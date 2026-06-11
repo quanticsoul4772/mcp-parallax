@@ -29,6 +29,8 @@
 // Production code must not panic via unwrap/expect; test modules opt out with a
 // local `#[allow(...)]`. This makes the guarantee compiler-enforced, not custom.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+// stdout is the MCP JSON-RPC channel — a stray print corrupts the protocol.
+#![deny(clippy::print_stdout, clippy::dbg_macro)]
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]

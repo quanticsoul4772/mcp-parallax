@@ -11,14 +11,40 @@
       "Bash(cargo llvm-cov:*)",
       "Bash(cargo add:*)",
       "Bash(cargo tree:*)",
+      "Bash(cargo audit:*)",
+      "Bash(cargo doc:*)",
+      "Bash(pre-commit run:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git show:*)",
       "Bash(git branch:*)",
       "Bash(git grep:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
       "Bash(rustc --version:*)",
       "Bash(cargo --version:*)"
+    ],
+    "deny": [
+      "Edit(./Cargo.lock)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cargo fmt --all",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

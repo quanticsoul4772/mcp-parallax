@@ -57,10 +57,14 @@ async fn main() {
     );
 }
 
+// --version/--help run before the MCP transport exists, so stdout is still a
+// terminal here — the one place printing to it is correct.
+#[allow(clippy::print_stdout)]
 fn print_version() {
     println!("mcp-parallax {}", env!("CARGO_PKG_VERSION"));
 }
 
+#[allow(clippy::print_stdout)]
 fn print_help() {
     println!("Parallax MCP server v{}", env!("CARGO_PKG_VERSION"));
     println!();

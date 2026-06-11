@@ -54,6 +54,9 @@ nursery = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+# stdout is the MCP JSON-RPC channel — a stray print corrupts the protocol.
+print_stdout = "deny"
+dbg_macro = "deny"
 
 [profile.release]
 lto = true
