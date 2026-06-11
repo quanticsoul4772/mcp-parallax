@@ -1,0 +1,61 @@
+[package]
+name = "mcp-parallax"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+authors = ["quanticsoul4772"]
+description = "An LLM-augmentation MCP server: a catalog of correctives for the calling model's predictable failure modes — metacognition the model can't run on itself."
+repository = "https://github.com/quanticsoul4772/mcp-parallax"
+license = "MIT"
+keywords = ["mcp", "reasoning", "anthropic", "claude", "ai"]
+categories = ["development-tools", "command-line-utilities"]
+
+[lib]
+name = "mcp_parallax"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-parallax"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Logging — stderr only; stdout is the MCP JSON-RPC channel
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async trait boundaries
+async-trait = "0.1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+# Trait mocking — the whole server tests without network or disk
+mockall = "0.14"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

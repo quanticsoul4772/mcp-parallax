@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Runtime data / databases
+/data
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
+.env.*
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
