@@ -27,6 +27,10 @@ Read these before proposing architecture. The master doc indexes the rest.
   routing, what's validated, what stops existing.
 - [`docs/design/SDK_LANDSCAPE.md`](docs/design/SDK_LANDSCAPE.md) — the chosen SDK/crate
   stack per layer (web-grounded, 2026-06), with versions and caveats.
+- [`docs/design/SDK_USAGE_CORE.md`](docs/design/SDK_USAGE_CORE.md) — *how* to wire the
+  core SDKs: rmcp tools with `Json<T>` structured output, the thin Anthropic
+  structured-outputs client behind `ModelClient`, the schema-sanitizer gotcha, and the
+  spikes to run before building core.
 - Layer deep-dives: `WATCHDOG_LAYER.md`, `MEMORY_LAYER.md`, `DETERMINISTIC_LAYER.md`,
   `CORRECTIVE_SELECTION.md`, `RESEARCH_PRIMITIVE.md`, `THEORY_OF_MIND.md`,
   `PREFERENCE_ELICITATION.md`, `OFFLOAD_LANDSCAPE.md`, `NEXT_REASONING_SERVER.md`.
@@ -58,13 +62,29 @@ cargo test                        # all tests
 cargo fmt --check                 # formatting
 cargo clippy -- -D warnings       # lint (gating)
 cargo test <module>               # e.g. cargo test config
+cargo test <name> -- --exact      # single test by full path
+
+# Aliases from .cargo/config.toml:
+cargo ci                          # check --all-features
+cargo lint                        # clippy -- -D warnings
+cargo cov                         # llvm-cov coverage report (no gate yet)
 
 # Full gate before every commit (also the /validate command):
 cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test
 ```
 
 Toolchain is pinned (`rust-toolchain.toml`: stable + clippy/rustfmt/llvm-tools).
-MSRV is 1.94 (CI verifies it). `pre-commit` hooks mirror the gate — `pre-commit install`.
+MSRV is 1.94 (CI verifies it with a dedicated job — bump `Cargo.toml` `rust-version`
+and the CI job in lockstep). A separate weekly `cargo audit` workflow gates
+advisories. `pre-commit` hooks mirror the gate — `pre-commit install`.
+
+## Runtime configuration (`Config::from_env()`)
+
+All config is environment variables: `ANTHROPIC_API_KEY` (required — the binary
+errors at startup without it), `DATABASE_PATH` (default `./data/parallax.db`),
+`LOG_LEVEL` (default `info`), `REQUEST_TIMEOUT_MS` (default `30000`),
+`MAX_RETRIES` (default `3`). A present-but-unparseable value is an error, never a
+silent fallback to the default.
 
 ## Conventions (carried over from `mcp-reasoning`, compiler-enforced)
 
@@ -72,7 +92,9 @@ MSRV is 1.94 (CI verifies it). `pre-commit` hooks mirror the gate — `pre-commi
   `clippy::unwrap_used`/`expect_used`. Test modules opt out with a local
   `#[allow(...)]`. On an error: read it, fix the actual broken thing — do **not** add
   fallbacks/try-catch to hide it.
-- `clippy::all` + `pedantic` + `nursery`, warnings denied in CI.
+- `clippy::all` + `pedantic` + `nursery`, warnings denied in CI. The lint policy
+  is declared in **both** `Cargo.toml [lints]` and the `lib.rs` preamble — change
+  them together.
 - Structured `tracing` to **stderr only** — stdout is the MCP JSON-RPC channel.
 - Composition over trait inheritance (the `ModelClient`/`Storage`/`TimeProvider`
   seams). Every external dependency sits behind a mockable trait so the server tests
