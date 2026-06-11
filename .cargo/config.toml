@@ -1,0 +1,16 @@
+[alias]
+# Quick gates — run before every commit
+ci = "check --all-features"
+lint = "clippy -- -D warnings"
+# Coverage report (no hard gate yet — the crate is a scaffold; add
+# --fail-under-lines once there is meaningful logic to cover).
+cov = "llvm-cov --ignore-filename-regex 'main\\.rs'"
+
+[build]
+incremental = true
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+RUST_BACKTRACE = "1"

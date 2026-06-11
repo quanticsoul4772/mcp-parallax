@@ -12,6 +12,9 @@
 .env
 .env.*
 
+# Claude Code — commit shared settings, keep personal/local out
+.claude/settings.local.json
+
 # Editor / OS
 .idea/
 .vscode/
