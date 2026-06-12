@@ -64,5 +64,46 @@ boxes below are checked.
 
 ## Findings
 
-*(to be filled during the live round; every deviation lands in research.md
-D1/D2 and reshapes hooks.json in the same change)*
+### Round 1 (2026-06-12, Claude Code 2.1.176, settings schema + first install)
+
+1. **The original draft hooks.json was wrong and silently inert.** The user
+   installed it; zero hooks registered (no checkpoint rows accrued, no
+   errors surfaced). Root causes, verified against the authoritative
+   settings JSON schema (`json.schemastore.org/claude-code-settings.json`):
+   - `mcp_tool` handlers require `server` (the configured MCP server name)
+     plus `tool` (the **bare** tool name on that server, not the
+     `mcp__server__tool` form).
+   - **The hook event payload is NOT auto-passed as tool arguments.** The
+     handler takes an explicit `input` object; string values support
+     `${path}` substitution from the hook event JSON
+     (`${session_id}`, `${transcript_path}`, `${tool_name}`,
+     `${tool_input}`, `${last_assistant_message}`, `${stop_hook_active}`).
+   - hooks.json rewritten to the schema-correct shape in the same change.
+2. **`PostToolBatch`, `Stop`, and `mcp_tool` all exist in 2.1.176** (schema
+   lists all 29 events; the five handler types match the research). The
+   matcher field is per-event-semantics; the draft's negative-lookahead
+   exclusion for `PostToolBatch` was dropped — self-trigger exemption is
+   verified empirically instead (round 2).
+3. `command` hooks support an `if` permission-rule filter (tool events
+   only) — a future option for harness-side risk narrowing.
+
+### Round 2 — open questions (verify after restart with the new config)
+
+- [ ] Hooks fire at all three boundaries (checkpoint_records accrues rows
+      with the live session id).
+- [ ] `${tool_input}` substitution: the hook payload's `tool_input` is an
+      object; does substitution into a string JSON-stringify it, and does
+      `${stop_hook_active}` (boolean) deserialize into the tool's boolean
+      `continuation` param? A type mismatch errors the call → fail-open;
+      fix would be loosening the wire contract types.
+- [ ] **Result → hook-control mapping**: does the tool's structured result
+      drive hook behavior (`hold` → block/ask, `flag` → `decision:"block"`)
+      or is it ignored? If ignored, the D1 named fallback (`command`
+      handler + one-shot CLI mode emitting hook-output JSON) replaces
+      `mcp_tool`.
+- [ ] Self-trigger exemption: hook-invoked checkpoint calls must not
+      re-fire `PreToolUse`/`PostToolBatch` (watch for runaway records).
+- [ ] `Stop` payload field names in anger (`last_assistant_message`,
+      `stop_hook_active`).
+- [ ] Live protocol: induced loop → visible flag; seeded constraint →
+      hold prompt; SC-004 kill-test; SC-006 inertness after uninstall.

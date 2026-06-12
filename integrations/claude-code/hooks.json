@@ -1,5 +1,5 @@
 {
-  "_comment": "Parallax checkpoint layer - sensor plane (006). DRAFT pending S1 verification (examples/spike_hooks.md): the mcp_tool handler payload/result mapping is the documented shape, not yet live-verified. Merge the 'hooks' object into your .claude/settings.json. Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session.",
+  "_comment": "Parallax checkpoint layer - sensor plane (006). Shape verified against the Claude Code settings schema (S1, 2026-06-12): mcp_tool hooks take server + tool (bare name) + an explicit input map with ${path} substitution from the hook event JSON. Merge the 'hooks' object into your .claude/settings.json (server name must match your MCP registration, here 'parallax'). Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session.",
   "hooks": {
     "PreToolUse": [
       {
@@ -7,20 +7,33 @@
         "hooks": [
           {
             "type": "mcp_tool",
-            "tool": "mcp__parallax__checkpoint_action",
-            "timeout": 5
+            "server": "parallax",
+            "tool": "checkpoint_action",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "tool_name": "${tool_name}",
+              "tool_input": "${tool_input}"
+            },
+            "timeout": 5,
+            "statusMessage": "checkpoint: pre-action gate"
           }
         ]
       }
     ],
     "PostToolBatch": [
       {
-        "matcher": "^(?!mcp__parallax__).*",
         "hooks": [
           {
             "type": "mcp_tool",
-            "tool": "mcp__parallax__checkpoint_batch",
-            "timeout": 10
+            "server": "parallax",
+            "tool": "checkpoint_batch",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}"
+            },
+            "timeout": 10,
+            "statusMessage": "checkpoint: trajectory screen"
           }
         ]
       }
@@ -30,8 +43,16 @@
         "hooks": [
           {
             "type": "mcp_tool",
-            "tool": "mcp__parallax__checkpoint_turn",
-            "timeout": 60
+            "server": "parallax",
+            "tool": "checkpoint_turn",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "final_message": "${last_assistant_message}",
+              "continuation": "${stop_hook_active}"
+            },
+            "timeout": 60,
+            "statusMessage": "checkpoint: end-of-turn review"
           }
         ]
       }
