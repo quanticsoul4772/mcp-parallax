@@ -33,6 +33,7 @@ fn test_config(timeout_ms: u64) -> Config {
         fetch_timeout_ms: 10_000,
         research_concurrency: 8,
         fetch_allow_private: false,
+        checkpoint_gate_patterns: vec![],
         database_path: ":memory:".into(),
         log_level: "info".into(),
         request_timeout_ms: timeout_ms,
@@ -390,7 +391,17 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     names.sort_unstable();
-    assert_eq!(names, vec!["check", "unstick", "verify"]);
+    assert_eq!(
+        names,
+        vec![
+            "check",
+            "checkpoint_action",
+            "checkpoint_batch",
+            "checkpoint_turn",
+            "unstick",
+            "verify"
+        ]
+    );
 
     drop(stdin);
     let _ = child.kill();
@@ -612,7 +623,17 @@ async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {
         .map(|t| t.name.to_string())
         .collect();
     names.sort();
-    assert_eq!(names, ["check", "unstick", "verify"]);
+    assert_eq!(
+        names,
+        [
+            "check",
+            "checkpoint_action",
+            "checkpoint_batch",
+            "checkpoint_turn",
+            "unstick",
+            "verify"
+        ]
+    );
 
     client.cancel().await.unwrap();
 }
@@ -627,7 +648,17 @@ async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
     names.sort_unstable();
     assert_eq!(
         names,
-        ["check", "forget", "recall", "save", "unstick", "verify"]
+        [
+            "check",
+            "checkpoint_action",
+            "checkpoint_batch",
+            "checkpoint_turn",
+            "forget",
+            "recall",
+            "save",
+            "unstick",
+            "verify"
+        ]
     );
 
     // Descriptions and schema property sets match the contract files.
@@ -1050,7 +1081,18 @@ async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
     let tools = client.list_all_tools().await.unwrap();
     let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     names.sort_unstable();
-    assert_eq!(names, ["check", "research", "unstick", "verify"]);
+    assert_eq!(
+        names,
+        [
+            "check",
+            "checkpoint_action",
+            "checkpoint_batch",
+            "checkpoint_turn",
+            "research",
+            "unstick",
+            "verify"
+        ]
+    );
 
     let research = tools.iter().find(|t| t.name == "research").unwrap();
     let contract: Value = serde_json::from_str(RESEARCH_CONTRACT).unwrap();
@@ -1455,6 +1497,238 @@ async fn check_double_translation_failure_surfaces_as_validation_failure() {
     let records = storage.list_invocations().await.unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].outcome, Outcome::ValidationFailure);
+
+    client.cancel().await.unwrap();
+}
+
+// ---- 006-checkpoint-layer ----------------------------------------------
+
+const CHECKPOINT_ACTION_CONTRACT: &str =
+    include_str!("../specs/006-checkpoint-layer/contracts/checkpoint_action.tool.json");
+const CHECKPOINT_BATCH_CONTRACT: &str =
+    include_str!("../specs/006-checkpoint-layer/contracts/checkpoint_batch.tool.json");
+const CHECKPOINT_TURN_CONTRACT: &str =
+    include_str!("../specs/006-checkpoint-layer/contracts/checkpoint_turn.tool.json");
+
+/// Write a transcript fixture: `commands` as one bash `tool_use` line each
+/// (failing when marked), for session `session`.
+fn write_transcript(dir: &std::path::Path, session: &str, commands: &[(&str, bool)]) -> String {
+    use std::io::Write as _;
+    let path = dir.join("transcript.jsonl");
+    let mut file = std::fs::File::create(&path).unwrap();
+    for (i, (command, failed)) in commands.iter().enumerate() {
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "assistant",
+                "sessionId": session,
+                "message": { "role": "assistant", "content": [
+                    { "type": "tool_use", "id": format!("t{i}"), "name": "Bash",
+                      "input": { "command": command } }
+                ]}
+            })
+        )
+        .unwrap();
+        if *failed {
+            writeln!(
+                file,
+                "{}",
+                json!({
+                    "type": "user",
+                    "sessionId": session,
+                    "message": { "role": "user", "content": [
+                        { "type": "tool_result", "tool_use_id": format!("t{i}"), "is_error": true }
+                    ]}
+                })
+            )
+            .unwrap();
+        }
+    }
+    path.to_string_lossy().to_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_tools_match_their_contracts() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    for (name, contract_text) in [
+        ("checkpoint_action", CHECKPOINT_ACTION_CONTRACT),
+        ("checkpoint_batch", CHECKPOINT_BATCH_CONTRACT),
+        ("checkpoint_turn", CHECKPOINT_TURN_CONTRACT),
+    ] {
+        let tool = tools.iter().find(|t| t.name == name).expect(name);
+        let contract: Value = serde_json::from_str(contract_text).unwrap();
+        assert_eq!(
+            tool.description.as_deref().unwrap(),
+            contract["description"],
+            "{name}: description diverges from the contract"
+        );
+        let input = serde_json::to_value(tool.input_schema.as_ref()).unwrap();
+        let props = |schema: &Value| -> Vec<String> {
+            let mut names: Vec<String> = schema["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(props(&input), props(&contract["params"]), "{name}");
+    }
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_batch_flags_a_seeded_loop_with_both_records() {
+    let mock = MockServer::start().await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_transcript(
+        dir.path(),
+        "cs-loop",
+        &[
+            ("cargo test", true),
+            ("cargo test", true),
+            ("cargo test", true),
+            ("cargo test", true),
+        ],
+    );
+
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_batch",
+            &json!({ "session_id": "cs-loop", "transcript_path": path }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "flag");
+    let message = structured["message"].as_str().unwrap();
+    assert!(message.contains("cargo test"), "{message}");
+    assert_eq!(structured["fail_open"], false);
+
+    // Exactly one invocation record AND one checkpoint record (FR-006).
+    let invocations = storage.list_invocations().await.unwrap();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].tool, "checkpoint_batch");
+    assert_eq!(invocations[0].outcome, Outcome::Success);
+    let checkpoints = storage.list_checkpoints().await.unwrap();
+    assert_eq!(checkpoints.len(), 1);
+    assert_eq!(checkpoints[0].verdict.as_str(), "flag");
+    assert!(!checkpoints[0].signals_fired.is_empty());
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_batch_is_silent_on_a_benign_transcript() {
+    let mock = MockServer::start().await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_transcript(
+        dir.path(),
+        "cs-benign",
+        &[
+            ("cargo build", false),
+            ("cargo test", true),
+            ("cargo fmt", false),
+            ("cargo test", false),
+        ],
+    );
+
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_batch",
+            &json!({ "session_id": "cs-benign", "transcript_path": path }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "silence");
+    assert_eq!(structured["message"], Value::Null);
+    assert_eq!(structured["signals"], json!([]));
+
+    let checkpoints = storage.list_checkpoints().await.unwrap();
+    assert_eq!(checkpoints.len(), 1);
+    assert_eq!(checkpoints[0].verdict.as_str(), "silence");
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_fails_open_when_the_transcript_is_unreadable() {
+    let mock = MockServer::start().await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    // A missing transcript is an evaluation failure - the verdict is a
+    // recorded fail-open silence, NOT an error (FR-008/SC-004).
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_batch",
+            &json!({ "session_id": "cs-x", "transcript_path": "missing/never.jsonl" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "silence");
+    assert_eq!(structured["fail_open"], true);
+
+    let invocations = storage.list_invocations().await.unwrap();
+    assert_eq!(invocations[0].outcome, Outcome::Success);
+    let checkpoints = storage.list_checkpoints().await.unwrap();
+    assert!(checkpoints[0].fail_open);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_action_passes_non_risk_and_continuation_turns_are_silent() {
+    let mock = MockServer::start().await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    // Non-risk-matched action: silence, no evaluation (FR-013) - and no
+    // memory capability is configured, so nothing else could run anyway.
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_action",
+            &json!({
+                "session_id": "cs-a",
+                "transcript_path": "unused.jsonl",
+                "tool_name": "Read",
+                "tool_input": "src/main.rs"
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "silence");
+    assert_eq!(structured["fail_open"], false);
+
+    // A continuation turn end never reviews again (FR-014).
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_turn",
+            &json!({
+                "session_id": "cs-a",
+                "transcript_path": "unused.jsonl",
+                "final_message": "Reconciled the two statements explicitly.",
+                "continuation": true
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "silence");
+
+    let checkpoints = storage.list_checkpoints().await.unwrap();
+    assert_eq!(checkpoints.len(), 2);
+    assert!(checkpoints.iter().all(|c| !c.review_ran));
+    let invocations = storage.list_invocations().await.unwrap();
+    assert_eq!(invocations.len(), 2);
 
     client.cancel().await.unwrap();
 }

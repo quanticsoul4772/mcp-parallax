@@ -56,6 +56,11 @@ pub struct Config {
     /// `FETCH_ALLOW_PRIVATE`, default `false` — an SSRF guard; enable only
     /// for local testing.
     pub fetch_allow_private: bool,
+    /// Extra pre-action gate risk patterns (checkpoint layer, FR-013) —
+    /// comma-separated substrings extending the built-in set.
+    /// `CHECKPOINT_GATE_PATTERNS`, default empty. A present value with an
+    /// empty entry (`"a,,b"`) is an error, never silently skipped.
+    pub checkpoint_gate_patterns: Vec<String>,
     /// Path to the SQLite database file. `DATABASE_PATH`, default `./data/parallax.db`.
     pub database_path: String,
     /// Log-level filter. `LOG_LEVEL`, default `info`.
@@ -106,6 +111,8 @@ impl Config {
         let research_concurrency =
             validate_research_concurrency(parse_env("RESEARCH_CONCURRENCY", 8)?)?;
         let fetch_allow_private = parse_env("FETCH_ALLOW_PRIVATE", false)?;
+        let checkpoint_gate_patterns =
+            parse_gate_patterns(std::env::var("CHECKPOINT_GATE_PATTERNS").ok().as_deref())?;
         let database_path =
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/parallax.db".to_string());
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
@@ -124,6 +131,7 @@ impl Config {
             fetch_timeout_ms,
             research_concurrency,
             fetch_allow_private,
+            checkpoint_gate_patterns,
             database_path,
             log_level,
             request_timeout_ms,
@@ -158,6 +166,20 @@ fn validate_research_concurrency(n: u8) -> Result<u8, ConfigError> {
     } else {
         Err(ConfigError::Invalid("RESEARCH_CONCURRENCY"))
     }
+}
+
+/// Parse `CHECKPOINT_GATE_PATTERNS`: comma-separated, trimmed, all entries
+/// non-empty. Unset → empty (built-ins only). A present-but-malformed value
+/// (an empty entry) is an error, never a silent skip.
+fn parse_gate_patterns(raw: Option<&str>) -> Result<Vec<String>, ConfigError> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let patterns: Vec<String> = raw.split(',').map(|p| p.trim().to_string()).collect();
+    if patterns.iter().any(String::is_empty) {
+        return Err(ConfigError::Invalid("CHECKPOINT_GATE_PATTERNS"));
+    }
+    Ok(patterns)
 }
 
 /// Read an environment variable and parse it, falling back to `default` when the
@@ -218,6 +240,17 @@ mod tests {
         assert!(validate_research_concurrency(33).is_err());
         assert_eq!(validate_research_concurrency(1).unwrap(), 1);
         assert_eq!(validate_research_concurrency(32).unwrap(), 32);
+    }
+
+    #[test]
+    fn gate_patterns_parse_trim_and_reject_empty_entries() {
+        assert!(parse_gate_patterns(None).unwrap().is_empty());
+        assert_eq!(
+            parse_gate_patterns(Some(" systemctl , docker compose down ")).unwrap(),
+            vec!["systemctl".to_string(), "docker compose down".to_string()]
+        );
+        let err = parse_gate_patterns(Some("a,,b")).unwrap_err();
+        assert!(err.to_string().contains("CHECKPOINT_GATE_PATTERNS"));
     }
 
     #[test]

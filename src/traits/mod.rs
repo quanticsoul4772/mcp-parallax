@@ -10,6 +10,7 @@ pub mod embedder;
 pub mod fetcher;
 pub mod search;
 pub mod storage;
+pub mod trajectory;
 
 pub use client::{Completion, ModelClient};
 pub use clock::{SystemClock, TimeProvider};
@@ -17,3 +18,4 @@ pub use embedder::{Embedder, Embedding};
 pub use fetcher::{FetchedPage, Fetcher};
 pub use search::{SearchHit, SearchProvider};
 pub use storage::Storage;
+pub use trajectory::{FsTrajectoryReader, TrajectoryReader};

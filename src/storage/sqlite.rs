@@ -5,6 +5,7 @@
 //! path fails boot, not the first call. (The sqlite-vec extension caveat does
 //! not apply here — no extensions are loaded in this feature.)
 
+use crate::checkpoint::{Boundary, CheckpointRecord, Signal, SignalKind, Verdict};
 use crate::error::{AppError, Outcome};
 use crate::memory::{Kind, Memory, Trust};
 use crate::telemetry::InvocationRecord;
@@ -43,6 +44,20 @@ CREATE TABLE IF NOT EXISTS invocation_records (
     latency_ms    INTEGER NOT NULL,
     outcome       TEXT NOT NULL,
     created_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS checkpoint_records (
+    id                TEXT PRIMARY KEY,
+    session_id        TEXT NOT NULL,
+    boundary          TEXT NOT NULL,
+    signals_evaluated TEXT NOT NULL,
+    signals_fired     TEXT NOT NULL,
+    review_ran        INTEGER NOT NULL,
+    verdict           TEXT NOT NULL,
+    suppressed        INTEGER NOT NULL,
+    fail_open         INTEGER NOT NULL,
+    latency_ms        INTEGER NOT NULL,
+    cost_usd          REAL NOT NULL,
+    created_at        TEXT NOT NULL
 );
 ";
 
@@ -137,6 +152,90 @@ impl SqliteStorage {
                     cost_usd: row.get("cost_usd"),
                     latency_ms,
                     outcome,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+}
+
+impl SqliteStorage {
+    /// Read back all checkpoint records, newest first. Implementation-level
+    /// inspection surface (tests, operators, the acceptance harness — SC-005
+    /// rates are plain SQL over this table).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] on read failure or a contract-violating
+    /// row.
+    pub async fn list_checkpoints(&self) -> Result<Vec<CheckpointRecord>, AppError> {
+        let rows = sqlx::query(
+            "SELECT id, session_id, boundary, signals_evaluated, signals_fired,
+                    review_ran, verdict, suppressed, fail_open, latency_ms,
+                    cost_usd, created_at
+             FROM checkpoint_records ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("checkpoint read failed: {e}")))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let boundary_text: String = row.get("boundary");
+                let boundary = Boundary::parse(&boundary_text).ok_or_else(|| {
+                    AppError::Storage(format!("unknown boundary in store: {boundary_text}"))
+                })?;
+                let verdict_text: String = row.get("verdict");
+                let verdict = match verdict_text.as_str() {
+                    "silence" => Verdict::Silence,
+                    "flag" => Verdict::Flag,
+                    "hold" => Verdict::Hold,
+                    other => {
+                        return Err(AppError::Storage(format!(
+                            "unknown verdict in store: {other}"
+                        )))
+                    }
+                };
+                let evaluated_text: String = row.get("signals_evaluated");
+                let evaluated_names: Vec<String> = serde_json::from_str(&evaluated_text)
+                    .map_err(|e| AppError::Storage(format!("signals_evaluated corrupt: {e}")))?;
+                let signals_evaluated = evaluated_names
+                    .iter()
+                    .map(|name| {
+                        serde_json::from_value::<SignalKind>(serde_json::Value::String(
+                            name.clone(),
+                        ))
+                        .map_err(|_| {
+                            AppError::Storage(format!("unknown signal kind in store: {name}"))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let fired_text: String = row.get("signals_fired");
+                let signals_fired: Vec<Signal> = serde_json::from_str(&fired_text)
+                    .map_err(|e| AppError::Storage(format!("signals_fired corrupt: {e}")))?;
+                let created_text: String = row.get("created_at");
+                let created_at = DateTime::parse_from_rfc3339(&created_text)
+                    .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
+                    .with_timezone(&Utc);
+                let latency: i64 = row.get("latency_ms");
+                let latency_ms = u64::try_from(latency).map_err(|_| {
+                    AppError::Storage(format!("negative latency_ms in store: {latency}"))
+                })?;
+                let review_ran: i64 = row.get("review_ran");
+                let suppressed: i64 = row.get("suppressed");
+                let fail_open: i64 = row.get("fail_open");
+                Ok(CheckpointRecord {
+                    id: row.get("id"),
+                    session_id: row.get("session_id"),
+                    boundary,
+                    signals_evaluated,
+                    signals_fired,
+                    review_ran: review_ran != 0,
+                    verdict,
+                    suppressed: suppressed != 0,
+                    fail_open: fail_open != 0,
+                    latency_ms,
+                    cost_usd: row.get("cost_usd"),
                     created_at,
                 })
             })
@@ -256,6 +355,68 @@ impl Storage for SqliteStorage {
             .await
             .map_err(|e| AppError::Storage(format!("memory delete failed: {e}")))?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
+        let signals_evaluated: Vec<&str> = record
+            .signals_evaluated
+            .iter()
+            .map(|k| k.as_str())
+            .collect();
+        let evaluated = serde_json::to_string(&signals_evaluated)
+            .map_err(|e| AppError::Storage(format!("signals_evaluated serialization: {e}")))?;
+        let fired = serde_json::to_string(&record.signals_fired)
+            .map_err(|e| AppError::Storage(format!("signals_fired serialization: {e}")))?;
+        #[allow(clippy::cast_possible_wrap)] // latency far below i64::MAX
+        sqlx::query(
+            "INSERT INTO checkpoint_records
+                (id, session_id, boundary, signals_evaluated, signals_fired,
+                 review_ran, verdict, suppressed, fail_open, latency_ms,
+                 cost_usd, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&record.id)
+        .bind(&record.session_id)
+        .bind(record.boundary.as_str())
+        .bind(evaluated)
+        .bind(fired)
+        .bind(i64::from(record.review_ran))
+        .bind(record.verdict.as_str())
+        .bind(i64::from(record.suppressed))
+        .bind(i64::from(record.fail_open))
+        .bind(record.latency_ms as i64)
+        .bind(record.cost_usd)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("checkpoint record write failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn delivered_signal_keys_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError> {
+        let rows = sqlx::query(
+            "SELECT signals_fired FROM checkpoint_records
+             WHERE session_id = ? AND created_at >= ?
+               AND suppressed = 0 AND verdict != 'silence'",
+        )
+        .bind(session_id)
+        .bind(since.to_rfc3339())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("cooldown read failed: {e}")))?;
+
+        let mut keys = Vec::new();
+        for row in rows {
+            let fired_text: String = row.get("signals_fired");
+            let fired: Vec<Signal> = serde_json::from_str(&fired_text)
+                .map_err(|e| AppError::Storage(format!("signals_fired corrupt: {e}")))?;
+            keys.extend(fired.into_iter().map(|s| s.signal_key));
+        }
+        Ok(keys)
     }
 
     async fn record_invocation(&self, record: &InvocationRecord) -> Result<(), AppError> {
@@ -480,6 +641,147 @@ mod tests {
         storage.save_memory(&memory).await.unwrap();
         let err = storage.save_memory(&memory).await.unwrap_err();
         assert!(matches!(err, AppError::Storage(_)));
+    }
+
+    fn sample_checkpoint(
+        id: &str,
+        at: &str,
+        verdict: Verdict,
+        suppressed: bool,
+    ) -> CheckpointRecord {
+        CheckpointRecord {
+            id: id.to_string(),
+            session_id: "cs1".into(),
+            boundary: Boundary::Batch,
+            signals_evaluated: vec![SignalKind::Repetition, SignalKind::RepeatedFailure],
+            signals_fired: if verdict == Verdict::Silence && !suppressed {
+                vec![]
+            } else {
+                vec![Signal::new(
+                    SignalKind::Repetition,
+                    "the action `bash cargo test` was invoked 4 times".into(),
+                    "bash cargo test",
+                )]
+            },
+            review_ran: false,
+            verdict,
+            suppressed,
+            fail_open: false,
+            latency_ms: 12,
+            cost_usd: 0.0,
+            created_at: DateTime::parse_from_rfc3339(at)
+                .unwrap()
+                .with_timezone(&Utc),
+        }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_records_round_trip_with_full_fidelity() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let record = sample_checkpoint("c1", "2026-06-12T10:00:00Z", Verdict::Flag, false);
+        storage.record_checkpoint(&record).await.unwrap();
+
+        let loaded = storage.list_checkpoints().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0], record);
+    }
+
+    #[tokio::test]
+    async fn cooldown_lookup_honors_the_window_edge_and_delivery_rules() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        // Delivered flag inside the window.
+        storage
+            .record_checkpoint(&sample_checkpoint(
+                "inside",
+                "2026-06-12T10:00:00Z",
+                Verdict::Flag,
+                false,
+            ))
+            .await
+            .unwrap();
+        // Delivered flag before the window.
+        storage
+            .record_checkpoint(&sample_checkpoint(
+                "before",
+                "2026-06-12T08:00:00Z",
+                Verdict::Flag,
+                false,
+            ))
+            .await
+            .unwrap();
+        // Suppressed inside the window — not a delivery, never extends cooldown.
+        storage
+            .record_checkpoint(&sample_checkpoint(
+                "suppressed",
+                "2026-06-12T10:30:00Z",
+                Verdict::Silence,
+                true,
+            ))
+            .await
+            .unwrap();
+
+        let since = DateTime::parse_from_rfc3339("2026-06-12T09:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let keys = storage
+            .delivered_signal_keys_since("cs1", since)
+            .await
+            .unwrap();
+        assert_eq!(keys.len(), 1, "{keys:?}");
+        assert!(keys[0].starts_with("repetition:"));
+
+        // Window edge: a query from exactly the delivery instant includes it.
+        let at_edge = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            storage
+                .delivered_signal_keys_since("cs1", at_edge)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Another session sees nothing.
+        assert!(storage
+            .delivered_signal_keys_since("other", since)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_rates_are_plain_sql_aggregates() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        storage
+            .record_checkpoint(&sample_checkpoint(
+                "a",
+                "2026-06-12T10:00:00Z",
+                Verdict::Flag,
+                false,
+            ))
+            .await
+            .unwrap();
+        storage
+            .record_checkpoint(&sample_checkpoint(
+                "b",
+                "2026-06-12T10:01:00Z",
+                Verdict::Silence,
+                false,
+            ))
+            .await
+            .unwrap();
+        // SC-005: flag rate computable from records alone.
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS total, SUM(verdict != 'silence') AS fired FROM checkpoint_records",
+        )
+        .fetch_one(&storage.pool)
+        .await
+        .unwrap();
+        let total: i64 = row.get("total");
+        let fired: i64 = row.get("fired");
+        assert_eq!((total, fired), (2, 1));
     }
 
     #[tokio::test]

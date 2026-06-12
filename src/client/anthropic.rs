@@ -243,6 +243,7 @@ mod tests {
             fetch_timeout_ms: 10_000,
             research_concurrency: 8,
             fetch_allow_private: false,
+            checkpoint_gate_patterns: vec![],
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,

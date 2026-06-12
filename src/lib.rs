@@ -39,6 +39,7 @@
 #![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::doc_markdown)] // Backticks in docs not required for all identifiers
 
+pub mod checkpoint;
 pub mod client;
 pub mod config;
 pub mod deterministic;

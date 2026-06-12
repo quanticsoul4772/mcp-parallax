@@ -4,6 +4,11 @@
 //! point where every invocation — success, failure, or abandonment — leaves
 //! exactly one record (FR-010).
 
+use crate::checkpoint::contract::{
+    CheckpointActionParams, CheckpointBatchParams, CheckpointResult, CheckpointTurnParams,
+};
+use crate::checkpoint::review as checkpoint_review;
+use crate::checkpoint::run::{self as checkpoint_run, CheckpointDeps};
 use crate::client::{BraveClient, VoyageClient};
 use crate::config::Config;
 use crate::deterministic::check::{self as check_tool, CheckDeps};
@@ -25,6 +30,7 @@ use crate::traits::clock::TimeProvider;
 use crate::traits::embedder::Embedder;
 use crate::traits::search::SearchProvider;
 use crate::traits::storage::Storage;
+use crate::traits::trajectory::FsTrajectoryReader;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ErrorData, ServerCapabilities, ServerInfo};
@@ -53,6 +59,10 @@ pub struct Parallax {
     /// Deterministic-check dependencies — always present (pure in-process
     /// engines need no gate; FR-010).
     deterministic: Arc<CheckDeps>,
+    /// Checkpoint-layer dependencies — always present; the layer is off by
+    /// default because nothing invokes the tools until the sensor plane
+    /// (hooks) is installed (006 FR-007).
+    checkpoint: Arc<CheckpointDeps>,
     /// Per-source fetch timeout for research runs (`FETCH_TIMEOUT_MS`).
     fetch_timeout_ms: u64,
     /// SSRF guard override for research fetches (`FETCH_ALLOW_PRIVATE`).
@@ -128,6 +138,7 @@ impl Parallax {
         // assertion belongs at boot whether or not the capability is on.
         pipeline::register(&mut registry)?;
         deterministic_translate::register(&mut registry)?;
+        checkpoint_review::register(&mut registry)?;
 
         let verify_mode = registry
             .get(VERIFY_ID)
@@ -139,6 +150,17 @@ impl Parallax {
                 .cloned()
                 .ok_or_else(|| AppError::Client(format!("mode {id} not registered at boot")))
         };
+
+        let checkpoint = Arc::new(CheckpointDeps {
+            reader: Arc::new(FsTrajectoryReader),
+            storage: Arc::clone(&storage),
+            clock: Arc::clone(&clock),
+            model_client: Arc::clone(&client),
+            review_mode: mode(checkpoint_review::REVIEW_MODE_ID)?,
+            model: config.anthropic_model.clone(),
+            embedder: embedder.clone(),
+            gate_extra_patterns: config.checkpoint_gate_patterns.clone(),
+        });
 
         let memory = embedder.map(|embedder| {
             Arc::new(MemoryDeps {
@@ -194,6 +216,7 @@ impl Parallax {
             memory,
             research,
             deterministic,
+            checkpoint,
             fetch_timeout_ms: config.fetch_timeout_ms,
             fetch_allow_private: config.fetch_allow_private,
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -316,6 +339,86 @@ impl Parallax {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<CheckResult>, ErrorData> {
         self.check_with_ct(params, context.ct).await
+    }
+
+    /// The `checkpoint_action` tool: the harness-triggered pre-action gate.
+    #[tool(
+        name = "checkpoint_action",
+        description = "Pre-action checkpoint: deterministically evaluate one pending, risk-matched action against verified stored constraints before it runs. Returns hold (escalate to the user, quoting the conflicting stored memory) or silence. Decides within a hard time budget and fails open - an error or timeout never blocks the action. Never modifies the action. Intended to be invoked by the harness's pre-action hook; calling it directly behaves identically."
+    )]
+    pub async fn checkpoint_action(
+        &self,
+        Parameters(params): Parameters<CheckpointActionParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<CheckpointResult>, ErrorData> {
+        self.checkpoint_action_with_ct(params, context.ct).await
+    }
+
+    /// The `checkpoint_batch` tool: harness-triggered post-batch screening.
+    #[tool(
+        name = "checkpoint_batch",
+        description = "Post-batch checkpoint: after a completed group of tool calls, deterministically screen the recent trajectory for loops (the same normalized action repeated) and repeated failures (the same action failing consecutively). Returns a flag naming the specific repeated action and count, or silence. Pure and local - no model call, no network. A delivered flag is cooldown-suppressed at subsequent checkpoints until resolved. Fails open. Intended to be invoked by the harness's post-batch hook; calling it directly behaves identically."
+    )]
+    pub async fn checkpoint_batch(
+        &self,
+        Parameters(params): Parameters<CheckpointBatchParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<CheckpointResult>, ErrorData> {
+        self.checkpoint_batch_with_ct(params, context.ct).await
+    }
+
+    /// The `checkpoint_turn` tool: harness-triggered end-of-turn review.
+    #[tool(
+        name = "checkpoint_turn",
+        description = "End-of-turn checkpoint: deterministically mine the turn's final message and recent trajectory for candidate contradictions (against earlier committed statements and verified stored decisions); only when candidates exist, one independent blind review pass classifies them. A confirmed contradiction returns a flag citing both conflicting statements, delivered as forced continuation - the turn does not end until the model addresses it (at most once per turn). Otherwise silence. Verdict and wording are server-assembled; the review pass never decides or phrases the verdict. Fails open. Intended to be invoked by the harness's stop hook; calling it directly behaves identically."
+    )]
+    pub async fn checkpoint_turn(
+        &self,
+        Parameters(params): Parameters<CheckpointTurnParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<CheckpointResult>, ErrorData> {
+        self.checkpoint_turn_with_ct(params, context.ct).await
+    }
+
+    async fn checkpoint_action_with_ct(
+        &self,
+        params: CheckpointActionParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<CheckpointResult>, ErrorData> {
+        let deps = Arc::clone(&self.checkpoint);
+        // Attribution: the embed lookup is the only metered call on this path.
+        let model = deps
+            .embedder
+            .as_ref()
+            .map_or_else(|| self.model.clone(), |e| e.model_id().to_string());
+        self.run_recorded("checkpoint_action", model, ct, async {
+            checkpoint_run::run_action(&deps, &params).await
+        })
+        .await
+    }
+
+    async fn checkpoint_batch_with_ct(
+        &self,
+        params: CheckpointBatchParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<CheckpointResult>, ErrorData> {
+        let deps = Arc::clone(&self.checkpoint);
+        self.run_recorded("checkpoint_batch", self.model.clone(), ct, async {
+            checkpoint_run::run_batch(&deps, &params).await
+        })
+        .await
+    }
+
+    async fn checkpoint_turn_with_ct(
+        &self,
+        params: CheckpointTurnParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<CheckpointResult>, ErrorData> {
+        let deps = Arc::clone(&self.checkpoint);
+        self.run_recorded("checkpoint_turn", self.model.clone(), ct, async {
+            checkpoint_run::run_turn(&deps, &params).await
+        })
+        .await
     }
 
     async fn verify_with_ct(
@@ -523,6 +626,11 @@ impl ServerHandler for Parallax {
                  budget and get back a short, cited, adversarially-verified answer.",
             );
         }
+        instructions.push_str(
+            " The `checkpoint_*` tools are trajectory checkpoints triggered by the \
+             harness's hooks when the checkpoint integration is installed - they are \
+             not for routine self-invocation.",
+        );
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)
     }
@@ -551,6 +659,7 @@ mod tests {
             fetch_timeout_ms: 10_000,
             research_concurrency: 8,
             fetch_allow_private: false,
+            checkpoint_gate_patterns: vec![],
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,
@@ -584,7 +693,17 @@ mod tests {
     #[tokio::test]
     async fn without_capability_keys_the_catalog_is_exactly_the_correctives() {
         let (server, _) = server_with(MockModelClient::new()).await;
-        assert_eq!(catalog(&server), ["check", "unstick", "verify"]);
+        assert_eq!(
+            catalog(&server),
+            [
+                "check",
+                "checkpoint_action",
+                "checkpoint_batch",
+                "checkpoint_turn",
+                "unstick",
+                "verify"
+            ]
+        );
         assert!(server.memory.is_none());
         assert!(server.research.is_none());
         // The instructions don't advertise tools that aren't there.
@@ -607,7 +726,18 @@ mod tests {
             Some(Arc::new(search)),
         )
         .unwrap();
-        assert_eq!(catalog(&server), ["check", "research", "unstick", "verify"]);
+        assert_eq!(
+            catalog(&server),
+            [
+                "check",
+                "checkpoint_action",
+                "checkpoint_batch",
+                "checkpoint_turn",
+                "research",
+                "unstick",
+                "verify"
+            ]
+        );
         let info = server.get_info();
         assert!(info.instructions.unwrap().contains("research"));
     }
@@ -673,7 +803,17 @@ mod tests {
         .unwrap();
         assert_eq!(
             catalog(&server),
-            ["check", "forget", "recall", "save", "unstick", "verify"]
+            [
+                "check",
+                "checkpoint_action",
+                "checkpoint_batch",
+                "checkpoint_turn",
+                "forget",
+                "recall",
+                "save",
+                "unstick",
+                "verify"
+            ]
         );
         let info = server.get_info();
         assert!(info.instructions.unwrap().contains("recall"));

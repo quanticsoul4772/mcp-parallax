@@ -1,8 +1,10 @@
 //! The persistence boundary. SQLite-backed in production; mocked in tests.
 
+use crate::checkpoint::CheckpointRecord;
 use crate::error::AppError;
 use crate::memory::Memory;
 use crate::telemetry::InvocationRecord;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 /// Durable storage for sessions, accumulated state, and invocation records.
@@ -52,6 +54,26 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns [`AppError`] if the delete fails.
     async fn delete_memory(&self, id: &str) -> Result<bool, AppError>;
+
+    /// Persist one checkpoint evaluation record (checkpoint layer, FR-006 —
+    /// exactly one per evaluation).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError>;
+
+    /// Signal keys delivered (verdict ≠ silence, not suppressed) in this
+    /// session since `since` — the FR-010 cooldown lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    async fn delivered_signal_keys_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError>;
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -59,6 +59,8 @@ evalexpr = "13"
 mockall = "0.14"
 rmcp = { version = "1.7.0", features = ["client"] }
 wiremock = "0.6.5"
+# Transcript fixtures for FsTrajectoryReader tests (checkpoint layer)
+tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"
