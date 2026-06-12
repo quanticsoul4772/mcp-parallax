@@ -53,16 +53,19 @@ conservative, explainable). Never a body (FR-012).
 
 | call | schema | bound |
 |---|---|---|
-| scope | `{angles: [string], sub_questions: [string]}` | angles ≤ tier N; sub_questions ≤ 7 |
+| scope | `{angles: [string], sub_questions: [string]}` | angles ≤ tier N; sub_questions ≤ 7; `focus` entries are woven into the scope prompt (FR-001) |
 | extract (per source) | `{claims: [string]}` | ≤ 12 claims/source; span dropped (research.md D4) |
-| verify (per claim) | existing verify mode schema, unchanged | K passes from tier |
-| synthesize | `{answer: string, gaps: [string]}` | answer ≤ length validated locally |
+| verify (per claim) | existing verify schema (`{verdict, findings}`), refute-biased prompt variant (research.md D3) | K passes from tier |
+| synthesize | `{answer: string, gaps: [string]}` | answer ≤ 8000 chars, gaps ≤ 10 × 500 chars — enforced by the local validator |
 
 ## 4. Pure functions (`verdict.rs`, `grounding.rs`)
 
-- `support(verdict, agreement, n_sources) -> Support` — mapping per
-  research.md D7: refuted-majority → Refuted; supported + n≥2 → Confirmed;
-  supported + n=1 → Unverified; sub-quorum agreement → Contested.
+- `support(passes, agreement, verdict, n_sources) -> Support` — mapping per
+  research.md D7, **order-sensitive**: Contested first (winning-side share of
+  passes < 2/3 — the verify ensemble resolves ties to refuted, so contested
+  must be detected before the aggregate verdict is trusted), then Refuted
+  (aggregate refuted at ≥ 2/3), then Confirmed (supported, n ≥ 2), then
+  Unverified (supported, n = 1).
 - `claim_confidence(agreement, n_sources, mean_credibility) -> f32` —
   clamped 0..=1, weights are constants (tuned offline, never at runtime).
 - `overall_confidence(findings, settled, total_subqs) -> f32` —

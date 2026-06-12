@@ -12,8 +12,9 @@ question into angles and falsifiable sub-questions; angle searches run
 concurrently against Brave behind a new `SearchProvider` seam; each source
 flows fetch→extract independently (hygiene-enforced `Fetcher` seam +
 local readable-text extraction + one claim-extraction call per source);
-deduplicated claims are verified by the **existing verify ensemble** (K
-refute-biased passes from the depth tier); synthesis is **server-assembled** —
+deduplicated claims are verified by the **verify ensemble machinery with a
+refute-biased prompt variant** (same schema, K passes from the depth tier —
+research.md D3); synthesis is **server-assembled** —
 the model writes only the prose answer and gap phrasing, while key findings,
 disagreements, sources, and stats are built deterministically from pipeline
 state, and a **pure grounding gate** validates every citation token against the

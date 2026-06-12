@@ -42,22 +42,28 @@ compile + extraction quality on fixture HTML before the pipeline is built.
 dependency, against the landscape's own preference); `article_scraper`
 (fivefilters configs + Readability — heavier, pulls libxml).
 
-## D3 — Verification: reuse the existing verify ensemble unchanged
+## D3 — Verification: verify's schema and ensemble machinery, with a refute-biased prompt variant
 
-**Decision**: per-claim verification calls the existing `verify` mode logic
-(`modes::verify::run`) with the claim text and a context line naming the
-source domain/title, K passes from the depth tier. No new mode schema.
+**Decision**: per-claim verification reuses the verify mode's **schema and
+K-pass ensemble machinery** but with a **refute-biased prompt template**: the
+verifier is instructed to attempt to refute the claim and to default to
+`refuted` when it cannot establish support ("uncertain" is a refutation, and
+the refutation must name what could not be established). The call carries the
+claim text and a context line naming the source domain/title; K from the
+depth tier. No new schema — same `{verdict, findings}` contract, same
+aggregation.
 
-**Rationale**: the verify mode *is* K stance-blind refute-capable passes with
-agreement-derived confidence — exactly the design doc's §4 shape. Reuse keeps
-one verification implementation (Principle VII) and one schema (Principle II).
-The refute-bias lives in the existing stance-blind prompt; "default to refuted
-if uncertain" is already its failure direction (a refutation must name the
-error).
+**Rationale**: the design doc (§4) explicitly prompts verifiers to refute,
+defaulting to refuted if uncertain — a stance-blind prompt is *neutral*, not
+refute-biased, and the spec (FR-002) promises the bias. A prompt-template
+variant gets the bias while keeping one schema (Principle II) and one
+ensemble implementation (Principle VII).
 
-**Alternatives considered**: a bespoke per-lens verifier mode
-(deep/exhaustive's diverse lenses) — deferred with the exhaustive tier; K
-identical-prompt passes are the v1 design point.
+**Alternatives considered**: reusing the stance-blind prompt unchanged —
+rejected at analysis (I1): it under-delivers FR-002's adversarial stance for
+single-source web claims, where "the model can't confirm this" must count
+against the claim. A bespoke per-lens verifier mode (deep/exhaustive's
+diverse lenses) — deferred with the exhaustive tier.
 
 ## D4 — Extraction output: flat `{claims: []}`, spans dropped (named deviation)
 
@@ -127,13 +133,21 @@ a label, or a confidence because it never emits them — it can only fabricate
 a citation token, which a string check catches. It also keeps the synthesis
 schema flat (Principle II) where the doc's illustrative response would not be.
 
-**Verdict mapping** (pure, `verdict.rs`): from the verify run (majority
-verdict, agreement confidence) + independent source count `n`:
-refuted-majority → `refuted` (dropped from body, counted); supported-majority
-with `n ≥ 2` → `confirmed`; supported-majority with `n = 1` → `unverified`
-(never stated as fact); near-tie agreement (< quorum margin) → `contested`
-(surfaced in `disagreements`). Overall confidence = coverage-weighted mean of
-finding confidences, penalized by unanswered sub-questions (design §4.2).
+**Verdict mapping** (pure, `verdict.rs`): from the verify run's `(passes,
+agreement, verdict)` + independent source count `n`, evaluated **in this
+order** (the order is load-bearing — the verify ensemble resolves ties to
+refuted, so the contested band must be checked *before* trusting the
+aggregate verdict, or genuinely contested claims silently drop):
+
+1. **contested** if the winning side's share of passes < 2/3 (covers the
+   K=2 1–1 split and the K=3 2–1 case; K=1 can never be contested);
+2. **refuted** if the aggregate verdict is refuted (≥ 2/3 share) — dropped
+   from the body, counted;
+3. **confirmed** if supported with `n ≥ 2` independent sources;
+4. **unverified** if supported with `n = 1` (never stated as fact).
+
+Overall confidence = coverage-weighted mean of finding confidences, penalized
+by unanswered sub-questions (design §4.2).
 
 ## D8 — Depth tiers and ceilings (constants, constraints override)
 
