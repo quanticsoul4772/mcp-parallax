@@ -49,7 +49,7 @@ convention.
 | LLM client | **native structured outputs** over a thin client | `reqwest` (thin) or `adk-anthropic` (typed, unofficial) | see core §2 tradeoff |
 | Schema gen / validate | `schemars` + a validator | `schemars` 1.x; `jsonschema` or `rsonschema` | validator enforces what the API grammar can't (ranges/lengths) |
 | Memory — embeddings | **Voyage 4** + **rerank-2.5** | Voyage API (`voyage-4`, `rerank-2.5`) | keeper from mcp-reasoning; 200M free tokens |
-| Memory — vector store | **sqlite-vec** (single-store) | `sqlite-vec` | fits the SQLite keeper; sqlx loading caveat (§memory) |
+| Memory — vector store | **brute-force f32 BLOBs** (v1); sqlite-vec at scale | — | spike S1: 3 ms at 5k×1024; see §memory amendment |
 | Deterministic — logic | **Z3** | `z3` 0.20 | pure binding, MSRV 1.85; SMT/SAT for the logic/constraint row |
 | Deterministic — code exec | **wasmtime** in-proc; microsandbox/E2B for Python | `wasmtime`; E2B/microsandbox (opt-in) | sandbox is non-negotiable; §deterministic |
 | Research — search | **Brave** (default) or **Tavily** (answers+cites) | Brave Search API / Tavily | Brave: lowest latency (~669ms); you already have the Brave MCP |
@@ -129,8 +129,15 @@ doubles as a watchdog signal** (relevance scoring for retrieved memories) — se
   store/format alongside SQLite.
 - **Qdrant** — Rust-native server (and "Qdrant Edge" in-process); overkill for a
   single-binary dev tool unless it goes multi-tenant.
-- **Pick:** **sqlite-vec** for v1 (one store, fits the design), spike the sqlx loading
-  first; hold LanceDB as the scale path.
+- **Pick (amended 2026-06-12, feature 003 spike S1):** **brute-force in-process
+  cosine over f32 BLOBs** for v1 — no vector extension at all. The spike resolved
+  the loading caveat the hard way: every sqlite-vec registration route costs
+  either an `unsafe extern` call (the crate forbids unsafe; isolating it means a
+  workspace split) or shipping per-platform loadable binaries, while brute force
+  at v1 scale measured **3 ms for 5k × 1024-dim vectors** (bit-exact BLOB
+  round-trip through the sqlx pool). **sqlite-vec is now the first scale step**
+  (revisit near ~50k memories or when recall latency data says so); LanceDB
+  remains the step after.
 
 ---
 

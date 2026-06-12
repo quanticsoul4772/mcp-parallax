@@ -22,12 +22,12 @@ network/disk state. The acceptance example is manual-run live spend.
 
 ## Phase 2: Foundational
 
-- [ ] T003 [P] Spike S1 in examples/spike_bruteforce.rs (no key): f32 BLOB round-trip through the sqlx pool + brute-force cosine timing at 5k×1024 — assert < 50 ms; this validates the named sqlite-vec deviation (research.md S1)
+- [X] T003 [P] Spike S1 in examples/spike_bruteforce.rs (no key): f32 BLOB round-trip through the sqlx pool + brute-force cosine timing at 5k×1024 — assert < 50 ms; this validates the named sqlite-vec deviation (research.md S1)
 - [ ] T004 [P] `Embedder` seam in src/traits/embedder.rs: embed_document/embed_query returning the f32 vector + input_tokens with mockall automock
 - [ ] T005 Thin Voyage client in src/client/voyage.rs implementing Embedder: input_type document/query, retry/backoff/timeout mirroring the Anthropic client, failures → EmbeddingProvider/Timeout/RetriesExhausted; wiremock tests for happy path, input_type correctness, 5xx exhaustion, timeout (depends on T002, T004)
 - [ ] T006 [P] Memory types + ranking in src/memory/mod.rs and src/memory/ranking.rs: Memory/Kind/Trust types; pure scoring (cosine + 0.02×2^(−age_days/30)) and ε=0.05 trust-tier partition; property tests pinning FR-004's three clauses (data-model.md §3)
 - [ ] T007 Memory store in src/memory/store.rs: `memories` table idempotent migration on SqliteStorage, insert/fetch_all/delete_by_id, f32↔BLOB encoding, embedding_model column; in-memory SQLite tests incl. persistence of every Trust value and forget-by-id (depends on T006)
-- [ ] T008 Amend docs/design/SDK_LANDSCAPE.md §memory: brute-force v1 decision recorded, sqlite-vec moved to the scale path with the unsafe/workspace finding (Constitution I, same-change amendment)
+- [X] T008 Amend docs/design/SDK_LANDSCAPE.md §memory: brute-force v1 decision recorded, sqlite-vec moved to the scale path with the unsafe/workspace finding (Constitution I, same-change amendment)
 
 ## Phase 3: US1 — save now, recall later (P1) 🎯 MVP
 
