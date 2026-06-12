@@ -167,9 +167,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `004-research-layer` — [spec](specs/004-research-layer/spec.md) ·
-[plan](specs/004-research-layer/plan.md) · [research](specs/004-research-layer/research.md) ·
-[data model](specs/004-research-layer/data-model.md) · [contracts](specs/004-research-layer/contracts/)
+Current feature: `005-deterministic-layer` — [spec](specs/005-deterministic-layer/spec.md) ·
+[plan](specs/005-deterministic-layer/plan.md) · [research](specs/005-deterministic-layer/research.md) ·
+[data model](specs/005-deterministic-layer/data-model.md) · [contracts](specs/005-deterministic-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

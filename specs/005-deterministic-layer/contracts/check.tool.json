@@ -1,0 +1,29 @@
+{
+  "$comment": "MCP tool contract for `check`. The verdict comes only from deterministic engine execution; the model classifies checkability and translates - it never decides. formal_form and engine_result make every verdict auditable (FR-007). not_checkable is a successful, honest outcome (FR-004).",
+  "name": "check",
+  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "claim": { "type": "string", "minLength": 1, "description": "The claim to check, in natural language. Best for arithmetic, quantitative comparisons, and logical/constraint consistency." },
+      "context": { "type": ["string", "null"], "description": "Optional background the claim depends on (definitions, given values)." }
+    },
+    "required": ["claim"],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "verdict": { "type": "string", "enum": ["supported", "refuted", "not_checkable"] },
+      "engine": { "type": ["string", "null"], "enum": ["arithmetic", "constraints", null], "description": "Which engine executed the check; null iff not_checkable." },
+      "formal_form": { "type": ["string", "null"], "description": "The executed expression or constraint script - audit the translation without re-running it." },
+      "engine_result": { "type": ["string", "null"], "description": "The engine's raw result (evaluated value, or sat/unsat)." },
+      "witness": { "type": ["string", "null"], "description": "Solver model when one exists: the satisfying assignment, or the counterexample refuting an impossibility claim." },
+      "explanation": { "type": "string", "description": "Deterministic, server-assembled explanation tying the engine result to the claim." },
+      "reason": { "type": ["string", "null"], "description": "Why the claim is not checkable (verdict = not_checkable only)." },
+      "translation_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }
+    },
+    "required": ["verdict", "engine", "formal_form", "engine_result", "witness", "explanation", "reason", "translation_attempts"],
+    "additionalProperties": false
+  }
+}
