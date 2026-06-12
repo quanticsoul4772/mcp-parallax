@@ -13,17 +13,19 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: core layer + memory layer.** The server speaks MCP over stdio and
-serves **`verify`** (k parallel stance-blind passes, agreement-derived
-confidence), **`unstick`** (one committed next step for a stuck caller,
-single pass), and — gated on `VOYAGE_API_KEY` presence — the memory tools
-**`save`/`recall`/`forget`** (verified-before-stored trust: external content is
-quarantined untrusted unless an independent verification pass admits it;
-ranking is brute-force cosine + recency with a trust band — a named deviation
-from sqlite-vec, see `SDK_LANDSCAPE.md` §memory). One invocation record per
-call in SQLite. Watchdog, research, and deterministic layers are not built
-yet. Feature artifacts: `specs/001-core-layer/`, `specs/002-unstick-mode/`,
-`specs/003-memory-layer/`.
+**Status: core + memory + research layers.** The server speaks MCP over stdio
+and serves **`verify`** (k parallel stance-blind passes, agreement-derived
+confidence), **`unstick`** (one committed next step, single pass), the memory
+tools **`save`/`recall`/`forget`** (gated on `VOYAGE_API_KEY`;
+verified-before-stored trust, brute-force cosine ranking — the named
+sqlite-vec deviation, `SDK_LANDSCAPE.md` §memory), and **`research`** (gated
+on `BRAVE_API_KEY`; five-phase scope→search→fetch+extract→verify→synthesize
+pipeline with refute-biased per-claim verification and a deterministic
+grounding gate — the model writes only the answer prose; findings, labels,
+confidences, sources, and stats are server-assembled). One invocation record
+per call in SQLite. Watchdog and deterministic layers are not built yet.
+Feature artifacts: `specs/001-core-layer/`, `specs/002-unstick-mode/`,
+`specs/003-memory-layer/`, `specs/004-research-layer/`.
 
 ## The design is the source of truth
 
@@ -93,7 +95,9 @@ errors at startup without it), `ANTHROPIC_MODEL` (default `claude-opus-4-8`),
 `VERIFY_MAX_CLAIM_CHARS` honored as alias), `VOYAGE_API_KEY` (optional —
 presence enables the memory tools; absent, they are not in the catalog),
 `VOYAGE_MODEL` (default `voyage-4`), `MEMORY_RECALL_LIMIT` (default `5`,
-1..=20), `DATABASE_PATH` (default `./data/parallax.db`), `LOG_LEVEL` (default
+1..=20), `BRAVE_API_KEY` (optional — presence enables the `research` tool),
+`FETCH_TIMEOUT_MS` (default `10000`), `RESEARCH_CONCURRENCY` (default `8`,
+1..=32), `DATABASE_PATH` (default `./data/parallax.db`), `LOG_LEVEL` (default
 `info`), `REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
 A present-but-unparseable value is an error, never a silent fallback to the
 default.
@@ -108,8 +112,8 @@ default.
   is declared in **both** `Cargo.toml [lints]` and the `lib.rs` preamble — change
   them together.
 - Structured `tracing` to **stderr only** — stdout is the MCP JSON-RPC channel.
-- Composition over trait inheritance (the
-  `ModelClient`/`Storage`/`TimeProvider`/`Embedder` seams). Every external
+- Composition over trait inheritance (the `ModelClient`/`Storage`/
+  `TimeProvider`/`Embedder`/`SearchProvider`/`Fetcher` seams). Every external
   dependency sits behind a mockable trait so the server tests without network
   or disk.
 - Target ≤500 lines per `.rs` file for new modules.
@@ -125,16 +129,19 @@ src/
 ├── error.rs          # AppError, ConfigError, the outcome taxonomy (thiserror)
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
-├── client/           # AnthropicClient (structured outputs), VoyageClient (embeddings)
+├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
 ├── modes/            # mode registry + verify/unstick (prompt + schema + run logic)
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
+├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing
-└── traits/           # the four mockable seams
+└── traits/           # the six mockable seams
     ├── clock.rs      # TimeProvider + SystemClock
     ├── client.rs     # ModelClient — the constrained-output contract (prompt + schema → JSON)
     ├── embedder.rs   # Embedder — asymmetric document/query embeddings
+    ├── search.rs     # SearchProvider — web search hits
+    ├── fetcher.rs    # Fetcher — hygiene-enforced page fetches
     └── storage.rs    # Storage — sessions, memories, records
 docs/design/          # the full design corpus (north star)
 ```
@@ -152,7 +159,7 @@ hooks (branch/commit) are wired via the speckit-git extension.
 The scaffold's trait seams are the slots the SDKs fill. Rough order: **core**
 (rmcp + thin Anthropic structured-outputs client behind `ModelClient` — done) →
 **memory** (Voyage 4 + brute-force cosine over f32 BLOBs, the named sqlite-vec
-deviation — done) → **research** (Brave provider + local extraction) →
+deviation — done) → **research** (Brave provider + local extraction — done) →
 **deterministic** (z3 + validator first; sandboxed code-exec optional, off) →
 **observability** (OTLP from the first server commit). This is a recommended order,
 not a mandate — confirm priorities before building.

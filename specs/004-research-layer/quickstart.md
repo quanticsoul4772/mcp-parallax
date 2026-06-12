@@ -52,6 +52,14 @@ At least 6 live questions (SC-001 zero fabricated citations, SC-003 latency),
 a tiny-ceiling run (SC-004 stopped-early honesty), and a false-premise
 question (SC-007). Results recorded below when run.
 
+### Status (2026-06-12)
+
+**Blocked on credential**: the configured `BRAVE_API_KEY` is rejected by the
+Brave Search API (`SUBSCRIPTION_TOKEN_INVALID`) — confirmed against the live
+endpoint and via the local brave-search MCP, which fails identically. The
+acceptance example and spike S2 are written and compile; issue a fresh key at
+the Brave Search API dashboard, then run both and record results here.
+
 ## Inspect
 
 ```bash
