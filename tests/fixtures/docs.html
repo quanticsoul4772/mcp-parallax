@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Configuration Reference — Widget 2.4</title></head>
+<body>
+  <div class="sidebar">
+    <ul>
+      <li><a href="/docs/install">Installation</a></li>
+      <li><a href="/docs/config">Configuration</a></li>
+      <li><a href="/docs/api">API Reference</a></li>
+      <li><a href="/docs/faq">FAQ</a></li>
+    </ul>
+  </div>
+  <div class="content" role="main">
+    <h1>Configuration Reference</h1>
+    <p>Widget reads its configuration from environment variables. A present but
+    unparseable value is a startup error, never a silent fallback to the default.</p>
+    <h2>WIDGET_TIMEOUT_MS</h2>
+    <p>The per-request timeout in milliseconds. Defaults to 30000. Requests that
+    exceed this budget are terminated and reported as timeouts, not retried.</p>
+    <h2>WIDGET_MAX_RETRIES</h2>
+    <p>Maximum retry attempts for retryable failures such as HTTP 429 and 5xx
+    responses. Defaults to 3. Transport errors count as retryable.</p>
+  </div>
+  <div class="doc-footer"><a href="/edit">Edit this page</a> · <a href="/prev">Previous</a> · <a href="/next">Next</a></div>
+</body>
+</html>

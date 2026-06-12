@@ -29,6 +29,10 @@ fn test_config(timeout_ms: u64) -> Config {
         voyage_api_key: None,
         voyage_model: "voyage-4".into(),
         memory_recall_limit: 5,
+        brave_api_key: None,
+        fetch_timeout_ms: 10_000,
+        research_concurrency: 8,
+        fetch_allow_private: false,
         database_path: ":memory:".into(),
         log_level: "info".into(),
         request_timeout_ms: timeout_ms,
@@ -343,6 +347,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
         // The developer machine may carry a real key — this test asserts the
         // capability-OFF catalog (FR-007).
         .env_remove("VOYAGE_API_KEY")
+        .env_remove("BRAVE_API_KEY")
         .env("DATABASE_PATH", db.to_string_lossy().to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -916,4 +921,293 @@ async fn forget_is_permanent_across_store_reopen() {
     assert!(memories[0].content.contains("alpha keeper"));
     drop(reopened);
     let _ = std::fs::remove_file(&db);
+}
+
+// ====== 004-research-layer ==================================================
+
+use mcp_parallax::client::BraveClient;
+
+const RESEARCH_CONTRACT: &str =
+    include_str!("../specs/004-research-layer/contracts/research.tool.json");
+
+/// Build the full server with research ON: a real `BraveClient` pointed at
+/// wiremock (`/res/v1/web/search`), pages and `/v1/messages` served by the
+/// same mock server. The fetcher is the real `HygieneFetcher` hitting
+/// wiremock over localhost.
+async fn serve_with_research(
+    mock: &MockServer,
+) -> (
+    rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+    Arc<SqliteStorage>,
+    rmcp::service::RunningService<rmcp::service::RoleServer, Parallax>,
+) {
+    let mut config = test_config(5_000);
+    config.brave_api_key = Some("brave-test-key".into());
+    config.fetch_timeout_ms = 3_000;
+    // Integration pages are served by wiremock on localhost.
+    config.fetch_allow_private = true;
+    let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+    let anthropic =
+        Arc::new(AnthropicClient::with_base_url(&config, &mock.uri()).with_backoff_base_ms(1));
+    let brave = Arc::new(
+        BraveClient::with_base_url(&config, &mock.uri())
+            .unwrap()
+            .with_backoff_base_ms(1),
+    );
+    let server = Parallax::with_capabilities(
+        anthropic,
+        storage.clone(),
+        Arc::new(SystemClock),
+        &config,
+        None,
+        Some(brave),
+    )
+    .unwrap();
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move { server.serve(server_io).await });
+    let client = ().serve(client_io).await.expect("client init");
+    let running_server = server_task.await.expect("join").expect("server init");
+    (client, storage, running_server)
+}
+
+/// Route the four research model hops by their prompt markers.
+async fn mount_research_llm(mock: &MockServer, answer: &str) {
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("scoping a web research run"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "angles": ["first angle"],
+            "sub_questions": ["does it hold?"]
+        }))))
+        .mount(mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("extract falsifiable claims"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(
+            &json!({ "claims": ["the documented claim holds"] }),
+        )))
+        .mount(mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("adversarial fact-checker"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(end_turn(&json!({ "verdict": "supported", "findings": [] }))),
+        )
+        .mount(mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("executive synthesis"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(end_turn(&json!({ "answer": answer, "gaps": [] }))),
+        )
+        .mount(mock)
+        .await;
+}
+
+async fn mount_search_and_page(mock: &MockServer) {
+    let page_url = format!("{}/page1", mock.uri());
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "web": { "results": [
+                { "url": page_url, "title": "The Documented Page", "description": "doc" }
+            ]}
+        })))
+        .mount(mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/page1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                "<html><head><title>The Documented Page</title></head><body><article>\
+             <h1>Heading</h1><p>The documented claim holds, as this page explains at \
+             length with enough running text for extraction to keep it as main \
+             content.</p></article></body></html>"
+                    .to_string(),
+                "text/html; charset=utf-8",
+            ),
+        )
+        .mount(mock)
+        .await;
+}
+
+// ---- T017: catalog gating ---------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve_with_research(&mock).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["research", "unstick", "verify"]);
+
+    let research = tools.iter().find(|t| t.name == "research").unwrap();
+    let contract: Value = serde_json::from_str(RESEARCH_CONTRACT).unwrap();
+    assert_eq!(
+        research.description.as_deref().unwrap(),
+        contract["description"]
+    );
+    let props = |schema: &Value| -> Vec<String> {
+        schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let input = serde_json::to_value(research.input_schema.as_ref()).unwrap();
+    assert_eq!(props(&input), props(&contract["inputSchema"]));
+    let output =
+        serde_json::to_value(research.output_schema.as_ref().expect("outputSchema")).unwrap();
+    assert_eq!(props(&output), props(&contract["outputSchema"]));
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T014: full round trip ----------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn research_round_trip_returns_grounded_citations_and_one_record() {
+    let mock = MockServer::start().await;
+    mount_search_and_page(&mock).await;
+    mount_research_llm(&mock, "The claim holds [s1].").await;
+    let (client, storage, _server) = serve_with_research(&mock).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "research",
+            &json!({ "question": "does the documented claim hold?", "depth": "quick" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+
+    // The wire shape validates against the contract.
+    let contract: Value = serde_json::from_str(RESEARCH_CONTRACT).unwrap();
+    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
+
+    // Every cited id resolves; sources carry identity, never bodies (FR-012).
+    assert_eq!(structured["answer"], "The claim holds [s1].");
+    let sources = structured["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["id"], "s1");
+    assert!(sources[0]["url"].as_str().unwrap().ends_with("/page1"));
+    let wire = structured.to_string();
+    assert!(!wire.contains("running text for extraction"));
+
+    let findings = structured["key_findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["support"], "unverified"); // single source — never fact
+    assert_eq!(structured["stats"]["sources_fetched"], 1);
+    assert_eq!(structured["stats"]["stopped_early"], false);
+
+    // Exactly one record, attributed to research on the anthropic model.
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "research");
+    assert_eq!(records[0].model, "claude-opus-4-8");
+    assert_eq!(records[0].outcome, Outcome::Success);
+    assert!(records[0].input_tokens > 0);
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T016 (integration): budget ceiling returns early, not an error ----------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tiny_budget_returns_a_well_formed_early_synthesized_result() {
+    let mock = MockServer::start().await;
+    mount_search_and_page(&mock).await;
+    // The scope call alone consumes 2000 input tokens against a 1000 budget.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("scoping a web research run"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "content": [{ "type": "text", "text": json!({
+                "angles": ["first angle"], "sub_questions": ["q1"]
+            }).to_string() }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 2000, "output_tokens": 10 }
+        })))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_research(&mock).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "research",
+            &json!({
+                "question": "q?",
+                "constraints": { "budget_tokens": 1000 }
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+
+    let contract: Value = serde_json::from_str(RESEARCH_CONTRACT).unwrap();
+    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
+    assert_eq!(structured["stats"]["stopped_early"], true);
+    assert_eq!(structured["stats"]["stop_reason"], "budget");
+    assert!(!structured["answer"].as_str().unwrap().is_empty());
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success); // early stop is not an error
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T018: failure parity -----------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn search_provider_outage_surfaces_named_with_one_record() {
+    let mock = MockServer::start().await;
+    mount_research_llm(&mock, "n/a").await;
+    // Terminal 422 from Brave (e.g. an invalid subscription token).
+    Mock::given(method("GET"))
+        .and(path("/res/v1/web/search"))
+        .respond_with(ResponseTemplate::new(422).set_body_string("SUBSCRIPTION_TOKEN_INVALID"))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_research(&mock).await;
+
+    let err = client
+        .call_tool(tool_call("research", &json!({ "question": "q?" })))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("[search_provider]"), "got: {err}");
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::SearchProvider);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn research_invalid_input_is_rejected_pre_provider_with_one_record() {
+    let mock = MockServer::start().await;
+    // Nothing mounted: any provider call would 404 and fail differently.
+    let (client, storage, _server) = serve_with_research(&mock).await;
+
+    let err = client
+        .call_tool(tool_call("research", &json!({ "question": "   " })))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("[invalid_input]"), "got: {err}");
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::InvalidInput);
+
+    client.cancel().await.unwrap();
 }

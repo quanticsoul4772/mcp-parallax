@@ -1,6 +1,12 @@
 # Spec — The Research Primitive
 
-**Status:** Proposal. **Parent:** [`NEXT_REASONING_SERVER.md`](NEXT_REASONING_SERVER.md).
+**Status:** Implemented (v1, feature `004-research-layer`, 2026-06-12) with
+named narrowings — see `specs/004-research-layer/research.md` D1-D10: claim
+spans dropped (flat-schema constraint), normalized-text claim dedup,
+verification-panel (not per-source) disagreement positions, token-level (not
+clause-level) grounding, candidate selection without the snippet-relevance
+ranking, and v1 deferrals (caches §7, the Recall hook, progress notifications
+§8, the exhaustive tier). **Parent:** [`NEXT_REASONING_SERVER.md`](NEXT_REASONING_SERVER.md).
 **One line:** *offload a question to a separate budget; get back a short, cited,
 adversarially-verified answer — not 15 articles.*
 
@@ -210,10 +216,14 @@ set. The tool never emits an ungrounded claim.
 
 | | angles | max_sources | verifier votes K | completeness loops | typical budget |
 |---|---|---|---|---|---|
-| **quick** | 3 | 8 | 1 | 0 | ~40k tok |
-| **standard** | 5 | 25 | 2 | 0 | ~120k tok |
-| **deep** | 8 | 60 | 3 (diverse lenses) | 1 | ~350k tok |
-| **exhaustive** | 12 | 120 | 3–5 (diverse) | 2 | ~800k tok |
+| **quick** | 3 | 8 | 1 | 0 | ~150k tok |
+| **standard** | 5 | 25 | 2 | 0 | ~450k tok |
+| **deep** | 8 | 60 | 3 (diverse lenses) | 1 | ~1M tok |
+| **exhaustive** | 12 | 120 | 3–5 (diverse) | 2 | ~2.5M tok |
+
+*(Budgets amended 2026-06-12 from v1 live measurement: the original
+40k/120k/350k/800k estimates starved real runs mid-verification — claim
+extraction alone costs ~4k input tokens per source.)*
 
 `budget_tokens`/`deadline_ms` always override the tier: hitting either triggers a
 **graceful early synthesize** over whatever is verified so far, with `stopped_early`

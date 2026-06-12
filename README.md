@@ -10,17 +10,22 @@ catches the ways the model reliably goes wrong and cannot see from inside its ow
 context (anchoring, sycophancy, drift, overconfident wrong answers). The name is
 the thesis: a second vantage point reveals what one frame can't.
 
-> **Status: core layer + memory layer.** The server speaks MCP over stdio and
-> serves **`verify`** (k parallel stance-blind verification passes, default 3,
-> aggregated by majority with agreement-derived confidence), **`unstick`** (one
-> committed next step for a stuck caller, single pass), and — when
-> `VOYAGE_API_KEY` is set — **`save`/`recall`/`forget`** (durable cross-session
-> memory with verified-before-stored trust: external content is quarantined as
-> untrusted unless an independent verification pass admits it, and refuted
-> content is rejected with findings). Every invocation is recorded (tool,
-> model, tokens, cost, latency, outcome) in SQLite. The remaining layers follow
-> the design north star in
+> **Status: core + memory + research layers.** The server speaks MCP over
+> stdio and serves **`verify`** (k parallel stance-blind verification passes,
+> default 3, aggregated by majority with agreement-derived confidence),
+> **`unstick`** (one committed next step for a stuck caller, single pass) —
+> plus, when `VOYAGE_API_KEY` is set, **`save`/`recall`/`forget`** (durable
+> cross-session memory with verified-before-stored trust), and, when
+> `BRAVE_API_KEY` is set, **`research`** (offload a question; get back a
+> short, cited, adversarially-verified answer — scoped parallel searches,
+> hygiene-enforced fetching, refute-biased per-claim verification, and a
+> deterministic grounding gate so no fabricated citation ever leaves the
+> server). Every invocation is recorded (tool, model, tokens, cost, latency,
+> outcome) in SQLite. The remaining layers follow the design north star in
 > [`docs/design/NEW_SERVER_DESIGN.md`](docs/design/NEW_SERVER_DESIGN.md).
+>
+> Research cost note: records carry summed LLM tokens; Brave bills
+> per-request, so its fee is not in `cost_usd` (a named inexactness).
 
 ## The architecture (four layers)
 
@@ -56,6 +61,9 @@ cargo clippy -- -D warnings
 | `VOYAGE_API_KEY` | no | unset | Presence enables the memory tools (`save`/`recall`/`forget`); absent, they are not in the catalog |
 | `VOYAGE_MODEL` | no | `voyage-4` | Embedding model (stay within one family — vectors share a space) |
 | `MEMORY_RECALL_LIMIT` | no | `5` | Default recall top-k (1–20) |
+| `BRAVE_API_KEY` | no | unset | Presence enables the `research` tool; absent, it is not in the catalog |
+| `FETCH_TIMEOUT_MS` | no | `10000` | Per-source fetch timeout for research runs |
+| `RESEARCH_CONCURRENCY` | no | `8` | Concurrent fetch/extract/verify cap (1–32) |
 | `DATABASE_PATH` | no | `./data/parallax.db` | SQLite path |
 | `LOG_LEVEL` | no | `info` | `error\|warn\|info\|debug\|trace` |
 | `REQUEST_TIMEOUT_MS` | no | `30000` | Per-request timeout (ms) |
@@ -67,7 +75,8 @@ cargo clippy -- -D warnings
   (compiler-denied).
 - Structured `tracing` to **stderr only** — stdout is the MCP JSON-RPC channel.
 - Trait-mockable boundaries (`TimeProvider`, `ModelClient`, `Storage`,
-  `Embedder`) so the whole server tests without network or disk.
+  `Embedder`, `SearchProvider`, `Fetcher`) so the whole server tests without
+  network or disk.
 - Composition over trait inheritance.
 
 ## License
