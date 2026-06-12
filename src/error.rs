@@ -86,10 +86,10 @@ pub enum AppError {
     #[error("storage error: {0}")]
     Storage(String),
 
-    /// The provider responded outside the protocol contract (unexpected
-    /// `stop_reason`, unparseable body). Distinct from `ValidationFailure`
-    /// only in message; both classify as `validation_failure`.
-    #[error("model client error: out-of-contract provider response: {0}")]
+    /// A model-client failure outside the named classes: an out-of-contract
+    /// provider response (the message says so at the construction site) or a
+    /// transport-level error. Classifies as `validation_failure`.
+    #[error("model client error: {0}")]
     Client(String),
 
     /// The model provider refused the request.

@@ -14,7 +14,7 @@ feature, but the type is the contract for every future mode.
 | `prompt_template` | string | instruction template; placeholders for claim/context only (blindness is structural: stance/history have no placeholder to flow through) |
 | `output_schema` | JSON Schema | the *unsanitized* schemars-derived per-pass schema; sanitized form derived at startup, cached (grammar cache favors stable schemas) |
 | `ensemble_k` | u8 | parallel passes; from config, default 3 |
-| `thinking_budget` | option | reserved; unused until Spike 4 resolves compatibility |
+| `thinking_budget` | option | reserved; Spike 4 confirmed adaptive thinking composes with structured outputs — wired when a mode first needs it |
 
 **Invariant**: every `output_schema` is flat (one level of named fields; arrays
 of scalars allowed) and closed. Enforced by a startup assertion over the
@@ -45,7 +45,7 @@ strip except boilerplate, minimizing grammar-subset risk on the first mode.
 |---|---|---|
 | `verdict` | enum `"supported"` \| `"refuted"` | majority across k passes; tie → `"refuted"` (fail toward scrutiny) with the tie noted in findings |
 | `findings` | array of string | deduplicated findings from the majority-side passes |
-| `confidence` | number | **agreement ratio** (majority count / k), range [0,1] — computed by the server, validated locally; never model self-report |
+| `confidence` | number | **agreement ratio** (majority count / passes completed), range [0,1] — computed by the server, validated locally; never model self-report |
 | `passes` | integer | k actually completed (transparency when a pass errors but quorum held) |
 
 Aggregation rule: if any pass fails with a non-quorum-breaking error, aggregate

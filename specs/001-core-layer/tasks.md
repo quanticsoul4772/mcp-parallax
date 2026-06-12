@@ -120,9 +120,9 @@ implementable and testable.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T028 Run the quickstart manual acceptance pass (live key): SC-001 stock-client connect, SC-002 20-claim schema-validity run, SC-003 seeded-error catch set (≥10 seeded-error + ≥6 sound claims), SC-004 stance-flip set, SC-006 latency; record results in specs/001-core-layer/quickstart.md under a Results heading
-- [ ] T029 [P] Update README.md and CLAUDE.md: status changes from "scaffold, transport not wired" to "serves verify"; document new env vars (ANTHROPIC_MODEL, VERIFY_ENSEMBLE_K)
-- [ ] T030 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test`) plus code-reviewer and design-reviewer agent passes over the branch diff before merge
+- [X] T028 Run the quickstart manual acceptance pass (live key): SC-001 stock-client connect, SC-002 20-claim schema-validity run, SC-003 seeded-error catch set (≥10 seeded-error + ≥6 sound claims), SC-004 stance-flip set, SC-006 latency; record results in specs/001-core-layer/quickstart.md under a Results heading
+- [X] T029 [P] Update README.md and CLAUDE.md: status changes from "scaffold, transport not wired" to "serves verify"; document new env vars (ANTHROPIC_MODEL, VERIFY_ENSEMBLE_K)
+- [X] T030 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test`) plus code-reviewer and design-reviewer agent passes over the branch diff before merge
 
 ---
 

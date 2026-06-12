@@ -13,10 +13,11 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: scaffold.** Foundation only — configuration, error types, the mockable
-trait boundaries (`TimeProvider`, `ModelClient`, `Storage`), and stderr logging. The
-transport and tool surface are **not yet wired**. Don't describe the server as
-working; it doesn't serve tools yet.
+**Status: core layer serving.** The server speaks MCP over stdio and serves the
+first corrective, **`verify`** — k parallel stance-blind passes via Anthropic
+native structured outputs, schema-guaranteed at both hops, with one invocation
+record per call in SQLite. Watchdog, memory, research, and deterministic layers
+are not built yet. Feature artifacts: `specs/001-core-layer/`.
 
 ## The design is the source of truth
 

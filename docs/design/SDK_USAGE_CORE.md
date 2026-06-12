@@ -21,6 +21,14 @@ So a mode is: one input type + one output type, both `JsonSchema`, and the schem
 generated once and reused at both boundaries. This is the concrete form of "modes are
 data" and "constrained output is the core contract."
 
+**Refinement (from the core implementation):** for *ensemble* modes the two hops
+carry **distinct but related** schemas from the same schemars pipeline — a
+**per-pass** schema for the model hop and an **aggregate** schema for the MCP hop.
+This split is forced by a deeper design rule: confidence is ensemble-agreement
+computed by the server, never model self-report (design §7.3/§10), so the model-hop
+schema must not contain `confidence`/`passes`. Verify's pair is `PassVerdict`
+(model) and `Verdict` (MCP) in `src/modes/verify.rs`.
+
 ---
 
 ## Part 1 — rmcp (the MCP server)

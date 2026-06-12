@@ -128,10 +128,17 @@ impl ModelClient for AnthropicClient {
                 return Err(AppError::Client(format!("HTTP {status}: {detail}")));
             }
 
-            let payload: MessagesResponse = response
-                .json()
-                .await
-                .map_err(|e| AppError::Client(format!("response body unreadable: {e}")))?;
+            // reqwest's .timeout() covers the body read too — a timeout that
+            // elapses here is still a Timeout, not an out-of-contract response.
+            let payload: MessagesResponse = response.json().await.map_err(|e| {
+                if e.is_timeout() {
+                    AppError::Timeout {
+                        ms: self.timeout_ms,
+                    }
+                } else {
+                    AppError::Client(format!("response body unreadable: {e}"))
+                }
+            })?;
             return interpret(&payload);
         }
 
@@ -146,11 +153,13 @@ impl ModelClient for AnthropicClient {
 fn interpret(payload: &MessagesResponse) -> Result<Completion, AppError> {
     match payload.stop_reason.as_deref() {
         Some("end_turn") => {
-            let text = payload
-                .first_text()
-                .ok_or_else(|| AppError::Client("no text block in response".to_string()))?;
+            let text = payload.first_text().ok_or_else(|| {
+                AppError::Client("out-of-contract provider response: no text block".to_string())
+            })?;
             let value = serde_json::from_str(text).map_err(|e| {
-                AppError::Client(format!("constrained body failed to parse as JSON: {e}"))
+                AppError::Client(format!(
+                    "out-of-contract provider response: constrained body failed to parse: {e}"
+                ))
             })?;
             Ok(Completion {
                 value,
@@ -169,7 +178,7 @@ fn interpret(payload: &MessagesResponse) -> Result<Completion, AppError> {
             payload.usage.output_tokens
         ))),
         other => Err(AppError::Client(format!(
-            "unexpected stop_reason: {other:?}"
+            "out-of-contract provider response: unexpected stop_reason: {other:?}"
         ))),
     }
 }

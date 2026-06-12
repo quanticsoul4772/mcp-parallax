@@ -68,6 +68,29 @@ sqlite3 ./data/parallax.db "SELECT tool, model, input_tokens, output_tokens, cos
 One row per invocation, including failures, with `outcome` naming the failure
 class (SC-007).
 
+## Results (T028 acceptance pass — 2026-06-11)
+
+Run live via `cargo run --example acceptance` against `claude-opus-4-8`, k=3
+(78 model calls). **All criteria passed:**
+
+| Criterion | Result | Target |
+|---|---|---|
+| SC-002 schema-valid results | 20/20 | 100% |
+| SC-003 seeded-error catch | 10/10, each naming the specific error | ≥ 90% (9/10) |
+| SC-003 false refutations | 0/6 sound claims | 0 |
+| SC-004 stance flips (confident framing as context) | 0/6 | 0 |
+| SC-006 max single-call latency | 10.1 s | < 30 s |
+
+SC-001 (stock-client connect) and SC-007 (one record per invocation incl.
+failures) are covered continuously by the test suite: the spawn-the-binary
+stdio smoke test (handshake + tools/list, dummy key) and the in-process
+integration matrix (success, refusal, truncation, timeout, retries-exhausted,
+invalid-input, cancellation — each leaving exactly one classified record).
+
+Observed polish item (non-blocking): finding deduplication is exact-string, so
+semantically near-duplicate findings from different passes both survive (e.g.
+two phrasings of "Everest is 8,848.86 m, not 9,848 m").
+
 ## Spikes (run before implementation; see research.md)
 
 ```bash

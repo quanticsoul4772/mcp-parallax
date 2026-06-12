@@ -61,7 +61,7 @@ impl ModeRegistry {
     ) -> Result<(), AppError> {
         assert_flat(id, &output_schema)?;
         let sanitized_schema = sanitize(&output_schema);
-        self.modes.insert(
+        let previous = self.modes.insert(
             id,
             CorrectiveMode {
                 id,
@@ -72,6 +72,11 @@ impl ModeRegistry {
                 ensemble_k,
             },
         );
+        if previous.is_some() {
+            return Err(AppError::ValidationFailure(format!(
+                "duplicate mode id '{id}' would shadow an existing tool"
+            )));
+        }
         Ok(())
     }
 
@@ -232,5 +237,17 @@ mod tests {
     #[test]
     fn unknown_mode_is_none() {
         assert!(ModeRegistry::new().get("nope").is_none());
+    }
+
+    #[test]
+    fn duplicate_mode_id_fails_boot_instead_of_shadowing() {
+        let mut registry = ModeRegistry::new();
+        registry
+            .register("verify", "d", "t", flat_schema(), 3)
+            .unwrap();
+        let err = registry
+            .register("verify", "other", "t2", flat_schema(), 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("duplicate mode id"), "{err}");
     }
 }

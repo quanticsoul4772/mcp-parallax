@@ -50,11 +50,14 @@ impl SqliteStorage {
     pub async fn connect(path: &str) -> Result<Self, AppError> {
         let options = if path == ":memory:" {
             SqliteConnectOptions::from_str("sqlite::memory:")
+                .map_err(|e| AppError::Storage(format!("invalid memory database: {e}")))?
         } else {
-            SqliteConnectOptions::from_str(&format!("sqlite://{path}"))
-                .map(|o| o.create_if_missing(true))
-        }
-        .map_err(|e| AppError::Storage(format!("invalid database path '{path}': {e}")))?;
+            // filename() takes the path verbatim — no URL parsing, so Windows
+            // backslashes, spaces, and '?'/'#' are safe.
+            SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(true)
+        };
 
         // One connection: correct for :memory: (each pool connection would
         // otherwise get its own empty database) and ample for a single-user
@@ -101,18 +104,25 @@ impl SqliteStorage {
                 let created_at = DateTime::parse_from_rfc3339(&created_text)
                     .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
                     .with_timezone(&Utc);
-                let input_tokens: i64 = row.get("input_tokens");
-                let output_tokens: i64 = row.get("output_tokens");
-                let latency_ms: i64 = row.get("latency_ms");
+                // A negative count is the same class of contract violation as
+                // an unknown outcome — loud, never coerced to zero.
+                let unsigned = |field: &str, value: i64| {
+                    u64::try_from(value).map_err(|_| {
+                        AppError::Storage(format!("negative {field} in store: {value}"))
+                    })
+                };
+                let input_tokens = unsigned("input_tokens", row.get("input_tokens"))?;
+                let output_tokens = unsigned("output_tokens", row.get("output_tokens"))?;
+                let latency_ms = unsigned("latency_ms", row.get("latency_ms"))?;
                 Ok(InvocationRecord {
                     id: row.get("id"),
                     session_id: row.get("session_id"),
                     tool: row.get("tool"),
                     model: row.get("model"),
-                    input_tokens: u64::try_from(input_tokens).unwrap_or_default(),
-                    output_tokens: u64::try_from(output_tokens).unwrap_or_default(),
+                    input_tokens,
+                    output_tokens,
                     cost_usd: row.get("cost_usd"),
-                    latency_ms: u64::try_from(latency_ms).unwrap_or_default(),
+                    latency_ms,
                     outcome,
                     created_at,
                 })

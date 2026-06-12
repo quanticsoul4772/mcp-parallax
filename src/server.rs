@@ -227,6 +227,10 @@ impl Drop for RecordGuard {
                     tracing::error!(error = %e, "cancelled-invocation record write failed");
                 }
             });
+        } else {
+            // No runtime to persist on — say so loudly rather than silently
+            // dropping the record (FR-010).
+            tracing::error!("cancelled-invocation record not persisted: no tokio runtime");
         }
     }
 }

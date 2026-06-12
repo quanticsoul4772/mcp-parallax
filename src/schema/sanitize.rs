@@ -26,7 +26,8 @@ const UNSUPPORTED_KEYWORDS: &[&str] = &[
     "maxProperties",
 ];
 
-/// Top-level-only metadata the grammar has no use for.
+/// Metadata the grammar has no use for, stripped at every level
+/// (`description` is kept — it is semantic guidance for the model).
 const METADATA_KEYWORDS: &[&str] = &["$schema", "title"];
 
 /// Produce the Anthropic-grammar-subset form of `schema`.
@@ -54,6 +55,9 @@ fn sanitize_node(node: &mut Value) {
     let Value::Object(map) = node else { return };
 
     for key in UNSUPPORTED_KEYWORDS {
+        map.remove(*key);
+    }
+    for key in METADATA_KEYWORDS {
         map.remove(*key);
     }
 
