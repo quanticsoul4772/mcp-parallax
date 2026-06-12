@@ -1,9 +1,12 @@
 //! Modes are data, not bespoke machinery.
 //!
 //! A corrective is `{ id, description, prompt template, output schema,
-//! ensemble k }`. One generic execution path runs any mode; adding mode #2 is
-//! a registry entry, not a new subsystem.
+//! ensemble k }`. Each mode has a thin `run` function sharing the server's
+//! recorded execution path; a fully generic executor is deferred until mode #3
+//! makes the pattern visible (research.md 002 D3). Adding a mode is a registry
+//! entry plus its run function — not a new subsystem.
 
+pub mod unstick;
 pub mod verify;
 
 use crate::error::AppError;
@@ -19,8 +22,8 @@ pub struct CorrectiveMode {
     pub id: &'static str,
     /// The MCP tool description — this does the routing work.
     pub description: &'static str,
-    /// Instruction template. Placeholders exist for claim/context only:
-    /// blindness is structural, not behavioral.
+    /// Instruction template. Placeholders exist for the mode's declared
+    /// inputs only: blindness is structural, not behavioral.
     pub prompt_template: &'static str,
     /// The unsanitized per-pass output schema (validator-side).
     pub output_schema: Value,
@@ -88,10 +91,11 @@ impl ModeRegistry {
 }
 
 /// Enforce the flat + closed invariant: the root is an object whose properties
-/// are scalars (string/number/integer/boolean, optionally enum-constrained) or
-/// arrays of scalars — one level of named fields, nothing deeper, no `$ref`,
-/// no unions. Closure (`additionalProperties: false` everywhere) is then the
-/// sanitizer's structural guarantee.
+/// are scalars (string/number/integer/boolean, optionally enum-constrained),
+/// nullable scalars (`type: [scalar, "null"]`), or arrays of scalars — one
+/// level of named fields, nothing deeper, no `$ref`, no non-scalar unions.
+/// Closure (`additionalProperties: false` everywhere) is then the sanitizer's
+/// structural guarantee.
 fn assert_flat(id: &str, schema: &Value) -> Result<(), AppError> {
     let illegal = |what: &str| {
         Err(AppError::ValidationFailure(format!(
@@ -106,7 +110,9 @@ fn assert_flat(id: &str, schema: &Value) -> Result<(), AppError> {
         return illegal("root type must be 'object'");
     }
     if root.contains_key("$ref") || root.contains_key("$defs") || root.contains_key("anyOf") {
-        return illegal("references and unions are not allowed");
+        return illegal(
+            "references and object/union schemas are not allowed (nullable scalars are)",
+        );
     }
     let Some(properties) = root.get("properties").and_then(Value::as_object) else {
         return illegal("root has no properties");
@@ -118,6 +124,26 @@ fn assert_flat(id: &str, schema: &Value) -> Result<(), AppError> {
         // `const`s, which the sanitizer collapses to `enum`).
         if is_scalar_enum(prop) {
             continue;
+        }
+        // A nullable scalar (`type: ["string","null"]` — schemars' encoding of
+        // Option<T>) is still flat; the grammar's null type covers it
+        // (verified live, feature 002). The gate is exactly that shape —
+        // heterogeneous unions stay illegal until one is validated.
+        if let Some(union) = prop.get("type").and_then(Value::as_array) {
+            let is_nullable_scalar = union.len() == 2
+                && union.iter().any(|t| t.as_str() == Some("null"))
+                && union.iter().any(|t| {
+                    matches!(
+                        t.as_str(),
+                        Some("string" | "number" | "integer" | "boolean")
+                    )
+                });
+            if is_nullable_scalar {
+                continue;
+            }
+            return illegal(&format!(
+                "property '{name}' has a type union that is not a nullable scalar"
+            ));
         }
         let Some(type_name) = prop.get("type").and_then(Value::as_str) else {
             return illegal(&format!("property '{name}' has no concrete type"));
@@ -237,6 +263,41 @@ mod tests {
     #[test]
     fn unknown_mode_is_none() {
         assert!(ModeRegistry::new().get("nope").is_none());
+    }
+
+    #[test]
+    fn nullable_scalar_unions_are_flat_but_object_unions_are_not() {
+        let nullable_scalar = json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": ["string", "null"] }
+            }
+        });
+        assert!(ModeRegistry::new()
+            .register("ok", "d", "t", nullable_scalar, 1)
+            .is_ok());
+
+        let object_union = json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": ["object", "null"] }
+            }
+        });
+        assert!(ModeRegistry::new()
+            .register("bad", "d", "t", object_union, 1)
+            .is_err());
+
+        // Heterogeneous scalar unions are not yet validated against the
+        // grammar — the gate admits exactly nullable scalars.
+        let heterogeneous = json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": ["string", "integer"] }
+            }
+        });
+        assert!(ModeRegistry::new()
+            .register("het", "d", "t", heterogeneous, 1)
+            .is_err());
     }
 
     #[test]

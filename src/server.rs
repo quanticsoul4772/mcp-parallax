@@ -6,18 +6,21 @@
 
 use crate::config::Config;
 use crate::error::{AppError, Outcome};
+use crate::modes::unstick::{self, NextStep, UnstickParams, UNSTICK_ID};
 use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
-use crate::telemetry::InvocationRecord;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
 use crate::traits::storage::Storage;
-use chrono::{DateTime, Utc};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{ErrorData, ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use std::sync::Arc;
+
+mod record;
+
+use record::{to_error_data, RecordGuard};
 
 /// The Parallax MCP server: the seams it composes plus the mode registry.
 #[derive(Clone)]
@@ -52,6 +55,7 @@ impl Parallax {
     ) -> Result<Self, AppError> {
         let mut registry = ModeRegistry::new();
         verify::register(&mut registry, config.verify_ensemble_k)?;
+        unstick::register(&mut registry)?;
         Ok(Self {
             tool_router: Self::tool_router(),
             client,
@@ -83,6 +87,23 @@ impl Parallax {
         self.verify_with_ct(params, context.ct).await
     }
 
+    /// The `unstick` tool: one committed next step for a stuck caller.
+    #[tool(
+        name = "unstick",
+        description = "Break a stuck loop by committing to one concrete next step. Call when you \
+        have a goal, you have tried things, and you are producing plausible motion that goes \
+        nowhere. Provide the goal, where you are blocked, and what you already tried; you get \
+        back exactly one immediately actionable step with a rationale - never a menu of options, \
+        never a plan. An external frame breaks the loop you cannot see from inside."
+    )]
+    pub async fn unstick(
+        &self,
+        Parameters(params): Parameters<UnstickParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<NextStep>, ErrorData> {
+        self.unstick_with_ct(params, context.ct).await
+    }
+
     async fn verify_with_ct(
         &self,
         params: VerifyParams,
@@ -91,15 +112,47 @@ impl Parallax {
         let mode = self.registry.get(VERIFY_ID).ok_or_else(|| {
             ErrorData::internal_error("verify mode not registered".to_string(), None)
         })?;
+        self.run_recorded(VERIFY_ID, ct, async {
+            verify::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
+                .await
+                .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
 
-        // Single exit point: the guard guarantees exactly one record on every
-        // path — cancellation via the select arm, abandonment (future dropped)
-        // via the guard's Drop backstop.
+    async fn unstick_with_ct(
+        &self,
+        params: UnstickParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<NextStep>, ErrorData> {
+        let mode = self.registry.get(UNSTICK_ID).ok_or_else(|| {
+            ErrorData::internal_error("unstick mode not registered".to_string(), None)
+        })?;
+        self.run_recorded(UNSTICK_ID, ct, async {
+            unstick::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
+                .await
+                .map(|run| (run.step, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
+    /// The shared per-invocation wrapper: single exit point where every path —
+    /// success, each failure class, cancellation (ct select arm), abandonment
+    /// (guard Drop backstop) — leaves exactly one record (FR-010).
+    async fn run_recorded<T, Fut>(
+        &self,
+        tool_id: &'static str,
+        ct: tokio_util::sync::CancellationToken,
+        work: Fut,
+    ) -> Result<Json<T>, ErrorData>
+    where
+        Fut: std::future::Future<Output = Result<(T, u64, u64), AppError>>,
+    {
         let guard = RecordGuard::new(
             Arc::clone(&self.storage),
             Arc::clone(&self.clock),
             self.session_id.clone(),
-            VERIFY_ID.to_string(),
+            tool_id.to_string(),
             self.model.clone(),
         );
 
@@ -108,13 +161,11 @@ impl Parallax {
                 guard.finish(0, 0, Outcome::Cancelled).await;
                 Err(to_error_data(&AppError::Cancelled))
             }
-            result = verify::run(self.client.as_ref(), mode, &params, self.max_claim_chars) => {
+            result = work => {
                 match result {
-                    Ok(run) => {
-                        guard
-                            .finish(run.input_tokens, run.output_tokens, Outcome::Success)
-                            .await;
-                        Ok(Json(run.verdict))
+                    Ok((value, input_tokens, output_tokens)) => {
+                        guard.finish(input_tokens, output_tokens, Outcome::Success).await;
+                        Ok(Json(value))
                     }
                     Err(error) => {
                         // Token usage on failed invocations is not attributable
@@ -133,105 +184,10 @@ impl ServerHandler for Parallax {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "Parallax: independent correctives for the calling model's blind spots. \
-             Call `verify` when an assertion matters and being confidently wrong is costly.",
+             Call `verify` when an assertion matters and being confidently wrong is costly. \
+             Call `unstick` when you are stuck or looping and need to commit to one \
+             concrete next step.",
         )
-    }
-}
-
-/// Map every failure class to a distinct, descriptive MCP error (FR-007 /
-/// SC-005): the class is identifiable from the message alone, via the
-/// outcome-taxonomy prefix plus the `AppError` Display text.
-fn to_error_data(error: &AppError) -> ErrorData {
-    let message = format!("[{}] {error}", error.outcome().as_str());
-    match error {
-        AppError::InvalidInput(_) => ErrorData::invalid_params(message, None),
-        _ => ErrorData::internal_error(message, None),
-    }
-}
-
-/// Drop-guard around one invocation: `finish()` writes the real record;
-/// dropping unfinished (the request future was abandoned) records `cancelled`.
-struct RecordGuard {
-    storage: Arc<dyn Storage>,
-    clock: Arc<dyn TimeProvider>,
-    session_id: String,
-    tool: String,
-    model: String,
-    started_at: DateTime<Utc>,
-    done: bool,
-}
-
-impl RecordGuard {
-    fn new(
-        storage: Arc<dyn Storage>,
-        clock: Arc<dyn TimeProvider>,
-        session_id: String,
-        tool: String,
-        model: String,
-    ) -> Self {
-        let started_at = clock.now();
-        Self {
-            storage,
-            clock,
-            session_id,
-            tool,
-            model,
-            started_at,
-            done: false,
-        }
-    }
-
-    async fn finish(mut self, input_tokens: u64, output_tokens: u64, outcome: Outcome) {
-        self.done = true;
-        let record = InvocationRecord::create(
-            self.clock.as_ref(),
-            &self.session_id,
-            &self.tool,
-            &self.model,
-            input_tokens,
-            output_tokens,
-            outcome,
-            self.started_at,
-        );
-        record.emit();
-        if let Err(e) = self.storage.record_invocation(&record).await {
-            // The record write itself failed — surface loudly on the
-            // diagnostic stream; never on the protocol channel.
-            tracing::error!(error = %e, "invocation record write failed");
-        }
-    }
-}
-
-impl Drop for RecordGuard {
-    fn drop(&mut self) {
-        if self.done {
-            return;
-        }
-        // Abandoned mid-flight: the edge case "client disconnects
-        // mid-invocation" — record `cancelled` (spec edge case 4).
-        let record = InvocationRecord::create(
-            self.clock.as_ref(),
-            &self.session_id,
-            &self.tool,
-            &self.model,
-            0,
-            0,
-            Outcome::Cancelled,
-            self.started_at,
-        );
-        record.emit();
-        let storage = Arc::clone(&self.storage);
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                if let Err(e) = storage.record_invocation(&record).await {
-                    tracing::error!(error = %e, "cancelled-invocation record write failed");
-                }
-            });
-        } else {
-            // No runtime to persist on — say so loudly rather than silently
-            // dropping the record (FR-010).
-            tracing::error!("cancelled-invocation record not persisted: no tokio runtime");
-        }
     }
 }
 

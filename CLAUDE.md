@@ -13,11 +13,13 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: core layer serving.** The server speaks MCP over stdio and serves the
-first corrective, **`verify`** — k parallel stance-blind passes via Anthropic
-native structured outputs, schema-guaranteed at both hops, with one invocation
-record per call in SQLite. Watchdog, memory, research, and deterministic layers
-are not built yet. Feature artifacts: `specs/001-core-layer/`.
+**Status: core layer serving two correctives.** The server speaks MCP over stdio
+and serves **`verify`** (k parallel stance-blind passes, agreement-derived
+confidence) and **`unstick`** (one committed next step for a stuck caller,
+single pass) — both via Anthropic native structured outputs, schema-guaranteed
+at both hops, with one invocation record per call in SQLite. Watchdog, memory,
+research, and deterministic layers are not built yet. Feature artifacts:
+`specs/001-core-layer/`, `specs/002-unstick-mode/`.
 
 ## The design is the source of truth
 
@@ -140,9 +142,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `001-core-layer` — [spec](specs/001-core-layer/spec.md) ·
-[plan](specs/001-core-layer/plan.md) · [research](specs/001-core-layer/research.md) ·
-[data model](specs/001-core-layer/data-model.md) · [contracts](specs/001-core-layer/contracts/)
+Current feature: `002-unstick-mode` — [spec](specs/002-unstick-mode/spec.md) ·
+[plan](specs/002-unstick-mode/plan.md) · [research](specs/002-unstick-mode/research.md) ·
+[data model](specs/002-unstick-mode/data-model.md) · [contracts](specs/002-unstick-mode/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

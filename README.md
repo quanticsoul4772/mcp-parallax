@@ -10,11 +10,12 @@ catches the ways the model reliably goes wrong and cannot see from inside its ow
 context (anchoring, sycophancy, drift, overconfident wrong answers). The name is
 the thesis: a second vantage point reveals what one frame can't.
 
-> **Status: core layer serving.** The server speaks MCP over stdio and serves
-> the first corrective, **`verify`**: k parallel stance-blind verification
-> passes (default 3) constrained to a JSON Schema by Anthropic native
-> structured outputs, aggregated by majority with agreement-derived confidence,
-> and recorded (tool, model, tokens, cost, latency, outcome) in SQLite. The
+> **Status: core layer serving two correctives.** The server speaks MCP over
+> stdio and serves **`verify`** (k parallel stance-blind verification passes,
+> default 3, aggregated by majority with agreement-derived confidence) and
+> **`unstick`** (one committed next step for a stuck caller, single pass) —
+> both constrained to JSON Schemas by Anthropic native structured outputs and
+> recorded (tool, model, tokens, cost, latency, outcome) in SQLite. The
 > remaining layers follow the design north star in
 > [`docs/design/NEW_SERVER_DESIGN.md`](docs/design/NEW_SERVER_DESIGN.md).
 

@@ -27,7 +27,9 @@ convention.
   - **Supported:** object/array/string/integer/number/boolean/null, `enum`, `const`,
     `anyOf`/`allOf` (limited), `$ref`/`$def` (no external refs), `required`,
     `additionalProperties: false` (mandatory), string `format`
-    (date-time/date/email/uri/uuid/…), array `minItems` (0 or 1 only).
+    (date-time/date/email/uri/uuid/…), array `minItems` (0 or 1 only),
+    type arrays for nullable scalars (`"type": ["string","null"]` — verified
+    live, feature 002).
   - **NOT supported:** recursive schemas, numeric constraints
     (`minimum`/`maximum`/`multipleOf`), string constraints (`minLength`/`maxLength`),
     richer array bounds, `additionalProperties: true`, regex lookaround.
