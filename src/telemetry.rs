@@ -19,6 +19,11 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
     ("claude-opus-4-6", 5.00, 25.00),
     ("claude-sonnet-4-6", 3.00, 15.00),
     ("claude-haiku-4-5", 1.00, 5.00),
+    // Voyage embeddings bill input only (cached from the Voyage pricing
+    // page 2026-06-11).
+    ("voyage-4-large", 0.12, 0.0),
+    ("voyage-4", 0.06, 0.0),
+    ("voyage-4-lite", 0.02, 0.0),
 ];
 
 /// Conservative fallback for unknown model ids (Opus-tier rates).
@@ -143,6 +148,9 @@ mod tests {
                 .abs()
                 < 1e-12
         );
+        // Voyage embeddings: input-only billing, output tokens cost nothing.
+        assert!((cost_usd("voyage-4", 1_000_000, 0) - 0.06).abs() < 1e-12);
+        assert!((cost_usd("voyage-4", 1_000_000, 999) - 0.06).abs() < 1e-12);
     }
 
     #[test]

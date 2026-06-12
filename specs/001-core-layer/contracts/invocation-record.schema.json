@@ -20,6 +20,7 @@
         "retries_exhausted",
         "invalid_input",
         "validation_failure",
+        "embedding_provider",
         "cancelled"
       ],
       "description": "config_error exists in the error taxonomy but never on a record - it occurs at startup, before any invocation exists"

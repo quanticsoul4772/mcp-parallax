@@ -11,6 +11,7 @@
 #![allow(clippy::print_stdout)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 #![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_wrap)] // ids are 0..5_000, far below i64::MAX
 
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::Row;

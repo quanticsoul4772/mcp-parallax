@@ -6,8 +6,10 @@
 
 pub mod client;
 pub mod clock;
+pub mod embedder;
 pub mod storage;
 
 pub use client::{Completion, ModelClient};
 pub use clock::{SystemClock, TimeProvider};
+pub use embedder::{Embedder, Embedding};
 pub use storage::Storage;
