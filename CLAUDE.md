@@ -136,6 +136,14 @@ sqlx-loading caveat) → **research** (Brave provider + local extraction) →
 **observability** (OTLP from the first server commit). This is a recommended order,
 not a mandate — confirm priorities before building.
 
+## Active feature (Spec Kit)
+
+<!-- SPECKIT START -->
+Current feature: `001-core-layer` — [spec](specs/001-core-layer/spec.md) ·
+[plan](specs/001-core-layer/plan.md) · [research](specs/001-core-layer/research.md) ·
+[data model](specs/001-core-layer/data-model.md) · [contracts](specs/001-core-layer/contracts/)
+<!-- SPECKIT END -->
+
 ## Working style
 
 Build the full agreed scope; don't silently narrow it or swap the stack. If something
