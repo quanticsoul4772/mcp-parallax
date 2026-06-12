@@ -10,7 +10,7 @@ catches the ways the model reliably goes wrong and cannot see from inside its ow
 context (anchoring, sycophancy, drift, overconfident wrong answers). The name is
 the thesis: a second vantage point reveals what one frame can't.
 
-> **Status: core + memory + research + deterministic layers.** The server
+> **Status: core + memory + research + deterministic + checkpoint layers.** The server
 > speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
 > verification passes, default 3, aggregated by majority with
 > agreement-derived confidence), **`unstick`** (one committed next step for a
@@ -25,9 +25,17 @@ the thesis: a second vantage point reveals what one frame can't.
 > short, cited, adversarially-verified answer — scoped parallel searches,
 > hygiene-enforced fetching, refute-biased per-claim verification, and a
 > deterministic grounding gate so no fabricated citation ever leaves the
-> server). Every invocation is recorded (tool, model, tokens, cost, latency,
-> outcome) in SQLite. The watchdog layer follows the design north star in
-> [`docs/design/NEW_SERVER_DESIGN.md`](docs/design/NEW_SERVER_DESIGN.md).
+> server) — plus the **checkpoint layer** (`checkpoint_action` /
+> `checkpoint_batch` / `checkpoint_turn`): the watchdog re-grounded for MCP —
+> harness hooks trigger trajectory checkpoints the model can't self-diagnose
+> to call (loop/repeated-failure flags, constraint-conflict holds quoting the
+> stored memory, end-of-turn contradiction review). **Off by default**:
+> install the hooks in
+> [`integrations/claude-code/`](integrations/claude-code/README.md) to enable
+> the sensor plane (currently a **draft pending the S1 live spike** —
+> `examples/spike_hooks.md`); everything fails open and never rewrites the
+> model's work. Every invocation is recorded (tool, model, tokens, cost, latency,
+> outcome) in SQLite.
 >
 > Research cost note: records carry summed LLM tokens; Brave bills
 > per-request, so its fee is not in `cost_usd` (a named inexactness).
@@ -37,7 +45,9 @@ the thesis: a second vantage point reveals what one frame can't.
 1. **Cognitive correctives** — the *what*; invoked when the model can
    self-diagnose (Verify, Diverge, Decide, …).
 2. **Watchdog** — the *when*; fires correctives the model can't self-diagnose to
-   call, running beside generation on the activity stream.
+   call. Re-grounded for MCP as the **checkpoint layer** (harness hooks as the
+   sensor plane — see the 2026-06-12 amendment in
+   [`docs/design/WATCHDOG_LAYER.md`](docs/design/WATCHDOG_LAYER.md)).
 3. **Memory / experience** — verified-before-stored skills, lessons, world-state;
    the literature says this can outweigh the model itself.
 4. **Deterministic / symbolic** — anything checkable is settled by a solver, not

@@ -13,7 +13,7 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: core + memory + research + deterministic layers.** The server
+**Status: core + memory + research + deterministic + checkpoint layers.** The server
 speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
 passes, agreement-derived confidence), **`unstick`** (one committed next
 step, single pass), **`check`** (always on, no gate — pure in-process
@@ -26,12 +26,18 @@ sqlite-vec deviation, `SDK_LANDSCAPE.md` §memory), and **`research`** (gated
 on `BRAVE_API_KEY`; five-phase scope→search→fetch+extract→verify→synthesize
 pipeline with refute-biased per-claim verification and a deterministic
 grounding gate — the model writes only the answer prose; findings, labels,
-confidences, sources, and stats are server-assembled). One invocation record
-per call in SQLite. The watchdog layer is not built yet. Build note: `z3`
-(bundled) needs cmake — first clean build ~5 min; on Windows set `CMAKE` to
-the VS Build Tools cmake path. Feature artifacts: `specs/001-core-layer/`,
-`specs/002-unstick-mode/`, `specs/003-memory-layer/`,
-`specs/004-research-layer/`, `specs/005-deterministic-layer/`.
+confidences, sources, and stats are server-assembled), and the **checkpoint
+layer** — the watchdog re-grounded for MCP (`WATCHDOG_LAYER.md` 2026-06-12
+amendment): three harness-triggered tools (`checkpoint_action` gate /
+`checkpoint_batch` loop screening / `checkpoint_turn` review with the
+layer's only model hop), always in the catalog but **off by default** — the
+sensor plane is an installable hooks config in `integrations/claude-code/`
+(draft pending the S1 live spike, `examples/spike_hooks.md`); verdicts are
+silence/flag/hold, server-assembled, fail-open, one `checkpoint_records`
+audit row per evaluation. One invocation record per call in SQLite. Build
+note: `z3` (bundled) needs cmake — first clean build ~5 min; on Windows set
+`CMAKE` to the VS Build Tools cmake path. Feature artifacts:
+`specs/001-core-layer/` through `specs/006-checkpoint-layer/`.
 
 ## The design is the source of truth
 
@@ -103,8 +109,11 @@ presence enables the memory tools; absent, they are not in the catalog),
 `VOYAGE_MODEL` (default `voyage-4`), `MEMORY_RECALL_LIMIT` (default `5`,
 1..=20), `BRAVE_API_KEY` (optional — presence enables the `research` tool),
 `FETCH_TIMEOUT_MS` (default `10000`), `RESEARCH_CONCURRENCY` (default `8`,
-1..=32), `DATABASE_PATH` (default `./data/parallax.db`), `LOG_LEVEL` (default
-`info`), `REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
+1..=32), `FETCH_ALLOW_PRIVATE` (default `false` — SSRF guard for research
+fetches), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
+substrings extending the gate's built-in risk patterns), `DATABASE_PATH`
+(default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
+`REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
 A present-but-unparseable value is an error, never a silent fallback to the
 default.
 
@@ -175,9 +184,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `005-deterministic-layer` — [spec](specs/005-deterministic-layer/spec.md) ·
-[plan](specs/005-deterministic-layer/plan.md) · [research](specs/005-deterministic-layer/research.md) ·
-[data model](specs/005-deterministic-layer/data-model.md) · [contracts](specs/005-deterministic-layer/contracts/)
+Current feature: `006-checkpoint-layer` — [spec](specs/006-checkpoint-layer/spec.md) ·
+[plan](specs/006-checkpoint-layer/plan.md) · [research](specs/006-checkpoint-layer/research.md) ·
+[data model](specs/006-checkpoint-layer/data-model.md) · [contracts](specs/006-checkpoint-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

@@ -1,0 +1,46 @@
+{
+  "name": "checkpoint_batch",
+  "description": "Post-batch checkpoint: after a completed group of tool calls, deterministically screen the recent trajectory for loops (the same normalized action repeated) and repeated failures (the same action failing consecutively). Returns a flag naming the specific repeated action and count, or silence. Pure and local - no model call, no network. A delivered flag is cooldown-suppressed at subsequent checkpoints until resolved. Fails open. Intended to be invoked by the harness's post-batch hook; calling it directly behaves identically.",
+  "params": {
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "description": "The harness session identifier; must match the transcript."
+      },
+      "transcript_path": {
+        "type": "string",
+        "description": "Path to the session's transcript (.jsonl). Validated and read as a bounded tail window."
+      }
+    },
+    "required": ["session_id", "transcript_path"],
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "properties": {
+      "verdict": { "type": "string", "enum": ["silence", "flag"] },
+      "message": {
+        "type": ["string", "null"],
+        "description": "Assembled feedback naming the repeated action and count; null when silence."
+      },
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "enum": ["repetition", "repeated_failure"] },
+            "evidence": { "type": "string" }
+          },
+          "required": ["kind", "evidence"],
+          "additionalProperties": false
+        }
+      },
+      "suppressed": { "type": "boolean" },
+      "fail_open": { "type": "boolean" },
+      "latency_ms": { "type": "integer" }
+    },
+    "required": ["verdict", "message", "signals", "suppressed", "fail_open", "latency_ms"],
+    "additionalProperties": false
+  }
+}

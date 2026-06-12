@@ -237,7 +237,10 @@ pipeline.
   to reuse **Voyage rerank-2.5** as a relevance/consistency scorer and reserve an LLM
   call (structured output) for the expensive contradiction check — matching the design's
   "cheap signals gate the expensive judge." A local cross-encoder via `candle`/`ort` is
-  a later option if the LLM-call cost is too high.
+  a later option if the LLM-call cost is too high. *006 implementation note:* the
+  shipped checkpoint layer uses no new crates at all — lexical overlap + polarity cues
+  mine candidates, existing voyage-4 cosine supplies relevance (query-embed p95
+  measured 165 ms, 006 S2), and one decline-biased structured-output hop classifies.
 
 ---
 

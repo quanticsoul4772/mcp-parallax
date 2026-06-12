@@ -56,11 +56,18 @@ instead of an in-process bus. The concept map:
 | Cheap signals gate the expensive judge | Unchanged and now load-bearing: hooks fire on every tool call, so the cheap path must be pure and fast (loop/repeat detection over the call sequence, entity diff, contradiction-vs-memory via the existing recall path); one constrained model hop only on a cheap-signal fire |
 | Trace event per trigger | Unchanged — one invocation record per checkpoint; catch-rate vs noise measurable from day one |
 
-Deliverable shape: hook configuration shipped alongside the server (as a
-Claude Code plugin), **off by default** — installing the hooks is the explicit
-opt-in this layer's authority requires — plus the checkpoint tool(s) on the
-server. The watchdog + memory pairing survives whole: memory holds what should
-be true; the checkpoint checks the live trajectory against it.
+Deliverable shape: hook configuration shipped alongside the server
+(`integrations/claude-code/`; plugin packaging is a named deferral until the
+hook plumbing is live-verified), **off by default** — installing the hooks is
+the explicit opt-in this layer's authority requires — plus the checkpoint
+tool(s) on the server. The gating model is deliberately
+*catalog-resident-but-uninvoked*: the checkpoint tools stay in the catalog
+like every corrective (their one new capability, a validated bounded
+transcript read, is constrained in the reader, not env-gated), and the layer
+is "off" because nothing fires the tools until the sensor plane is installed
+— the same opt-in posture as Constitution VI, enforced at the harness instead
+of an env var. The watchdog + memory pairing survives whole: memory holds
+what should be true; the checkpoint checks the live trajectory against it.
 
 ### Named costs
 
