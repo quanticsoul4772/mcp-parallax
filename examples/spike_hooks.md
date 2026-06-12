@@ -87,7 +87,62 @@ boxes below are checked.
 3. `command` hooks support an `if` permission-rule filter (tool events
    only) — a future option for harness-side risk narrowing.
 
-### Round 2 — open questions (verify after restart with the new config)
+### Round 2 (2026-06-12, live session, schema-correct config installed)
+
+**All three hooks fire.** `PreToolUse` -> `checkpoint_action` and
+`PostToolBatch` -> `checkpoint_batch` produced one success row per
+boundary crossing (records accruing with the live session id, all
+silence/fail_open=0 on benign work). `Stop` -> `checkpoint_turn` fired and
+errored — see finding 5. Answers to the round-2 questions:
+
+4. **`${path}` substitution typing**: objects JSON-stringify into string
+   params (`${tool_input}` deserialized fine into the tool's `tool_input:
+   String`); **booleans stringify too** — `${stop_hook_active}` arrived as
+   the string `"false"` and the tool's `continuation: bool` rejected it
+   (`MCP error -32602 ... invalid type: string "false", expected a
+   boolean`, surfaced to the user as a non-blocking Stop-hook error =
+   harness-level fail-open confirmed). Fixed: `continuation` now accepts
+   boolean or `"true"`/`"false"` (lenient deserializer; contract updated).
+5. **Result -> hook-control mapping (the decisive question)**: per the
+   hooks reference, *"the tool's text content is treated like command-hook
+   stdout: if it parses as valid JSON output it is processed as a
+   decision."* Confirmed live: an induced repetition flag fired
+   server-side (4x identical command -> flag row with named evidence) but
+   did NOT reach the model — `CheckpointResult` carried no hook-output
+   fields, so the decision-less JSON was a no-op. **Fix (keeps `mcp_tool`,
+   no CLI fallback)**: flag results now carry `decision: "block"` +
+   `reason`; hold results carry `hookSpecificOutput: { hookEventName:
+   "PreToolUse", permissionDecision: "ask", permissionDecisionReason }`;
+   silence carries neither (observed: decision-less JSON is perfectly
+   quiet). Contracts updated in the same change.
+6. **Self-trigger exemption: confirmed.** Hook-invoked checkpoint calls
+   produced no further hook rows (no cascade, counts exactly one
+   action row per matched tool call, one batch row per batch); the
+   `PreToolUse` matcher (`Bash|Write|Edit`) doesn't match MCP tools
+   anyway.
+7. **Stop field names confirmed**: `stop_hook_active` exists and
+   substitutes; `last_assistant_message` produced no missing-field error.
+8. **Detector precision finding (fixed)**: the model varies the Bash
+   `description` between retries of the SAME command, which made
+   normalized inputs differ and blinded the detectors — with identical
+   inputs the repetition flag fired exactly at threshold. `description`
+   is now a dropped (narrative) key in normalization.
+9. **Transcript write-lag observed**: the batch hook can run before the
+   latest tool_result lines are flushed, so failure marks may trail by
+   one batch; detection then fires on the next checkpoint. Acceptable —
+   named, not fixed (the signal arrives one batch late at worst).
+
+### Round 3 — remaining (after rebuild + restart with these fixes)
+
+- [ ] Flag delivery in anger: induced loop -> `decision: "block"` feeds the
+      flag message back to the model.
+- [ ] Hold delivery: seeded constraint + conflicting risky command -> the
+      permission prompt appears quoting the memory (FR-011 ask).
+- [ ] Stop boundary end-to-end: turn review runs (continuation string
+      accepted); forced continuation on a confirmed contradiction.
+- [ ] SC-004 live kill-test; SC-006 inertness after uninstall.
+
+### Round 2 — open questions (answered above; kept for the protocol record)
 
 - [ ] Hooks fire at all three boundaries (checkpoint_records accrues rows
       with the live session id).

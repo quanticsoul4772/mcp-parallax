@@ -47,8 +47,51 @@ pub struct CheckpointTurnParams {
     /// The model's final message for the turn (as provided by the harness).
     pub final_message: String,
     /// True when this turn end follows a forced continuation; limits this
-    /// evaluation to screening so continuation can never loop.
+    /// evaluation to screening so continuation can never loop. Accepts a
+    /// boolean or its string form ("true"/"false") — the harness's hook
+    /// `${stop_hook_active}` substitution stringifies booleans (S1 round 2).
+    #[serde(deserialize_with = "lenient_bool")]
+    #[schemars(schema_with = "lenient_bool_schema")]
     pub continuation: bool,
+}
+
+/// Deserialize a bool from a JSON boolean or its string form — the harness's
+/// `${path}` hook substitution produces strings for non-string payload
+/// fields (S1 round 2 finding).
+fn lenient_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct LenientBool;
+    impl serde::de::Visitor<'_> for LenientBool {
+        type Value = bool;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a boolean or \"true\"/\"false\"")
+        }
+
+        fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<bool, E> {
+            Ok(value)
+        }
+
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<bool, E> {
+            match value {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                other => Err(E::custom(format!(
+                    "expected \"true\" or \"false\", got {other:?}"
+                ))),
+            }
+        }
+    }
+    deserializer.deserialize_any(LenientBool)
+}
+
+fn lenient_bool_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": ["boolean", "string"],
+        "description": "True when this turn end follows a forced continuation. Accepts a boolean or its string form (\"true\"/\"false\")."
+    })
 }
 
 /// One fired signal as reported on the wire (the cooldown key stays
@@ -70,6 +113,20 @@ impl From<&Signal> for WireSignal {
     }
 }
 
+/// Claude Code hook-output mapping for a hold (S1: the harness interprets
+/// the mcp_tool hook's result as hook output JSON — a hold must carry
+/// `hookSpecificOutput.permissionDecision`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HookPermissionOutput {
+    /// Always "PreToolUse".
+    pub hook_event_name: String,
+    /// Always "ask" — holds escalate to the user, never deny (FR-011).
+    pub permission_decision: String,
+    /// The assembled hold reason (same text as `message`).
+    pub permission_decision_reason: String,
+}
+
 /// Shared checkpoint result (contracts/*.tool.json).
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CheckpointResult {
@@ -85,6 +142,18 @@ pub struct CheckpointResult {
     pub fail_open: bool,
     /// Wall-clock evaluation time.
     pub latency_ms: u64,
+    /// Harness hook mapping (S1): "block" on flag verdicts — the harness
+    /// feeds `reason` back to the model. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    /// Harness hook mapping: the flag message, in the field the hook
+    /// contract reads. Absent unless `decision` is present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Harness hook mapping for holds (`permissionDecision: "ask"`).
+    /// Absent otherwise.
+    #[serde(rename = "hookSpecificOutput", skip_serializing_if = "Option::is_none")]
+    pub hook_specific_output: Option<HookPermissionOutput>,
 }
 
 impl CheckpointResult {
@@ -98,6 +167,9 @@ impl CheckpointResult {
             suppressed: false,
             fail_open: false,
             latency_ms,
+            decision: None,
+            reason: None,
+            hook_specific_output: None,
         }
     }
 
@@ -112,6 +184,9 @@ impl CheckpointResult {
             suppressed: true,
             fail_open: false,
             latency_ms,
+            decision: None,
+            reason: None,
+            hook_specific_output: None,
         }
     }
 
@@ -126,32 +201,49 @@ impl CheckpointResult {
             suppressed: false,
             fail_open: true,
             latency_ms,
+            decision: None,
+            reason: None,
+            hook_specific_output: None,
         }
     }
 
-    /// A delivered flag (feedback boundaries only).
+    /// A delivered flag (feedback boundaries only). Carries the harness
+    /// hook mapping (`decision: "block"`) so the message reaches the model
+    /// when invoked via a hook (S1).
     #[must_use]
     pub fn flag(message: String, signals: &[Signal], latency_ms: u64) -> Self {
         Self {
             verdict: Verdict::Flag,
-            message: Some(message),
+            message: Some(message.clone()),
             signals: signals.iter().map(WireSignal::from).collect(),
             suppressed: false,
             fail_open: false,
             latency_ms,
+            decision: Some("block".to_string()),
+            reason: Some(message),
+            hook_specific_output: None,
         }
     }
 
-    /// A held action (gate boundary only).
+    /// A held action (gate boundary only). Carries the harness hook mapping
+    /// (`permissionDecision: "ask"` — FR-011 escalate-only) so the hold
+    /// pauses the action when invoked via a hook (S1).
     #[must_use]
     pub fn hold(message: String, signals: &[Signal], latency_ms: u64) -> Self {
         Self {
             verdict: Verdict::Hold,
-            message: Some(message),
+            message: Some(message.clone()),
             signals: signals.iter().map(WireSignal::from).collect(),
             suppressed: false,
             fail_open: false,
             latency_ms,
+            decision: None,
+            reason: None,
+            hook_specific_output: Some(HookPermissionOutput {
+                hook_event_name: "PreToolUse".to_string(),
+                permission_decision: "ask".to_string(),
+                permission_decision_reason: message,
+            }),
         }
     }
 }
@@ -177,6 +269,60 @@ mod tests {
         assert_eq!(result.verdict, Verdict::Silence);
         assert!(result.fail_open);
         assert!(result.message.is_none());
+    }
+
+    // S1: the harness interprets the mcp_tool hook result as hook-output
+    // JSON — flags must carry decision/reason, holds permissionDecision,
+    // and silence must carry neither (a decision-less JSON is a no-op).
+    #[test]
+    fn hook_mapping_fields_follow_the_verdict() {
+        let signals = vec![Signal::new(
+            SignalKind::Repetition,
+            "evidence".into(),
+            "identity",
+        )];
+        let flag = serde_json::to_value(CheckpointResult::flag("msg".into(), &signals, 1)).unwrap();
+        assert_eq!(flag["decision"], "block");
+        assert_eq!(flag["reason"], "msg");
+        assert!(flag.get("hookSpecificOutput").is_none());
+
+        let hold = serde_json::to_value(CheckpointResult::hold("why".into(), &signals, 1)).unwrap();
+        assert!(hold.get("decision").is_none());
+        assert_eq!(hold["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+        assert_eq!(hold["hookSpecificOutput"]["permissionDecision"], "ask");
+        assert_eq!(
+            hold["hookSpecificOutput"]["permissionDecisionReason"],
+            "why"
+        );
+
+        for quiet in [
+            CheckpointResult::silence(1),
+            CheckpointResult::fail_open(1),
+            CheckpointResult::suppressed(&signals, 1),
+        ] {
+            let value = serde_json::to_value(quiet).unwrap();
+            assert!(value.get("decision").is_none(), "{value}");
+            assert!(value.get("reason").is_none(), "{value}");
+            assert!(value.get("hookSpecificOutput").is_none(), "{value}");
+        }
+    }
+
+    // S1 round 2: ${stop_hook_active} substitution stringifies booleans.
+    #[test]
+    fn continuation_accepts_boolean_and_string_forms() {
+        let from =
+            |v: serde_json::Value| -> Result<CheckpointTurnParams, _> { serde_json::from_value(v) };
+        let base = |cont: serde_json::Value| {
+            serde_json::json!({
+                "session_id": "s", "transcript_path": "t.jsonl",
+                "final_message": "m", "continuation": cont
+            })
+        };
+        assert!(from(base(serde_json::json!(true))).unwrap().continuation);
+        assert!(!from(base(serde_json::json!(false))).unwrap().continuation);
+        assert!(from(base(serde_json::json!("true"))).unwrap().continuation);
+        assert!(!from(base(serde_json::json!("false"))).unwrap().continuation);
+        assert!(from(base(serde_json::json!("maybe"))).is_err());
     }
 
     #[test]

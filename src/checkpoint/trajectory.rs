@@ -56,6 +56,10 @@ const VOLATILE_KEYS: &[&str] = &[
     "sessionId",
     "timestamp",
     "request_id",
+    // Narrative metadata, not action content: the model rephrases its Bash
+    // `description` on every retry of the SAME command, which blinded the
+    // repetition detector in the live S1 spike (round 2 finding).
+    "description",
 ];
 
 fn write_normalized(value: &Value, out: &mut String) {
@@ -221,6 +225,12 @@ mod tests {
             (
                 json!({ "command": "cargo   test\n--all" }),
                 json!({ "command": "cargo test --all" }),
+            ),
+            // Narrative `description` is dropped (S1 round 2: the model
+            // rephrases it on every retry of the same command).
+            (
+                json!({ "command": "cargo test", "description": "Run tests (attempt 1)" }),
+                json!({ "command": "cargo test", "description": "Retry the test suite" }),
             ),
         ];
         for (a, b) in equal_pairs {
