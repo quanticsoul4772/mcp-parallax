@@ -136,7 +136,7 @@ fn check_input(params: &VerifyParams, max_claim_chars: usize) -> Result<(), AppE
     if len > max_claim_chars {
         return Err(AppError::InvalidInput(format!(
             "claim is {len} characters; the configured maximum is {max_claim_chars} \
-             (VERIFY_MAX_CLAIM_CHARS); it was not trimmed"
+             (INPUT_MAX_CHARS); it was not trimmed"
         )));
     }
     Ok(())

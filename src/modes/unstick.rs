@@ -133,7 +133,7 @@ fn check_input(params: &UnstickParams, max_chars: usize) -> Result<(), AppError>
     if total > max_chars {
         return Err(AppError::InvalidInput(format!(
             "combined input is {total} characters; the configured maximum is {max_chars} \
-             (VERIFY_MAX_CLAIM_CHARS); it was not trimmed"
+             (INPUT_MAX_CHARS); it was not trimmed"
         )));
     }
     Ok(())

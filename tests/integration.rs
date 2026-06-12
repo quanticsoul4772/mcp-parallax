@@ -25,7 +25,10 @@ fn test_config(timeout_ms: u64) -> Config {
         anthropic_api_key: "test-key".into(),
         anthropic_model: "claude-opus-4-8".into(),
         verify_ensemble_k: 3,
-        verify_max_claim_chars: 50_000,
+        input_max_chars: 50_000,
+        voyage_api_key: None,
+        voyage_model: "voyage-4".into(),
+        memory_recall_limit: 5,
         database_path: ":memory:".into(),
         log_level: "info".into(),
         request_timeout_ms: timeout_ms,
@@ -337,6 +340,9 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
     let db = std::env::temp_dir().join(format!("parallax-smoke-{}.db", uuid::Uuid::new_v4()));
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mcp-parallax"))
         .env("ANTHROPIC_API_KEY", "dummy-key-no-model-call-happens")
+        // The developer machine may carry a real key — this test asserts the
+        // capability-OFF catalog (FR-007).
+        .env_remove("VOYAGE_API_KEY")
         .env("DATABASE_PATH", db.to_string_lossy().to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -509,4 +515,405 @@ async fn unstick_failures_use_the_same_distinct_classes() {
     assert_eq!(records[0].outcome, Outcome::Refusal);
 
     client.cancel().await.unwrap();
+}
+
+// ====== 003-memory-layer ====================================================
+
+use mcp_parallax::client::VoyageClient;
+use mcp_parallax::traits::storage::Storage;
+use wiremock::Request;
+
+/// Build the full server with the memory capability ON: a real `VoyageClient`
+/// pointed at the same wiremock server (`/v1/embeddings` beside
+/// `/v1/messages`), persisted to `db_path`.
+async fn serve_with_memory(
+    mock: &MockServer,
+    db_path: &str,
+) -> (
+    rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+    Arc<SqliteStorage>,
+    rmcp::service::RunningService<rmcp::service::RoleServer, Parallax>,
+) {
+    let mut config = test_config(2_000);
+    config.voyage_api_key = Some("voyage-test-key".into());
+    let storage = Arc::new(SqliteStorage::connect(db_path).await.unwrap());
+    let anthropic =
+        Arc::new(AnthropicClient::with_base_url(&config, &mock.uri()).with_backoff_base_ms(1));
+    let voyage = Arc::new(
+        VoyageClient::with_base_url(&config, &mock.uri())
+            .unwrap()
+            .with_backoff_base_ms(1),
+    );
+    let server = Parallax::with_embedder(
+        anthropic,
+        storage.clone(),
+        Arc::new(SystemClock),
+        &config,
+        Some(voyage),
+    )
+    .unwrap();
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move { server.serve(server_io).await });
+    let client = ().serve(client_io).await.expect("client init");
+    let running_server = server_task.await.expect("join").expect("server init");
+    (client, storage, running_server)
+}
+
+fn tool_call(name: &str, arguments: &Value) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new(name.to_string());
+    params.arguments = arguments.as_object().cloned();
+    params
+}
+
+/// Deterministic per-content embeddings: distinct contents get nearly
+/// orthogonal vectors; the query lands closest to the "alpha" document.
+fn mount_embeddings(mock: &MockServer) -> impl std::future::Future<Output = ()> + '_ {
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(|req: &Request| {
+            let body: Value = req.body_json().unwrap();
+            let text = body["input"][0].as_str().unwrap();
+            let vector: Vec<f32> = if text.contains("alpha") {
+                vec![1.0, 0.0]
+            } else if text.contains("beta") {
+                vec![0.0, 1.0]
+            } else {
+                // The recall query — closest to alpha.
+                vec![0.9, 0.1]
+            };
+            ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "embedding": vector, "index": 0 }],
+                "usage": { "total_tokens": 5 }
+            }))
+        })
+        .mount(mock)
+}
+
+// ---- T014: catalog gating (FR-007) ----------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {
+    let mock = MockServer::start().await;
+    // serve() builds the server via Parallax::new with voyage_api_key = None —
+    // and construction must not touch the network (no mounts needed).
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let mut names: Vec<String> = client
+        .list_all_tools()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["unstick", "verify"]);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["forget", "recall", "save", "unstick", "verify"]);
+
+    // Descriptions and schema property sets match the contract files.
+    let props = |schema: &Value| -> Vec<String> {
+        schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    };
+    for (name, contract_text) in [
+        (
+            "save",
+            include_str!("../specs/003-memory-layer/contracts/save.tool.json"),
+        ),
+        (
+            "recall",
+            include_str!("../specs/003-memory-layer/contracts/recall.tool.json"),
+        ),
+        (
+            "forget",
+            include_str!("../specs/003-memory-layer/contracts/forget.tool.json"),
+        ),
+    ] {
+        let tool = tools.iter().find(|t| t.name == name).unwrap();
+        let contract: Value = serde_json::from_str(contract_text).unwrap();
+        assert_eq!(
+            tool.description.as_deref().unwrap(),
+            contract["description"],
+            "{name} description"
+        );
+        let input = serde_json::to_value(tool.input_schema.as_ref()).unwrap();
+        assert_eq!(
+            props(&input),
+            props(&contract["inputSchema"]),
+            "{name} input"
+        );
+        let output =
+            serde_json::to_value(tool.output_schema.as_ref().expect("outputSchema")).unwrap();
+        assert_eq!(
+            props(&output),
+            props(&contract["outputSchema"]),
+            "{name} output"
+        );
+    }
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T015: save → recall round trip, records, attribution ------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn save_then_recall_returns_the_relevant_memory_first_with_records() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    // Two first-hand saves with distinct embeddings.
+    let saved_alpha = client
+        .call_tool(tool_call(
+            "save",
+            &json!({
+                "content": "alpha: pin the toolchain before bumping MSRV",
+                "kind": "lesson",
+                "origin": "this session",
+                "external": false
+            }),
+        ))
+        .await
+        .unwrap();
+    let alpha = saved_alpha.structured_content.as_ref().unwrap();
+    assert_eq!(alpha["trust"], "first_hand");
+    client
+        .call_tool(tool_call(
+            "save",
+            &json!({
+                "content": "beta: wiremock mounts are additive",
+                "kind": "fact",
+                "origin": "this session",
+                "external": false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    // The query embeds closest to alpha — it must come back first.
+    let recalled = client
+        .call_tool(tool_call(
+            "recall",
+            &json!({ "query": "toolchain pinning" }),
+        ))
+        .await
+        .unwrap();
+    let structured = recalled.structured_content.as_ref().unwrap();
+    let contract: Value = serde_json::from_str(include_str!(
+        "../specs/003-memory-layer/contracts/recall.tool.json"
+    ))
+    .unwrap();
+    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
+    let memories = structured["memories"].as_array().unwrap();
+    assert_eq!(memories.len(), 2);
+    assert!(memories[0]["content"].as_str().unwrap().contains("alpha"));
+    assert_eq!(memories[0]["id"], alpha["id"]);
+    assert!(memories[0]["score"].as_f64().unwrap() > memories[1]["score"].as_f64().unwrap());
+
+    // One record per call, attributed to its tool and the embedding model.
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 3);
+    let mut tools_seen: Vec<&str> = records.iter().map(|r| r.tool.as_str()).collect();
+    tools_seen.sort_unstable();
+    assert_eq!(tools_seen, ["recall", "save", "save"]);
+    assert!(records.iter().all(|r| r.model == "voyage-4"));
+    assert!(records.iter().all(|r| r.outcome == Outcome::Success));
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verifying_save_runs_the_ensemble_and_attributes_the_anthropic_model() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(end_turn(&json!({ "verdict": "supported", "findings": [] }))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let saved = client
+        .call_tool(tool_call(
+            "save",
+            &json!({
+                "content": "alpha claim from a blog post",
+                "kind": "fact",
+                "origin": "https://example.com/post",
+                "external": true,
+                "verify": true
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = saved.structured_content.as_ref().unwrap();
+    assert_eq!(structured["trust"], "verified");
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "save");
+    assert_eq!(records[0].model, "claude-opus-4-8");
+    // Ensemble usage (3 × 100) plus the embedding tokens (5).
+    assert_eq!(records[0].input_tokens, 305);
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T013: trust banding end-to-end (FR-004) -------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn at_equal_relevance_first_hand_outranks_untrusted_and_both_are_labeled() {
+    let mock = MockServer::start().await;
+    // Both contents contain "alpha" — identical embeddings, equal relevance.
+    mount_embeddings(&mock).await;
+    let (client, _storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    // Save the untrusted one FIRST so insertion order can't fake the win.
+    client
+        .call_tool(tool_call(
+            "save",
+            &json!({ "content": "alpha hearsay from a forum", "kind": "fact",
+                    "origin": "forum", "external": true }),
+        ))
+        .await
+        .unwrap();
+    client
+        .call_tool(tool_call(
+            "save",
+            &json!({ "content": "alpha observed directly", "kind": "fact",
+                    "origin": "this session", "external": false }),
+        ))
+        .await
+        .unwrap();
+
+    let recalled = client
+        .call_tool(tool_call("recall", &json!({ "query": "the thing" })))
+        .await
+        .unwrap();
+    let memories = recalled.structured_content.unwrap()["memories"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(memories.len(), 2);
+    assert_eq!(memories[0]["trust"], "first_hand");
+    assert_eq!(memories[0]["external"], false);
+    assert_eq!(memories[1]["trust"], "untrusted");
+    assert_eq!(memories[1]["external"], true);
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T015: embedding provider failure surfaces with its class --------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedding_provider_failure_surfaces_named_with_one_record() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("invalid input"))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let err = client
+        .call_tool(tool_call(
+            "save",
+            &json!({
+                "content": "anything",
+                "kind": "fact",
+                "origin": "here",
+                "external": false
+            }),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("[embedding_provider]"),
+        "got: {err}"
+    );
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::EmbeddingProvider);
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T015: forget is permanent, across store reopen -------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forget_is_permanent_across_store_reopen() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    let db = std::env::temp_dir().join(format!("parallax-it-{}.db", uuid::Uuid::new_v4()));
+    let db_path = db.to_string_lossy().to_string();
+
+    {
+        let (client, _storage, server) = serve_with_memory(&mock, &db_path).await;
+        let keep = client
+            .call_tool(tool_call(
+                "save",
+                &json!({ "content": "alpha keeper", "kind": "skill",
+                        "origin": "s", "external": false }),
+            ))
+            .await
+            .unwrap();
+        let drop_me = client
+            .call_tool(tool_call(
+                "save",
+                &json!({ "content": "beta to forget", "kind": "skill",
+                        "origin": "s", "external": false }),
+            ))
+            .await
+            .unwrap();
+        let drop_id = drop_me.structured_content.unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let forgotten = client
+            .call_tool(tool_call("forget", &json!({ "id": drop_id.clone() })))
+            .await
+            .unwrap();
+        assert_eq!(forgotten.structured_content.unwrap()["forgotten"], true);
+
+        // A second forget of the same id is a distinct not-found error.
+        let err = client
+            .call_tool(tool_call("forget", &json!({ "id": drop_id })))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("[invalid_input]"), "got: {err}");
+        assert!(err.to_string().contains("no memory with id"), "got: {err}");
+
+        let _ = keep;
+        client.cancel().await.unwrap();
+        let _ = server.cancel().await;
+    }
+
+    // Reopen the store fresh — only the kept memory survives.
+    let reopened = SqliteStorage::connect(&db_path).await.unwrap();
+    let memories = reopened.load_memories().await.unwrap();
+    assert_eq!(memories.len(), 1);
+    assert!(memories[0].content.contains("alpha keeper"));
+    drop(reopened);
+    let _ = std::fs::remove_file(&db);
 }

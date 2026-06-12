@@ -1,6 +1,7 @@
 //! The persistence boundary. SQLite-backed in production; mocked in tests.
 
 use crate::error::AppError;
+use crate::memory::Memory;
 use crate::telemetry::InvocationRecord;
 use serde_json::Value;
 
@@ -29,6 +30,28 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns [`AppError`] if the write fails.
     async fn record_invocation(&self, record: &InvocationRecord) -> Result<(), AppError>;
+
+    /// Persist one memory (memory capability).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn save_memory(&self, memory: &Memory) -> Result<(), AppError>;
+
+    /// Load every stored memory (ranking happens in process — research.md 003
+    /// S1: brute force at v1 scale).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    async fn load_memories(&self) -> Result<Vec<Memory>, AppError>;
+
+    /// Permanently delete a memory by id; returns whether it existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the delete fails.
+    async fn delete_memory(&self, id: &str) -> Result<bool, AppError>;
 }
 
 #[cfg(test)]

@@ -128,7 +128,7 @@ async fn main() {
             tried: Some(tried.iter().map(|s| (*s).to_string()).collect()),
         };
         let start = Instant::now();
-        let result = unstick::run(&client, &mode, &params, config.verify_max_claim_chars).await;
+        let result = unstick::run(&client, &mode, &params, config.input_max_chars).await;
         let elapsed = start.elapsed();
         max_latency_ms = max_latency_ms.max(elapsed.as_millis());
 

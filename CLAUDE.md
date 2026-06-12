@@ -13,13 +13,17 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: core layer serving two correctives.** The server speaks MCP over stdio
-and serves **`verify`** (k parallel stance-blind passes, agreement-derived
-confidence) and **`unstick`** (one committed next step for a stuck caller,
-single pass) — both via Anthropic native structured outputs, schema-guaranteed
-at both hops, with one invocation record per call in SQLite. Watchdog, memory,
-research, and deterministic layers are not built yet. Feature artifacts:
-`specs/001-core-layer/`, `specs/002-unstick-mode/`.
+**Status: core layer + memory layer.** The server speaks MCP over stdio and
+serves **`verify`** (k parallel stance-blind passes, agreement-derived
+confidence), **`unstick`** (one committed next step for a stuck caller,
+single pass), and — gated on `VOYAGE_API_KEY` presence — the memory tools
+**`save`/`recall`/`forget`** (verified-before-stored trust: external content is
+quarantined untrusted unless an independent verification pass admits it;
+ranking is brute-force cosine + recency with a trust band — a named deviation
+from sqlite-vec, see `SDK_LANDSCAPE.md` §memory). One invocation record per
+call in SQLite. Watchdog, research, and deterministic layers are not built
+yet. Feature artifacts: `specs/001-core-layer/`, `specs/002-unstick-mode/`,
+`specs/003-memory-layer/`.
 
 ## The design is the source of truth
 
@@ -84,10 +88,15 @@ advisories. `pre-commit` hooks mirror the gate — `pre-commit install`.
 ## Runtime configuration (`Config::from_env()`)
 
 All config is environment variables: `ANTHROPIC_API_KEY` (required — the binary
-errors at startup without it), `DATABASE_PATH` (default `./data/parallax.db`),
-`LOG_LEVEL` (default `info`), `REQUEST_TIMEOUT_MS` (default `30000`),
-`MAX_RETRIES` (default `3`). A present-but-unparseable value is an error, never a
-silent fallback to the default.
+errors at startup without it), `ANTHROPIC_MODEL` (default `claude-opus-4-8`),
+`VERIFY_ENSEMBLE_K` (default `3`), `INPUT_MAX_CHARS` (default `50000`;
+`VERIFY_MAX_CLAIM_CHARS` honored as alias), `VOYAGE_API_KEY` (optional —
+presence enables the memory tools; absent, they are not in the catalog),
+`VOYAGE_MODEL` (default `voyage-4`), `MEMORY_RECALL_LIMIT` (default `5`,
+1..=20), `DATABASE_PATH` (default `./data/parallax.db`), `LOG_LEVEL` (default
+`info`), `REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
+A present-but-unparseable value is an error, never a silent fallback to the
+default.
 
 ## Conventions (carried over from `mcp-reasoning`, compiler-enforced)
 
@@ -99,9 +108,10 @@ silent fallback to the default.
   is declared in **both** `Cargo.toml [lints]` and the `lib.rs` preamble — change
   them together.
 - Structured `tracing` to **stderr only** — stdout is the MCP JSON-RPC channel.
-- Composition over trait inheritance (the `ModelClient`/`Storage`/`TimeProvider`
-  seams). Every external dependency sits behind a mockable trait so the server tests
-  without network or disk.
+- Composition over trait inheritance (the
+  `ModelClient`/`Storage`/`TimeProvider`/`Embedder` seams). Every external
+  dependency sits behind a mockable trait so the server tests without network
+  or disk.
 - Target ≤500 lines per `.rs` file for new modules.
 - Off by default / gated: every new capability (network egress, code execution) is
   env-gated and off by default.
@@ -112,12 +122,20 @@ silent fallback to the default.
 src/
 ├── main.rs           # entry point: --version/--help, stderr tracing, config load
 ├── lib.rs            # crate docs + lint preamble
-├── error.rs          # AppError, ConfigError (thiserror)
+├── error.rs          # AppError, ConfigError, the outcome taxonomy (thiserror)
 ├── config.rs         # Config::from_env()
-└── traits/           # the three mockable seams
+├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
+├── client/           # AnthropicClient (structured outputs), VoyageClient (embeddings)
+├── modes/            # mode registry + verify/unstick (prompt + schema + run logic)
+├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
+├── schema/           # sanitizer (grammar subset) + local validator
+├── storage/          # SqliteStorage (sessions, memories, invocation records)
+├── telemetry.rs      # InvocationRecord + per-model pricing
+└── traits/           # the four mockable seams
     ├── clock.rs      # TimeProvider + SystemClock
     ├── client.rs     # ModelClient — the constrained-output contract (prompt + schema → JSON)
-    └── storage.rs    # Storage — session persistence
+    ├── embedder.rs   # Embedder — asymmetric document/query embeddings
+    └── storage.rs    # Storage — sessions, memories, records
 docs/design/          # the full design corpus (north star)
 ```
 
@@ -132,9 +150,9 @@ hooks (branch/commit) are wired via the speckit-git extension.
 ## Sequencing (from `SDK_LANDSCAPE.md`)
 
 The scaffold's trait seams are the slots the SDKs fill. Rough order: **core**
-(rmcp + thin Anthropic structured-outputs client behind `ModelClient`, makes
-`complete(prompt, schema)` real) → **memory** (Voyage 4 + sqlite-vec; spike the
-sqlx-loading caveat) → **research** (Brave provider + local extraction) →
+(rmcp + thin Anthropic structured-outputs client behind `ModelClient` — done) →
+**memory** (Voyage 4 + brute-force cosine over f32 BLOBs, the named sqlite-vec
+deviation — done) → **research** (Brave provider + local extraction) →
 **deterministic** (z3 + validator first; sandboxed code-exec optional, off) →
 **observability** (OTLP from the first server commit). This is a recommended order,
 not a mandate — confirm priorities before building.
@@ -142,9 +160,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `002-unstick-mode` — [spec](specs/002-unstick-mode/spec.md) ·
-[plan](specs/002-unstick-mode/plan.md) · [research](specs/002-unstick-mode/research.md) ·
-[data model](specs/002-unstick-mode/data-model.md) · [contracts](specs/002-unstick-mode/contracts/)
+Current feature: `003-memory-layer` — [spec](specs/003-memory-layer/spec.md) ·
+[plan](specs/003-memory-layer/plan.md) · [research](specs/003-memory-layer/research.md) ·
+[data model](specs/003-memory-layer/data-model.md) · [contracts](specs/003-memory-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

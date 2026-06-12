@@ -4,13 +4,19 @@
 //! point where every invocation — success, failure, or abandonment — leaves
 //! exactly one record (FR-010).
 
+use crate::client::VoyageClient;
 use crate::config::Config;
 use crate::error::{AppError, Outcome};
+use crate::memory::tools::{
+    self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
+    SaveParams, SaveResult,
+};
 use crate::modes::unstick::{self, NextStep, UnstickParams, UNSTICK_ID};
 use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
+use crate::traits::embedder::Embedder;
 use crate::traits::storage::Storage;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
@@ -25,14 +31,15 @@ use record::{to_error_data, RecordGuard};
 /// The Parallax MCP server: the seams it composes plus the mode registry.
 #[derive(Clone)]
 pub struct Parallax {
-    // Read only inside the #[tool_handler]-generated impl; rustc's dead-code
-    // pass doesn't see through the macro.
-    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     client: Arc<dyn ModelClient>,
     storage: Arc<dyn Storage>,
     clock: Arc<dyn TimeProvider>,
     registry: Arc<ModeRegistry>,
+    /// Memory tool dependencies — `None` when the capability is disabled
+    /// (no `VOYAGE_API_KEY`), in which case the tools are absent from the
+    /// catalog too (FR-007).
+    memory: Option<Arc<MemoryDeps>>,
     /// Per-process session UUID (one stdio connection per process).
     session_id: String,
     model: String,
@@ -42,7 +49,9 @@ pub struct Parallax {
 #[tool_router]
 impl Parallax {
     /// Compose the server from its seams. Registers all modes — an illegal
-    /// mode schema fails here, at boot, not on the first call.
+    /// mode schema fails here, at boot, not on the first call. Builds the
+    /// Voyage embedder iff `VOYAGE_API_KEY` is configured (FR-007);
+    /// construction never touches the network.
     ///
     /// # Errors
     ///
@@ -53,18 +62,70 @@ impl Parallax {
         clock: Arc<dyn TimeProvider>,
         config: &Config,
     ) -> Result<Self, AppError> {
+        let embedder: Option<Arc<dyn Embedder>> = match config.voyage_api_key {
+            Some(_) => Some(Arc::new(VoyageClient::new(config)?)),
+            None => None,
+        };
+        Self::with_embedder(client, storage, clock, config, embedder)
+    }
+
+    /// [`Parallax::new`] with the embedder injected (tests pass a mock; the
+    /// memory capability — tools, catalog entries — is on iff `Some`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the registry's flat+closed schema assertion.
+    pub fn with_embedder(
+        client: Arc<dyn ModelClient>,
+        storage: Arc<dyn Storage>,
+        clock: Arc<dyn TimeProvider>,
+        config: &Config,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Self, AppError> {
         let mut registry = ModeRegistry::new();
         verify::register(&mut registry, config.verify_ensemble_k)?;
         unstick::register(&mut registry)?;
+
+        let memory = match embedder {
+            Some(embedder) => {
+                let verify_mode = registry
+                    .get(VERIFY_ID)
+                    .ok_or_else(|| {
+                        AppError::Client("verify mode not registered at boot".to_string())
+                    })?
+                    .clone();
+                Some(Arc::new(MemoryDeps {
+                    embedder,
+                    storage: Arc::clone(&storage),
+                    clock: Arc::clone(&clock),
+                    model_client: Arc::clone(&client),
+                    verify_mode,
+                    input_max_chars: config.input_max_chars,
+                    default_recall_limit: config.memory_recall_limit,
+                }))
+            }
+            None => None,
+        };
+
+        // Catalog honesty (FR-007): a disabled capability is absent from the
+        // catalog, not present-but-erroring.
+        let mut tool_router = Self::tool_router();
+        if memory.is_none() {
+            for name in ["save", "recall", "forget"] {
+                tool_router.remove_route(name);
+            }
+        }
+
         Ok(Self {
-            tool_router: Self::tool_router(),
+            tool_router,
             client,
             storage,
             clock,
             registry: Arc::new(registry),
+            memory,
             session_id: uuid::Uuid::new_v4().to_string(),
             model: config.anthropic_model.clone(),
-            max_claim_chars: config.verify_max_claim_chars,
+            max_claim_chars: config.input_max_chars,
         })
     }
 
@@ -104,6 +165,54 @@ impl Parallax {
         self.unstick_with_ct(params, context.ct).await
     }
 
+    /// The `save` tool: store one memory with derived trust.
+    #[tool(
+        name = "save",
+        description = "Save a memory for future sessions: a skill (reusable approach that \
+        worked), a lesson (what failed and why), or a fact (durable knowledge). Provide \
+        provenance: where this came from and whether it is first-hand or from external content. \
+        External memories are stored untrusted unless you request verification; verified or \
+        first-hand memories rank higher at recall."
+    )]
+    pub async fn save(
+        &self,
+        Parameters(params): Parameters<SaveParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<SaveResult>, ErrorData> {
+        self.save_with_ct(params, context.ct).await
+    }
+
+    /// The `recall` tool: semantically relevant memories for a query.
+    #[tool(
+        name = "recall",
+        description = "Recall saved memories relevant to what you are working on. Describe what \
+        you need in natural language; returns the most relevant skills, lessons, and facts from \
+        prior sessions, ranked, each labeled with its provenance and trust standing. Call before \
+        re-deriving something that may already be solved."
+    )]
+    pub async fn recall(
+        &self,
+        Parameters(params): Parameters<RecallParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<RecallResult>, ErrorData> {
+        self.recall_with_ct(params, context.ct).await
+    }
+
+    /// The `forget` tool: permanently delete one memory by id.
+    #[tool(
+        name = "forget",
+        description = "Permanently delete a saved memory by id. Use when a memory is wrong, \
+        stale, or should not be retained. Deletion is irreversible; the memory will never \
+        appear in recall again."
+    )]
+    pub async fn forget(
+        &self,
+        Parameters(params): Parameters<ForgetParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<ForgetResult>, ErrorData> {
+        self.forget_with_ct(params, context.ct).await
+    }
+
     async fn verify_with_ct(
         &self,
         params: VerifyParams,
@@ -112,7 +221,7 @@ impl Parallax {
         let mode = self.registry.get(VERIFY_ID).ok_or_else(|| {
             ErrorData::internal_error("verify mode not registered".to_string(), None)
         })?;
-        self.run_recorded(VERIFY_ID, ct, async {
+        self.run_recorded(VERIFY_ID, self.model.clone(), ct, async {
             verify::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
                 .await
                 .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
@@ -128,10 +237,69 @@ impl Parallax {
         let mode = self.registry.get(UNSTICK_ID).ok_or_else(|| {
             ErrorData::internal_error("unstick mode not registered".to_string(), None)
         })?;
-        self.run_recorded(UNSTICK_ID, ct, async {
+        self.run_recorded(UNSTICK_ID, self.model.clone(), ct, async {
             unstick::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
                 .await
                 .map(|run| (run.step, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
+    /// The memory deps, or the internal error for a tool that should not have
+    /// been reachable — the catalog omits memory tools when disabled (FR-007),
+    /// so a call without deps is a client ignoring the catalog.
+    fn memory_deps(&self) -> Result<&Arc<MemoryDeps>, ErrorData> {
+        self.memory.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "memory capability is disabled (VOYAGE_API_KEY is not configured)".to_string(),
+                None,
+            )
+        })
+    }
+
+    async fn save_with_ct(
+        &self,
+        params: SaveParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<SaveResult>, ErrorData> {
+        let deps = Arc::clone(self.memory_deps()?);
+        // Model attribution is known up front: a verifying save is dominated
+        // by the verify ensemble's model; otherwise only the embedder runs.
+        let model = if memory_tools::save_runs_verification(&params) {
+            self.model.clone()
+        } else {
+            deps.embedder.model_id().to_string()
+        };
+        self.run_recorded("save", model, ct, async {
+            memory_tools::save(&deps, &params).await
+        })
+        .await
+    }
+
+    async fn recall_with_ct(
+        &self,
+        params: RecallParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<RecallResult>, ErrorData> {
+        let deps = Arc::clone(self.memory_deps()?);
+        let model = deps.embedder.model_id().to_string();
+        self.run_recorded("recall", model, ct, async {
+            memory_tools::recall(&deps, &params).await
+        })
+        .await
+    }
+
+    async fn forget_with_ct(
+        &self,
+        params: ForgetParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<ForgetResult>, ErrorData> {
+        let deps = Arc::clone(self.memory_deps()?);
+        // No provider call is involved; attribute to the embedder model the
+        // capability is keyed on.
+        let model = deps.embedder.model_id().to_string();
+        self.run_recorded("forget", model, ct, async {
+            memory_tools::forget(&deps, &params).await
         })
         .await
     }
@@ -142,6 +310,7 @@ impl Parallax {
     async fn run_recorded<T, Fut>(
         &self,
         tool_id: &'static str,
+        model: String,
         ct: tokio_util::sync::CancellationToken,
         work: Fut,
     ) -> Result<Json<T>, ErrorData>
@@ -153,7 +322,7 @@ impl Parallax {
             Arc::clone(&self.clock),
             self.session_id.clone(),
             tool_id.to_string(),
-            self.model.clone(),
+            model,
         );
 
         tokio::select! {
@@ -179,15 +348,27 @@ impl Parallax {
     }
 }
 
-#[tool_handler]
+// The router expression must be the instance field — the macro default
+// (`Self::tool_router()`) would rebuild the full, ungated router per call and
+// silently undo the capability gating done at construction.
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for Parallax {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+        let mut instructions = String::from(
             "Parallax: independent correctives for the calling model's blind spots. \
              Call `verify` when an assertion matters and being confidently wrong is costly. \
              Call `unstick` when you are stuck or looping and need to commit to one \
              concrete next step.",
-        )
+        );
+        if self.memory.is_some() {
+            instructions.push_str(
+                " Call `recall` before re-deriving prior work, `save` to keep a skill, \
+                 lesson, or fact for future sessions, and `forget` to delete a stored \
+                 memory by id.",
+            );
+        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(instructions)
     }
 }
 
@@ -206,7 +387,10 @@ mod tests {
             anthropic_api_key: "test-key".into(),
             anthropic_model: "claude-opus-4-8".into(),
             verify_ensemble_k: 3,
-            verify_max_claim_chars: 50_000,
+            input_max_chars: 50_000,
+            voyage_api_key: None,
+            voyage_model: "voyage-4".into(),
+            memory_recall_limit: 5,
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,
@@ -224,6 +408,163 @@ mod tests {
         )
         .unwrap();
         (server, storage)
+    }
+
+    fn catalog(server: &Parallax) -> Vec<String> {
+        let mut names: Vec<String> = server
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[tokio::test]
+    async fn without_a_voyage_key_the_catalog_is_exactly_the_correctives() {
+        let (server, _) = server_with(MockModelClient::new()).await;
+        assert_eq!(catalog(&server), ["unstick", "verify"]);
+        assert!(server.memory.is_none());
+        // The instructions don't advertise tools that aren't there.
+        let info = server.get_info();
+        assert!(!info.instructions.unwrap().contains("recall"));
+    }
+
+    #[tokio::test]
+    async fn with_an_embedder_the_memory_tools_join_the_catalog() {
+        let mut embedder = crate::traits::embedder::MockEmbedder::new();
+        embedder
+            .expect_model_id()
+            .return_const("voyage-4".to_string());
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let server = Parallax::with_embedder(
+            Arc::new(MockModelClient::new()),
+            storage,
+            Arc::new(SystemClock),
+            &test_config(),
+            Some(Arc::new(embedder)),
+        )
+        .unwrap();
+        assert_eq!(
+            catalog(&server),
+            ["forget", "recall", "save", "unstick", "verify"]
+        );
+        let info = server.get_info();
+        assert!(info.instructions.unwrap().contains("recall"));
+    }
+
+    #[tokio::test]
+    async fn memory_tools_record_with_the_attributed_model() {
+        let mut embedder = crate::traits::embedder::MockEmbedder::new();
+        embedder
+            .expect_model_id()
+            .return_const("voyage-4".to_string());
+        embedder.expect_embed_document().returning(|_| {
+            Ok(crate::traits::embedder::Embedding {
+                vector: vec![1.0, 0.0],
+                input_tokens: 9,
+            })
+        });
+        embedder.expect_embed_query().returning(|_| {
+            Ok(crate::traits::embedder::Embedding {
+                vector: vec![1.0, 0.0],
+                input_tokens: 4,
+            })
+        });
+        // The verifying save runs the ensemble (k = 3 in test_config).
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(3).returning(|_, _| {
+            Ok(Completion {
+                value: json!({ "verdict": "supported", "findings": [] }),
+                input_tokens: 100,
+                output_tokens: 10,
+            })
+        });
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let server = Parallax::with_embedder(
+            Arc::new(client),
+            storage.clone(),
+            Arc::new(SystemClock),
+            &test_config(),
+            Some(Arc::new(embedder)),
+        )
+        .unwrap();
+        let ct = tokio_util::sync::CancellationToken::new;
+
+        // Plain save: only the embedder ran — attributed to the voyage model.
+        let saved = server
+            .save_with_ct(
+                SaveParams {
+                    content: "first-hand lesson".into(),
+                    kind: crate::memory::Kind::Lesson,
+                    origin: "this session".into(),
+                    external: false,
+                    tags: None,
+                    verify: None,
+                },
+                ct(),
+            )
+            .await
+            .unwrap();
+
+        // Verifying save: the ensemble dominates — attributed to the
+        // anthropic model.
+        server
+            .save_with_ct(
+                SaveParams {
+                    content: "external claim".into(),
+                    kind: crate::memory::Kind::Fact,
+                    origin: "the web".into(),
+                    external: true,
+                    tags: None,
+                    verify: Some(true),
+                },
+                ct(),
+            )
+            .await
+            .unwrap();
+
+        let recalled = server
+            .recall_with_ct(
+                RecallParams {
+                    query: "lesson".into(),
+                    kind: None,
+                    limit: None,
+                },
+                ct(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(recalled.0.memories.len(), 2);
+
+        server
+            .forget_with_ct(
+                ForgetParams {
+                    id: saved.0.id.clone(),
+                },
+                ct(),
+            )
+            .await
+            .unwrap();
+
+        let records = storage.list_invocations().await.unwrap();
+        assert_eq!(records.len(), 4);
+        let model_for = |tool: &str| -> Vec<&str> {
+            records
+                .iter()
+                .filter(|r| r.tool == tool)
+                .map(|r| r.model.as_str())
+                .collect()
+        };
+        // Both saves recorded; the verifying one carries the anthropic model.
+        let mut save_models = model_for("save");
+        save_models.sort_unstable();
+        assert_eq!(save_models, ["claude-opus-4-8", "voyage-4"]);
+        assert_eq!(model_for("recall"), ["voyage-4"]);
+        assert_eq!(model_for("forget"), ["voyage-4"]);
+        // Every record succeeded.
+        assert!(records.iter().all(|r| r.outcome == Outcome::Success));
     }
 
     #[tokio::test]

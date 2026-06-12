@@ -6,6 +6,7 @@
 //! not apply here — no extensions are loaded in this feature.)
 
 use crate::error::{AppError, Outcome};
+use crate::memory::{Kind, Memory, Trust};
 use crate::telemetry::InvocationRecord;
 use crate::traits::storage::Storage;
 use chrono::{DateTime, Utc};
@@ -18,6 +19,18 @@ const MIGRATION: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
     id   TEXT PRIMARY KEY,
     data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memories (
+    id              TEXT PRIMARY KEY,
+    content         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    origin          TEXT NOT NULL,
+    external        INTEGER NOT NULL,
+    trust           TEXT NOT NULL,
+    tags            TEXT NOT NULL,
+    embedding       BLOB NOT NULL,
+    embedding_model TEXT NOT NULL,
+    created_at      TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS invocation_records (
     id            TEXT PRIMARY KEY,
@@ -157,6 +170,94 @@ impl Storage for SqliteStorage {
         .transpose()
     }
 
+    async fn save_memory(&self, memory: &Memory) -> Result<(), AppError> {
+        let tags = serde_json::to_string(&memory.tags)
+            .map_err(|e| AppError::Storage(format!("tags serialization: {e}")))?;
+        sqlx::query(
+            "INSERT INTO memories
+                (id, content, kind, origin, external, trust, tags,
+                 embedding, embedding_model, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&memory.id)
+        .bind(&memory.content)
+        .bind(memory.kind.as_str())
+        .bind(&memory.origin)
+        .bind(i64::from(memory.external))
+        .bind(memory.trust.as_str())
+        .bind(tags)
+        .bind(embedding_to_blob(&memory.embedding))
+        .bind(&memory.embedding_model)
+        .bind(memory.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("memory write failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn load_memories(&self) -> Result<Vec<Memory>, AppError> {
+        let rows = sqlx::query(
+            "SELECT id, content, kind, origin, external, trust, tags,
+                    embedding, embedding_model, created_at
+             FROM memories",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("memory read failed: {e}")))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let id: String = row.get("id");
+                // A misaligned BLOB is the same class of contract violation as
+                // an unknown enum — loud, never silently truncated.
+                let blob: &[u8] = row.get("embedding");
+                if !blob.len().is_multiple_of(4) {
+                    return Err(AppError::Storage(format!(
+                        "embedding blob length {} is not a multiple of 4 for memory {id}",
+                        blob.len()
+                    )));
+                }
+                let kind_text: String = row.get("kind");
+                let kind = Kind::parse(&kind_text).ok_or_else(|| {
+                    AppError::Storage(format!("unknown memory kind in store: {kind_text}"))
+                })?;
+                let trust_text: String = row.get("trust");
+                let trust = Trust::parse(&trust_text).ok_or_else(|| {
+                    AppError::Storage(format!("unknown trust in store: {trust_text}"))
+                })?;
+                let tags_text: String = row.get("tags");
+                let tags: Vec<String> = serde_json::from_str(&tags_text)
+                    .map_err(|e| AppError::Storage(format!("tags corrupt: {e}")))?;
+                let created_text: String = row.get("created_at");
+                let created_at = DateTime::parse_from_rfc3339(&created_text)
+                    .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
+                    .with_timezone(&Utc);
+                let external: i64 = row.get("external");
+                Ok(Memory {
+                    id,
+                    content: row.get("content"),
+                    kind,
+                    origin: row.get("origin"),
+                    external: external != 0,
+                    trust,
+                    tags,
+                    embedding: embedding_from_blob(blob),
+                    embedding_model: row.get("embedding_model"),
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
+    async fn delete_memory(&self, id: &str) -> Result<bool, AppError> {
+        let result = sqlx::query("DELETE FROM memories WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("memory delete failed: {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn record_invocation(&self, record: &InvocationRecord) -> Result<(), AppError> {
         #[allow(clippy::cast_possible_wrap)] // token/latency counts are far below i64::MAX
         sqlx::query(
@@ -180,6 +281,19 @@ impl Storage for SqliteStorage {
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
         Ok(())
     }
+}
+
+/// f32 slice → little-endian BLOB (bit-exact round trip; spike S1).
+fn embedding_to_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+/// Little-endian BLOB → f32 vector. Callers must reject misaligned blobs
+/// first (`load_memories` does, loudly, with the row id).
+fn embedding_from_blob(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 #[cfg(test)]
@@ -261,6 +375,111 @@ mod tests {
         let err = storage.record_invocation(&record).await.unwrap_err();
         assert!(matches!(err, AppError::Storage(_)));
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    fn sample_memory(id: &str, trust: Trust) -> Memory {
+        Memory {
+            id: id.to_string(),
+            content: format!("content for {id}"),
+            kind: Kind::Lesson,
+            origin: "test".into(),
+            external: trust == Trust::Untrusted,
+            trust,
+            tags: vec!["alpha".into(), "beta".into()],
+            embedding: vec![0.25, -1.5, 3.0e-7, 42.0],
+            embedding_model: "voyage-4".into(),
+            created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        }
+    }
+
+    #[tokio::test]
+    async fn every_trust_value_round_trips_bit_exact() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let trusts = [Trust::FirstHand, Trust::Verified, Trust::Untrusted];
+        for (i, trust) in trusts.into_iter().enumerate() {
+            storage
+                .save_memory(&sample_memory(&format!("m{i}"), trust))
+                .await
+                .unwrap();
+        }
+
+        let loaded = storage.load_memories().await.unwrap();
+        assert_eq!(loaded.len(), trusts.len());
+        for (i, trust) in trusts.into_iter().enumerate() {
+            let expected = sample_memory(&format!("m{i}"), trust);
+            let got = loaded.iter().find(|m| m.id == expected.id).unwrap();
+            // Full struct fidelity including the bit-exact f32 embedding (spike S1).
+            assert_eq!(got, &expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn forget_deletes_by_id_and_reports_unknown() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        storage
+            .save_memory(&sample_memory("keep", Trust::FirstHand))
+            .await
+            .unwrap();
+        storage
+            .save_memory(&sample_memory("drop", Trust::Untrusted))
+            .await
+            .unwrap();
+
+        assert!(storage.delete_memory("drop").await.unwrap());
+        assert!(!storage.delete_memory("drop").await.unwrap()); // already gone
+        assert!(!storage.delete_memory("never-existed").await.unwrap());
+
+        let remaining = storage.load_memories().await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "keep");
+    }
+
+    #[tokio::test]
+    async fn migration_rerun_preserves_memories() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        storage
+            .save_memory(&sample_memory("m", Trust::Verified))
+            .await
+            .unwrap();
+        sqlx::raw_sql(MIGRATION)
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        assert_eq!(storage.load_memories().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn misaligned_embedding_blob_is_a_loud_error_not_a_truncation() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "INSERT INTO memories
+                (id, content, kind, origin, external, trust, tags,
+                 embedding, embedding_model, created_at)
+             VALUES ('bad', 'c', 'fact', 'o', 0, 'first_hand', '[]',
+                     ?, 'voyage-4', '2026-06-11T12:00:00+00:00')",
+        )
+        .bind(vec![0_u8; 5]) // not a multiple of 4
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+
+        let err = storage.load_memories().await.unwrap_err();
+        assert!(matches!(err, AppError::Storage(_)));
+        assert!(
+            err.to_string().contains("not a multiple of 4") && err.to_string().contains("bad"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_memory_id_is_a_loud_error() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let memory = sample_memory("m", Trust::FirstHand);
+        storage.save_memory(&memory).await.unwrap();
+        let err = storage.save_memory(&memory).await.unwrap_err();
+        assert!(matches!(err, AppError::Storage(_)));
     }
 
     #[tokio::test]

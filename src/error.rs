@@ -30,6 +30,8 @@ pub enum Outcome {
     /// out-of-contract provider response (unexpected `stop_reason`, unparseable
     /// body).
     ValidationFailure,
+    /// The embedding provider failed (memory capability).
+    EmbeddingProvider,
     /// Startup configuration was missing or invalid (never recorded).
     ConfigError,
     /// The client abandoned the invocation before it completed.
@@ -48,6 +50,7 @@ impl Outcome {
             "retries_exhausted" => Some(Self::RetriesExhausted),
             "invalid_input" => Some(Self::InvalidInput),
             "validation_failure" => Some(Self::ValidationFailure),
+            "embedding_provider" => Some(Self::EmbeddingProvider),
             "config_error" => Some(Self::ConfigError),
             "cancelled" => Some(Self::Cancelled),
             _ => None,
@@ -65,6 +68,7 @@ impl Outcome {
             Self::RetriesExhausted => "retries_exhausted",
             Self::InvalidInput => "invalid_input",
             Self::ValidationFailure => "validation_failure",
+            Self::EmbeddingProvider => "embedding_provider",
             Self::ConfigError => "config_error",
             Self::Cancelled => "cancelled",
         }
@@ -120,14 +124,19 @@ pub enum AppError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
-    /// The returned value failed local schema validation (the constraints the
-    /// provider grammar cannot enforce).
-    #[error("response failed local schema validation: {0}")]
+    /// A result failed local validation: schema constraints the provider
+    /// grammar cannot enforce, a semantic contract (e.g. unstick restating a
+    /// tried item), or verification refuting a save.
+    #[error("validation failure: {0}")]
     ValidationFailure(String),
 
     /// The client abandoned the invocation.
     #[error("invocation cancelled by the client")]
     Cancelled,
+
+    /// The embedding provider failed (memory capability).
+    #[error("embedding provider error: {0}")]
+    EmbeddingProvider(String),
 }
 
 impl AppError {
@@ -148,6 +157,7 @@ impl AppError {
             Self::RetriesExhausted { .. } => Outcome::RetriesExhausted,
             Self::InvalidInput(_) => Outcome::InvalidInput,
             Self::Cancelled => Outcome::Cancelled,
+            Self::EmbeddingProvider(_) => Outcome::EmbeddingProvider,
         }
     }
 }
@@ -190,9 +200,13 @@ mod tests {
             ),
             (
                 AppError::ValidationFailure("confidence out of range".into()),
-                "schema validation",
+                "validation failure",
             ),
             (AppError::Cancelled, "cancelled"),
+            (
+                AppError::EmbeddingProvider("voyage 503".into()),
+                "embedding provider",
+            ),
             (
                 AppError::Config(ConfigError::MissingRequired("ANTHROPIC_API_KEY")),
                 "configuration error",
@@ -247,6 +261,10 @@ mod tests {
         );
         assert_eq!(AppError::Cancelled.outcome(), Outcome::Cancelled);
         assert_eq!(
+            AppError::EmbeddingProvider(String::new()).outcome(),
+            Outcome::EmbeddingProvider
+        );
+        assert_eq!(
             AppError::Storage(String::new()).outcome(),
             Outcome::ConfigError
         );
@@ -264,5 +282,10 @@ mod tests {
         assert_eq!(Outcome::ValidationFailure.as_str(), "validation_failure");
         assert_eq!(Outcome::ConfigError.as_str(), "config_error");
         assert_eq!(Outcome::Cancelled.as_str(), "cancelled");
+        assert_eq!(Outcome::EmbeddingProvider.as_str(), "embedding_provider");
+        assert_eq!(
+            Outcome::parse("embedding_provider"),
+            Some(Outcome::EmbeddingProvider)
+        );
     }
 }

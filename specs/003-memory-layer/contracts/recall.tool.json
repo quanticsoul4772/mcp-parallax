@@ -1,0 +1,40 @@
+{
+  "$comment": "MCP tool contract for `recall`. MCP-side only (no model hop - research.md D6): the nested memory array is legal here. Ranking: relevance-dominant, recency tie-break, untrusted never above trusted at comparable relevance (FR-004).",
+  "name": "recall",
+  "description": "Recall saved memories relevant to what you are working on. Describe what you need in natural language; returns the most relevant skills, lessons, and facts from prior sessions, ranked, each labeled with its provenance and trust standing. Call before re-deriving something that may already be solved.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "minLength": 1, "description": "What you need, in natural language." },
+      "kind": { "type": ["string", "null"], "enum": ["skill", "lesson", "fact", null] },
+      "limit": { "type": ["integer", "null"], "minimum": 1, "maximum": 20 }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "memories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "content": { "type": "string" },
+            "kind": { "type": "string", "enum": ["skill", "lesson", "fact"] },
+            "origin": { "type": "string" },
+            "external": { "type": "boolean" },
+            "trust": { "type": "string", "enum": ["first_hand", "verified", "untrusted"] },
+            "created_at": { "type": "string" },
+            "score": { "type": "number" }
+          },
+          "required": ["id", "content", "kind", "origin", "external", "trust", "created_at", "score"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["memories"],
+    "additionalProperties": false
+  }
+}

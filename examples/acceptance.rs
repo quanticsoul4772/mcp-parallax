@@ -82,7 +82,7 @@ async fn main() {
         };
         let client = &client;
         let mode = &mode;
-        let max = config.verify_max_claim_chars;
+        let max = config.input_max_chars;
         async move {
             let start = Instant::now();
             let result = verify::run(client, mode, &params, max).await;

@@ -1,0 +1,21 @@
+{
+  "$comment": "MCP tool contract for `forget`. Hard deletion - the privacy/compliance lever. Unknown id is a distinct not-found error, not {forgotten:false}.",
+  "name": "forget",
+  "description": "Permanently delete a saved memory by id. Use when a memory is wrong, stale, or should not be retained. Deletion is irreversible; the memory will never appear in recall again.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "minLength": 1 }
+    },
+    "required": ["id"],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "forgotten": { "type": "boolean" }
+    },
+    "required": ["forgotten"],
+    "additionalProperties": false
+  }
+}

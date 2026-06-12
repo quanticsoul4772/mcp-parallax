@@ -42,6 +42,7 @@
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod memory;
 pub mod modes;
 pub mod schema;
 pub mod server;
