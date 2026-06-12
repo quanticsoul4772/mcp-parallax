@@ -160,9 +160,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `003-memory-layer` — [spec](specs/003-memory-layer/spec.md) ·
-[plan](specs/003-memory-layer/plan.md) · [research](specs/003-memory-layer/research.md) ·
-[data model](specs/003-memory-layer/data-model.md) · [contracts](specs/003-memory-layer/contracts/)
+Current feature: `004-research-layer` — [spec](specs/004-research-layer/spec.md) ·
+[plan](specs/004-research-layer/plan.md) · [research](specs/004-research-layer/research.md) ·
+[data model](specs/004-research-layer/data-model.md) · [contracts](specs/004-research-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
