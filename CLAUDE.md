@@ -184,9 +184,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `006-checkpoint-layer` — [spec](specs/006-checkpoint-layer/spec.md) ·
-[plan](specs/006-checkpoint-layer/plan.md) · [research](specs/006-checkpoint-layer/research.md) ·
-[data model](specs/006-checkpoint-layer/data-model.md) · [contracts](specs/006-checkpoint-layer/contracts/)
+Current feature: `007-observability-layer` — [spec](specs/007-observability-layer/spec.md) ·
+[plan](specs/007-observability-layer/plan.md) · [research](specs/007-observability-layer/research.md) ·
+[data model](specs/007-observability-layer/data-model.md) · [contracts](specs/007-observability-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
