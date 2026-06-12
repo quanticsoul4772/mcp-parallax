@@ -51,6 +51,8 @@ futures = "0.3.32"
 tokio-util = "0.7.18"
 rs-trafilatura = "0.2.2"
 robotstxt = "0.3.0"
+z3 = { version = "0.20", features = ["bundled"] }
+evalexpr = "13"
 
 [dev-dependencies]
 # Trait mocking — the whole server tests without network or disk
@@ -72,6 +74,13 @@ panic = "deny"
 # stdout is the MCP JSON-RPC channel — a stray print corrupts the protocol.
 print_stdout = "deny"
 dbg_macro = "deny"
+
+# Z3's Debug C++ build opens `.z3-trace` in the process cwd from a global
+# initializer (artifact pollution for a stdio server running in the client's
+# cwd) and is far slower. opt-level 3 makes cmake build Z3 as Release in
+# every cargo profile — `_TRACE` is compiled out.
+[profile.dev.package.z3-sys]
+opt-level = 3
 
 [profile.release]
 lto = true

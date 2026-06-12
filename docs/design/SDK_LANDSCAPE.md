@@ -151,10 +151,25 @@ arbitrary Python.
   Z3, MSRV 1.85, vendored build via the `bundled` feature. Pure in-process, no sandbox
   needed (it's a solver, not arbitrary code) — the cleanest deterministic win and the
   right *first* engine for the logic/constraint and "checkable-ness" rows.
+  **Validated (005, 2026-06-12):** clean bundled build is ~5 min (requires cmake —
+  on Windows the VS Build Tools' bundled cmake via the `CMAKE` env var works; CI
+  runners ship it). Z3 parses SMT-LIB scripts atomically, so an assertion-count
+  check detects parse failures without unsafe FFI. Z3's Debug C++ build opens
+  `.z3-trace` in the process cwd from a global initializer — `z3-sys` is forced
+  to `opt-level = 3` in every cargo profile so `_TRACE` compiles out.
 - **Schema/format checks** — the `jsonschema`/`rsonschema` validator above; in-process,
   trivial, already present.
-- **Arithmetic / units** — a pure-Rust evaluator (e.g. a `meval`/`fend`-style expression
-  crate) covers the bulk of quantitative checks without a code sandbox.
+- **Arithmetic / units** — a pure-Rust evaluator covers the bulk of quantitative
+  checks without a code sandbox. **Pick (amended 2026-06-12, feature 005):**
+  `evalexpr` 13 — the original "`meval`/`fend`-style" wording was proven wrong at
+  implementation: `meval` 0.2 is unmaintained and numeric-only (no boolean
+  comparisons, so a claim-as-expression target cannot work) and `fend-core` is
+  string-in/string-out without boolean results; `evalexpr` natively evaluates
+  comparisons into a typed boolean. Its dialect is strict (`^` yields floats,
+  int never equals float, `/` on integers is integer division) — the
+  translation prompt embeds the whitelist + type rules, and the engine rejects
+  exact `==`/`!=` over float-producing arithmetic (tolerance forms enforced).
+  `fend-core` remains the upgrade path for the units/dates row.
 - **Arbitrary code (PAL-style) — the sandbox question.** Running model-written Python
   is what needs isolation. Options, by isolation strength:
   - **wasmtime** — in-process WASM, memory-isolated by design, runtime formally

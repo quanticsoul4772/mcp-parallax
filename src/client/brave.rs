@@ -81,6 +81,7 @@ impl BraveClient {
             .map_err(|e| {
                 if e.is_timeout() {
                     AppError::Timeout {
+                        what: "request",
                         ms: self.timeout_ms,
                     }
                 } else {
@@ -128,6 +129,7 @@ impl SearchProvider for BraveClient {
             let payload: SearchResponse = response.json().await.map_err(|e| {
                 if e.is_timeout() {
                     AppError::Timeout {
+                        what: "request",
                         ms: self.timeout_ms,
                     }
                 } else {
@@ -314,7 +316,10 @@ mod tests {
             .await;
 
         let err = client_for(&mock).search("q", 2).await.unwrap_err();
-        assert!(matches!(err, AppError::Timeout { ms: 2_000 }), "got: {err}");
+        assert!(
+            matches!(err, AppError::Timeout { ms: 2_000, .. }),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]

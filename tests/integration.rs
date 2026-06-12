@@ -390,7 +390,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     names.sort_unstable();
-    assert_eq!(names, vec!["unstick", "verify"]);
+    assert_eq!(names, vec!["check", "unstick", "verify"]);
 
     drop(stdin);
     let _ = child.kill();
@@ -612,7 +612,7 @@ async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {
         .map(|t| t.name.to_string())
         .collect();
     names.sort();
-    assert_eq!(names, ["unstick", "verify"]);
+    assert_eq!(names, ["check", "unstick", "verify"]);
 
     client.cancel().await.unwrap();
 }
@@ -625,7 +625,10 @@ async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
     let tools = client.list_all_tools().await.unwrap();
     let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     names.sort_unstable();
-    assert_eq!(names, ["forget", "recall", "save", "unstick", "verify"]);
+    assert_eq!(
+        names,
+        ["check", "forget", "recall", "save", "unstick", "verify"]
+    );
 
     // Descriptions and schema property sets match the contract files.
     let props = |schema: &Value| -> Vec<String> {
@@ -1047,7 +1050,7 @@ async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
     let tools = client.list_all_tools().await.unwrap();
     let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     names.sort_unstable();
-    assert_eq!(names, ["research", "unstick", "verify"]);
+    assert_eq!(names, ["check", "research", "unstick", "verify"]);
 
     let research = tools.iter().find(|t| t.name == "research").unwrap();
     let contract: Value = serde_json::from_str(RESEARCH_CONTRACT).unwrap();
@@ -1208,6 +1211,250 @@ async fn research_invalid_input_is_rejected_pre_provider_with_one_record() {
     let records = storage.list_invocations().await.unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].outcome, Outcome::InvalidInput);
+
+    client.cancel().await.unwrap();
+}
+
+// ====== 005-deterministic-layer =============================================
+
+const CHECK_CONTRACT: &str =
+    include_str!("../specs/005-deterministic-layer/contracts/check.tool.json");
+
+/// Route the check translation hop by its prompt marker.
+async fn mount_check_translation(mock: &MockServer, translation: Value) {
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("deterministic checking"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&translation)))
+        .mount(mock)
+        .await;
+}
+
+// ---- T008: catalog — check is always on, no keys required (SC-005) ---------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_is_in_the_catalog_with_no_capability_keys_and_matches_the_contract() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let check = tools
+        .iter()
+        .find(|t| t.name == "check")
+        .expect("check listed");
+    let contract: Value = serde_json::from_str(CHECK_CONTRACT).unwrap();
+    assert_eq!(
+        check.description.as_deref().unwrap(),
+        contract["description"]
+    );
+    let props = |schema: &Value| -> Vec<String> {
+        schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let input = serde_json::to_value(check.input_schema.as_ref()).unwrap();
+    assert_eq!(props(&input), props(&contract["inputSchema"]));
+    let output = serde_json::to_value(check.output_schema.as_ref().expect("outputSchema")).unwrap();
+    assert_eq!(props(&output), props(&contract["outputSchema"]));
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T008: ground-truth round trip — the REAL engines execute --------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_arithmetic_round_trip_returns_an_engine_decided_verdict() {
+    let mock = MockServer::start().await;
+    mount_check_translation(
+        &mock,
+        json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "math::abs(1840 * 0.63 - 1159.2) <= 0.001",
+            "smtlib_constraints": null, "asserted": null
+        }),
+    )
+    .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "check",
+            &json!({ "claim": "a 37% reduction from 1840 ms leaves 1159.2 ms" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+
+    let contract: Value = serde_json::from_str(CHECK_CONTRACT).unwrap();
+    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
+    assert_eq!(structured["verdict"], "supported");
+    assert_eq!(structured["engine"], "arithmetic");
+    assert!(structured["formal_form"]
+        .as_str()
+        .unwrap()
+        .contains("math::abs"));
+    assert_eq!(structured["engine_result"], "true");
+    assert_eq!(structured["translation_attempts"], 1);
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "check");
+    assert_eq!(records[0].model, "claude-opus-4-8");
+    assert_eq!(records[0].outcome, Outcome::Success);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_refuted_impossibility_carries_the_solver_witness() {
+    let mock = MockServer::start().await;
+    mount_check_translation(
+        &mock,
+        json!({
+            "checkable": true, "reason": null, "engine": "constraints",
+            "arithmetic_expression": null,
+            "smtlib_constraints": "(declare-const a Int)\n(declare-const b Int)\n(declare-const c Int)\n(assert (< a b))\n(assert (< b c))\n(assert (< c a))",
+            "asserted": "unsatisfiable"
+        }),
+    )
+    .await;
+    let (client, _storage, _server) = serve(&mock, 5_000).await;
+
+    // The cyclic ordering really is unsatisfiable — the claim asserting
+    // impossibility is SUPPORTED, proven by the solver.
+    let result = client
+        .call_tool(tool_call(
+            "check",
+            &json!({ "claim": "you cannot order a, b, c so each is less than the next cyclically" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "supported");
+    assert_eq!(structured["engine"], "constraints");
+    assert_eq!(structured["engine_result"], "unsat");
+    assert!(structured["explanation"]
+        .as_str()
+        .unwrap()
+        .contains("no assignment exists"));
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T009: the honest decline path ------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_declines_uncheckable_claims_with_one_success_record() {
+    let mock = MockServer::start().await;
+    mount_check_translation(
+        &mock,
+        json!({
+            "checkable": false, "reason": "elegance is a judgment call",
+            "engine": null, "arithmetic_expression": null,
+            "smtlib_constraints": null, "asserted": null
+        }),
+    )
+    .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "check",
+            &json!({ "claim": "Rust is more elegant than C++" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "not_checkable");
+    assert!(structured["reason"].as_str().unwrap().contains("judgment"));
+    assert!(structured["engine"].is_null());
+    assert!(structured["formal_form"].is_null());
+    assert!(structured["engine_result"].is_null());
+    assert!(structured["witness"].is_null());
+
+    // The honest decline is a SUCCESS, not an error class.
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success);
+
+    client.cancel().await.unwrap();
+}
+
+// ---- T010: the feedback loop end to end --------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_recovers_from_a_malformed_translation_via_one_violation_fed_retry() {
+    let mock = MockServer::start().await;
+    // First attempt: wrong dialect (abs is not whitelisted). The retry prompt
+    // carries the engine violation; second attempt is valid.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("deterministic checking"))
+        .and(body_string_contains("REJECTED"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "math::abs(2.0 - 2.0) <= 0.1",
+            "smtlib_constraints": null, "asserted": null
+        }))))
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("deterministic checking"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "abs(2.0 - 2.0) <= 0.1",
+            "smtlib_constraints": null, "asserted": null
+        }))))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(tool_call("check", &json!({ "claim": "2 is about 2" })))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "supported");
+    assert_eq!(structured["translation_attempts"], 2);
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_double_translation_failure_surfaces_as_validation_failure() {
+    let mock = MockServer::start().await;
+    mount_check_translation(
+        &mock,
+        json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "((( not an expression",
+            "smtlib_constraints": null, "asserted": null
+        }),
+    )
+    .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let err = client
+        .call_tool(tool_call("check", &json!({ "claim": "c" })))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("[validation_failure]"),
+        "got: {err}"
+    );
+    assert!(err.to_string().contains("translation failed"), "got: {err}");
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::ValidationFailure);
 
     client.cancel().await.unwrap();
 }

@@ -10,18 +10,23 @@ catches the ways the model reliably goes wrong and cannot see from inside its ow
 context (anchoring, sycophancy, drift, overconfident wrong answers). The name is
 the thesis: a second vantage point reveals what one frame can't.
 
-> **Status: core + memory + research layers.** The server speaks MCP over
-> stdio and serves **`verify`** (k parallel stance-blind verification passes,
-> default 3, aggregated by majority with agreement-derived confidence),
-> **`unstick`** (one committed next step for a stuck caller, single pass) —
-> plus, when `VOYAGE_API_KEY` is set, **`save`/`recall`/`forget`** (durable
+> **Status: core + memory + research + deterministic layers.** The server
+> speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
+> verification passes, default 3, aggregated by majority with
+> agreement-derived confidence), **`unstick`** (one committed next step for a
+> stuck caller, single pass), **`check`** (checkable claims settled by
+> execution, not judgment: the model only classifies and translates into a
+> small formal target — an arithmetic expression or an SMT-LIB 2 constraint
+> system — and a deterministic engine decides, with the executed form and raw
+> result returned for audit; always on, no extra credential) — plus, when
+> `VOYAGE_API_KEY` is set, **`save`/`recall`/`forget`** (durable
 > cross-session memory with verified-before-stored trust), and, when
 > `BRAVE_API_KEY` is set, **`research`** (offload a question; get back a
 > short, cited, adversarially-verified answer — scoped parallel searches,
 > hygiene-enforced fetching, refute-biased per-claim verification, and a
 > deterministic grounding gate so no fabricated citation ever leaves the
 > server). Every invocation is recorded (tool, model, tokens, cost, latency,
-> outcome) in SQLite. The remaining layers follow the design north star in
+> outcome) in SQLite. The watchdog layer follows the design north star in
 > [`docs/design/NEW_SERVER_DESIGN.md`](docs/design/NEW_SERVER_DESIGN.md).
 >
 > Research cost note: records carry summed LLM tokens; Brave bills
@@ -42,6 +47,11 @@ See the [master design](docs/design/NEW_SERVER_DESIGN.md) and the deep-dives it
 indexes.
 
 ## Build & test
+
+> Contributor note: the `z3` dependency builds Z3 from source (`bundled`) —
+> the first clean build takes ~5 minutes and requires **cmake** (on Windows,
+> the VS 2022 Build Tools' bundled cmake works: set the `CMAKE` env var to
+> its full path). CI runners ship cmake; rust-cache amortizes the build.
 
 ```bash
 cargo build

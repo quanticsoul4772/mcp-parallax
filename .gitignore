@@ -20,3 +20,4 @@
 .vscode/
 .DS_Store
 Thumbs.db
+.z3-trace

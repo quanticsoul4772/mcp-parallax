@@ -210,6 +210,7 @@ impl HygieneFetcher {
             let chunk = chunk.map_err(|e| {
                 if e.is_timeout() {
                     AppError::Timeout {
+                        what: "request",
                         ms: self.policy.timeout_ms,
                     }
                 } else {
@@ -279,6 +280,7 @@ impl HygieneFetcher {
                 .map_err(|e| {
                     if e.is_timeout() {
                         AppError::Timeout {
+                            what: "request",
                             ms: self.policy.timeout_ms,
                         }
                     } else {

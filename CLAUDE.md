@@ -13,19 +13,25 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: core + memory + research layers.** The server speaks MCP over stdio
-and serves **`verify`** (k parallel stance-blind passes, agreement-derived
-confidence), **`unstick`** (one committed next step, single pass), the memory
-tools **`save`/`recall`/`forget`** (gated on `VOYAGE_API_KEY`;
+**Status: core + memory + research + deterministic layers.** The server
+speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
+passes, agreement-derived confidence), **`unstick`** (one committed next
+step, single pass), **`check`** (always on, no gate — pure in-process
+engines: the model classifies checkability and translates to a small typed
+formal target, evalexpr or Z3 executes, and verdict + explanation are
+server-assembled; one violation-fed retry on real engine signals only), the
+memory tools **`save`/`recall`/`forget`** (gated on `VOYAGE_API_KEY`;
 verified-before-stored trust, brute-force cosine ranking — the named
 sqlite-vec deviation, `SDK_LANDSCAPE.md` §memory), and **`research`** (gated
 on `BRAVE_API_KEY`; five-phase scope→search→fetch+extract→verify→synthesize
 pipeline with refute-biased per-claim verification and a deterministic
 grounding gate — the model writes only the answer prose; findings, labels,
 confidences, sources, and stats are server-assembled). One invocation record
-per call in SQLite. Watchdog and deterministic layers are not built yet.
-Feature artifacts: `specs/001-core-layer/`, `specs/002-unstick-mode/`,
-`specs/003-memory-layer/`, `specs/004-research-layer/`.
+per call in SQLite. The watchdog layer is not built yet. Build note: `z3`
+(bundled) needs cmake — first clean build ~5 min; on Windows set `CMAKE` to
+the VS Build Tools cmake path. Feature artifacts: `specs/001-core-layer/`,
+`specs/002-unstick-mode/`, `specs/003-memory-layer/`,
+`specs/004-research-layer/`, `specs/005-deterministic-layer/`.
 
 ## The design is the source of truth
 
@@ -131,6 +137,7 @@ src/
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
 ├── modes/            # mode registry + verify/unstick (prompt + schema + run logic)
+├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
 ├── schema/           # sanitizer (grammar subset) + local validator
@@ -160,16 +167,17 @@ The scaffold's trait seams are the slots the SDKs fill. Rough order: **core**
 (rmcp + thin Anthropic structured-outputs client behind `ModelClient` — done) →
 **memory** (Voyage 4 + brute-force cosine over f32 BLOBs, the named sqlite-vec
 deviation — done) → **research** (Brave provider + local extraction — done) →
-**deterministic** (z3 + validator first; sandboxed code-exec optional, off) →
+**deterministic** (z3 + evalexpr + the existing validator — done; sandboxed
+code-exec stays deferred, off) →
 **observability** (OTLP from the first server commit). This is a recommended order,
 not a mandate — confirm priorities before building.
 
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `004-research-layer` — [spec](specs/004-research-layer/spec.md) ·
-[plan](specs/004-research-layer/plan.md) · [research](specs/004-research-layer/research.md) ·
-[data model](specs/004-research-layer/data-model.md) · [contracts](specs/004-research-layer/contracts/)
+Current feature: `005-deterministic-layer` — [spec](specs/005-deterministic-layer/spec.md) ·
+[plan](specs/005-deterministic-layer/plan.md) · [research](specs/005-deterministic-layer/research.md) ·
+[data model](specs/005-deterministic-layer/data-model.md) · [contracts](specs/005-deterministic-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

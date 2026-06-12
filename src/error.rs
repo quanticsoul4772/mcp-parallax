@@ -108,9 +108,12 @@ pub enum AppError {
     #[error("response truncated before the schema completed (max_tokens): {0}")]
     Truncation(String),
 
-    /// The request exceeded the per-request timeout.
-    #[error("request timed out after {ms} ms")]
+    /// A bounded operation exceeded its timeout (a provider request, or the
+    /// in-process solver — the message names which).
+    #[error("{what} timed out after {ms} ms")]
     Timeout {
+        /// What timed out (e.g. "request", "solver (timeout or incompleteness)").
+        what: &'static str,
         /// The configured timeout that elapsed.
         ms: u64,
     },
@@ -195,7 +198,13 @@ mod tests {
         let cases: Vec<(AppError, &str)> = vec![
             (AppError::Refusal("policy".into()), "refused"),
             (AppError::Truncation("partial".into()), "truncated"),
-            (AppError::Timeout { ms: 30_000 }, "timed out"),
+            (
+                AppError::Timeout {
+                    what: "request",
+                    ms: 30_000,
+                },
+                "timed out",
+            ),
             (
                 AppError::RetriesExhausted {
                     attempts: 3,
@@ -251,7 +260,14 @@ mod tests {
             AppError::Truncation(String::new()).outcome(),
             Outcome::Truncation
         );
-        assert_eq!(AppError::Timeout { ms: 1 }.outcome(), Outcome::Timeout);
+        assert_eq!(
+            AppError::Timeout {
+                what: "request",
+                ms: 1
+            }
+            .outcome(),
+            Outcome::Timeout
+        );
         assert_eq!(
             AppError::RetriesExhausted {
                 attempts: 1,

@@ -321,7 +321,7 @@ mod tests {
                     output_tokens: 10,
                 }),
                 Err(AppError::Refusal(m)) => Err(AppError::Refusal(m.clone())),
-                Err(AppError::Timeout { ms }) => Err(AppError::Timeout { ms: *ms }),
+                Err(AppError::Timeout { what, ms }) => Err(AppError::Timeout { what, ms: *ms }),
                 Err(other) => Err(AppError::Client(other.to_string())),
             }
         });
@@ -550,7 +550,10 @@ mod tests {
     #[test]
     fn dominant_failure_picks_the_most_frequent_class() {
         let dominant = dominant_failure(vec![
-            AppError::Timeout { ms: 1 },
+            AppError::Timeout {
+                what: "request",
+                ms: 1,
+            },
             AppError::Refusal("a".into()),
             AppError::Refusal("b".into()),
         ]);
