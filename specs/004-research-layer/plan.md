@@ -100,6 +100,9 @@ src/
 │   ├── extract.rs        # readable text (rs-trafilatura) + claim-extraction model call
 │   ├── verdict.rs        # PURE: support labels + per-claim/overall confidence
 │   ├── grounding.rs      # PURE: deterministic grounding gate over citation tokens
+│   ├── prompts.rs        # model-hop bundles: templates + flat schemas + registration
+│   ├── settings.rs       # tier defaults + caller overrides + validation
+│   ├── synthesis.rs      # phase 5: server-assembled findings + grounded synthesis
 │   └── pipeline.rs       # five-phase orchestration, ceilings, early synthesis
 ├── config.rs             # + BRAVE_API_KEY (gate), FETCH_TIMEOUT_MS, RESEARCH_CONCURRENCY
 ├── server.rs             # + research #[tool] via run_recorded; catalog gating
@@ -117,6 +120,6 @@ only operator-relevant knobs become env vars.
 
 ## Complexity Tracking
 
-No constitution violations to justify. The watch item (Principle VII) is
-`pipeline.rs` size; the named mitigation is splitting per-phase functions into
-`research/pipeline/` if it crosses 500 lines.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| `pipeline.rs` crossed 500 lines during implementation | the five-phase spine plus ceiling/accounting logic | mitigated per the plan: prompts/schemas split to `prompts.rs`, settings to `settings.rs`, phase-5 assembly to `synthesis.rs`, tests to `pipeline_tests.rs`; the remaining spine is the orchestration that reads best unbroken |

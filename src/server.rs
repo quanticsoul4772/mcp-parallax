@@ -49,6 +49,8 @@ pub struct Parallax {
     research: Option<Arc<ResearchDeps>>,
     /// Per-source fetch timeout for research runs (`FETCH_TIMEOUT_MS`).
     fetch_timeout_ms: u64,
+    /// SSRF guard override for research fetches (`FETCH_ALLOW_PRIVATE`).
+    fetch_allow_private: bool,
     /// Per-process session UUID (one stdio connection per process).
     session_id: String,
     model: String,
@@ -179,6 +181,7 @@ impl Parallax {
             memory,
             research,
             fetch_timeout_ms: config.fetch_timeout_ms,
+            fetch_allow_private: config.fetch_allow_private,
             session_id: uuid::Uuid::new_v4().to_string(),
             model: config.anthropic_model.clone(),
             max_claim_chars: config.input_max_chars,
@@ -383,6 +386,7 @@ impl Parallax {
             domains_allow: constraints.domains_allow.unwrap_or_default(),
             domains_deny: constraints.domains_deny.unwrap_or_default(),
             domain_spacing_ms: DOMAIN_SPACING_MS,
+            allow_private: self.fetch_allow_private,
         };
         // LLM calls dominate research cost; Brave bills per-request, not
         // per-token — attribute the record to the anthropic model (plan.md).
@@ -504,6 +508,7 @@ mod tests {
             brave_api_key: None,
             fetch_timeout_ms: 10_000,
             research_concurrency: 8,
+            fetch_allow_private: false,
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,

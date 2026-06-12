@@ -33,9 +33,10 @@ each, matched by registrable-domain suffix.
 
 **KeyFinding**: `claim` (string), `support` ("confirmed" \| "contested" \|
 "refuted" \| "unverified"), `confidence` (0..=1), `sources` ([string] of ids;
-≥ 1 — FR-003). Refuted findings never appear here (dropped, counted) except
-when the question's own premise is refuted, in which case the refutation is
-itself the finding (SC-007).
+≥ 1 — FR-003). Refuted claims never appear here — they are dropped and
+counted; SC-007 (a false premise must not be confirmed) is served by the
+refuted list being handed to the synthesis prompt with an explicit
+do-not-assert instruction, so the answer can note the refutation.
 
 **Disagreement**: `claim` (string), `positions` ([{stance: string, sources:
 [string]}], ≥ 2).
@@ -44,7 +45,9 @@ itself the finding (SC-007).
 (RFC 3339), `credibility` (0..=1, heuristic: domain class + corroboration —
 conservative, explainable). Never a body (FR-012).
 
-**Stats**: `angles`, `searches`, `sources_found`, `sources_fetched`,
+**Stats** (sources_found counts candidates post URL dedup and *before* the
+domain filter, so policy-excluded candidates stay visible in the
+accounting): `angles`, `searches`, `sources_found`, `sources_fetched`,
 `claims_extracted`, `claims_after_dedup`, `claims_verified`, `claims_dropped`,
 `tokens` (summed LLM usage), `elapsed_ms`, `stopped_early` (bool),
 `stop_reason` ("budget" \| "deadline" \| "grounding" \| null).

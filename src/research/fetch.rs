@@ -1,18 +1,22 @@
 //! The hygiene-enforcing [`Fetcher`] implementation (research.md 004 D5).
 //!
-//! Every guard from RESEARCH_PRIMITIVE.md §6: per-fetch timeout, redirect
-//! cap, streaming size cap (never trusts Content-Length), content-type
-//! allowlist, per-domain politeness (one in-flight request per domain plus
-//! minimum spacing), robots.txt (fail-open on robots *fetch* errors,
-//! fail-closed on explicit disallow), and allow/deny domain lists — the
-//! pipeline pre-filters candidates by domain, and this fetcher re-checks
-//! both the requested and the post-redirect URL, so a redirect cannot escape
-//! into a denied domain.
+//! Every guard from RESEARCH_PRIMITIVE.md §6: per-fetch timeout, manual
+//! redirect hops (each hop re-checked against the domain lists, robots.txt,
+//! the address guard, and politeness — a redirect cannot escape into a
+//! denied domain or skip robots), streaming size caps (never trusts
+//! Content-Length, robots.txt included), content-type allowlist, per-domain
+//! politeness (one in-flight request per domain plus minimum spacing),
+//! robots.txt (fail-open on robots *fetch* errors, fail-closed on explicit
+//! disallow), allow/deny domain lists, and a non-global address guard
+//! (loopback / private / link-local literals rejected unless
+//! `FETCH_ALLOW_PRIVATE` is set — SSRF defense for a server running inside a
+//! developer network).
 
 use crate::error::AppError;
 use crate::traits::fetcher::{FetchedPage, Fetcher};
 use robotstxt::matcher::{LongestMatchRobotsMatchStrategy, RobotsMatcher};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -20,7 +24,9 @@ use tokio::time::Instant;
 
 /// Maximum response body bytes (enforced while streaming).
 pub const FETCH_MAX_BYTES: usize = 2_000_000;
-/// Redirect cap.
+/// Maximum robots.txt bytes (same streaming enforcement).
+pub const ROBOTS_MAX_BYTES: usize = 512_000;
+/// Redirect cap (manual hops — each hop re-runs every guard).
 pub const FETCH_MAX_REDIRECTS: usize = 5;
 /// Minimum spacing between requests to the same domain.
 pub const DOMAIN_SPACING_MS: u64 = 300;
@@ -40,6 +46,9 @@ pub struct FetchPolicy {
     pub domains_deny: Vec<String>,
     /// Minimum spacing between same-domain requests (tests set 0).
     pub domain_spacing_ms: u64,
+    /// Permit loopback/private/link-local targets (`FETCH_ALLOW_PRIVATE`;
+    /// off by default — needed only by tests fetching a local mock server).
+    pub allow_private: bool,
 }
 
 #[derive(Default)]
@@ -52,7 +61,7 @@ struct DomainState {
 pub struct HygieneFetcher {
     http: reqwest::Client,
     policy: FetchPolicy,
-    /// host → robots.txt body (None: robots fetch failed → fail-open).
+    /// origin → robots.txt body (None: robots fetch failed → fail-open).
     robots: Mutex<HashMap<String, Option<Arc<str>>>>,
     /// host → politeness state; the per-domain mutex serializes in-flight
     /// requests to one per domain.
@@ -68,7 +77,9 @@ impl HygieneFetcher {
     pub fn new(policy: FetchPolicy) -> Result<Self, AppError> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
-            .redirect(reqwest::redirect::Policy::limited(FETCH_MAX_REDIRECTS))
+            // Redirects are followed MANUALLY so every hop re-runs the
+            // domain/robots/address/politeness guards.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| AppError::SearchProvider(format!("fetch client: {e}")))?;
         Ok(Self {
@@ -104,6 +115,47 @@ impl HygieneFetcher {
         Ok(())
     }
 
+    /// Reject non-global targets (SSRF defense): loopback, RFC1918,
+    /// link-local (incl. 169.254.169.254 metadata endpoints), unspecified,
+    /// and `localhost` names. Literal-IP and name-based checks only —
+    /// resolver-level pinning is named future hardening (research.md D5).
+    fn check_address(&self, host: &str) -> Result<(), AppError> {
+        if self.policy.allow_private {
+            return Ok(());
+        }
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        if let Ok(ip) = bare.parse::<IpAddr>() {
+            let non_global = match ip {
+                IpAddr::V4(v4) => {
+                    v4.is_loopback()
+                        || v4.is_private()
+                        || v4.is_link_local()
+                        || v4.is_unspecified()
+                        || v4.is_broadcast()
+                }
+                IpAddr::V6(v6) => {
+                    v6.is_loopback()
+                        || v6.is_unspecified()
+                        // Unique-local fc00::/7 and link-local fe80::/10.
+                        || (v6.segments()[0] & 0xfe00) == 0xfc00
+                        || (v6.segments()[0] & 0xffc0) == 0xfe80
+                }
+            };
+            if non_global {
+                return Err(AppError::SearchProvider(format!(
+                    "address {host} is not globally reachable (FETCH_ALLOW_PRIVATE is off)"
+                )));
+            }
+        } else if bare.eq_ignore_ascii_case("localhost")
+            || bare.to_lowercase().ends_with(".localhost")
+        {
+            return Err(AppError::SearchProvider(format!(
+                "host {host} is local (FETCH_ALLOW_PRIVATE is off)"
+            )));
+        }
+        Ok(())
+    }
+
     async fn domain_state(&self, host: &str) -> Arc<Mutex<DomainState>> {
         Arc::clone(
             self.domains
@@ -115,8 +167,10 @@ impl HygieneFetcher {
     }
 
     /// robots.txt body for an origin (scheme://host:port — the port matters,
-    /// not least under test), fetched once per run. `None` = the robots fetch
-    /// itself failed → fail-open (treat as allowed).
+    /// not least under test), fetched once per run, size-capped. `None` = the
+    /// robots fetch itself failed → fail-open (treat as allowed). Callers
+    /// hold the per-domain politeness lock, so the robots request is itself
+    /// polite and never duplicated concurrently.
     async fn robots_body(&self, origin: &str) -> Option<Arc<str>> {
         if let Some(cached) = self.robots.lock().await.get(origin) {
             return cached.clone();
@@ -129,10 +183,12 @@ impl HygieneFetcher {
             .send()
             .await
         {
-            Ok(response) if response.status().is_success() => {
-                response.text().await.ok().map(Arc::<str>::from)
-            }
-            // 404/4xx/5xx/transport: no readable robots → fail-open.
+            Ok(response) if response.status().is_success() => self
+                .read_capped(response, ROBOTS_MAX_BYTES)
+                .await
+                .ok()
+                .map(|bytes| Arc::<str>::from(String::from_utf8_lossy(&bytes).into_owned())),
+            // 404/4xx/5xx/redirected/transport: no readable robots → fail-open.
             _ => None,
         };
         self.robots
@@ -142,7 +198,11 @@ impl HygieneFetcher {
         body
     }
 
-    async fn read_capped(&self, response: reqwest::Response) -> Result<Vec<u8>, AppError> {
+    async fn read_capped(
+        &self,
+        response: reqwest::Response,
+        cap: usize,
+    ) -> Result<Vec<u8>, AppError> {
         use futures::StreamExt;
         let mut stream = response.bytes_stream();
         let mut body: Vec<u8> = Vec::new();
@@ -156,113 +216,138 @@ impl HygieneFetcher {
                     AppError::SearchProvider(format!("body read: {e}"))
                 }
             })?;
-            if body.len() + chunk.len() > FETCH_MAX_BYTES {
+            if body.len() + chunk.len() > cap {
                 return Err(AppError::SearchProvider(format!(
-                    "body exceeds the {FETCH_MAX_BYTES}-byte cap"
+                    "body exceeds the {cap}-byte cap"
                 )));
             }
             body.extend_from_slice(&chunk);
         }
         Ok(body)
     }
+
+    /// Run every pre-request guard for one hop, then send it. Returns the
+    /// response with redirects NOT followed.
+    // The per-domain lock is deliberately held across robots and the request
+    // — that IS the one-in-flight-per-domain politeness guarantee.
+    #[allow(clippy::significant_drop_tightening)]
+    async fn guarded_request(&self, target: &reqwest::Url) -> Result<reqwest::Response, AppError> {
+        if !matches!(target.scheme(), "http" | "https") {
+            return Err(AppError::SearchProvider(format!(
+                "unsupported scheme {:?}",
+                target.scheme()
+            )));
+        }
+        let host = target
+            .host_str()
+            .ok_or_else(|| AppError::SearchProvider(format!("url {target} has no host")))?
+            .to_string();
+        self.check_domain(&host, "requested")?;
+        self.check_address(&host)?;
+
+        // Politeness: one in-flight request per domain + minimum spacing.
+        {
+            let state = self.domain_state(&host).await;
+            let mut state = state.lock().await;
+            if let Some(last) = state.last_request {
+                let spacing = Duration::from_millis(self.policy.domain_spacing_ms);
+                let elapsed = last.elapsed();
+                if elapsed < spacing {
+                    tokio::time::sleep(spacing.saturating_sub(elapsed)).await;
+                }
+            }
+            state.last_request = Some(Instant::now());
+
+            // robots.txt: fail-closed on explicit disallow, fail-open when no
+            // robots could be read — checked for EVERY hop's origin.
+            let origin = target.origin().ascii_serialization();
+            if let Some(body) = self.robots_body(&origin).await {
+                let allowed = RobotsMatcher::<LongestMatchRobotsMatchStrategy>::default()
+                    .one_agent_allowed_by_robots(&body, USER_AGENT, target.as_str());
+                if !allowed {
+                    return Err(AppError::SearchProvider(format!(
+                        "robots.txt disallows {target}"
+                    )));
+                }
+            }
+
+            self.http
+                .get(target.clone())
+                .timeout(Duration::from_millis(self.policy.timeout_ms))
+                .send()
+                .await
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        AppError::Timeout {
+                            ms: self.policy.timeout_ms,
+                        }
+                    } else {
+                        AppError::SearchProvider(format!("fetch failed: {e}"))
+                    }
+                })
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl Fetcher for HygieneFetcher {
-    // The per-domain lock is deliberately held across the request — that IS
-    // the one-in-flight-per-domain politeness guarantee.
-    #[allow(clippy::significant_drop_tightening)]
     async fn fetch(&self, url: &str) -> Result<FetchedPage, AppError> {
-        let parsed = reqwest::Url::parse(url)
+        let mut target = reqwest::Url::parse(url)
             .map_err(|e| AppError::SearchProvider(format!("unfetchable url {url:?}: {e}")))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(AppError::SearchProvider(format!(
-                "unsupported scheme {:?}",
-                parsed.scheme()
-            )));
-        }
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| AppError::SearchProvider(format!("url {url:?} has no host")))?
-            .to_string();
-        self.check_domain(&host, "requested")?;
 
-        // robots.txt: fail-closed on explicit disallow, fail-open when no
-        // robots could be read.
-        let origin = parsed.origin().ascii_serialization();
-        if let Some(body) = self.robots_body(&origin).await {
-            let allowed = RobotsMatcher::<LongestMatchRobotsMatchStrategy>::default()
-                .one_agent_allowed_by_robots(&body, USER_AGENT, url);
-            if !allowed {
+        // Manual redirect hops: every hop re-runs domain, address, robots,
+        // and politeness — no internal redirect following.
+        for _hop in 0..=FETCH_MAX_REDIRECTS {
+            let response = self.guarded_request(&target).await?;
+            let status = response.status();
+
+            if status.is_redirection() {
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| {
+                        AppError::SearchProvider(format!(
+                            "HTTP {status} without a Location header for {target}"
+                        ))
+                    })?;
+                target = target.join(location).map_err(|e| {
+                    AppError::SearchProvider(format!("unfollowable redirect {location:?}: {e}"))
+                })?;
+                continue;
+            }
+            if !status.is_success() {
                 return Err(AppError::SearchProvider(format!(
-                    "robots.txt disallows {url}"
+                    "HTTP {status} for {target}"
                 )));
             }
-        }
 
-        // Politeness: one in-flight request per domain + minimum spacing.
-        let state = self.domain_state(&host).await;
-        let mut state = state.lock().await;
-        if let Some(last) = state.last_request {
-            let spacing = Duration::from_millis(self.policy.domain_spacing_ms);
-            let elapsed = last.elapsed();
-            if elapsed < spacing {
-                tokio::time::sleep(spacing.saturating_sub(elapsed)).await;
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_lowercase();
+            if !CONTENT_TYPE_ALLOW
+                .iter()
+                .any(|t| content_type.starts_with(t))
+            {
+                return Err(AppError::SearchProvider(format!(
+                    "content-type {content_type:?} is not extractable"
+                )));
             }
-        }
-        state.last_request = Some(Instant::now());
 
-        let response = self
-            .http
-            .get(parsed)
-            .timeout(Duration::from_millis(self.policy.timeout_ms))
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    AppError::Timeout {
-                        ms: self.policy.timeout_ms,
-                    }
-                } else {
-                    AppError::SearchProvider(format!("fetch failed: {e}"))
-                }
-            })?;
-
-        let status = response.status();
-        if !status.is_success() {
-            return Err(AppError::SearchProvider(format!("HTTP {status} for {url}")));
+            let body = self.read_capped(response, FETCH_MAX_BYTES).await?;
+            let html = String::from_utf8_lossy(&body).into_owned();
+            return Ok(FetchedPage {
+                url: target.to_string(),
+                html,
+            });
         }
 
-        // The redirect cap is the client's; the final URL must still satisfy
-        // the domain lists — a redirect cannot escape into a denied domain.
-        let final_url = response.url().clone();
-        let final_host = final_url
-            .host_str()
-            .ok_or_else(|| AppError::SearchProvider("redirected to a hostless url".to_string()))?
-            .to_string();
-        self.check_domain(&final_host, "redirected-to")?;
-
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_lowercase();
-        if !CONTENT_TYPE_ALLOW
-            .iter()
-            .any(|t| content_type.starts_with(t))
-        {
-            return Err(AppError::SearchProvider(format!(
-                "content-type {content_type:?} is not extractable"
-            )));
-        }
-
-        let body = self.read_capped(response).await?;
-        let html = String::from_utf8_lossy(&body).into_owned();
-        Ok(FetchedPage {
-            url: final_url.to_string(),
-            html,
-        })
+        Err(AppError::SearchProvider(format!(
+            "more than {FETCH_MAX_REDIRECTS} redirects for {url}"
+        )))
     }
 }
 
@@ -279,6 +364,8 @@ mod tests {
             domains_allow: vec![],
             domains_deny: vec![],
             domain_spacing_ms: 0,
+            // Tests fetch a local wiremock server.
+            allow_private: true,
         }
     }
 
@@ -333,6 +420,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn redirect_target_is_robots_checked_too() {
+        // The landing page is allowed; it redirects into a disallowed path.
+        let mock = MockServer::start().await;
+        serve_robots(&mock, "User-agent: *\nDisallow: /private\n").await;
+        Mock::given(method("GET"))
+            .and(path("/landing"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/private/doc"))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/private/doc"))
+            .respond_with(html_response("<html>secret</html>"))
+            .expect(0) // the redirect target must never be requested
+            .mount(&mock)
+            .await;
+
+        let fetcher = HygieneFetcher::new(policy(2_000)).unwrap();
+        let err = fetcher
+            .fetch(&format!("{}/landing", mock.uri()))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("robots.txt disallows"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn redirects_are_followed_with_a_cap() {
+        let mock = MockServer::start().await;
+        serve_robots(&mock, "").await;
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(ResponseTemplate::new(301).insert_header("Location", "/end"))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/end"))
+            .respond_with(html_response("<html>arrived</html>"))
+            .mount(&mock)
+            .await;
+        // An endless loop trips the cap.
+        Mock::given(method("GET"))
+            .and(path("/loop"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/loop"))
+            .mount(&mock)
+            .await;
+
+        let fetcher = HygieneFetcher::new(policy(2_000)).unwrap();
+        let page = fetcher
+            .fetch(&format!("{}/start", mock.uri()))
+            .await
+            .unwrap();
+        assert!(page.html.contains("arrived"));
+        assert!(page.url.ends_with("/end"));
+
+        let err = fetcher
+            .fetch(&format!("{}/loop", mock.uri()))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("redirects"), "{err}");
+    }
+
+    #[tokio::test]
     async fn missing_robots_is_fail_open() {
         let mock = MockServer::start().await;
         // No robots.txt mount → 404 → fail-open.
@@ -376,6 +524,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_global_addresses_are_rejected_unless_allowed() {
+        let fetcher = HygieneFetcher::new(FetchPolicy {
+            allow_private: false,
+            ..policy(2_000)
+        })
+        .unwrap();
+        for target in [
+            "http://127.0.0.1/x",
+            "http://10.0.0.8/x",
+            "http://192.168.1.1/x",
+            "http://169.254.169.254/latest/meta-data",
+            "http://localhost/x",
+            "http://[::1]/x",
+        ] {
+            let err = fetcher.fetch(target).await.unwrap_err();
+            assert!(
+                err.to_string().contains("FETCH_ALLOW_PRIVATE"),
+                "{target}: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn wrong_content_type_is_rejected() {
         let mock = MockServer::start().await;
         serve_robots(&mock, "").await;
@@ -412,6 +583,22 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("byte cap"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn oversized_robots_is_capped_and_fails_open() {
+        let mock = MockServer::start().await;
+        // A hostile, huge robots.txt: capped read fails → treated as
+        // unreadable → fail-open, the page still fetches.
+        serve_robots(&mock, &"x".repeat(ROBOTS_MAX_BYTES + 1)).await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .respond_with(html_response("<html>ok</html>"))
+            .mount(&mock)
+            .await;
+
+        let fetcher = HygieneFetcher::new(policy(5_000)).unwrap();
+        assert!(fetcher.fetch(&format!("{}/page", mock.uri())).await.is_ok());
     }
 
     #[tokio::test]

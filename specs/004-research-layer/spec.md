@@ -160,7 +160,7 @@ exactly one correctly attributed record.
 - **FR-002**: The system MUST execute research as five phases — scope the
   question into search angles and falsifiable sub-questions; run the angle
   searches concurrently; fetch and extract each source independently (no
-  cross-source barrier) into falsifiable claims tied to source spans; verify
+  cross-source barrier) into falsifiable claims tied to their sources; verify
   each deduplicated claim with multiple independent refute-biased passes; and
   synthesize a compact cited answer — with concurrency bounded server-side.
 - **FR-003**: Every key finding MUST carry at least one citation, every cited

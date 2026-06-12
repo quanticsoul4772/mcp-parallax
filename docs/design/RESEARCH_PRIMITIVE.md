@@ -1,6 +1,12 @@
 # Spec — The Research Primitive
 
-**Status:** Proposal. **Parent:** [`NEXT_REASONING_SERVER.md`](NEXT_REASONING_SERVER.md).
+**Status:** Implemented (v1, feature `004-research-layer`, 2026-06-12) with
+named narrowings — see `specs/004-research-layer/research.md` D1-D10: claim
+spans dropped (flat-schema constraint), normalized-text claim dedup,
+verification-panel (not per-source) disagreement positions, token-level (not
+clause-level) grounding, candidate selection without the snippet-relevance
+ranking, and v1 deferrals (caches §7, the Recall hook, progress notifications
+§8, the exhaustive tier). **Parent:** [`NEXT_REASONING_SERVER.md`](NEXT_REASONING_SERVER.md).
 **One line:** *offload a question to a separate budget; get back a short, cited,
 adversarially-verified answer — not 15 articles.*
 

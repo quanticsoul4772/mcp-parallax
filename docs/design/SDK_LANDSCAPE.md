@@ -195,6 +195,11 @@ pipeline.
   - **Firecrawl** — managed extract API, top-tier quality, but a second paid dependency.
   - **Pick:** **rs-trafilatura** (local, no extra API, page-type-aware) for the extract
     layer; Firecrawl only if local quality proves insufficient.
+  - **Validated (004, 2026-06-12):** rs-trafilatura 0.2.2 passed the fixture spike
+    (main text extracted, boilerplate excluded; its DEBUG diagnostics are stderr-only
+    and debug_assertions-gated — stdout stays protocol-clean). `robotstxt` 0.3
+    (Google-parser port) joined the stack for robots.txt enforcement. The Firecrawl
+    fallback was not needed.
 
 ---
 
@@ -230,6 +235,8 @@ traits are already the seams these slot behind):
 2. **Memory (next):** Voyage 4 client; spike **sqlite-vec under sqlx** (resolve the
    loading caveat) before building recall.
 3. **Research primitive:** Brave provider behind the trait + rs-trafilatura extract.
+   **Done (004)** — plus `robotstxt`; named narrowings recorded in the feature's
+   research.md and RESEARCH_PRIMITIVE.md's status note.
 4. **Deterministic:** `z3` + validator + arithmetic first (no sandbox); the optional
    sandboxed code-exec integration later, off by default.
 5. **Observability/watchdog:** OTLP from the first server commit (cheap, and the

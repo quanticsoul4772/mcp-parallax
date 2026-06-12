@@ -196,6 +196,7 @@ mod tests {
             brave_api_key: Some("brave-test-key".into()),
             fetch_timeout_ms: 10_000,
             research_concurrency: 8,
+            fetch_allow_private: false,
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,

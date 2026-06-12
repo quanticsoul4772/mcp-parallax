@@ -53,7 +53,7 @@ acceptance example is manual-run live spend.
 
 - [ ] T019 [P] (written, run blocked on a valid BRAVE_API_KEY) Acceptance example examples/acceptance_research.rs (live: BRAVE_API_KEY + ANTHROPIC_API_KEY): ≥6 live questions asserting zero fabricated citations + schema conformance (SC-001/SC-002), latency per tier (SC-003), a tiny-ceiling run (SC-004), a false-premise question (SC-007); record results in specs/004-research-layer/quickstart.md
 - [X] T020 [P] Docs: README.md + CLAUDE.md status and env tables (research capability off by default; BRAVE_API_KEY/FETCH_TIMEOUT_MS/RESEARCH_CONCURRENCY); repo layout gains research/ + new seams; note the named cost inexactness — research records carry summed LLM tokens only, Brave's per-request fee is not in cost_usd (plan.md telemetry note)
-- [ ] T021 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`) + code-reviewer and design-reviewer agent passes over the branch diff + apply findings
+- [X] T021 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`) + code-reviewer and design-reviewer agent passes over the branch diff + apply findings
 
 ## Dependencies
 

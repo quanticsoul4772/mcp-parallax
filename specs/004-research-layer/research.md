@@ -103,6 +103,16 @@ before any connection.
 small pure dependency (crates.io confirmed) so corpus fidelity costs little.
 A rejected/failed fetch drops the source and counts it (FR-009/FR-013).
 
+**Hardening added at review (2026-06-12)**: redirects are followed manually —
+every hop re-runs the domain lists, robots.txt, the address guard, and
+politeness, so a redirect cannot escape into a denied domain or skip robots;
+robots.txt reads are size-capped (512 KB, fail-open past the cap); and a
+non-global address guard rejects loopback/RFC1918/link-local/`localhost`
+targets unless `FETCH_ALLOW_PRIVATE` is set (SSRF defense — Brave results and
+redirects are untrusted input). The guard is literal-IP and name based;
+resolver-level pinning (a public name resolving to a private address) is
+named future hardening.
+
 **Alternatives considered**: skipping robots.txt for v1 — rejected, it is in
 the corpus and cheap; headless rendering for JS pages — out of scope by spec
 assumption (dropped + counted).
@@ -139,6 +149,24 @@ a label, or a confidence because it never emits them — it can only fabricate
 a citation token, which a string check catches. It also keeps the synthesis
 schema flat (Principle II) where the doc's illustrative response would not be.
 
+**Two further v1 narrowings, named**: (a) *disagreement positions* reflect
+the verification-panel split, not per-source stances — the design doc's
+"sources disagree" trigger (§4.1) and per-position source attribution need a
+per-source stance breakdown that v1 does not track, because claims merge
+across sources at dedup; both positions carry the claim's full source list.
+(b) The design's `w2·agreement(sources)` confidence term is folded into the
+corroboration count for the same reason. Revisit both if per-source stance
+tracking is added.
+
+**Grounding scope, named**: the gate is *token-level*, not clause-level — it
+guarantees every citation resolves to a fetched source and every finding is
+source-backed, but an answer sentence with no citation token passes ungated
+(the corpus §4.3 asks for clause-level mapping). Near-miss citation forms
+(`[S3]`, `[s1, s2]`, unclosed brackets) are violations, not ignored. The
+coverage penalty in overall confidence depends on model-reported gaps —
+omitted gaps inflate confidence; both are accepted v1 bounds of the
+"model writes prose only" design.
+
 **Verdict mapping** (pure, `verdict.rs`): from the verify run's `(passes,
 agreement, verdict)` + independent source count `n`, evaluated **in this
 order** (the order is load-bearing — the verify ensemble resolves ties to
@@ -165,13 +193,23 @@ by unanswered sub-questions (design §4.2).
 | deep | 8 | 60 | 3 | 480 s | 350k tok |
 
 Exhaustive deferred (spec assumption). Explicit `constraints` always override
-tier defaults (FR-006). Ceiling enforcement: the pipeline checks
-budget/deadline before spawning each new unit of work; on trip, it stops
-spawning, drains in-flight work (bounded by the per-call timeout), and
-synthesizes over verified claims with `stopped_early: true` and
-`stop_reason: "budget" | "deadline"`. Token accounting sums usage from every
+tier defaults (FR-006). Ceiling enforcement: the pipeline probes
+budget/deadline between phases (including before the search fan-out), before
+each spawn, and again inside each task after it acquires its concurrency
+permit — a mid-phase budget blowout stops queued work, not just the next
+phase. On trip it stops spawning, drains in-flight work (bounded by the
+per-call timeout), and synthesizes over verified claims with
+`stopped_early: true` and `stop_reason: "budget" | "deadline"`. Token accounting sums usage from every
 model call in the run (the verify runs already return usage; scope/extract/
 synthesis calls do too).
+
+## D8a — Candidate selection (named deviation)
+
+Candidates are taken in angle-discovery order after URL dedup and the domain
+filter, truncated at `max_sources` — the design doc's snippet-relevance ×
+source-heuristic ranking (§2(2)) is **not implemented in v1**; `SearchHit.snippet`
+is collected but unused. The provider's own ranking per angle is the
+implicit order. Revisit when a tuned ranking signal exists to measure.
 
 ## D9 — Concurrency
 

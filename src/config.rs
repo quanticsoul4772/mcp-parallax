@@ -52,6 +52,10 @@ pub struct Config {
     /// Concurrent fetch/extract/verify cap for research runs.
     /// `RESEARCH_CONCURRENCY`, default `8`; must be in `1..=32`.
     pub research_concurrency: u8,
+    /// Permit research fetches to loopback/private/link-local targets.
+    /// `FETCH_ALLOW_PRIVATE`, default `false` — an SSRF guard; enable only
+    /// for local testing.
+    pub fetch_allow_private: bool,
     /// Path to the SQLite database file. `DATABASE_PATH`, default `./data/parallax.db`.
     pub database_path: String,
     /// Log-level filter. `LOG_LEVEL`, default `info`.
@@ -101,6 +105,7 @@ impl Config {
         let fetch_timeout_ms = parse_env("FETCH_TIMEOUT_MS", 10_000)?;
         let research_concurrency =
             validate_research_concurrency(parse_env("RESEARCH_CONCURRENCY", 8)?)?;
+        let fetch_allow_private = parse_env("FETCH_ALLOW_PRIVATE", false)?;
         let database_path =
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/parallax.db".to_string());
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
@@ -118,6 +123,7 @@ impl Config {
             brave_api_key,
             fetch_timeout_ms,
             research_concurrency,
+            fetch_allow_private,
             database_path,
             log_level,
             request_timeout_ms,

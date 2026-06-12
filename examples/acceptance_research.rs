@@ -77,6 +77,7 @@ fn fetcher(config: &Config) -> HygieneFetcher {
         domains_allow: vec![],
         domains_deny: vec![],
         domain_spacing_ms: DOMAIN_SPACING_MS,
+        allow_private: false,
     })
     .expect("fetcher")
 }

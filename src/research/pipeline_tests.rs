@@ -607,7 +607,10 @@ async fn budget_ceiling_stops_new_work_and_synthesizes_early() {
         on_synth: Box::new(|_| panic!("nothing verified — deterministic answer expected")),
         usage: (700, 500),
     });
-    let search = search_returning(&["https://example.com/a"]);
+    // The ceiling is probed between scope and search: no search egress
+    // happens after the budget is already blown.
+    let mut search = MockSearchProvider::new();
+    search.expect_search().times(0);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
     let mut fetcher = MockFetcher::new();
     fetcher.expect_fetch().times(0);

@@ -13,9 +13,11 @@ pub mod grounding;
 pub mod pipeline;
 pub mod prompts;
 pub(crate) mod settings;
+pub(crate) mod synthesis;
 pub mod verdict;
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum sub-questions a scope call may produce.
 pub const MAX_SUB_QUESTIONS: usize = 7;
@@ -118,6 +120,39 @@ pub struct Claim {
     pub text: String,
     /// Source ids backing it (grows on dedup merge).
     pub source_ids: Vec<String>,
+}
+
+/// Shared run accounting: token sums double as the budget meter.
+#[derive(Default)]
+pub(crate) struct RunMeter {
+    input_tokens: AtomicU64,
+    output_tokens: AtomicU64,
+}
+
+impl RunMeter {
+    pub(crate) fn add(&self, input: u64, output: u64) {
+        self.input_tokens.fetch_add(input, Ordering::Relaxed);
+        self.output_tokens.fetch_add(output, Ordering::Relaxed);
+    }
+    pub(crate) fn total(&self) -> u64 {
+        self.input_tokens() + self.output_tokens()
+    }
+    pub(crate) fn input_tokens(&self) -> u64 {
+        self.input_tokens.load(Ordering::Relaxed)
+    }
+    pub(crate) fn output_tokens(&self) -> u64 {
+        self.output_tokens.load(Ordering::Relaxed)
+    }
+}
+
+/// One fetched-and-extracted source (internal).
+pub(crate) struct SourceRecord {
+    pub(crate) id: String,
+    pub(crate) url: String,
+    pub(crate) title: String,
+    pub(crate) fetched_at: String,
+    pub(crate) credibility: f32,
+    pub(crate) claims: Vec<String>,
 }
 
 /// A claim after verification.

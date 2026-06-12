@@ -32,6 +32,7 @@ fn test_config(timeout_ms: u64) -> Config {
         brave_api_key: None,
         fetch_timeout_ms: 10_000,
         research_concurrency: 8,
+        fetch_allow_private: false,
         database_path: ":memory:".into(),
         log_level: "info".into(),
         request_timeout_ms: timeout_ms,
@@ -943,6 +944,8 @@ async fn serve_with_research(
     let mut config = test_config(5_000);
     config.brave_api_key = Some("brave-test-key".into());
     config.fetch_timeout_ms = 3_000;
+    // Integration pages are served by wiremock on localhost.
+    config.fetch_allow_private = true;
     let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
     let anthropic =
         Arc::new(AnthropicClient::with_base_url(&config, &mock.uri()).with_backoff_base_ms(1));
