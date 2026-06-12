@@ -24,7 +24,7 @@ registry — a mode with an illegal schema fails boot, not the first call.
 
 | Field | Type | Validation |
 |---|---|---|
-| `claim` | string | required; non-empty after trim (else `invalid_input` before any model call); length ≤ configured max (oversize → `invalid_input`, never silent trim) |
+| `claim` | string | required; non-empty after trim (else `invalid_input` before any model call); length ≤ `VERIFY_MAX_CLAIM_CHARS` (oversize → `invalid_input`, never silent trim) |
 | `context` | string, optional | verbatim context the verifier may use; the *only* extra information a pass ever receives |
 
 ## 3. PassVerdict (per-pass model output — the constrained schema)
@@ -60,7 +60,7 @@ Table `invocation_records` (SQLite, created by idempotent startup migration):
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PK | UUID v4 |
-| `session_id` | TEXT | MCP session correlation id |
+| `session_id` | TEXT | UUID v4 generated per server process at startup (one stdio connection per process, so process = session); becomes per-connection if a multi-connection transport is ever added |
 | `tool` | TEXT | mode id |
 | `model` | TEXT | model id used |
 | `input_tokens` | INTEGER | summed across passes |
@@ -79,6 +79,11 @@ in a single exit point that all paths funnel through.
 `success` · `refusal` · `truncation` · `timeout` · `retries_exhausted` ·
 `invalid_input` · `validation_failure` · `config_error` · `cancelled`
 
+**Note**: `config_error` is error-surface-only — it occurs at startup, before
+any invocation exists, so it never appears on an invocation record (and is
+excluded from the record contract's enum). All other classes appear in both
+uses.
+
 - Use 1: `AppError` variants surfaced to the MCP client — each renders a
   distinct, descriptive message naming the class (FR-007, SC-005).
 - Use 2: the `outcome` column on `InvocationRecord` (FR-010).
@@ -93,7 +98,8 @@ in a single exit point that all paths funnel through.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — (required) | existing |
 | `ANTHROPIC_MODEL` | `claude-opus-4-8` | **new** |
-| `VERIFY_ENSEMBLE_K` | `3` | **new** |
+| `VERIFY_ENSEMBLE_K` | `3` | **new** — must be ≥ 1; `0` is a config error |
+| `VERIFY_MAX_CLAIM_CHARS` | `50000` | **new** — upper bound on claim length |
 | `DATABASE_PATH` | `./data/parallax.db` | existing |
 | `LOG_LEVEL` | `info` | existing |
 | `REQUEST_TIMEOUT_MS` | `30000` | existing |

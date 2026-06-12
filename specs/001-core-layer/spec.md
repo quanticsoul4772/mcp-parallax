@@ -126,7 +126,7 @@ and correct outcome classification.
 
 - **SC-001**: A stock MCP client connects, lists tools, and completes a Verify call with no setup beyond providing the one required credential.
 - **SC-002**: 100% of successful Verify results validate against the declared output structure across an acceptance run of at least 20 varied claims — zero parse failures, zero free-text fallbacks (the standard the project's spike set: 15/15).
-- **SC-003**: Verification catches seeded errors: across an acceptance set of claims with known planted errors, at least 90% are refuted with the specific error named, and 0 sound claims in the set are refuted (the spike's calibrated profile achieved 6/6 catch with 0/6 false positives).
+- **SC-003**: Verification catches seeded errors: across an acceptance set of at least 10 claims with known planted errors and at least 6 sound claims, at least 90% of the seeded errors are refuted with the specific error named, and 0 of the sound claims are refuted (the spike's calibrated profile achieved 6/6 catch with 0/6 false positives).
 - **SC-004**: Stance-blindness holds: presenting the identical claim with and without requester confidence framing changes the verdict in 0 of the acceptance cases.
 - **SC-005**: In induced-failure testing, an operator can identify the failure class (refusal vs truncation vs timeout vs configuration) from the error alone in 100% of cases.
 - **SC-006**: A single Verify call completes in under 30 seconds at default settings.

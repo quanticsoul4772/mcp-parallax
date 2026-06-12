@@ -20,9 +20,9 @@
         "retries_exhausted",
         "invalid_input",
         "validation_failure",
-        "config_error",
         "cancelled"
-      ]
+      ],
+      "description": "config_error exists in the error taxonomy but never on a record - it occurs at startup, before any invocation exists"
     },
     "created_at": { "type": "string", "format": "date-time" }
   },

@@ -18,7 +18,8 @@ cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && carg
 |---|---|---|
 | `ANTHROPIC_API_KEY` | yes | — |
 | `ANTHROPIC_MODEL` | no | `claude-opus-4-8` |
-| `VERIFY_ENSEMBLE_K` | no | `3` |
+| `VERIFY_ENSEMBLE_K` | no | `3` (must be ≥ 1) |
+| `VERIFY_MAX_CLAIM_CHARS` | no | `50000` |
 | `DATABASE_PATH` | no | `./data/parallax.db` |
 | `LOG_LEVEL` | no | `info` |
 | `REQUEST_TIMEOUT_MS` | no | `30000` |

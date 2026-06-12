@@ -28,7 +28,7 @@ implementable and testable.
 **Purpose**: Dependencies and the shared vocabulary every story uses
 
 - [ ] T001 Add core dependencies to Cargo.toml: rmcp 1.x (server/macros/transport-io/schemars), reqwest (rustls, no default tls), schemars 1.x, jsonschema, sqlx (sqlite/runtime-tokio-rustls), uuid; dev-deps: wiremock. Run `cargo build` to lock. (Exact rmcp minor pinned later by T006.)
-- [ ] T002 [P] Extend Config with `ANTHROPIC_MODEL` (default `claude-opus-4-8`) and `VERIFY_ENSEMBLE_K` (default 3) in src/config.rs, with unit tests for defaults and the present-but-invalid hard-error contract
+- [ ] T002 [P] Extend Config with `ANTHROPIC_MODEL` (default `claude-opus-4-8`), `VERIFY_ENSEMBLE_K` (default 3, validated ≥ 1 — 0 is a config error), and `VERIFY_MAX_CLAIM_CHARS` (default 50000) in src/config.rs, with unit tests for defaults, the ≥1 bound, and the present-but-invalid hard-error contract
 - [ ] T003 [P] Add the Outcome taxonomy (success, refusal, truncation, timeout, retries_exhausted, invalid_input, validation_failure, config_error, cancelled) and matching AppError variants with distinct, descriptive Display messages in src/error.rs, with unit tests asserting each message names its class (data-model.md §6)
 
 ---
@@ -63,7 +63,7 @@ implementable and testable.
 
 > Write these first; they fail until T015–T018 land
 
-- [ ] T013 [P] [US1] Integration test skeleton in tests/integration.rs: in-process rmcp client performs handshake, asserts the catalog lists `verify` with the inputSchema/outputSchema from specs/001-core-layer/contracts/verify.tool.json (acceptance scenario 1)
+- [ ] T013 [P] [US1] Integration test skeleton in tests/integration.rs: in-process rmcp client performs handshake, asserts the catalog lists `verify` with the inputSchema/outputSchema from specs/001-core-layer/contracts/verify.tool.json (acceptance scenario 1); plus a concurrency case — two simultaneous verify calls with distinct mocked results complete independently and results are never crossed (spec edge case 3)
 - [ ] T014 [P] [US1] Aggregation unit tests in src/modes/verify.rs test module (mockall ModelClient): majority verdict, tie → refuted with tie noted, quorum rule (< ⌈k/2⌉ completed passes → dominant failure, never a minority verdict), confidence = agreement ratio, findings deduplicated from majority side (data-model.md §4)
 
 ### Implementation for User Story 1
@@ -71,7 +71,7 @@ implementable and testable.
 - [ ] T015 [P] [US1] Verify types in src/modes/verify.rs: VerifyParams, PassVerdict (per-pass, grammar-minimal), Verdict (aggregated) with schemars derives; unit test asserting the derived schemas match contracts/ and pass the registry's flat+closed assertion
 - [ ] T016 [US1] Verify execution in src/modes/verify.rs: calibrated prompt template (each refutation names a concrete error + steelman lens; only claim/context placeholders exist — blindness is structural), k parallel ModelClient passes, aggregation per T014's tests (depends on T011, T012, T015)
 - [ ] T017 [US1] rmcp server handler in src/server.rs: `#[tool_router]` Parallax struct holding the seams, `verify` tool returning `Result<Json<Verdict>, ErrorData>`, `get_info` with tools capability (depends on T016)
-- [ ] T018 [US1] Wire src/main.rs: construct config → client/storage/clock → Parallax, `serve(stdio())`, keep --version/--help and the config-error exit path (depends on T017)
+- [ ] T018 [US1] Wire src/main.rs: construct config → client/storage/clock → Parallax, `serve(stdio())`, keep --version/--help and the config-error exit path; plus a spawn-the-binary stdio smoke test in tests/integration.rs (dummy key env, handshake + tools/list — no model call) asserting stdout carries only protocol frames (FR-008) (depends on T017)
 - [ ] T019 [US1] Stance-blindness guarantee test in src/modes/verify.rs test module: prompt builder output contains claim and context verbatim and nothing else — no stance, history, or identity can flow through (acceptance scenario 5, SC-004's structural half)
 
 **Checkpoint**: MVP — a stock MCP client gets schema-valid verdicts end-to-end (with ModelClient mocked in tests; live via quickstart)
@@ -86,7 +86,7 @@ implementable and testable.
 
 ### Tests for User Story 2 (REQUIRED) ⚠️
 
-- [ ] T020 [P] [US2] Induced-failure integration matrix in tests/integration.rs: wiremock-backed client returns refusal, max_tokens truncation, timeout, and persistent 5xx (retry exhaustion); assert each invoke yields the matching distinct error text, never a partial Verdict (acceptance scenarios 1–3)
+- [ ] T020 [P] [US2] Induced-failure integration matrix in tests/integration.rs: wiremock-backed client returns refusal, max_tokens truncation, timeout, persistent 5xx (retry exhaustion), and a cancellation case (client drops the request mid-invocation; server stays healthy for the next call); assert each invoke yields the matching distinct error text, never a partial Verdict (acceptance scenarios 1–3; spec edge case 4)
 - [ ] T021 [P] [US2] Startup failure tests in src/config.rs test module: missing ANTHROPIC_API_KEY and invalid VERIFY_ENSEMBLE_K/REQUEST_TIMEOUT_MS each refuse startup naming the exact variable (acceptance scenario 4)
 
 ### Implementation for User Story 2
@@ -111,8 +111,8 @@ implementable and testable.
 ### Implementation for User Story 3
 
 - [ ] T025 [P] [US3] sqlx SQLite Storage implementation in src/storage/sqlite.rs + src/storage/mod.rs: invocation_records table per data-model.md §5, idempotent startup migration at DATABASE_PATH
-- [ ] T026 [P] [US3] Telemetry module in src/telemetry.rs: InvocationRecord construction (UUID, token sums across passes, cost from per-model pricing table, latency via TimeProvider), GenAI semantic-convention span attributes; unit tests with MockTimeProvider
-- [ ] T027 [US3] Single-exit recording in src/server.rs: every invocation path (success and each failure class) funnels through one record-write point; integration tests assert exactly one record with correct outcome for success + each induced failure from T020 (depends on T023, T025, T026)
+- [ ] T026 [P] [US3] Telemetry module in src/telemetry.rs: InvocationRecord construction (record UUID, session_id = per-process UUID generated at startup, token sums across passes, cost from per-model pricing table, latency via TimeProvider), GenAI semantic-convention span attributes; unit tests with MockTimeProvider
+- [ ] T027 [US3] Single-exit recording in src/server.rs: every invocation path (success and each failure class, including `cancelled` via a drop-guard so an abandoned invocation still records) funnels through one record-write point; integration tests assert exactly one record with correct outcome for success + each induced failure from T020, and two records for T013's concurrency case (depends on T023, T025, T026)
 
 **Checkpoint**: All three stories independently functional
 
@@ -120,7 +120,7 @@ implementable and testable.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T028 Run the quickstart manual acceptance pass (live key): SC-001 stock-client connect, SC-002 20-claim schema-validity run, SC-003 seeded-error catch set, SC-004 stance-flip set, SC-006 latency; record results in specs/001-core-layer/quickstart.md under a Results heading
+- [ ] T028 Run the quickstart manual acceptance pass (live key): SC-001 stock-client connect, SC-002 20-claim schema-validity run, SC-003 seeded-error catch set (≥10 seeded-error + ≥6 sound claims), SC-004 stance-flip set, SC-006 latency; record results in specs/001-core-layer/quickstart.md under a Results heading
 - [ ] T029 [P] Update README.md and CLAUDE.md: status changes from "scaffold, transport not wired" to "serves verify"; document new env vars (ANTHROPIC_MODEL, VERIFY_ENSEMBLE_K)
 - [ ] T030 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test`) plus code-reviewer and design-reviewer agent passes over the branch diff before merge
 
