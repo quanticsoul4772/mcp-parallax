@@ -67,7 +67,7 @@ specific description; the benign trajectories produce silence.
 
 1. **Given** a trajectory where the same tool was invoked with
    near-identical input 4 times in the recent window, **When** the
-   post-activity checkpoint runs, **Then** the verdict is a flag naming the
+   post-batch checkpoint runs, **Then** the verdict is a flag naming the
    repeated action and count, and the feedback is delivered to the model.
 2. **Given** a trajectory where the same command failed 3 consecutive times,
    **When** the checkpoint runs, **Then** the verdict is a flag naming the
@@ -190,7 +190,7 @@ runs when screening finds no candidates.
 - **FR-003**: Every checkpoint MUST run cheap deterministic screening first;
   the single independent review pass (at most one per checkpoint) MAY run only
   when screening produces candidates, and only at the end-of-turn boundary.
-  The pre-action and post-activity boundaries MUST decide deterministically.
+  The pre-action and post-batch boundaries MUST decide deterministically.
 - **FR-004**: The v1 signal catalog is: (a) repetition/looping — near-identical
   actions repeated within the recent window; (b) repeated failure — the same
   action failing consecutively; (c) contradiction with stored memory — a
@@ -219,7 +219,7 @@ runs when screening finds no candidates.
   block or degrade the user's session.
 - **FR-009**: Pre-action checkpoints sit in the action's critical path and
   MUST decide within a hard time budget (default 500 ms, screening-only);
-  post-activity and end-of-turn checkpoints MUST NOT extend the critical path
+  post-batch and end-of-turn checkpoints MUST NOT extend the critical path
   beyond their own bounded evaluation.
 - **FR-013**: The pre-action gate MUST evaluate only pending actions matching
   a configurable risk-pattern set (default: consequential shell commands and
@@ -242,7 +242,7 @@ runs when screening finds no candidates.
 ### Key Entities
 
 - **Checkpoint event**: one harness boundary crossing — its kind (pre-action /
-  post-activity / end-of-turn), the triggering payload (pending action or
+  post-batch / end-of-turn), the triggering payload (pending action or
   recent activity or final message), and a reference to the session
   trajectory.
 - **Signal**: one named detector from the v1 catalog, with whatever it
@@ -273,9 +273,13 @@ runs when screening finds no candidates.
 - **SC-005** (auditability): 100% of checkpoint evaluations produce exactly one
   record, and flag rate / hold rate / catch rate are computable from records
   alone.
-- **SC-006** (inertness when off): with the add-on uninstalled or disabled,
-  recorded sessions are byte-identical in behavior to a baseline without the
-  feature (no latency added, nothing injected, catalog unchanged).
+- **SC-006** (inertness when off): with the sensor plane uninstalled or
+  disabled, harness sessions behave identically to the same server before
+  installation — no latency is added, nothing is injected, no checkpoint
+  evaluations occur, and zero checkpoint records accrue during a benign
+  session. (The checkpoint capabilities remain in the catalog like any other
+  tool; installing or uninstalling the sensor plane changes no server
+  behavior — FR-007.)
 - **SC-007** (actionability): every delivered flag names the specific evidence
   (the repeated action, the conflicting statements, or the contradicted
   memory) — no flag is a generic warning.

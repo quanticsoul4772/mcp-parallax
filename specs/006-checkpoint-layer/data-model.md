@@ -89,8 +89,11 @@ additionalProperties: false; all strings; no nesting, no enums-in-options
 ```
 
 Decline-biased prompt: a contradiction must be explicit and material — tone
-shifts, refinements, and additions are NOT contradictions. Candidates are
-presented stripped of surrounding self-justification (FR-012).
+shifts, refinements, and additions are NOT contradictions, and a reversal
+justified by evidence that appeared between the two statements is NOT a
+contradiction (FR-004(d)). Each candidate pair carries a compact summary of
+the tool outcomes observed between the statements so the rule is applicable.
+Candidates are presented stripped of surrounding self-justification (FR-012).
 
 ## 5. New capability bounds: transcript read (Principle VI)
 

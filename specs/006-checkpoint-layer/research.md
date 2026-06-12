@@ -120,9 +120,13 @@ supervision patterns) and are recorded in the corpus amendment
   most one `checkpoint_review` hop: flat+closed schema
   `{contradicts: boolean, statement_a: string, statement_b: string, basis:
   string}`, candidates presented **stripped of surrounding self-justification**
-  (FR-012, blind judging), decline-biased prompt (contradiction must be
-  explicit, not a tone shift). Verdict mapping and flag wording are pure
-  functions of the hop's output (FR-005).
+  (FR-012, blind judging), decline-biased prompt: a contradiction must be
+  explicit and material — not a tone shift — and **a reversal justified by
+  evidence that appeared between the two statements is NOT a contradiction**
+  (FR-004(d) "without intervening evidence"); each candidate pair therefore
+  carries a compact summary of tool outcomes observed between the two
+  statements so the hop can apply that rule. Verdict mapping and flag wording
+  are pure functions of the hop's output (FR-005).
 - **Rationale**: the 005 pattern applied to the noisiest boundary — the model
   classifies, the server decides and phrases; screening keeps the hop rare
   (cost + alarm fatigue).

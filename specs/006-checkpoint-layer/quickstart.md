@@ -49,11 +49,15 @@ cargo run --release --example acceptance_checkpoint
 ```
 
 Replays ≥20 recorded benign trajectories and ≥12 seeded-failure trajectories
-(all four v1 signals) through all three boundaries via the in-process server:
-asserts ≥95% silence + zero holds on benign (SC-001), ≥80% catch / 100%
-seeded-hold (SC-002), gate budget compliance (SC-003), one record per
-evaluation with rates computable by SQL (SC-005), and evidence-bearing
-messages (SC-007). Results recorded below when run.
+(all four v1 signals, plus one evidence-justified reversal that must stay
+silent) through all three boundaries via the in-process server: asserts ≥95%
+silence + zero holds on benign (SC-001), ≥80% catch / 100% seeded-hold
+(SC-002), gate budget compliance (SC-003), fail-open under unavailable deps
+(SC-004), one record per evaluation with rates computable by SQL (SC-005),
+and evidence-bearing messages (SC-007). The session-level halves of SC-004
+(server killed mid-session) and SC-006 (hooks uninstalled → zero new
+records) are verified by the live protocol in T011. Results recorded below
+when run.
 
 ## Inspect
 
