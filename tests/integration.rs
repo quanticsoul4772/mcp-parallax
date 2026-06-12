@@ -372,16 +372,141 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
     line.clear();
     stdout.read_line(&mut line).unwrap();
     let tools: Value = serde_json::from_str(&line).expect("tools/list reply is JSON-RPC");
-    let names: Vec<&str> = tools["result"]["tools"]
+    let mut names: Vec<&str> = tools["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["verify"]);
+    names.sort_unstable();
+    assert_eq!(names, vec!["unstick", "verify"]);
 
     drop(stdin);
     let _ = child.kill();
     let _ = child.wait();
     let _ = std::fs::remove_file(&db);
+}
+
+// ====== 002-unstick-mode (US2: guarantee parity) ==========================
+
+const UNSTICK_CONTRACT: &str =
+    include_str!("../specs/002-unstick-mode/contracts/unstick.tool.json");
+
+fn unstick_call(goal: &str, blocked: &str, tried: &[&str]) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new("unstick");
+    params.arguments = json!({ "goal": goal, "blocked": blocked, "tried": tried })
+        .as_object()
+        .cloned();
+    params
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn catalog_lists_unstick_with_the_contracted_schemas() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let unstick = tools
+        .iter()
+        .find(|t| t.name == "unstick")
+        .expect("unstick listed");
+    let contract: Value = serde_json::from_str(UNSTICK_CONTRACT).unwrap();
+
+    assert_eq!(
+        unstick.description.as_deref().unwrap(),
+        contract["description"]
+    );
+    let props = |schema: &Value| -> Vec<String> {
+        schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let input = serde_json::to_value(unstick.input_schema.as_ref()).unwrap();
+    assert_eq!(props(&input), props(&contract["inputSchema"]));
+    let output = serde_json::to_value(
+        unstick
+            .output_schema
+            .as_ref()
+            .expect("outputSchema advertised"),
+    )
+    .unwrap();
+    assert_eq!(props(&output), props(&contract["outputSchema"]));
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unstick_returns_schema_valid_structured_step_and_one_record() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "next_step": "Bisect the failing config by halving the overrides file",
+            "rationale": "Halving isolates the bad key in O(log n) runs.",
+            "watch_for": "Overrides that only fail in combination"
+        }))))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(unstick_call(
+            "find the bad config key",
+            "service crashes on boot with the full overrides file",
+            &["reading the file top to bottom", "grepping for typos"],
+        ))
+        .await
+        .unwrap();
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    let contract: Value = serde_json::from_str(UNSTICK_CONTRACT).unwrap();
+    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
+    assert!(structured["next_step"]
+        .as_str()
+        .unwrap()
+        .starts_with("Bisect"));
+
+    // Exactly one record, attributed to unstick, single-pass usage (not x3).
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "unstick");
+    assert_eq!(records[0].outcome, Outcome::Success);
+    assert_eq!(records[0].input_tokens, 100);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unstick_failures_use_the_same_distinct_classes() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "content": [],
+            "stop_reason": "refusal",
+            "usage": { "input_tokens": 10, "output_tokens": 0 }
+        })))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 500).await;
+
+    let err = client
+        .call_tool(unstick_call("g", "b", &[]))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("[refusal]"),
+        "same class naming as verify; got: {err}"
+    );
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "unstick");
+    assert_eq!(records[0].outcome, Outcome::Refusal);
+
+    client.cancel().await.unwrap();
 }

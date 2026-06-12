@@ -38,6 +38,24 @@ ANTHROPIC_API_KEY=... cargo run --example acceptance_unstick
 Runs 10 varied stuck scenarios; asserts structural validity, one-step shape,
 zero restatements of tried items, and per-call latency. Results recorded below.
 
+## Results (acceptance pass — 2026-06-12)
+
+Run live via `cargo run --example acceptance_unstick` against `claude-opus-4-8`
+(10 single-pass calls). **All criteria passed:**
+
+| Criterion | Result | Target |
+|---|---|---|
+| SC-002 valid results | 10/10 | 100% |
+| SC-003 menu/plan leakage | 0/10 | 0 |
+| SC-003 tried-restatements | 0 (code-enforced; any would have errored) | 0 |
+| SC-004 max single-call latency | 6.5 s | < 15 s |
+
+SC-001/SC-005/SC-006 are covered by the test suite: catalog lists both tools
+with contract-matching schemas, every invocation leaves one record attributed
+to its tool, and the pre-existing suite passes with one knowingly-updated
+assertion (the stdio smoke test asserts the *full catalog*, which gaining a
+second tool is the feature itself, not a change to verify's behavior).
+
 ## Records (SC-005)
 
 Same table as verify — the `tool` column distinguishes the correctives:

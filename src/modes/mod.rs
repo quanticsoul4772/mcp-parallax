@@ -4,6 +4,7 @@
 //! ensemble k }`. One generic execution path runs any mode; adding mode #2 is
 //! a registry entry, not a new subsystem.
 
+pub mod unstick;
 pub mod verify;
 
 use crate::error::AppError;
@@ -118,6 +119,21 @@ fn assert_flat(id: &str, schema: &Value) -> Result<(), AppError> {
         // `const`s, which the sanitizer collapses to `enum`).
         if is_scalar_enum(prop) {
             continue;
+        }
+        // A nullable scalar (`type: ["string","null"]` — schemars' encoding of
+        // Option<T>) is still flat; the grammar supports the null type.
+        if let Some(union) = prop.get("type").and_then(Value::as_array) {
+            let all_scalar = !union.is_empty()
+                && union.iter().all(|t| {
+                    matches!(
+                        t.as_str(),
+                        Some("string" | "number" | "integer" | "boolean" | "null")
+                    )
+                });
+            if all_scalar {
+                continue;
+            }
+            return illegal(&format!("property '{name}' has a non-scalar type union"));
         }
         let Some(type_name) = prop.get("type").and_then(Value::as_str) else {
             return illegal(&format!("property '{name}' has no concrete type"));
@@ -237,6 +253,29 @@ mod tests {
     #[test]
     fn unknown_mode_is_none() {
         assert!(ModeRegistry::new().get("nope").is_none());
+    }
+
+    #[test]
+    fn nullable_scalar_unions_are_flat_but_object_unions_are_not() {
+        let nullable_scalar = json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": ["string", "null"] }
+            }
+        });
+        assert!(ModeRegistry::new()
+            .register("ok", "d", "t", nullable_scalar, 1)
+            .is_ok());
+
+        let object_union = json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": ["object", "null"] }
+            }
+        });
+        assert!(ModeRegistry::new()
+            .register("bad", "d", "t", object_union, 1)
+            .is_err());
     }
 
     #[test]

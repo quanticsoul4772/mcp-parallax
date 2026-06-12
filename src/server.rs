@@ -6,6 +6,7 @@
 
 use crate::config::Config;
 use crate::error::{AppError, Outcome};
+use crate::modes::unstick::{self, NextStep, UnstickParams, UNSTICK_ID};
 use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
 use crate::telemetry::InvocationRecord;
@@ -52,6 +53,7 @@ impl Parallax {
     ) -> Result<Self, AppError> {
         let mut registry = ModeRegistry::new();
         verify::register(&mut registry, config.verify_ensemble_k)?;
+        unstick::register(&mut registry)?;
         Ok(Self {
             tool_router: Self::tool_router(),
             client,
@@ -83,6 +85,23 @@ impl Parallax {
         self.verify_with_ct(params, context.ct).await
     }
 
+    /// The `unstick` tool: one committed next step for a stuck caller.
+    #[tool(
+        name = "unstick",
+        description = "Break a stuck loop by committing to one concrete next step. Call when you \
+        have a goal, you have tried things, and you are producing plausible motion that goes \
+        nowhere. Provide the goal, where you are blocked, and what you already tried; you get \
+        back exactly one immediately actionable step with a rationale - never a menu of options, \
+        never a plan. An external frame breaks the loop you cannot see from inside."
+    )]
+    pub async fn unstick(
+        &self,
+        Parameters(params): Parameters<UnstickParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<NextStep>, ErrorData> {
+        self.unstick_with_ct(params, context.ct).await
+    }
+
     async fn verify_with_ct(
         &self,
         params: VerifyParams,
@@ -91,15 +110,47 @@ impl Parallax {
         let mode = self.registry.get(VERIFY_ID).ok_or_else(|| {
             ErrorData::internal_error("verify mode not registered".to_string(), None)
         })?;
+        self.run_recorded(VERIFY_ID, ct, async {
+            verify::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
+                .await
+                .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
 
-        // Single exit point: the guard guarantees exactly one record on every
-        // path — cancellation via the select arm, abandonment (future dropped)
-        // via the guard's Drop backstop.
+    async fn unstick_with_ct(
+        &self,
+        params: UnstickParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<NextStep>, ErrorData> {
+        let mode = self.registry.get(UNSTICK_ID).ok_or_else(|| {
+            ErrorData::internal_error("unstick mode not registered".to_string(), None)
+        })?;
+        self.run_recorded(UNSTICK_ID, ct, async {
+            unstick::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
+                .await
+                .map(|run| (run.step, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
+    /// The shared per-invocation wrapper: single exit point where every path —
+    /// success, each failure class, cancellation (ct select arm), abandonment
+    /// (guard Drop backstop) — leaves exactly one record (FR-010).
+    async fn run_recorded<T, Fut>(
+        &self,
+        tool_id: &'static str,
+        ct: tokio_util::sync::CancellationToken,
+        work: Fut,
+    ) -> Result<Json<T>, ErrorData>
+    where
+        Fut: std::future::Future<Output = Result<(T, u64, u64), AppError>>,
+    {
         let guard = RecordGuard::new(
             Arc::clone(&self.storage),
             Arc::clone(&self.clock),
             self.session_id.clone(),
-            VERIFY_ID.to_string(),
+            tool_id.to_string(),
             self.model.clone(),
         );
 
@@ -108,13 +159,11 @@ impl Parallax {
                 guard.finish(0, 0, Outcome::Cancelled).await;
                 Err(to_error_data(&AppError::Cancelled))
             }
-            result = verify::run(self.client.as_ref(), mode, &params, self.max_claim_chars) => {
+            result = work => {
                 match result {
-                    Ok(run) => {
-                        guard
-                            .finish(run.input_tokens, run.output_tokens, Outcome::Success)
-                            .await;
-                        Ok(Json(run.verdict))
+                    Ok((value, input_tokens, output_tokens)) => {
+                        guard.finish(input_tokens, output_tokens, Outcome::Success).await;
+                        Ok(Json(value))
                     }
                     Err(error) => {
                         // Token usage on failed invocations is not attributable
