@@ -24,6 +24,17 @@ strictly additive and strictly derived: the local records remain the source
 of truth, behavior never changes, and with the feature disabled (the
 default) nothing is emitted and nothing slows down.
 
+## Clarifications
+
+### Session 2026-06-12
+
+- Q: Is inheriting the standard OTel env-var contract a deliberate-enough
+  enablement (Constitution VI), given MCP child processes inherit the
+  user environment? → A: Yes — standard vars only, no Parallax-specific
+  gate. The inheritance behavior is documented prominently (README +
+  integration docs) rather than gated; FR-008's metadata-only guarantee
+  bounds what an inherited enablement can ever export.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Watch every invocation in an existing telemetry backend (Priority: P1)
@@ -174,7 +185,11 @@ and shutdown completes within the bounded flush window.
   through the standard OpenTelemetry environment variables (endpoint et
   al.) — no Parallax-specific switch, no code change, no config file. A
   present-but-malformed telemetry variable is a startup error, never a
-  silent fallback (the existing config convention).
+  silent fallback (the existing config convention). Because these
+  variables are shared across OTel-aware processes by design, a globally
+  set endpoint enables Parallax too — this inheritance MUST be documented
+  prominently in the operator-facing docs (clarified 2026-06-12; FR-008
+  bounds what an inherited enablement can export).
 - **FR-005**: With telemetry disabled, the system MUST add no measurable
   per-invocation overhead and make no telemetry-related network egress.
 - **FR-006**: Telemetry failures (unreachable collector, export errors,
