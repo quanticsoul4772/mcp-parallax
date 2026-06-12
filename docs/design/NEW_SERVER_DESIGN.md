@@ -111,10 +111,13 @@ by *whether the model has to recognize it needs them*:
 1. **Cognitive correctives** (§A) — the *what*. Invoked when the model can
    self-diagnose. Delivered by the primitives below, each engineered for real
    independence.
-2. **Watchdog** ([`WATCHDOG_LAYER.md`](WATCHDOG_LAYER.md)) — the *when*. Runs beside
-   generation and fires correctives the model can't self-diagnose to call. Removes the
+2. **Watchdog** ([`WATCHDOG_LAYER.md`](WATCHDOG_LAYER.md)) — the *when*. Fires
+   correctives the model can't self-diagnose to call. Removes the
    self-diagnosis dependency — the highest-leverage fix for the failures that matter
-   most.
+   most. *Amended 2026-06-12:* "runs beside generation" did not survive MCP — the
+   layer is re-grounded as harness-triggered checkpoints (client hooks as
+   sensor/actuator, this server as the brain); see the MCP-reality amendment in
+   `WATCHDOG_LAYER.md`.
 3. **Memory / experience** ([`MEMORY_LAYER.md`](MEMORY_LAYER.md)) — accumulated
    skills, lessons, world-state. The literature says this can outweigh the model
    itself. Verified-before-stored.
