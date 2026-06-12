@@ -27,7 +27,8 @@ carry **distinct but related** schemas from the same schemars pipeline — a
 This split is forced by a deeper design rule: confidence is ensemble-agreement
 computed by the server, never model self-report (design §7.3/§10), so the model-hop
 schema must not contain `confidence`/`passes`. Verify's pair is `PassVerdict`
-(model) and `Verdict` (MCP) in `src/modes/verify.rs`.
+(model) and `Verdict` (MCP) in `src/modes/verify.rs`. For single-pass modes the
+pair collapses to one type (unstick's `NextStep`).
 
 ---
 
