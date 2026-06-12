@@ -59,6 +59,37 @@ and evidence-bearing messages (SC-007). The session-level halves of SC-004
 records) are verified by the live protocol in T011. Results recorded below
 when run.
 
+### Results (2026-06-12, claude-opus-4-8 + voyage-4)
+
+**S2 spike** (`spike_embed_latency`, 50 sequential query embeds): min 102 /
+p50 130 / p95 165 / max 262 ms. The 500 ms hard budget holds with wide
+margin; SC-003's p95 target was amended 150 → 300 ms from this measurement
+(research.md D4) — semantic recall stays in the gate.
+
+**Acceptance run 1 — PASS** (78 evaluations: 20 benign sessions × 3
+boundaries, 12 seeded, 1 FR-004(d) negative case, 5 fail-open):
+
+- SC-001: **60/60 benign silence (100%), zero holds** — including risk-matched
+  benign actions (`git push origin feature/...`, `cargo publish --dry-run`)
+  evaluated against three seeded constraints without a false hold at τ = 0.55.
+- SC-002: **11/12 caught (91.7%)**; memory-contradicting actions held **3/3**
+  with the conflicting constraint quoted. The one miss: `contra-1` (cache-layer
+  reversal) — candidates were mined but the decline-biased review hop judged
+  it silent. Recorded as-is; the decline bias erring toward silence is the
+  designed trade (alarm fatigue beats recall).
+- SC-003: gate p95 **136 ms** (< 300 amended target); 100% within the 500 ms
+  hard budget.
+- SC-004 (in-process slice): 5/5 unavailable-transcript evaluations returned
+  recorded fail-open silence, none errored outward.
+- SC-005: exactly **78 records for 78 evaluations**; flags 8, holds 3,
+  fail-open 5 — rates computed from `checkpoint_records` alone.
+- SC-007: every flag/hold message named its specific evidence.
+- FR-004(d): the evidence-justified reversal (failed Windows builds between
+  the two statements) stayed **silent**.
+
+`GATE_RELEVANCE_TAU = 0.55` is validated by this evidence (3/3 true holds,
+0/60 false) and is no longer a placeholder.
+
 ## Inspect
 
 ```bash

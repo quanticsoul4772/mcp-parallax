@@ -266,7 +266,10 @@ runs when screening finds no candidates.
   memory-contradicting actions are held.
 - **SC-003** (latency): pre-action checkpoints decide within their hard time
   budget in 100% of evaluations; the 95th-percentile pre-action decision
-  completes in under 150 ms.
+  completes in under 300 ms. *(Amended 2026-06-12 from the S2 measurement —
+  research.md D4: voyage-4 query-embed p95 alone is 165 ms from the dev
+  machine, so the original 150 ms was unachievable with semantic recall in
+  the gate; the hard-budget criterion is unchanged.)*
 - **SC-004** (fail-open): with the layer made unavailable or erroring
   mid-session, 100% of exercised sessions complete with no blocked actions and
   no user-visible degradation.

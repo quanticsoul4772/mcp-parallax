@@ -21,7 +21,7 @@ evidence):
 | `REPEAT_THRESHOLD` | 4 | identical normalized actions → flag (US1-AS1) |
 | `FAILURE_THRESHOLD` | 3 | consecutive failures of same action → flag (US1-AS2) |
 | `GATE_BUDGET_MS` | 500 | hard pre-action budget; timeout → fail-open (FR-009) |
-| `GATE_RELEVANCE_TAU` | τ (set by S2/acceptance) | min cosine for a hold (D4) |
+| `GATE_RELEVANCE_TAU` | 0.55 (validated by acceptance run 1: 3/3 true holds, 0/60 false) | min cosine for a hold (D4) |
 | `REVIEW_CANDIDATES_MAX` | 4 | cap on candidate pairs sent to the review hop |
 | `COOLDOWN_WINDOW_MS` | 1_800_000 | flag suppression window (FR-010) |
 | `GATE_RISK_PATTERNS` | built-in set | FR-013 default: consequential shell commands (deploy/push/delete/migrate/...) and config-file writes; overridable via `CHECKPOINT_GATE_PATTERNS` env (comma-separated substrings; present-but-unparseable = error, per config convention) |

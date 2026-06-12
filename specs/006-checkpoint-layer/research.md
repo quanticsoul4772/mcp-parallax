@@ -89,6 +89,15 @@ supervision patterns) and are recorded in the corpus amendment
   options are: (a) local lexical matching (token overlap) over the small set
   of constraint memories in the gate, semantic recall reserved for
   end-of-turn; (b) amend SC-003 from measurement. Decided at spike time.
+- **S2 RESULT (2026-06-12, `examples/spike_embed_latency.rs`, 50 sequential
+  voyage-4 query embeds)**: min 102 ms / p50 130 ms / p90 150 ms / **p95
+  165 ms** / max 262 ms. The 500 ms hard budget holds with wide margin —
+  semantic recall stays in the gate (option (a) rejected: trading detection
+  quality for 15 ms over an aspirational number is the wrong side of the
+  trade). **Option (b) taken**: SC-003's p95 target amended from 150 ms to
+  300 ms (embed p95 + headroom for memory load and ranking), decided from
+  measurement at spike time, recorded in the spec in the same change. The
+  100%-within-hard-budget criterion is unchanged.
 - **Alternatives**: LLM contradiction judgment in the gate — violates FR-003
   and the latency budget; rejected. Skipping memory in the gate — guts US2;
   rejected.
