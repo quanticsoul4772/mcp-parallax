@@ -75,6 +75,13 @@ panic = "deny"
 print_stdout = "deny"
 dbg_macro = "deny"
 
+# Z3's Debug C++ build opens `.z3-trace` in the process cwd from a global
+# initializer (artifact pollution for a stdio server running in the client's
+# cwd) and is far slower. opt-level 3 makes cmake build Z3 as Release in
+# every cargo profile — `_TRACE` is compiled out.
+[profile.dev.package.z3-sys]
+opt-level = 3
+
 [profile.release]
 lto = true
 codegen-units = 1

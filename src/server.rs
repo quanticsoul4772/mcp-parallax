@@ -505,8 +505,10 @@ impl ServerHandler for Parallax {
         let mut instructions = String::from(
             "Parallax: independent correctives for the calling model's blind spots. \
              Call `verify` when an assertion matters and being confidently wrong is costly. \
-             Call `unstick` when you are stuck or looping and need to commit to one \
-             concrete next step.",
+             Call `check` instead when the claim's truth is computable (arithmetic, \
+             quantitative comparisons, logical/constraint consistency) - a deterministic \
+             engine decides, not a judge. Call `unstick` when you are stuck or looping \
+             and need to commit to one concrete next step.",
         );
         if self.memory.is_some() {
             instructions.push_str(

@@ -43,6 +43,33 @@ cargo run --release --example acceptance_check
 claims (SC-002 100% declined), auditability (SC-003), determinism (SC-007).
 Results recorded below when run.
 
+### Results (2026-06-12, claude-opus-4-8)
+
+Four live runs; the first three each exposed a translation-quality defect
+that was fixed at the engine/prompt level (never by widening the verdict
+mapping):
+
+- **Run 1 — FAIL, 16/21.** Two confidently wrong refutations from exact
+  `==` over float-producing arithmetic (`0.15 * 240 == 36` is false in
+  f64), and three constraint claims with inverted polarity (`asserted` set
+  to what the model computed, not what the claim states). Fix: the
+  arithmetic engine now rejects `==`/`!=` in float-producing expressions
+  as a retryable violation forcing the tolerance form (pure-integer
+  equality stays exact).
+- **Run 2 — FAIL, 16/21 on 19 completed.** The equality guard recovered
+  one claim via the violation-fed retry; two claims double-failed because
+  the guard message gave no concrete rewrite, and the same three polarity
+  errors remained (a prompt edit had silently failed to apply). SC-002
+  7/7, SC-003 19/19, SC-007 true.
+- **Run 3 — FAIL, 17/21 on 18 completed.** Polarity cues landed: all
+  constraint claims correct. But the abstract guidance ("use a tolerance")
+  made three exact-value claims double-fail and one get wrongly declined.
+- **Run 4 — PASS.** Guard message quotes the rejected expression and names
+  a literal bound (`<= 0.0001`); prompt states exact percentage/power
+  claims are checkable. SC-001 21/21, SC-002 7/7 declines, SC-003 21/21
+  responses carry `formal_form` + `engine_result`, SC-007 determinism
+  true (forms varied across the repeat; engine results identical).
+
 ## Inspect
 
 ```bash

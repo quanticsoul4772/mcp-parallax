@@ -10,6 +10,35 @@
 use crate::deterministic::{Violation, SOLVER_TIMEOUT_MS};
 use z3::{Params, SatResult, Solver};
 
+/// Count `(assert ...)` forms tolerantly: `(`, optional whitespace, the word
+/// `assert` at a word boundary (so `(assert-soft` does not count and
+/// `( assert` does). Shared with the cross-field validator so the
+/// parse-detection arithmetic and the validator can never disagree.
+pub(crate) fn count_asserts(script: &str) -> usize {
+    let bytes = script.as_bytes();
+    let mut count = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'(' {
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if script[j..].starts_with("assert") {
+                let after = j + "assert".len();
+                let boundary = bytes
+                    .get(after)
+                    .is_none_or(|c| c.is_ascii_whitespace() || *c == b'(' || *c == b')');
+                if boundary {
+                    count += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    count
+}
+
 /// A completed solver run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SolverOutcome {
@@ -34,10 +63,17 @@ pub enum SolverOutcome {
 /// Returns a [`Violation`] (retryable — research.md D5) for NUL bytes,
 /// scripts with no assertions, and full or partial parse failures.
 pub fn check(smtlib: &str) -> Result<SolverOutcome, Violation> {
+    // Artifact-pollution note (review finding): Z3's Debug C++ build opens
+    // `.z3-trace` in the process cwd from a GLOBAL INITIALIZER — no runtime
+    // parameter can prevent it. The fix is at build level: Cargo.toml forces
+    // `opt-level = 3` for z3-sys in every profile, which builds Z3's C++ as
+    // Release and compiles the `_TRACE` machinery out entirely. The
+    // `no_trace_file_is_written_to_the_cwd` test pins this.
+
     if smtlib.contains('\0') {
         return Err(Violation("the script contains a NUL byte".to_string()));
     }
-    let expected = smtlib.matches("(assert").count();
+    let expected = count_asserts(smtlib);
     if expected == 0 {
         return Err(Violation(
             "the script contains no (assert ...) form".to_string(),
@@ -118,6 +154,32 @@ mod tests {
             .unwrap_err()
             .0
             .contains("no (assert"));
+    }
+
+    #[test]
+    fn assert_counting_is_tolerant_and_boundary_aware() {
+        assert_eq!(count_asserts("(assert true)"), 1);
+        assert_eq!(count_asserts("( assert true)(  assert false)"), 2);
+        assert_eq!(count_asserts("(assert-soft true)"), 0); // word boundary
+        assert_eq!(count_asserts("(asserting x)"), 0);
+        assert_eq!(count_asserts("(declare-const x Int)"), 0);
+    }
+
+    // Review finding: the bundled Z3 (debug profile) writes `.z3-trace`
+    // into the process cwd unless tracing is disabled — a stdio server runs
+    // in the client's cwd, so that would be artifact pollution.
+    #[test]
+    fn no_trace_file_is_written_to_the_cwd() {
+        let _ = std::fs::remove_file(".z3-trace");
+        check(
+            "(declare-const t Int)
+(assert (> t 0))",
+        )
+        .unwrap();
+        assert!(
+            !std::path::Path::new(".z3-trace").exists(),
+            "z3 tracing must stay disabled"
+        );
     }
 
     // SC-007: determinism.

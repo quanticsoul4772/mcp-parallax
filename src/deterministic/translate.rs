@@ -35,13 +35,21 @@ Engine 'arithmetic': produce a single BOOLEAN-VALUED expression that is true \
 exactly when the claim is true. Dialect (use nothing outside it): \
 <<whitelist>>. Vague quantities ('roughly', 'about') must become an explicit \
 tolerance in the expression (e.g. math::abs(x - y) <= bound); if no \
-reasonable bound exists, the claim is not checkable.\n\
+reasonable bound exists, the claim is not checkable. HARD RULE: never use == \
+or != when the expression involves a decimal point, /, or ^ — the engine \
+rejects it. Instead write math::abs(a - b) <= 0.0001 (a literal numeric \
+bound, never the word 'tolerance'), or rewrite division-free (a/b == c \
+becomes a == b*c). Exact == is fine for pure-integer arithmetic, and exact \
+percentage/power claims ARE checkable this way — do not decline them.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \
 each variable over Int, Real, or Bool, then (assert ...) forms using linear \
 arithmetic; do NOT emit (check-sat). Set 'asserted' to what the claim says \
 about the system: 'satisfiable' if the claim says an assignment exists, \
-'unsatisfiable' if the claim says none exists.\n\
+'unsatisfiable' if the claim says none exists. The polarity reflects what \
+the claim STATES, never what you compute to be true. Cues: 'there is/are', \
+'there exist(s)', 'you can', 'it is possible' assert satisfiable; 'no ... \
+exists', 'you cannot', 'it is impossible', 'never' assert unsatisfiable.\n\
 \n\
 A claim mixing a checkable core with judgment may be checked ONLY for the \
 core — the formal form is the statement of what was checked; if the core \
@@ -129,12 +137,40 @@ fn build_prompt(
              cannot be faithfully formalized)."
         )
     });
-    mode.prompt_template
-        .replace("<<decline_bias>>", DECLINE_BIAS)
-        .replace("<<whitelist>>", EVALEXPR_WHITELIST)
-        .replace("<<violation_clause>>", &violation_clause)
-        .replace("<<claim>>", claim)
-        .replace("<<context>>", context.unwrap_or("(none)"))
+    fill(
+        mode.prompt_template,
+        &[
+            ("<<decline_bias>>", DECLINE_BIAS),
+            ("<<whitelist>>", EVALEXPR_WHITELIST),
+            ("<<violation_clause>>", &violation_clause),
+            ("<<claim>>", claim),
+            ("<<context>>", context.unwrap_or("(none)")),
+        ],
+    )
+}
+
+/// One-pass placeholder substitution: scans only the pristine template, so
+/// placeholder-like text inside substituted values (a hostile claim
+/// containing `<<context>>`, an engine violation echoing model output) is
+/// NEVER re-expanded (review finding: template-injection seam).
+fn fill(template: &str, substitutions: &[(&str, &str)]) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut rest = template;
+    while !rest.is_empty() {
+        // The earliest placeholder occurrence wins.
+        let next = substitutions
+            .iter()
+            .filter_map(|(key, value)| rest.find(key).map(|at| (at, *key, *value)))
+            .min_by_key(|(at, _, _)| *at);
+        let Some((at, key, value)) = next else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..at]);
+        output.push_str(value);
+        rest = &rest[at + key.len()..];
+    }
+    output
 }
 
 /// One classify+translate call.
@@ -222,23 +258,35 @@ fn cross_field_validate(out: &TranslateOut) -> TranslateAttempt {
                     "smtlib_constraints contains a NUL byte".to_string(),
                 ));
             }
-            if !smtlib.contains("(assert") {
+            if crate::deterministic::solver::count_asserts(smtlib) == 0 {
                 return Err(Violation(
                     "smtlib_constraints contains no (assert ...) form".to_string(),
                 ));
             }
-            if smtlib.contains("(check-sat") {
-                return Err(Violation(
-                    "smtlib_constraints must not contain (check-sat) — the engine appends it"
-                        .to_string(),
-                ));
+            // The prompt restricts scripts to declares + asserts; comments
+            // and stateful commands would desynchronize the parse-detection
+            // count (review finding) and are rejected up front.
+            for forbidden in [
+                ";",
+                "(check-sat",
+                "(push",
+                "(pop",
+                "(reset",
+                "(set-option",
+                "(assert-soft",
+            ] {
+                if smtlib.contains(forbidden) {
+                    return Err(Violation(format!(
+                        "smtlib_constraints must contain only (declare-const ...) and (assert ...) forms; {forbidden:?} is not allowed"
+                    )));
+                }
             }
             let asserted = match out.asserted.as_deref() {
                 Some("satisfiable") => Polarity::Satisfiable,
                 Some("unsatisfiable") => Polarity::Unsatisfiable,
                 other => {
                     return Err(Violation(format!(
-                        "engine=constraints requires asserted to be exactly \"satisfiable\"                          or \"unsatisfiable\"; got {other:?}"
+                        "engine=constraints requires asserted to be exactly \"satisfiable\" or \"unsatisfiable\"; got {other:?}"
                     )))
                 }
             };
@@ -384,7 +432,7 @@ mod tests {
                 json!({ "checkable": true, "reason": null, "engine": "constraints",
                         "arithmetic_expression": null,
                         "smtlib_constraints": "(assert true)(check-sat)", "asserted": "satisfiable" }),
-                "must not contain (check-sat",
+                "is not allowed",
             ),
             (
                 json!({ "checkable": true, "reason": null, "engine": "constraints",

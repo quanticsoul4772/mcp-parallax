@@ -122,25 +122,38 @@ pub async fn run(
                     .await
                     .map_err(|e| AppError::Client(format!("solver task failed: {e}")))?;
                 match solved {
-                    Ok(SolverOutcome::Unknown) => {
-                        return Err(AppError::Timeout {
-                            what: "solver (timeout or incompleteness)",
-                            ms: u64::from(SOLVER_TIMEOUT_MS),
-                        });
-                    }
                     Ok(outcome) => {
-                        let (verdict, witness) = constraint_verdict(&outcome, asserted);
+                        // Narrow to PROVEN outcomes only — Unknown cannot
+                        // reach the verdict mapping by construction.
+                        let proven = match outcome {
+                            SolverOutcome::Sat { witness } => Proven::Sat { witness },
+                            SolverOutcome::Unsat => Proven::Unsat,
+                            SolverOutcome::Unknown => {
+                                return Err(AppError::Timeout {
+                                    what: "solver (timeout or incompleteness)",
+                                    ms: u64::from(SOLVER_TIMEOUT_MS),
+                                });
+                            }
+                        };
+                        let (verdict, witness) = constraint_verdict(proven, asserted);
                         return Ok((
                             CheckResult {
-                                explanation: explain_constraints(asserted, &outcome, verdict),
+                                explanation: explain_constraints(
+                                    asserted,
+                                    verdict,
+                                    witness.is_some(),
+                                ),
                                 verdict,
                                 engine: Some(Engine::Constraints),
                                 formal_form: Some(smtlib),
                                 engine_result: Some(
-                                    match outcome {
-                                        SolverOutcome::Sat { .. } => "sat",
-                                        SolverOutcome::Unsat => "unsat",
-                                        SolverOutcome::Unknown => "unknown",
+                                    match verdict {
+                                        Verdict::Supported | Verdict::Refuted
+                                            if witness.is_some() =>
+                                        {
+                                            "sat"
+                                        }
+                                        _ => "unsat",
                                     }
                                     .to_string(),
                                 ),
@@ -167,23 +180,23 @@ pub async fn run(
     )))
 }
 
-/// Pure verdict mapping for the solver (data-model.md §4): the engine result
+/// A PROVEN solver outcome — `Unknown` is unrepresentable here, so a verdict
+/// can only exist when the engine actually proved something (FR-002/FR-005;
+/// review finding: the invariant is in the types, not statement order).
+enum Proven {
+    Sat { witness: String },
+    Unsat,
+}
+
+/// Pure verdict mapping for the solver (data-model.md §4): the proven result
 /// crossed with the claim's asserted polarity; the witness rides on
 /// whichever side holds a model.
-fn constraint_verdict(outcome: &SolverOutcome, asserted: Polarity) -> (Verdict, Option<String>) {
-    match (outcome, asserted) {
-        (SolverOutcome::Sat { witness }, Polarity::Satisfiable) => {
-            (Verdict::Supported, Some(witness.clone()))
-        }
-        (SolverOutcome::Sat { witness }, Polarity::Unsatisfiable) => {
-            (Verdict::Refuted, Some(witness.clone()))
-        }
-        (SolverOutcome::Unsat, Polarity::Unsatisfiable) => (Verdict::Supported, None),
-        // Unknown never reaches here — the orchestrator surfaces it as
-        // Timeout; mapped like a refutation defensively.
-        (SolverOutcome::Unsat, Polarity::Satisfiable) | (SolverOutcome::Unknown, _) => {
-            (Verdict::Refuted, None)
-        }
+fn constraint_verdict(proven: Proven, asserted: Polarity) -> (Verdict, Option<String>) {
+    match (proven, asserted) {
+        (Proven::Sat { witness }, Polarity::Satisfiable) => (Verdict::Supported, Some(witness)),
+        (Proven::Sat { witness }, Polarity::Unsatisfiable) => (Verdict::Refuted, Some(witness)),
+        (Proven::Unsat, Polarity::Unsatisfiable) => (Verdict::Supported, None),
+        (Proven::Unsat, Polarity::Satisfiable) => (Verdict::Refuted, None),
     }
 }
 
@@ -200,11 +213,11 @@ fn explain_arithmetic(expression: &str, verdict: Verdict) -> String {
     }
 }
 
-fn explain_constraints(asserted: Polarity, outcome: &SolverOutcome, verdict: Verdict) -> String {
-    let proved = match outcome {
-        SolverOutcome::Sat { .. } => "satisfiable (a concrete assignment exists — see witness)",
-        SolverOutcome::Unsat => "unsatisfiable (proven: no assignment exists)",
-        SolverOutcome::Unknown => "undetermined",
+fn explain_constraints(asserted: Polarity, verdict: Verdict, has_witness: bool) -> String {
+    let proved = if has_witness {
+        "satisfiable (a concrete assignment exists — see witness)"
+    } else {
+        "unsatisfiable (proven: no assignment exists)"
     };
     let claimed = match asserted {
         Polarity::Satisfiable => "satisfiable",
@@ -295,13 +308,15 @@ mod tests {
 
     #[tokio::test]
     async fn true_arithmetic_claims_are_supported_with_the_form_shown() {
-        let client = client_translating(arithmetic_translation("1840 * 0.63 == 1159.2"));
+        let client = client_translating(arithmetic_translation(
+            "math::abs(1840 * 0.63 - 1159.2) <= 0.001",
+        ));
         let (result, inp, out) = run(&deps_with(client), &params("63% of 1840 is 1159.2"))
             .await
             .unwrap();
         assert_eq!(result.verdict, Verdict::Supported);
         assert_eq!(result.engine, Some(Engine::Arithmetic));
-        assert_eq!(result.formal_form.as_deref(), Some("1840 * 0.63 == 1159.2"));
+        assert!(result.formal_form.as_deref().unwrap().contains("math::abs"));
         assert_eq!(result.engine_result.as_deref(), Some("true"));
         assert!(result.explanation.contains("evaluated to true"));
         assert_eq!(result.translation_attempts, 1);

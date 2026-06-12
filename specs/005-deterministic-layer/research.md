@@ -79,7 +79,13 @@ prompt-borne-guarantee pattern as the decline-bias pin).
 2^53 and arbitrary precision are not v1 claims; the explicit-tolerance
 requirement in the formal target is the working mitigation, and claims
 needing exact big-number arithmetic should translate to the solver (integers
-in Z3 are arbitrary precision).
+in Z3 are arbitrary precision). **Hardened after acceptance run 1**: exact
+`==`/`!=` over float-producing arithmetic produced confidently wrong
+refutations (`0.15 * 240 == 36` is false in f64) — the engine now rejects
+that shape as a retryable violation, forcing the tolerance form through the
+feedback loop; pure-integer equality stays exact. The dialect whitelist is
+prompt-borne + violation-enforced; evaluating against a builtins-disabled
+context (making it engine-enforced) is named follow-up hardening.
 
 ## D3 — One model call: classify + translate in a single flat schema
 
@@ -93,10 +99,21 @@ checkable, decline — a crisp answer to the wrong question is worse than no
 answer") and requires tolerances to be explicit in the expression.
 
 **Rationale**: spec assumption (fewer hops, bias lives in the prompt); the
-schema is flat+closed (nullable scalars + enums — the 002-validated shapes).
-Cross-field consistency (engine implies its field; asserted required for
-constraints) is enforced by a **pure validator** after parsing — a violation
-here is a translation violation, fed to the retry like an engine parse error.
+schema is flat+closed. Cross-field consistency (engine implies its field;
+asserted required for constraints) is enforced by a **pure validator** after
+parsing — a violation here is a translation violation, fed to the retry like
+an engine parse error.
+
+**Implementation forcing (named)**: `engine`/`asserted` are **nullable
+strings**, not enums — schemars encodes `Option<enum>` as `anyOf`, which
+fails the flat+closed assertion. The allowed values live in the field
+descriptions, the prompt, and the cross-field validator (an unknown value is
+a retryable violation). Follow-up tightening: a `schema_with` override
+emitting `{"type":["string","null"],"enum":[...]}` would push the constraint
+into the provider grammar; deferred until measured prompt-compliance data
+says it is needed. The validator additionally rejects scripts containing
+comments or stateful commands (`;`, `push`/`pop`/`reset`/`set-option`,
+`assert-soft`) so the parse-detection count can never desynchronize.
 
 ## D4 — Verdict mapping and explanation: server-assembled (004 D7, applied harder)
 
@@ -133,11 +150,19 @@ Timeout-is-terminal mirrors the 001 client policy (the budget was consumed).
 
 **Decision**: no new environment variables (`SOLVER_TIMEOUT_MS` = 10 000 and
 `EXPRESSION_MAX_CHARS` = 2 000 are constants in `deterministic/mod.rs`);
-no error-taxonomy changes (engine timeout → `timeout`, translation failure →
-`validation_failure`, both with class-distinct messages); the tool is always
-in the catalog (engines are pure in-process — Constitution VI gates effects
-beyond the process, and there are none). Records attribute to the anthropic
-model (translation is the only metered call).
+no **Outcome class** changes (engine timeout → `timeout`, translation
+failure → `validation_failure`, both with class-distinct messages); the tool
+is always in the catalog (engines are pure in-process — Constitution VI
+gates effects beyond the process, and there are none; the `.z3-trace`
+artifact Z3's Debug build would have written is compiled out via the
+`z3-sys` opt-level override, pinned by test). Records attribute to the
+anthropic model (translation is the only metered call).
+
+**Named amendment**: delivering the class-distinct timeout message required
+`AppError::Timeout` to gain a message-bearing `what` field ("request" vs
+"solver (timeout or incompleteness)") — a variant-shape change rippling
+through the four clients. The Outcome class set and the 001
+invocation-record contract are unchanged.
 
 **Rationale**: YAGNI + taxonomy stability; the 001 invocation-record contract
 needs no enum addition for this feature.

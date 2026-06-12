@@ -44,9 +44,9 @@ rmcp for integration. The acceptance example is manual-run live spend
 
 ## Phase 6: Polish
 
-- [ ] T011 [P] Acceptance example examples/acceptance_check.rs (live: ANTHROPIC_API_KEY only): ≥20 ground-truth claims spanning both engines (SC-001 100% verdict accuracy), ≥6 clearly uncheckable claims incl. one too-vague-to-bound numeric claim (SC-002 100% declined), auditability sweep (SC-003), one repeated check asserting identical engine result (SC-007); record results in specs/005-deterministic-layer/quickstart.md
+- [X] T011 [P] Acceptance example examples/acceptance_check.rs (live: ANTHROPIC_API_KEY only): ≥20 ground-truth claims spanning both engines (SC-001 100% verdict accuracy), ≥6 clearly uncheckable claims incl. one too-vague-to-bound numeric claim (SC-002 100% declined), auditability sweep (SC-003), one repeated check asserting identical engine result (SC-007); record results in specs/005-deterministic-layer/quickstart.md
 - [X] T012 [P] Docs: README.md + CLAUDE.md status (deterministic layer served; `check` always on — first ungated addition since core, rationale: pure in-process engines), repo layout gains deterministic/; note z3 bundled build cost for contributors (first clean build is slow, rust-cache amortizes in CI)
-- [ ] T013 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`) + code-reviewer and design-reviewer agent passes over the branch diff + apply findings
+- [X] T013 Full gate (`cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`) + code-reviewer and design-reviewer agent passes over the branch diff + apply findings
 
 ## Dependencies
 

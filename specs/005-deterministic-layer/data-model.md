@@ -36,7 +36,7 @@ One call, classify + translate (research.md D3):
 |---|---|---|
 | checkable | boolean | decline-biased |
 | reason | string \| null | required when checkable = false |
-| engine | "arithmetic" \| "constraints" \| null | required when checkable |
+| engine | "arithmetic" \| "constraints" \| null (a nullable STRING on the wire — flat+closed forbids `Option<enum>`'s `anyOf` encoding; values enforced by the cross-field validator) | required when checkable |
 | arithmetic_expression | string \| null | boolean-valued evalexpr expression; tolerances explicit; ≤ 2000 chars (local validator) |
 | smtlib_constraints | string \| null | SMT-LIB 2 declares + asserts (no check-sat) |
 | asserted | "satisfiable" \| "unsatisfiable" \| null | the claim's polarity; required for constraints |

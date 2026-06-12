@@ -91,7 +91,7 @@ src/
 │   ├── solver.rs         # z3 engine wrapper (SMT-LIB 2 in → sat/unsat/unknown + witness)
 │   └── check.rs          # orchestration: validate → translate → execute → server-assembled result
 ├── server.rs             # + check #[tool] via run_recorded (always in catalog)
-└── error.rs              # (no change — timeout/validation_failure classes reused)
+└── error.rs              # Timeout gains a message-bearing `what` field (class set unchanged)
 
 tests/integration.rs      # + catalog presence, ground-truth round trip, failure parity
 examples/spike_z3.rs      # S1: bundled build + trivial sat/unsat (gates everything)
