@@ -52,7 +52,8 @@ engine parse error — D5).
   expression length bound enforced first.
 - `solver::check(smtlib, asserted) -> Result<SolverOutcome, Violation>` —
   parse errors are Violations; `SolverOutcome` = Sat(witness) | Unsat |
-  Unknown (→ `timeout` class).
+  Unknown (→ `timeout` class; message: "solver returned unknown (timeout or
+  incompleteness)" — Z3 returns unknown for theory incompleteness too).
 - `verdict(engine_outcome, asserted) -> (Verdict, Option<witness>)` —
   sat × satisfiable → supported(witness); sat × unsatisfiable →
   refuted(counterexample); unsat × unsatisfiable → supported; unsat ×

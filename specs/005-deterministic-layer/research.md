@@ -55,6 +55,13 @@ typed `Value::Boolean`, which is exactly the verdict-bearing shape. Named
 refinement of the landscape wording; `fend-core` stays the upgrade path when
 the units/dates/conversions row is built (deferred).
 
+**Dialect pinning (analysis A1)**: evalexpr's function names and operator
+set are its own dialect (`math::abs`, not `abs`) — the translation prompt
+MUST embed the allowed function/operator whitelist verbatim, or first
+translations will routinely burn the single retry on syntax instead of
+semantics. A unit test pins the whitelist's presence in the prompt (the same
+prompt-borne-guarantee pattern as the decline-bias pin).
+
 **Known bound (named)**: f64 arithmetic — exact integer arithmetic beyond
 2^53 and arbitrary precision are not v1 claims; the explicit-tolerance
 requirement in the formal target is the working mitigation, and claims
@@ -85,7 +92,9 @@ arithmetic `true`/`false` → supported/refuted; solver `sat`/`unsat` crossed
 with the claim's `asserted` polarity → supported/refuted (+witness on the
 side that has a model — a satisfying assignment when sat supports, a
 counterexample when sat refutes). `unknown`/solver-timeout → the existing
-`timeout` class with a solver-naming message. The **explanation is a
+`timeout` class; the message stays honest about both causes ("solver
+returned unknown (timeout or incompleteness) after N ms") since Z3 also
+returns unknown for theory incompleteness, not only deadline. The **explanation is a
 deterministic template** over (claim, formal form, engine result, verdict) —
 no second model hop, nothing model-phrased in the verdict path.
 

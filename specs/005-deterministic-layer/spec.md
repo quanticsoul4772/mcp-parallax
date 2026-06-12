@@ -82,9 +82,10 @@ fabricated formal verdict.
    meeting room is the largest"), **When** `check` runs, **Then** the result
    is not-checkable — never an invented formalization.
 3. **Given** a mixed claim (a checkable arithmetic core wrapped in judgment),
-   **When** `check` runs, **Then** either the checkable core is checked with
-   the response stating exactly what was and wasn't covered, or the claim is
-   declined — never a verdict that silently covers the judgment part.
+   **When** `check` runs, **Then** either the checkable core is checked —
+   with the returned formal form making the checked scope explicit and
+   auditable (the formal form IS the coverage statement) — or the claim is
+   declined; never a verdict that silently covers the judgment part.
 
 ---
 
@@ -127,7 +128,8 @@ formal form.
 ### Edge Cases
 
 - A claim that is checkable but whose formalization times out in the engine →
-  a distinct engine-timeout outcome; never an opinion-based fallback verdict.
+  the timeout class with a solver-naming message; never an opinion-based
+  fallback verdict.
 - The translation is syntactically valid but the engine result is neither
   supports nor refutes the claim (e.g. the formalization answered a different
   question detectably — result type mismatch) → translation failure, not a
@@ -172,8 +174,10 @@ formal form.
   translation-failure class. The system MUST NOT synthesize a verdict from a
   failed translation.
 - **FR-006**: Engine execution MUST be bounded: a per-check engine timeout
-  with its own distinct outcome when exceeded. Solver and evaluator run
-  in-process with no network and no filesystem effects.
+  that, when exceeded, surfaces under the timeout class with a message
+  naming the solver (message-distinct, per the established class-naming
+  convention). Solver and evaluator run in-process with no network and no
+  filesystem effects.
 - **FR-007**: Every response MUST carry the executed formal form and raw
   engine result (auditability — the translation-faithfulness defense); a
   refuted satisfiability claim MUST include the solver's witness when one
