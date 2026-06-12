@@ -1,0 +1,28 @@
+{
+  "$comment": "MCP tool contract for `save`. MCP-side only (no model hop - research.md D6). trust is derived, never caller-set; a refuted verification is an error carrying findings, not a result.",
+  "name": "save",
+  "description": "Save a memory for future sessions: a skill (reusable approach that worked), a lesson (what failed and why), or a fact (durable knowledge). Provide provenance: where this came from and whether it is first-hand or from external content. External memories are stored untrusted unless you request verification; verified or first-hand memories rank higher at recall.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "content": { "type": "string", "minLength": 1, "description": "The memory itself, self-contained." },
+      "kind": { "type": "string", "enum": ["skill", "lesson", "fact"] },
+      "origin": { "type": "string", "minLength": 1, "description": "Where this knowledge came from." },
+      "external": { "type": "boolean", "description": "true if sourced from external content (web, docs, repos) rather than first-hand experience." },
+      "tags": { "type": ["array", "null"], "items": { "type": "string" } },
+      "verify": { "type": ["boolean", "null"], "description": "Run independent verification before admitting an external memory as trusted." }
+    },
+    "required": ["content", "kind", "origin", "external"],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string" },
+      "trust": { "type": "string", "enum": ["first_hand", "verified", "untrusted"] },
+      "findings": { "type": "array", "items": { "type": "string" }, "description": "Verification findings when verification ran; empty otherwise." }
+    },
+    "required": ["id", "trust", "findings"],
+    "additionalProperties": false
+  }
+}

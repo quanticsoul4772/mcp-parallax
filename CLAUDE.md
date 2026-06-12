@@ -142,7 +142,7 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `002-unstick-mode` — [spec](specs/002-unstick-mode/spec.md) ·
+Current feature: `003-memory-layer` — [spec](specs/003-memory-layer/spec.md) ·
 [plan](specs/002-unstick-mode/plan.md) · [research](specs/002-unstick-mode/research.md) ·
 [data model](specs/002-unstick-mode/data-model.md) · [contracts](specs/002-unstick-mode/contracts/)
 <!-- SPECKIT END -->
