@@ -57,6 +57,11 @@ fn sanitize_node(node: &mut Value) {
         map.remove(*key);
     }
 
+    // schemars emits doc-commented enums as `oneOf: [{const: ..}, ..]`;
+    // `oneOf` is not in the grammar subset, so collapse scalar-const unions
+    // to the equivalent plain `enum`.
+    collapse_const_one_of(map);
+
     // The grammar supports minItems only as 0 or 1.
     if let Some(min_items) = map.get("minItems").and_then(Value::as_u64) {
         if min_items > 1 {
@@ -90,6 +95,38 @@ fn sanitize_node(node: &mut Value) {
             }
         }
     }
+}
+
+/// Rewrite `oneOf: [{type: T, const: c1}, {type: T, const: c2}, ...]` (the
+/// schemars encoding of a doc-commented enum) into `{type: T, enum: [c1, c2]}`.
+/// Applies only when every branch is a scalar `const`; anything else is left
+/// for the normal recursion.
+fn collapse_const_one_of(map: &mut Map<String, Value>) {
+    let Some(Value::Array(branches)) = map.get("oneOf") else {
+        return;
+    };
+    let mut variants = Vec::with_capacity(branches.len());
+    let mut type_name: Option<String> = None;
+    for branch in branches {
+        let Some(branch_map) = branch.as_object() else {
+            return;
+        };
+        let Some(constant) = branch_map.get("const") else {
+            return;
+        };
+        if constant.is_object() || constant.is_array() {
+            return;
+        }
+        if let Some(t) = branch_map.get("type").and_then(Value::as_str) {
+            type_name.get_or_insert_with(|| t.to_string());
+        }
+        variants.push(constant.clone());
+    }
+    map.remove("oneOf");
+    if let Some(t) = type_name {
+        map.insert("type".into(), Value::String(t));
+    }
+    map.insert("enum".into(), Value::Array(variants));
 }
 
 /// Recurse into each value of an object-valued keyword (`properties`, `$defs`).
@@ -235,6 +272,41 @@ mod tests {
         assert!(out["$defs"]["Inner"]["properties"]["s"]
             .get("maxLength")
             .is_none());
+    }
+
+    #[test]
+    fn collapses_doc_commented_enums_to_plain_enum() {
+        // schemars encodes a doc-commented enum as oneOf-of-consts; oneOf is
+        // not in the Anthropic grammar subset.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "description": "supported | refuted.",
+                    "oneOf": [
+                        { "description": "ok", "type": "string", "const": "supported" },
+                        { "description": "bad", "type": "string", "const": "refuted" }
+                    ]
+                }
+            }
+        });
+        let out = sanitize(&schema);
+        assert!(out["properties"]["verdict"].get("oneOf").is_none());
+        assert_eq!(out["properties"]["verdict"]["type"], json!("string"));
+        assert_eq!(
+            out["properties"]["verdict"]["enum"],
+            json!(["supported", "refuted"])
+        );
+
+        // A oneOf that is NOT all scalar consts is left alone (recursed only).
+        let mixed = json!({
+            "type": "object",
+            "properties": {
+                "x": { "oneOf": [ { "type": "string", "const": "a" }, { "type": "null" } ] }
+            }
+        });
+        let out = sanitize(&mixed);
+        assert!(out["properties"]["x"].get("oneOf").is_some());
     }
 
     #[test]

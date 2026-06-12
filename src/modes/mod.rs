@@ -1,0 +1,236 @@
+//! Modes are data, not bespoke machinery.
+//!
+//! A corrective is `{ id, description, prompt template, output schema,
+//! ensemble k }`. One generic execution path runs any mode; adding mode #2 is
+//! a registry entry, not a new subsystem.
+
+pub mod verify;
+
+use crate::error::AppError;
+use crate::schema::sanitize;
+use serde_json::Value;
+use std::collections::HashMap;
+
+/// One corrective mode — the registry entry contract for every current and
+/// future mode (data-model.md §1).
+#[derive(Debug, Clone)]
+pub struct CorrectiveMode {
+    /// Tool name as exposed over MCP.
+    pub id: &'static str,
+    /// The MCP tool description — this does the routing work.
+    pub description: &'static str,
+    /// Instruction template. Placeholders exist for claim/context only:
+    /// blindness is structural, not behavioral.
+    pub prompt_template: &'static str,
+    /// The unsanitized per-pass output schema (validator-side).
+    pub output_schema: Value,
+    /// The grammar-legal form sent to the provider, derived once at
+    /// registration (stable schemas keep the provider's grammar cache warm).
+    pub sanitized_schema: Value,
+    /// Parallel passes per invocation.
+    pub ensemble_k: u8,
+}
+
+/// The set of registered modes. Registration enforces the schema invariant at
+/// boot — a mode with an illegal schema fails startup, not its first call.
+#[derive(Debug, Default)]
+pub struct ModeRegistry {
+    modes: HashMap<&'static str, CorrectiveMode>,
+}
+
+impl ModeRegistry {
+    /// Create an empty registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a mode, deriving its sanitized schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ValidationFailure`] if the mode's output schema is
+    /// not flat + closed (Constitution II / FR-006).
+    pub fn register(
+        &mut self,
+        id: &'static str,
+        description: &'static str,
+        prompt_template: &'static str,
+        output_schema: Value,
+        ensemble_k: u8,
+    ) -> Result<(), AppError> {
+        assert_flat(id, &output_schema)?;
+        let sanitized_schema = sanitize(&output_schema);
+        self.modes.insert(
+            id,
+            CorrectiveMode {
+                id,
+                description,
+                prompt_template,
+                output_schema,
+                sanitized_schema,
+                ensemble_k,
+            },
+        );
+        Ok(())
+    }
+
+    /// Look up a mode by id.
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&CorrectiveMode> {
+        self.modes.get(id)
+    }
+}
+
+/// Enforce the flat + closed invariant: the root is an object whose properties
+/// are scalars (string/number/integer/boolean, optionally enum-constrained) or
+/// arrays of scalars — one level of named fields, nothing deeper, no `$ref`,
+/// no unions. Closure (`additionalProperties: false` everywhere) is then the
+/// sanitizer's structural guarantee.
+fn assert_flat(id: &str, schema: &Value) -> Result<(), AppError> {
+    let illegal = |what: &str| {
+        Err(AppError::ValidationFailure(format!(
+            "mode '{id}' output schema is not flat+closed: {what}"
+        )))
+    };
+
+    let Some(root) = schema.as_object() else {
+        return illegal("root is not an object schema");
+    };
+    if root.get("type").and_then(Value::as_str) != Some("object") {
+        return illegal("root type must be 'object'");
+    }
+    if root.contains_key("$ref") || root.contains_key("$defs") || root.contains_key("anyOf") {
+        return illegal("references and unions are not allowed");
+    }
+    let Some(properties) = root.get("properties").and_then(Value::as_object) else {
+        return illegal("root has no properties");
+    };
+
+    for (name, prop) in properties {
+        // An enum of scalars is a scalar. This covers both the plain `enum`
+        // form and schemars' doc-commented-enum encoding (`oneOf` of scalar
+        // `const`s, which the sanitizer collapses to `enum`).
+        if is_scalar_enum(prop) {
+            continue;
+        }
+        let Some(type_name) = prop.get("type").and_then(Value::as_str) else {
+            return illegal(&format!("property '{name}' has no concrete type"));
+        };
+        match type_name {
+            "string" | "number" | "integer" | "boolean" => {}
+            "array" => {
+                let item_type = prop
+                    .get("items")
+                    .and_then(|items| items.get("type"))
+                    .and_then(Value::as_str);
+                match item_type {
+                    Some("string" | "number" | "integer" | "boolean") => {}
+                    _ => return illegal(&format!("property '{name}' is not an array of scalars")),
+                }
+            }
+            other => {
+                return illegal(&format!(
+                    "property '{name}' has non-scalar type '{other}' (one level only)"
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// True when `prop` is an enumeration of scalar values — either `enum: [..]`
+/// or `oneOf: [{const: ..}, ..]` with every branch a scalar const.
+fn is_scalar_enum(prop: &Value) -> bool {
+    if let Some(variants) = prop.get("enum").and_then(Value::as_array) {
+        return variants.iter().all(|v| !v.is_object() && !v.is_array());
+    }
+    if let Some(branches) = prop.get("oneOf").and_then(Value::as_array) {
+        return !branches.is_empty()
+            && branches.iter().all(|branch| {
+                branch
+                    .get("const")
+                    .is_some_and(|c| !c.is_object() && !c.is_array())
+            });
+    }
+    false
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn flat_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "verdict": { "type": "string", "enum": ["supported", "refuted"] },
+                "findings": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": ["verdict", "findings"]
+        })
+    }
+
+    #[test]
+    fn registers_a_flat_mode_and_derives_the_sanitized_schema() {
+        let mut registry = ModeRegistry::new();
+        registry
+            .register("verify", "desc", "template {claim}", flat_schema(), 3)
+            .unwrap();
+
+        let mode = registry.get("verify").unwrap();
+        assert_eq!(mode.ensemble_k, 3);
+        assert_eq!(mode.sanitized_schema["additionalProperties"], json!(false));
+        // Sanitized derivation happened once, at registration.
+        assert!(mode.output_schema.get("additionalProperties").is_none());
+    }
+
+    #[test]
+    fn rejects_a_nested_object_schema_at_boot() {
+        let nested = json!({
+            "type": "object",
+            "properties": {
+                "inner": { "type": "object", "properties": { "x": { "type": "string" } } }
+            }
+        });
+        let err = ModeRegistry::new()
+            .register("bad", "d", "t", nested, 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("not flat+closed"), "{err}");
+        assert!(err.to_string().contains("'inner'"));
+    }
+
+    #[test]
+    fn rejects_arrays_of_objects_refs_and_unions() {
+        let array_of_objects = json!({
+            "type": "object",
+            "properties": {
+                "list": { "type": "array", "items": { "type": "object" } }
+            }
+        });
+        assert!(ModeRegistry::new()
+            .register("a", "d", "t", array_of_objects, 1)
+            .is_err());
+
+        let with_ref = json!({
+            "type": "object",
+            "$defs": { "X": { "type": "string" } },
+            "properties": { "x": { "type": "string" } }
+        });
+        assert!(ModeRegistry::new()
+            .register("b", "d", "t", with_ref, 1)
+            .is_err());
+
+        let non_object_root = json!({ "type": "array", "items": { "type": "string" } });
+        assert!(ModeRegistry::new()
+            .register("c", "d", "t", non_object_root, 1)
+            .is_err());
+    }
+
+    #[test]
+    fn unknown_mode_is_none() {
+        assert!(ModeRegistry::new().get("nope").is_none());
+    }
+}

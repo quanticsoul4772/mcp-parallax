@@ -46,8 +46,8 @@ implementable and testable.
 - [X] T008 [P] Spike 4 — thinking + `output_config` compatibility in examples/spike_thinking.rs (manual-run, real spend); record the yes/no finding in docs/design/SDK_USAGE_CORE.md (core does not depend on the answer)
 - [X] T009 Schema sanitizer module in src/schema/sanitize.rs + src/schema/mod.rs (promotes T004's validated transform), unit tests covering every stripped keyword and the additionalProperties/required guarantees (depends on T004)
 - [X] T010 [P] Defense-in-depth validator in src/schema/validate.rs using the jsonschema crate against the UNSANITIZED schema, unit tests proving it re-imposes exactly what the sanitizer strips (ranges, lengths, non-empty findings)
-- [ ] T011 Thin Anthropic client implementing ModelClient in src/client/anthropic.rs + src/client/mod.rs: `output_config.format` request body, stop_reason → Outcome mapping (end_turn/refusal/max_tokens), retry with backoff honoring MAX_RETRIES, REQUEST_TIMEOUT_MS; wiremock unit tests for each stop_reason, timeout, and retry exhaustion — no real network (depends on T003, T009)
-- [ ] T012 Mode registry in src/modes/mod.rs: CorrectiveMode struct (id, description, prompt_template, output_schema, ensemble_k), startup assertion that every registered schema is flat + closed (illegal schema fails boot), unit tests for the assertion both ways (depends on T009)
+- [X] T011 Thin Anthropic client implementing ModelClient in src/client/anthropic.rs + src/client/mod.rs: `output_config.format` request body, stop_reason → Outcome mapping (end_turn/refusal/max_tokens), retry with backoff honoring MAX_RETRIES, REQUEST_TIMEOUT_MS; wiremock unit tests for each stop_reason, timeout, and retry exhaustion — no real network (depends on T003, T009)
+- [X] T012 Mode registry in src/modes/mod.rs: CorrectiveMode struct (id, description, prompt_template, output_schema, ensemble_k), startup assertion that every registered schema is flat + closed (illegal schema fails boot), unit tests for the assertion both ways (depends on T009)
 
 **Checkpoint**: Sanitizer, validator, client, and registry exist and are fully tested without network — user stories can begin
 
@@ -64,15 +64,15 @@ implementable and testable.
 > Write these first; they fail until T015–T018 land
 
 - [ ] T013 [P] [US1] Integration test skeleton in tests/integration.rs: in-process rmcp client performs handshake, asserts the catalog lists `verify` with the inputSchema/outputSchema from specs/001-core-layer/contracts/verify.tool.json (acceptance scenario 1); plus a concurrency case — two simultaneous verify calls with distinct mocked results complete independently and results are never crossed (spec edge case 3)
-- [ ] T014 [P] [US1] Aggregation unit tests in src/modes/verify.rs test module (mockall ModelClient): majority verdict, tie → refuted with tie noted, quorum rule (< ⌈k/2⌉ completed passes → dominant failure, never a minority verdict), confidence = agreement ratio, findings deduplicated from majority side (data-model.md §4)
+- [X] T014 [P] [US1] Aggregation unit tests in src/modes/verify.rs test module (mockall ModelClient): majority verdict, tie → refuted with tie noted, quorum rule (< ⌈k/2⌉ completed passes → dominant failure, never a minority verdict), confidence = agreement ratio, findings deduplicated from majority side (data-model.md §4)
 
 ### Implementation for User Story 1
 
-- [ ] T015 [P] [US1] Verify types in src/modes/verify.rs: VerifyParams, PassVerdict (per-pass, grammar-minimal), Verdict (aggregated) with schemars derives; unit test asserting the derived schemas match contracts/ and pass the registry's flat+closed assertion
-- [ ] T016 [US1] Verify execution in src/modes/verify.rs: calibrated prompt template (each refutation names a concrete error + steelman lens; only claim/context placeholders exist — blindness is structural), k parallel ModelClient passes, aggregation per T014's tests (depends on T011, T012, T015)
+- [X] T015 [P] [US1] Verify types in src/modes/verify.rs: VerifyParams, PassVerdict (per-pass, grammar-minimal), Verdict (aggregated) with schemars derives; unit test asserting the derived schemas match contracts/ and pass the registry's flat+closed assertion
+- [X] T016 [US1] Verify execution in src/modes/verify.rs: calibrated prompt template (each refutation names a concrete error + steelman lens; only claim/context placeholders exist — blindness is structural), k parallel ModelClient passes, aggregation per T014's tests (depends on T011, T012, T015)
 - [ ] T017 [US1] rmcp server handler in src/server.rs: `#[tool_router]` Parallax struct holding the seams, `verify` tool returning `Result<Json<Verdict>, ErrorData>`, `get_info` with tools capability (depends on T016)
 - [ ] T018 [US1] Wire src/main.rs: construct config → client/storage/clock → Parallax, `serve(stdio())`, keep --version/--help and the config-error exit path; plus a spawn-the-binary stdio smoke test in tests/integration.rs (dummy key env, handshake + tools/list — no model call) asserting stdout carries only protocol frames (FR-008) (depends on T017)
-- [ ] T019 [US1] Stance-blindness guarantee test in src/modes/verify.rs test module: prompt builder output contains claim and context verbatim and nothing else — no stance, history, or identity can flow through (acceptance scenario 5, SC-004's structural half)
+- [X] T019 [US1] Stance-blindness guarantee test in src/modes/verify.rs test module: prompt builder output contains claim and context verbatim and nothing else — no stance, history, or identity can flow through (acceptance scenario 5, SC-004's structural half)
 
 **Checkpoint**: MVP — a stock MCP client gets schema-valid verdicts end-to-end (with ModelClient mocked in tests; live via quickstart)
 
