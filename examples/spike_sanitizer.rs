@@ -65,7 +65,7 @@ fn main() {
     // schemars emitted no range for confidence (we add ranges in the real mode
     // type via schemars attributes); prove the validator path works with an
     // explicitly-constrained schema:
-    let mut constrained = unsanitized.clone();
+    let mut constrained = unsanitized;
     constrained["properties"]["confidence"]["minimum"] = json!(0.0);
     constrained["properties"]["confidence"]["maximum"] = json!(1.0);
     validate(&constrained, &out_of_range).expect_err("out-of-range confidence is rejected locally");

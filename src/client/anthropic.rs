@@ -213,7 +213,7 @@ struct Usage {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use wiremock::matchers::{header, method, path};
@@ -232,7 +232,7 @@ mod tests {
         }
     }
 
-    async fn client_for(mock: &MockServer) -> AnthropicClient {
+    fn client_for(mock: &MockServer) -> AnthropicClient {
         AnthropicClient::with_base_url(&test_config(), &mock.uri()).with_backoff_base_ms(1)
     }
 
@@ -254,11 +254,7 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let out = client_for(&mock)
-            .await
-            .complete("p", &json!({}))
-            .await
-            .unwrap();
+        let out = client_for(&mock).complete("p", &json!({})).await.unwrap();
         assert_eq!(out.value, json!({ "ok": true }));
         assert_eq!((out.input_tokens, out.output_tokens), (100, 25));
     }
@@ -278,7 +274,6 @@ mod tests {
             .await;
 
         client_for(&mock)
-            .await
             .complete("p", &json!({ "type": "object" }))
             .await
             .unwrap();
@@ -297,7 +292,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -317,7 +311,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -334,7 +327,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -361,11 +353,7 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let out = client_for(&mock)
-            .await
-            .complete("p", &json!({}))
-            .await
-            .unwrap();
+        let out = client_for(&mock).complete("p", &json!({})).await.unwrap();
         assert_eq!(out.value, json!({ "ok": 1 }));
     }
 
@@ -383,7 +371,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -400,7 +387,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -425,7 +411,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -444,7 +429,6 @@ mod tests {
             .await;
 
         let err = client_for(&mock)
-            .await
             .complete("p", &json!({}))
             .await
             .unwrap_err();
@@ -467,11 +451,7 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let out = client_for(&mock)
-            .await
-            .complete("p", &json!({}))
-            .await
-            .unwrap();
+        let out = client_for(&mock).complete("p", &json!({})).await.unwrap();
         assert_eq!(out.value, json!({ "ok": true }));
     }
 }

@@ -37,6 +37,23 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// Parse the stable string form back into the taxonomy (storage read path).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "success" => Some(Self::Success),
+            "refusal" => Some(Self::Refusal),
+            "truncation" => Some(Self::Truncation),
+            "timeout" => Some(Self::Timeout),
+            "retries_exhausted" => Some(Self::RetriesExhausted),
+            "invalid_input" => Some(Self::InvalidInput),
+            "validation_failure" => Some(Self::ValidationFailure),
+            "config_error" => Some(Self::ConfigError),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+
     /// Stable string form — the `outcome` column value on invocation records.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

@@ -63,15 +63,15 @@ implementable and testable.
 
 > Write these first; they fail until T015–T018 land
 
-- [ ] T013 [P] [US1] Integration test skeleton in tests/integration.rs: in-process rmcp client performs handshake, asserts the catalog lists `verify` with the inputSchema/outputSchema from specs/001-core-layer/contracts/verify.tool.json (acceptance scenario 1); plus a concurrency case — two simultaneous verify calls with distinct mocked results complete independently and results are never crossed (spec edge case 3)
+- [X] T013 [P] [US1] Integration test skeleton in tests/integration.rs: in-process rmcp client performs handshake, asserts the catalog lists `verify` with the inputSchema/outputSchema from specs/001-core-layer/contracts/verify.tool.json (acceptance scenario 1); plus a concurrency case — two simultaneous verify calls with distinct mocked results complete independently and results are never crossed (spec edge case 3)
 - [X] T014 [P] [US1] Aggregation unit tests in src/modes/verify.rs test module (mockall ModelClient): majority verdict, tie → refuted with tie noted, quorum rule (< ⌈k/2⌉ completed passes → dominant failure, never a minority verdict), confidence = agreement ratio, findings deduplicated from majority side (data-model.md §4)
 
 ### Implementation for User Story 1
 
 - [X] T015 [P] [US1] Verify types in src/modes/verify.rs: VerifyParams, PassVerdict (per-pass, grammar-minimal), Verdict (aggregated) with schemars derives; unit test asserting the derived schemas match contracts/ and pass the registry's flat+closed assertion
 - [X] T016 [US1] Verify execution in src/modes/verify.rs: calibrated prompt template (each refutation names a concrete error + steelman lens; only claim/context placeholders exist — blindness is structural), k parallel ModelClient passes, aggregation per T014's tests (depends on T011, T012, T015)
-- [ ] T017 [US1] rmcp server handler in src/server.rs: `#[tool_router]` Parallax struct holding the seams, `verify` tool returning `Result<Json<Verdict>, ErrorData>`, `get_info` with tools capability (depends on T016)
-- [ ] T018 [US1] Wire src/main.rs: construct config → client/storage/clock → Parallax, `serve(stdio())`, keep --version/--help and the config-error exit path; plus a spawn-the-binary stdio smoke test in tests/integration.rs (dummy key env, handshake + tools/list — no model call) asserting stdout carries only protocol frames (FR-008) (depends on T017)
+- [X] T017 [US1] rmcp server handler in src/server.rs: `#[tool_router]` Parallax struct holding the seams, `verify` tool returning `Result<Json<Verdict>, ErrorData>`, `get_info` with tools capability (depends on T016)
+- [X] T018 [US1] Wire src/main.rs: construct config → client/storage/clock → Parallax, `serve(stdio())`, keep --version/--help and the config-error exit path; plus a spawn-the-binary stdio smoke test in tests/integration.rs (dummy key env, handshake + tools/list — no model call) asserting stdout carries only protocol frames (FR-008) (depends on T017)
 - [X] T019 [US1] Stance-blindness guarantee test in src/modes/verify.rs test module: prompt builder output contains claim and context verbatim and nothing else — no stance, history, or identity can flow through (acceptance scenario 5, SC-004's structural half)
 
 **Checkpoint**: MVP — a stock MCP client gets schema-valid verdicts end-to-end (with ModelClient mocked in tests; live via quickstart)
@@ -86,13 +86,13 @@ implementable and testable.
 
 ### Tests for User Story 2 (REQUIRED) ⚠️
 
-- [ ] T020 [P] [US2] Induced-failure integration matrix in tests/integration.rs: wiremock-backed client returns refusal, max_tokens truncation, timeout, persistent 5xx (retry exhaustion), and a cancellation case (client drops the request mid-invocation; server stays healthy for the next call); assert each invoke yields the matching distinct error text, never a partial Verdict (acceptance scenarios 1–3; spec edge case 4)
-- [ ] T021 [P] [US2] Startup failure tests in src/config.rs test module: missing ANTHROPIC_API_KEY and invalid VERIFY_ENSEMBLE_K/REQUEST_TIMEOUT_MS each refuse startup naming the exact variable (acceptance scenario 4)
+- [X] T020 [P] [US2] Induced-failure integration matrix in tests/integration.rs: wiremock-backed client returns refusal, max_tokens truncation, timeout, persistent 5xx (retry exhaustion), and a cancellation case (client drops the request mid-invocation; server stays healthy for the next call); assert each invoke yields the matching distinct error text, never a partial Verdict (acceptance scenarios 1–3; spec edge case 4)
+- [X] T021 [P] [US2] Startup failure tests in src/config.rs test module: missing ANTHROPIC_API_KEY and invalid VERIFY_ENSEMBLE_K/REQUEST_TIMEOUT_MS each refuse startup naming the exact variable (acceptance scenario 4)
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Input validation in src/modes/verify.rs: empty/whitespace-only claim and oversized claim rejected as invalid_input BEFORE any model call (with the no-model-call assertion in tests via mockall expect-zero) (edge cases 1–2)
-- [ ] T023 [US2] Failure surfacing in src/server.rs: map every AppError/Outcome class to a distinct ErrorData (FR-007), ensure validation_failure (validator rejection) is an error not a verdict; unit tests assert the full class → message table (depends on T017, T022)
+- [X] T022 [US2] Input validation in src/modes/verify.rs: empty/whitespace-only claim and oversized claim rejected as invalid_input BEFORE any model call (with the no-model-call assertion in tests via mockall expect-zero) (edge cases 1–2)
+- [X] T023 [US2] Failure surfacing in src/server.rs: map every AppError/Outcome class to a distinct ErrorData (FR-007), ensure validation_failure (validator rejection) is an error not a verdict; unit tests assert the full class → message table (depends on T017, T022)
 
 **Checkpoint**: US1 + US2 — the verify path is safe to rely on; ambiguous failure is impossible
 
@@ -106,13 +106,13 @@ implementable and testable.
 
 ### Tests for User Story 3 (REQUIRED) ⚠️
 
-- [ ] T024 [P] [US3] Storage conformance tests in src/storage/sqlite.rs test module against in-memory SQLite: migration idempotency, write + read-back of every Outcome value, one-row-per-id (contracts/invocation-record.schema.json)
+- [X] T024 [P] [US3] Storage conformance tests in src/storage/sqlite.rs test module against in-memory SQLite: migration idempotency, write + read-back of every Outcome value, one-row-per-id (contracts/invocation-record.schema.json)
 
 ### Implementation for User Story 3
 
-- [ ] T025 [P] [US3] sqlx SQLite Storage implementation in src/storage/sqlite.rs + src/storage/mod.rs: invocation_records table per data-model.md §5, idempotent startup migration at DATABASE_PATH
-- [ ] T026 [P] [US3] Telemetry module in src/telemetry.rs: InvocationRecord construction (record UUID, session_id = per-process UUID generated at startup, token sums across passes, cost from per-model pricing table, latency via TimeProvider), GenAI semantic-convention span attributes; unit tests with MockTimeProvider
-- [ ] T027 [US3] Single-exit recording in src/server.rs: every invocation path (success and each failure class, including `cancelled` via a drop-guard so an abandoned invocation still records) funnels through one record-write point; integration tests assert exactly one record with correct outcome for success + each induced failure from T020, and two records for T013's concurrency case (depends on T023, T025, T026)
+- [X] T025 [P] [US3] sqlx SQLite Storage implementation in src/storage/sqlite.rs + src/storage/mod.rs: invocation_records table per data-model.md §5, idempotent startup migration at DATABASE_PATH
+- [X] T026 [P] [US3] Telemetry module in src/telemetry.rs: InvocationRecord construction (record UUID, session_id = per-process UUID generated at startup, token sums across passes, cost from per-model pricing table, latency via TimeProvider), GenAI semantic-convention span attributes; unit tests with MockTimeProvider
+- [X] T027 [US3] Single-exit recording in src/server.rs: every invocation path (success and each failure class, including `cancelled` via a drop-guard so an abandoned invocation still records) funnels through one record-write point; integration tests assert exactly one record with correct outcome for success + each induced failure from T020, and two records for T013's concurrency case (depends on T023, T025, T026)
 
 **Checkpoint**: All three stories independently functional
 

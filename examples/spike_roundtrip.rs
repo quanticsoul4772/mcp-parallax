@@ -114,7 +114,7 @@ async fn main() {
     );
 }
 
-fn rmcp_version() -> &'static str {
+const fn rmcp_version() -> &'static str {
     // Reported for the T006 pin decision.
     "1.7.x (workspace-resolved)"
 }

@@ -44,4 +44,7 @@ pub mod config;
 pub mod error;
 pub mod modes;
 pub mod schema;
+pub mod server;
+pub mod storage;
+pub mod telemetry;
 pub mod traits;
