@@ -227,10 +227,12 @@ pipeline.
   `gen_ai.response.finish_reasons`, message attributes) — so token/model/cost/latency
   are *standard span attributes*, satisfying the design's "observability designed in
   from the first commit" with an industry schema rather than a bespoke event.
-- **Why it matters for the watchdog:** the design has the watchdog consuming the same
-  activity/event stream the dashboard emits. Emitting OTLP makes that stream
-  (a) consumable by the watchdog in-process, and (b) exportable to any OTel backend
-  (Jaeger/Prometheus/vendor) for free — one instrumentation, two consumers.
+- **Why it matters for the watchdog:** the design had the watchdog consuming the same
+  activity/event stream the dashboard emits. *Amended 2026-06-12:* that in-process
+  stream did not survive MCP — the watchdog's event feed is now the client's hook
+  system (see the MCP-reality amendment in `WATCHDOG_LAYER.md`); OTLP remains the
+  *export* story (per-checkpoint trace events for catch-rate vs noise measurement),
+  not the watchdog's input.
 - **NLI / contradiction signal (watchdog):** no clean Rust NLI SDK; the cheap path is
   to reuse **Voyage rerank-2.5** as a relevance/consistency scorer and reserve an LLM
   call (structured output) for the expensive contradiction check — matching the design's
