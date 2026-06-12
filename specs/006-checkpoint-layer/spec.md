@@ -25,6 +25,22 @@ model fixes its own work; the checkpoint never rewrites anything.
 Silence is the default and the discipline: a checkpoint layer that cries wolf
 is worse than none, so precision is the make-or-break acceptance criterion.
 
+## Clarifications
+
+### Session 2026-06-12
+
+- Q: How often does the post-activity checkpoint run? → A: Once per completed
+  tool batch, before the model's next inference step — loop-visible
+  granularity at volume proportional to inference steps, screening pure-local.
+- Q: Which pending actions does the pre-action gate evaluate? → A: Only
+  actions matching a configurable risk-pattern set (default: consequential
+  shell commands and writes — deploys, pushes, deletes, config changes);
+  everything else passes with zero added latency.
+- Q: How is a real end-of-turn flag delivered? → A: Forced continuation — the
+  turn does not end until the model addresses the flag (at most one forced
+  continuation per turn; cooldown prevents loops), so the correction lands
+  before the user relies on the answer.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Catch the loop the model can't see (Priority: P1)
@@ -124,7 +140,8 @@ runs when screening finds no candidates.
 
 1. **Given** a session whose final message contradicts an earlier stored
    decision or committed statement, **When** the end-of-turn checkpoint runs,
-   **Then** a flag is returned citing the two conflicting statements.
+   **Then** a flag citing the two conflicting statements is delivered by
+   forced continuation — the turn does not end until the model addresses it.
 2. **Given** a benign session, **When** the end-of-turn checkpoint runs,
    **Then** no review pass is invoked and the verdict is silence.
 3. **Given** screening fires but the review pass judges the candidates
@@ -160,9 +177,11 @@ runs when screening finds no candidates.
 ### Functional Requirements
 
 - **FR-001**: The system MUST provide checkpoint evaluation invocable at three
-  harness boundaries: before a pending action (gate-capable), after tool
-  activity (feedback-capable), and at end of turn (feedback-capable). Each
-  accepts the harness event payload plus access to the session trajectory.
+  harness boundaries: before a pending action (gate-capable), after each
+  completed tool batch — once per group of tool calls, before the model's next
+  inference step (feedback-capable) — and at end of turn (feedback-capable).
+  Each accepts the harness event payload plus access to the session
+  trajectory.
 - **FR-002**: Checkpoint verdicts MUST be limited to: **silence** (no output
   reaches the model or user), **flag** (a specific, actionable observation
   delivered to the model), or **hold** (a pending action is paused for user
@@ -202,8 +221,16 @@ runs when screening finds no candidates.
   MUST decide within a hard time budget (default 500 ms, screening-only);
   post-activity and end-of-turn checkpoints MUST NOT extend the critical path
   beyond their own bounded evaluation.
+- **FR-013**: The pre-action gate MUST evaluate only pending actions matching
+  a configurable risk-pattern set (default: consequential shell commands and
+  writes — deploys, pushes, deletes, configuration changes). Non-matching
+  actions MUST pass through with no evaluation and no added latency.
 - **FR-010**: A delivered flag MUST NOT be re-delivered for the same unresolved
   signal within its cooldown window; holds are never rate-limited.
+- **FR-014**: An end-of-turn flag MUST be delivered by forced continuation:
+  the turn does not end until the model has addressed the flag. At most one
+  forced continuation MAY occur per turn; a flag arising from the continuation
+  itself falls under the FR-010 cooldown (no continuation loops).
 - **FR-011**: The hold verdict MUST only ever escalate to the user (request
   confirmation); the layer MUST NOT autonomously and silently deny actions in
   v1. Autonomous denial is a named deferral pending measured precision.
