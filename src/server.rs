@@ -6,6 +6,9 @@
 
 use crate::client::{BraveClient, VoyageClient};
 use crate::config::Config;
+use crate::deterministic::check::{self as check_tool, CheckDeps};
+use crate::deterministic::contract::{CheckParams, CheckResult};
+use crate::deterministic::translate as deterministic_translate;
 use crate::error::{AppError, Outcome};
 use crate::memory::tools::{
     self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
@@ -47,6 +50,9 @@ pub struct Parallax {
     /// Research dependencies — `None` when the capability is disabled
     /// (no `BRAVE_API_KEY`); same catalog honesty.
     research: Option<Arc<ResearchDeps>>,
+    /// Deterministic-check dependencies — always present (pure in-process
+    /// engines need no gate; FR-010).
+    deterministic: Arc<CheckDeps>,
     /// Per-source fetch timeout for research runs (`FETCH_TIMEOUT_MS`).
     fetch_timeout_ms: u64,
     /// SSRF guard override for research fetches (`FETCH_ALLOW_PRIVATE`).
@@ -121,6 +127,7 @@ impl Parallax {
         // Research-internal modes register unconditionally — their flat+closed
         // assertion belongs at boot whether or not the capability is on.
         pipeline::register(&mut registry)?;
+        deterministic_translate::register(&mut registry)?;
 
         let verify_mode = registry
             .get(VERIFY_ID)
@@ -160,6 +167,12 @@ impl Parallax {
             None => None,
         };
 
+        let deterministic = Arc::new(CheckDeps {
+            model_client: Arc::clone(&client),
+            translate_mode: mode(deterministic_translate::TRANSLATE_MODE_ID)?,
+            input_max_chars: config.input_max_chars,
+        });
+
         // Catalog honesty (FR-007): a disabled capability is absent from the
         // catalog, not present-but-erroring.
         let mut tool_router = Self::tool_router();
@@ -180,6 +193,7 @@ impl Parallax {
             registry: Arc::new(registry),
             memory,
             research,
+            deterministic,
             fetch_timeout_ms: config.fetch_timeout_ms,
             fetch_allow_private: config.fetch_allow_private,
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -291,6 +305,19 @@ impl Parallax {
         self.research_with_ct(params, context.ct).await
     }
 
+    /// The `check` tool: checkable claims settled by execution, not judgment.
+    #[tool(
+        name = "check",
+        description = "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead."
+    )]
+    pub async fn check(
+        &self,
+        Parameters(params): Parameters<CheckParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<CheckResult>, ErrorData> {
+        self.check_with_ct(params, context.ct).await
+    }
+
     async fn verify_with_ct(
         &self,
         params: VerifyParams,
@@ -363,6 +390,19 @@ impl Parallax {
         let model = deps.embedder.model_id().to_string();
         self.run_recorded("recall", model, ct, async {
             memory_tools::recall(&deps, &params).await
+        })
+        .await
+    }
+
+    async fn check_with_ct(
+        &self,
+        params: CheckParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<CheckResult>, ErrorData> {
+        let deps = Arc::clone(&self.deterministic);
+        // Translation is the only metered call — anthropic-model attribution.
+        self.run_recorded("check", self.model.clone(), ct, async {
+            check_tool::run(&deps, &params).await
         })
         .await
     }
@@ -542,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn without_capability_keys_the_catalog_is_exactly_the_correctives() {
         let (server, _) = server_with(MockModelClient::new()).await;
-        assert_eq!(catalog(&server), ["unstick", "verify"]);
+        assert_eq!(catalog(&server), ["check", "unstick", "verify"]);
         assert!(server.memory.is_none());
         assert!(server.research.is_none());
         // The instructions don't advertise tools that aren't there.
@@ -565,7 +605,7 @@ mod tests {
             Some(Arc::new(search)),
         )
         .unwrap();
-        assert_eq!(catalog(&server), ["research", "unstick", "verify"]);
+        assert_eq!(catalog(&server), ["check", "research", "unstick", "verify"]);
         let info = server.get_info();
         assert!(info.instructions.unwrap().contains("research"));
     }
@@ -631,7 +671,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             catalog(&server),
-            ["forget", "recall", "save", "unstick", "verify"]
+            ["check", "forget", "recall", "save", "unstick", "verify"]
         );
         let info = server.get_info();
         assert!(info.instructions.unwrap().contains("recall"));
@@ -757,7 +797,10 @@ mod tests {
         let errors = [
             AppError::Refusal("x".into()),
             AppError::Truncation("x".into()),
-            AppError::Timeout { ms: 1 },
+            AppError::Timeout {
+                what: "request",
+                ms: 1,
+            },
             AppError::RetriesExhausted {
                 attempts: 2,
                 last: "x".into(),

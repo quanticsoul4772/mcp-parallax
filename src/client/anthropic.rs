@@ -77,6 +77,7 @@ impl AnthropicClient {
             .map_err(|e| {
                 if e.is_timeout() {
                     AppError::Timeout {
+                        what: "request",
                         ms: self.timeout_ms,
                     }
                 } else {
@@ -133,6 +134,7 @@ impl ModelClient for AnthropicClient {
             let payload: MessagesResponse = response.json().await.map_err(|e| {
                 if e.is_timeout() {
                     AppError::Timeout {
+                        what: "request",
                         ms: self.timeout_ms,
                     }
                 } else {
@@ -390,7 +392,10 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Timeout { ms: 2_000 }), "got: {err}");
+        assert!(
+            matches!(err, AppError::Timeout { ms: 2_000, .. }),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]

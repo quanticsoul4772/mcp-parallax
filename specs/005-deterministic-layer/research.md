@@ -36,6 +36,19 @@ decided at spike time, not silently.
 `forbid(unsafe_code)` governs our code, not dependencies (same standing as
 sqlx/reqwest internals).
 
+**Spike S1 result (2026-06-12): PASS.** Clean bundled build: **4 m 58 s** on
+the Windows dev machine (acceptable; rust-cache amortizes it in CI, ubuntu
+runners ship cmake). Build prerequisite finding: cmake is required and was
+not on PATH — the VS 2022 Build Tools' bundled cmake works via the `CMAKE`
+env var (documented for contributors in T012). Round trip validated: sat
+with witness naming the variables, unsat on contradiction, the timeout
+parameter bounds a hard instance (Unknown in 68 ms at a 50 ms cap), and
+determinism holds. Parse-failure detection: Z3 parses the script
+**atomically** — a malformed script yields 0 accepted assertions even when
+earlier asserts were valid, so the assertion-count check catches full and
+partial failures without unsafe FFI. The crate's `from_string` would panic
+on interior NUL (`CString::new`) — the wrapper rejects NUL first.
+
 ## D2 — Arithmetic engine: `evalexpr` 13 (named refinement of the landscape's wording)
 
 **Decision**: `evalexpr` 13 for the arithmetic family. The formal target is a
