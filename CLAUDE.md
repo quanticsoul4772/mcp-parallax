@@ -140,9 +140,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `001-core-layer` — [spec](specs/001-core-layer/spec.md) ·
-[plan](specs/001-core-layer/plan.md) · [research](specs/001-core-layer/research.md) ·
-[data model](specs/001-core-layer/data-model.md) · [contracts](specs/001-core-layer/contracts/)
+Current feature: `002-unstick-mode` — [spec](specs/002-unstick-mode/spec.md) ·
+[plan](specs/002-unstick-mode/plan.md) · [research](specs/002-unstick-mode/research.md) ·
+[data model](specs/002-unstick-mode/data-model.md) · [contracts](specs/002-unstick-mode/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

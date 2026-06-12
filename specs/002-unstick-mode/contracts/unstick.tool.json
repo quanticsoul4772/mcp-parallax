@@ -1,0 +1,47 @@
+{
+  "$comment": "MCP tool contract for `unstick`. The output schema doubles as the model-hop schema (single pass, so per-pass and aggregate coincide). The sanitized (Anthropic-grammar) form is derived at registration; the non-empty and no-restatement rules on next_step are code-enforced after local validation.",
+  "name": "unstick",
+  "description": "Break a stuck loop by committing to one concrete next step. Call when you have a goal, you have tried things, and you are producing plausible motion that goes nowhere. Provide the goal, where you are blocked, and what you already tried; you get back exactly one immediately actionable step with a rationale - never a menu of options, never a plan. An external frame breaks the loop you cannot see from inside.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "goal": {
+        "type": "string",
+        "description": "What you are ultimately trying to accomplish.",
+        "minLength": 1
+      },
+      "blocked": {
+        "type": "string",
+        "description": "Where you are stuck right now - the immediate blocker, error, or dead end.",
+        "minLength": 1
+      },
+      "tried": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Approaches already attempted. The returned step will not restate any of these."
+      }
+    },
+    "required": ["goal", "blocked"],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "next_step": {
+        "type": "string",
+        "description": "Exactly one concrete, immediately actionable step. Never multiple alternatives, never a plan.",
+        "minLength": 1
+      },
+      "rationale": {
+        "type": "string",
+        "description": "Why this step breaks the loop, in one or two sentences."
+      },
+      "watch_for": {
+        "type": ["string", "null"],
+        "description": "One pitfall likely to derail the step, or null."
+      }
+    },
+    "required": ["next_step", "rationale", "watch_for"],
+    "additionalProperties": false
+  }
+}
