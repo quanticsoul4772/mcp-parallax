@@ -97,12 +97,16 @@ src/
 ├── client/voyage.rs      # NEW thin Voyage client (reqwest, wiremock-tested)
 ├── memory/
 │   ├── mod.rs            # types: Memory, Kind, Trust, Provenance
-│   ├── store.rs          # memories table CRUD on the existing SqliteStorage pool
+│   ├── contract.rs       # save/recall/forget wire types (MCP-side schemas)
 │   ├── ranking.rs        # cosine + recency + trust tiering (pure, heavily tested)
 │   └── tools.rs          # save/recall/forget logic incl. verify-at-save
 ├── config.rs             # + VOYAGE_API_KEY/VOYAGE_MODEL/MEMORY_RECALL_LIMIT/INPUT_MAX_CHARS
 ├── server.rs             # + three #[tool] methods via run_recorded; catalog gating
 └── error.rs              # + EmbeddingProvider failure class
+
+(Memories CRUD landed on the existing `Storage` trait + `storage/sqlite.rs`
+rather than a separate `memory/store.rs` — everything stays behind the one
+mockable seam.)
 
 examples/
 ├── spike_bruteforce.rs   # S1: blob round-trip + scoring timing at 5k×1024 (no key)

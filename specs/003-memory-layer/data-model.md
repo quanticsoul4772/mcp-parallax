@@ -33,11 +33,16 @@ distinct not-found error (`invalid_input` class with "no memory with id").
 
 ## 3. Ranking (pure functions, `ranking.rs` — D4)
 
-`score = cosine + 0.02 × 2^(−age_days/30)`; ordering: sort by score desc,
-then stable-partition within ε=0.05 relevance bands so
-`{first_hand, verified}` precede `untrusted` at comparable relevance.
-Properties pinned by tests: (1) relevance dominates beyond ε; (2) recency
-breaks near-ties; (3) untrusted never above trusted within ε.
+`effective = cosine + 0.02 × 2^(−age_days/30) + (ε=0.05 if trusted)`; sort by
+effective desc, deterministic id tie-break. Adding ε to trusted memories
+implements the band as one clean total order: `{first_hand, verified}` precede
+`untrusted` at comparable relevance, and an untrusted memory outranks a
+trusted one only when its relevance advantage exceeds ε adjusted by the
+recency delta (at most ±0.02 — the effective band is 0.03..0.07 depending on
+relative age). The reported `score` stays the raw cosine.
+Properties pinned by tests: (1) relevance dominates beyond the band;
+(2) recency breaks near-ties; (3) untrusted never above trusted within the
+band; (4) the band edge under a maximal age gap (0.03).
 
 ## 4. Outcome taxonomy extension
 

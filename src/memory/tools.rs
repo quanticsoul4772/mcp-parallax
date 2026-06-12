@@ -5,16 +5,25 @@
 //! decides (`verified` or rejection-with-findings); external without →
 //! `untrusted`, stored quarantined and down-ranked.
 
+use crate::config::MEMORY_RECALL_LIMIT_MAX;
 use crate::error::AppError;
-use crate::memory::{ranking, Kind, Memory, Trust};
+use crate::memory::{ranking, Memory, Trust};
 use crate::modes::verify::{self, VerdictKind, VerifyParams};
 use crate::modes::CorrectiveMode;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
 use crate::traits::embedder::Embedder;
 use crate::traits::storage::Storage;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+pub use super::contract::{
+    ForgetParams, ForgetResult, RecallParams, RecallResult, RecalledMemory, SaveParams, SaveResult,
+};
+
+/// Maximum number of tags per memory.
+pub const MAX_TAGS: usize = 20;
+/// Maximum characters per tag.
+pub const MAX_TAG_CHARS: usize = 100;
 
 /// Everything the memory tools need, composed from the server's seams.
 pub struct MemoryDeps {
@@ -32,88 +41,6 @@ pub struct MemoryDeps {
     pub input_max_chars: usize,
     /// Default recall top-k (`MEMORY_RECALL_LIMIT`).
     pub default_recall_limit: u8,
-}
-
-/// `save` input (contract: `contracts/save.tool.json`).
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-pub struct SaveParams {
-    /// The memory itself, self-contained.
-    pub content: String,
-    /// skill | lesson | fact.
-    pub kind: Kind,
-    /// Where this knowledge came from.
-    pub origin: String,
-    /// true if sourced from external content rather than first-hand experience.
-    pub external: bool,
-    /// Optional tags.
-    pub tags: Option<Vec<String>>,
-    /// Run independent verification before admitting an external memory as
-    /// trusted.
-    pub verify: Option<bool>,
-}
-
-/// `save` output.
-#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
-pub struct SaveResult {
-    /// The new memory's id.
-    pub id: String,
-    /// Derived trust standing.
-    pub trust: Trust,
-    /// Verification findings when verification ran; empty otherwise.
-    pub findings: Vec<String>,
-}
-
-/// `recall` input (contract: `contracts/recall.tool.json`).
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-pub struct RecallParams {
-    /// What you need, in natural language.
-    pub query: String,
-    /// Optional kind filter.
-    pub kind: Option<Kind>,
-    /// Optional result limit (1..=20; default from config).
-    pub limit: Option<u32>,
-}
-
-/// One recalled memory.
-#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
-pub struct RecalledMemory {
-    /// Memory id (usable with `forget`).
-    pub id: String,
-    /// The memory content.
-    pub content: String,
-    /// skill | lesson | fact.
-    pub kind: Kind,
-    /// Stated provenance.
-    pub origin: String,
-    /// External-content provenance.
-    pub external: bool,
-    /// Trust standing.
-    pub trust: Trust,
-    /// RFC 3339 creation time.
-    pub created_at: String,
-    /// Raw relevance to the query.
-    pub score: f32,
-}
-
-/// `recall` output — nested array is legal here (no model hop; D6).
-#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
-pub struct RecallResult {
-    /// Ranked memories, most relevant first.
-    pub memories: Vec<RecalledMemory>,
-}
-
-/// `forget` input (contract: `contracts/forget.tool.json`).
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-pub struct ForgetParams {
-    /// The memory id to permanently delete.
-    pub id: String,
-}
-
-/// `forget` output.
-#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
-pub struct ForgetResult {
-    /// Always true on success (an unknown id is an error, not `false`).
-    pub forgotten: bool,
 }
 
 /// Should this save run verification? Known up front from the params — the
@@ -136,6 +63,7 @@ pub async fn save(
 ) -> Result<(SaveResult, u64, u64), AppError> {
     check_text("content", &params.content, deps.input_max_chars)?;
     check_text("origin", &params.origin, deps.input_max_chars)?;
+    check_tags(params.tags.as_deref())?;
 
     let (mut input_tokens, mut output_tokens) = (0_u64, 0_u64);
 
@@ -210,10 +138,10 @@ pub async fn recall(
     check_text("query", &params.query, deps.input_max_chars)?;
     let limit = match params.limit {
         None => usize::from(deps.default_recall_limit),
-        Some(n @ 1..=20) => n as usize,
+        Some(n) if (1..=u32::from(MEMORY_RECALL_LIMIT_MAX)).contains(&n) => n as usize,
         Some(n) => {
             return Err(AppError::InvalidInput(format!(
-                "limit {n} is out of range 1..=20"
+                "limit {n} is out of range 1..={MEMORY_RECALL_LIMIT_MAX}"
             )))
         }
     };
@@ -221,6 +149,23 @@ pub async fn recall(
     let embedding = deps.embedder.embed_query(&params.query).await?;
 
     let mut memories = deps.storage.load_memories().await?;
+    // The per-row embedding_model exists to make a model switch detectable —
+    // mismatched memories rank against an incompatible space (often scoring
+    // 0.0), so say it loudly instead of degrading silently.
+    let current_model = deps.embedder.model_id();
+    let mismatched = memories
+        .iter()
+        .filter(|m| m.embedding_model != current_model)
+        .count();
+    if mismatched > 0 {
+        tracing::warn!(
+            current_model,
+            mismatched,
+            "memories were embedded with a different model; their recall \
+             ranking is unreliable — re-save them or restore the prior \
+             VOYAGE_MODEL"
+        );
+    }
     if let Some(kind) = params.kind {
         memories.retain(|m| m.kind == kind);
     }
@@ -266,6 +211,32 @@ pub async fn forget(
     Ok((ForgetResult { forgotten: true }, 0, 0))
 }
 
+/// Tag validation: bounded count, each tag non-empty and bounded — the
+/// `INPUT_MAX_CHARS` bound on content/origin must not be bypassable via tags.
+fn check_tags(tags: Option<&[String]>) -> Result<(), AppError> {
+    let Some(tags) = tags else { return Ok(()) };
+    if tags.len() > MAX_TAGS {
+        return Err(AppError::InvalidInput(format!(
+            "{} tags exceed the maximum of {MAX_TAGS}",
+            tags.len()
+        )));
+    }
+    for tag in tags {
+        if tag.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "a tag is empty or whitespace-only".to_string(),
+            ));
+        }
+        let len = tag.chars().count();
+        if len > MAX_TAG_CHARS {
+            return Err(AppError::InvalidInput(format!(
+                "a tag is {len} characters; the maximum is {MAX_TAG_CHARS}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Shared input validation: non-empty after trim, bounded (FR-010).
 fn check_text(field: &str, text: &str, max_chars: usize) -> Result<(), AppError> {
     if text.trim().is_empty() {
@@ -287,6 +258,7 @@ fn check_text(field: &str, text: &str, max_chars: usize) -> Result<(), AppError>
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::memory::Kind;
     use crate::modes::ModeRegistry;
     use crate::storage::SqliteStorage;
     use crate::traits::client::{Completion, MockModelClient};
@@ -618,71 +590,28 @@ mod tests {
         assert!(err.to_string().contains("no memory with id"), "{err}");
     }
 
-    // ---- contract sync ---------------------------------------------------------
+    // Contract-sync tests live with the wire types in `memory::contract`.
 
-    #[test]
-    fn derived_schemas_match_the_contract_files() {
-        let props = |schema: &Value, key: &str| -> Vec<String> {
-            schema[key]["properties"]
-                .as_object()
-                .unwrap()
-                .keys()
-                .cloned()
-                .collect()
-        };
-        let derived_props = |schema: &Value| -> Vec<String> {
-            schema["properties"]
-                .as_object()
-                .unwrap()
-                .keys()
-                .cloned()
-                .collect()
-        };
+    #[tokio::test]
+    async fn oversized_or_blank_tags_are_rejected_before_any_provider_call() {
+        let mut embedder = MockEmbedder::new();
+        embedder.expect_embed_document().times(0);
+        let deps = deps_with(embedder, no_model_calls()).await;
 
-        let save_contract: Value = serde_json::from_str(include_str!(
-            "../../specs/003-memory-layer/contracts/save.tool.json"
-        ))
-        .unwrap();
-        let save_in = serde_json::to_value(schemars::schema_for!(SaveParams)).unwrap();
-        let save_out = serde_json::to_value(schemars::schema_for!(SaveResult)).unwrap();
-        assert_eq!(
-            derived_props(&save_in),
-            props(&save_contract, "inputSchema")
-        );
-        assert_eq!(
-            derived_props(&save_out),
-            props(&save_contract, "outputSchema")
-        );
+        let mut too_many = save_params("ok", false, None);
+        too_many.tags = Some(vec!["t".to_string(); MAX_TAGS + 1]);
+        let err = save(&deps, &too_many).await.unwrap_err();
+        assert!(err.to_string().contains("maximum of"), "{err}");
 
-        let recall_contract: Value = serde_json::from_str(include_str!(
-            "../../specs/003-memory-layer/contracts/recall.tool.json"
-        ))
-        .unwrap();
-        let recall_in = serde_json::to_value(schemars::schema_for!(RecallParams)).unwrap();
-        let recall_out = serde_json::to_value(schemars::schema_for!(RecallResult)).unwrap();
-        assert_eq!(
-            derived_props(&recall_in),
-            props(&recall_contract, "inputSchema")
-        );
-        assert_eq!(
-            derived_props(&recall_out),
-            props(&recall_contract, "outputSchema")
-        );
+        let mut blank = save_params("ok", false, None);
+        blank.tags = Some(vec!["  ".to_string()]);
+        let err = save(&deps, &blank).await.unwrap_err();
+        assert!(err.to_string().contains("empty or whitespace"), "{err}");
 
-        let forget_contract: Value = serde_json::from_str(include_str!(
-            "../../specs/003-memory-layer/contracts/forget.tool.json"
-        ))
-        .unwrap();
-        let forget_in = serde_json::to_value(schemars::schema_for!(ForgetParams)).unwrap();
-        let forget_out = serde_json::to_value(schemars::schema_for!(ForgetResult)).unwrap();
-        assert_eq!(
-            derived_props(&forget_in),
-            props(&forget_contract, "inputSchema")
-        );
-        assert_eq!(
-            derived_props(&forget_out),
-            props(&forget_contract, "outputSchema")
-        );
+        let mut oversized = save_params("ok", false, None);
+        oversized.tags = Some(vec!["x".repeat(MAX_TAG_CHARS + 1)]);
+        let err = save(&deps, &oversized).await.unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
     }
 
     #[test]

@@ -3,7 +3,11 @@
 //! `effective = cosine + RECENCY_WEIGHT × 2^(−age_days/30) + (ε if trusted)`.
 //! Adding ε to *trusted* memories implements the FR-004 band as a clean total
 //! order: an untrusted memory outranks a trusted one only when its relevance
-//! advantage exceeds ε. The reported `score` stays the raw relevance (cosine).
+//! advantage exceeds ε **adjusted by the recency delta** — since recency
+//! contributes at most `RECENCY_WEIGHT` (0.02), the effective band is
+//! `ε − 0.02 ..= ε + 0.02` (0.03 when a fresh untrusted memory faces an old
+//! trusted one; the band-edge test pins this). The reported `score` stays the
+//! raw relevance (cosine).
 
 use crate::memory::Memory;
 use chrono::{DateTime, Utc};
@@ -157,6 +161,35 @@ mod tests {
             Utc::now(),
         );
         assert_eq!(ranked[0].memory.id, "new");
+    }
+
+    // FR-004 band edge: a fresh untrusted memory vs an old trusted one — the
+    // recency gap (≈0.02) narrows the band, so the untrusted side needs a
+    // relevance advantage just over ε − RECENCY_WEIGHT ≈ 0.03.
+    #[test]
+    fn recency_narrows_the_band_to_its_documented_edge() {
+        let query = [1.0, 0.0];
+        // Advantage 0.04 > 0.03: fresh untrusted wins.
+        let ranked = rank(
+            vec![
+                memory("old-trusted", vec![0.95, 0.312_25], Trust::Verified, 300),
+                memory("new-untrusted", vec![0.99, 0.141_07], Trust::Untrusted, 0),
+            ],
+            &query,
+            Utc::now(),
+        );
+        assert_eq!(ranked[0].memory.id, "new-untrusted");
+
+        // Advantage 0.02 < 0.03: trusted holds even against maximal recency.
+        let ranked = rank(
+            vec![
+                memory("old-trusted", vec![0.95, 0.312_25], Trust::Verified, 300),
+                memory("new-untrusted", vec![0.97, 0.243_11], Trust::Untrusted, 0),
+            ],
+            &query,
+            Utc::now(),
+        );
+        assert_eq!(ranked[0].memory.id, "old-trusted");
     }
 
     #[test]

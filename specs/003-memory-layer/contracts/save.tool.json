@@ -9,7 +9,7 @@
       "kind": { "type": "string", "enum": ["skill", "lesson", "fact"] },
       "origin": { "type": "string", "minLength": 1, "description": "Where this knowledge came from." },
       "external": { "type": "boolean", "description": "true if sourced from external content (web, docs, repos) rather than first-hand experience." },
-      "tags": { "type": ["array", "null"], "items": { "type": "string" } },
+      "tags": { "type": ["array", "null"], "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 100 } },
       "verify": { "type": ["boolean", "null"], "description": "Run independent verification before admitting an external memory as trusted." }
     },
     "required": ["content", "kind", "origin", "external"],

@@ -6,6 +6,7 @@
 //! apply to them (research.md 003 D6). They share the seams, the error
 //! taxonomy, and the recorded execution path.
 
+pub mod contract;
 pub mod ranking;
 pub mod tools;
 

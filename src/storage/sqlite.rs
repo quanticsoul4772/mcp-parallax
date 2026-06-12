@@ -207,6 +207,16 @@ impl Storage for SqliteStorage {
 
         rows.into_iter()
             .map(|row| {
+                let id: String = row.get("id");
+                // A misaligned BLOB is the same class of contract violation as
+                // an unknown enum — loud, never silently truncated.
+                let blob: &[u8] = row.get("embedding");
+                if !blob.len().is_multiple_of(4) {
+                    return Err(AppError::Storage(format!(
+                        "embedding blob length {} is not a multiple of 4 for memory {id}",
+                        blob.len()
+                    )));
+                }
                 let kind_text: String = row.get("kind");
                 let kind = Kind::parse(&kind_text).ok_or_else(|| {
                     AppError::Storage(format!("unknown memory kind in store: {kind_text}"))
@@ -224,14 +234,14 @@ impl Storage for SqliteStorage {
                     .with_timezone(&Utc);
                 let external: i64 = row.get("external");
                 Ok(Memory {
-                    id: row.get("id"),
+                    id,
                     content: row.get("content"),
                     kind,
                     origin: row.get("origin"),
                     external: external != 0,
                     trust,
                     tags,
-                    embedding: embedding_from_blob(row.get::<&[u8], _>("embedding")),
+                    embedding: embedding_from_blob(blob),
                     embedding_model: row.get("embedding_model"),
                     created_at,
                 })
@@ -278,7 +288,8 @@ fn embedding_to_blob(vector: &[f32]) -> Vec<u8> {
     vector.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
-/// Little-endian BLOB → f32 vector.
+/// Little-endian BLOB → f32 vector. Callers must reject misaligned blobs
+/// first (`load_memories` does, loudly, with the row id).
 fn embedding_from_blob(blob: &[u8]) -> Vec<f32> {
     blob.chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
@@ -437,6 +448,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.load_memories().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn misaligned_embedding_blob_is_a_loud_error_not_a_truncation() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "INSERT INTO memories
+                (id, content, kind, origin, external, trust, tags,
+                 embedding, embedding_model, created_at)
+             VALUES ('bad', 'c', 'fact', 'o', 0, 'first_hand', '[]',
+                     ?, 'voyage-4', '2026-06-11T12:00:00+00:00')",
+        )
+        .bind(vec![0_u8; 5]) // not a multiple of 4
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+
+        let err = storage.load_memories().await.unwrap_err();
+        assert!(matches!(err, AppError::Storage(_)));
+        assert!(
+            err.to_string().contains("not a multiple of 4") && err.to_string().contains("bad"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
