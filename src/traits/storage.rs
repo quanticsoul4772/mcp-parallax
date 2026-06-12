@@ -1,9 +1,10 @@
 //! The persistence boundary. SQLite-backed in production; mocked in tests.
 
 use crate::error::AppError;
+use crate::telemetry::InvocationRecord;
 use serde_json::Value;
 
-/// Durable storage for sessions and accumulated state.
+/// Durable storage for sessions, accumulated state, and invocation records.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait Storage: Send + Sync {
@@ -20,6 +21,14 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns [`AppError`] if the read fails.
     async fn load_session(&self, id: &str) -> Result<Option<Value>, AppError>;
+
+    /// Persist one invocation record. Called exactly once per invocation, on
+    /// every exit path (FR-010).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn record_invocation(&self, record: &InvocationRecord) -> Result<(), AppError>;
 }
 
 #[cfg(test)]

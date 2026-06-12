@@ -4,10 +4,10 @@
 //! dependencies it needs behind these traits, rather than inheriting behavior.
 //! The three seams are time, the model client, and storage.
 
-mod client;
-mod clock;
-mod storage;
+pub mod client;
+pub mod clock;
+pub mod storage;
 
-pub use client::ModelClient;
+pub use client::{Completion, ModelClient};
 pub use clock::{SystemClock, TimeProvider};
 pub use storage::Storage;

@@ -1,13 +1,21 @@
 //! Parallax MCP server — binary entry point.
 //!
-//! All logs go to stderr; stdout is reserved for MCP JSON-RPC. The transport and
-//! tool surface are not yet wired — this entry point initializes logging and
-//! validates configuration, the foundation the server is built on.
+//! All logs go to stderr; stdout is reserved for MCP JSON-RPC. Construction
+//! order is config → storage (migration at boot) → client → server →
+//! serve(stdio): every misconfiguration fails here, named, before the first
+//! tool call.
 
 // The binary entry point is a production path too — no panics via unwrap/expect.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+use mcp_parallax::client::AnthropicClient;
 use mcp_parallax::config::Config;
+use mcp_parallax::server::Parallax;
+use mcp_parallax::storage::SqliteStorage;
+use mcp_parallax::traits::clock::SystemClock;
+use rmcp::transport::stdio;
+use rmcp::ServiceExt;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -49,12 +57,54 @@ async fn main() {
         }
     };
 
+    // The default DATABASE_PATH lives under ./data/ — create the parent
+    // directory so a fresh checkout boots without manual setup.
+    if let Some(parent) = std::path::Path::new(&config.database_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::error!("cannot create database directory {parent:?}: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let storage = match SqliteStorage::connect(&config.database_path).await {
+        Ok(storage) => Arc::new(storage),
+        Err(e) => {
+            tracing::error!("storage error at startup: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let client = Arc::new(AnthropicClient::new(&config));
+    let server = match Parallax::new(client, storage, Arc::new(SystemClock), &config) {
+        Ok(server) => server,
+        Err(e) => {
+            tracing::error!("server construction failed: {e}");
+            std::process::exit(1);
+        }
+    };
+
     tracing::info!(
         database = %config.database_path,
+        model = %config.anthropic_model,
+        ensemble_k = config.verify_ensemble_k,
         timeout_ms = config.request_timeout_ms,
         max_retries = config.max_retries,
-        "parallax: configuration loaded; transport not yet wired"
+        "parallax: serving MCP over stdio"
     );
+
+    let service = match server.serve(stdio()).await {
+        Ok(service) => service,
+        Err(e) => {
+            tracing::error!("transport initialization failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = service.waiting().await {
+        tracing::error!("server terminated with error: {e}");
+        std::process::exit(1);
+    }
 }
 
 // --version/--help run before the MCP transport exists, so stdout is still a
@@ -75,12 +125,15 @@ fn print_help() {
     println!("    --version, -v    Print version information and exit");
     println!("    --help, -h       Print this help message and exit");
     println!();
-    println!("    (no arguments)   Initialize and start the server");
+    println!("    (no arguments)   Start the MCP server on stdio");
     println!();
     println!("ENVIRONMENT VARIABLES:");
-    println!("    ANTHROPIC_API_KEY     Anthropic API key (required)");
-    println!("    DATABASE_PATH         SQLite database path (default: ./data/parallax.db)");
-    println!("    LOG_LEVEL             error|warn|info|debug|trace (default: info)");
-    println!("    REQUEST_TIMEOUT_MS    Per-request timeout in ms (default: 30000)");
-    println!("    MAX_RETRIES           Maximum API retry attempts (default: 3)");
+    println!("    ANTHROPIC_API_KEY       Anthropic API key (required)");
+    println!("    ANTHROPIC_MODEL         Model id (default: claude-opus-4-8)");
+    println!("    VERIFY_ENSEMBLE_K       Verification passes, >= 1 (default: 3)");
+    println!("    VERIFY_MAX_CLAIM_CHARS  Max claim length (default: 50000)");
+    println!("    DATABASE_PATH           SQLite database path (default: ./data/parallax.db)");
+    println!("    LOG_LEVEL               error|warn|info|debug|trace (default: info)");
+    println!("    REQUEST_TIMEOUT_MS      Per-request timeout in ms (default: 30000)");
+    println!("    MAX_RETRIES             Maximum API retry attempts (default: 3)");
 }

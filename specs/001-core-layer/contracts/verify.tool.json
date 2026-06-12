@@ -1,0 +1,49 @@
+{
+  "$comment": "MCP tool contract for `verify`. inputSchema/outputSchema are what the server advertises in its tool catalog. outputSchema is the AGGREGATED tool result; the per-pass model schema is the same shape minus `confidence`/`passes` (see data-model.md §3-4). The sanitized (Anthropic-grammar) form is derived from this by the schema sanitizer at startup; the constraints below that the grammar cannot enforce (minimum/maximum on confidence, minLength on claim) are enforced by the local validator.",
+  "name": "verify",
+  "description": "Independently verify a claim. Runs multiple parallel verification passes that see only the claim and optional context - never the requester's stance or conversation. Returns a structured verdict: supported or refuted, specific concrete findings (every refutation names the exact error), and a confidence score derived from cross-pass agreement. Use when an assertion matters and being confidently wrong is costly.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "claim": {
+        "type": "string",
+        "description": "The claim to verify, stated neutrally.",
+        "minLength": 1
+      },
+      "context": {
+        "type": "string",
+        "description": "Optional supporting context the verifier may consult. This is the only extra information a verification pass receives."
+      }
+    },
+    "required": ["claim"],
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": ["supported", "refuted"],
+        "description": "Majority verdict across passes; ties resolve to refuted."
+      },
+      "findings": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Deduplicated specific findings from the majority-side passes. Non-empty whenever verdict is refuted."
+      },
+      "confidence": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Agreement ratio (majority count / passes). Computed by the server, never model self-report."
+      },
+      "passes": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Number of verification passes that completed."
+      }
+    },
+    "required": ["verdict", "findings", "confidence", "passes"],
+    "additionalProperties": false
+  }
+}
