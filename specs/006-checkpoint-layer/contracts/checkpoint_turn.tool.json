@@ -1,0 +1,54 @@
+{
+  "name": "checkpoint_turn",
+  "description": "End-of-turn checkpoint: deterministically mine the turn's final message and recent trajectory for candidate contradictions (against earlier committed statements and verified stored decisions); only when candidates exist, one independent blind review pass classifies them. A confirmed contradiction returns a flag citing both conflicting statements, delivered as forced continuation - the turn does not end until the model addresses it (at most once per turn). Otherwise silence. Verdict and wording are server-assembled; the review pass never decides or phrases the verdict. Fails open. Intended to be invoked by the harness's stop hook; calling it directly behaves identically.",
+  "params": {
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "description": "The harness session identifier; must match the transcript."
+      },
+      "transcript_path": {
+        "type": "string",
+        "description": "Path to the session's transcript (.jsonl). Validated and read as a bounded tail window."
+      },
+      "final_message": {
+        "type": "string",
+        "description": "The model's final message for the turn (as provided by the harness)."
+      },
+      "continuation": {
+        "type": "boolean",
+        "description": "True when this turn end follows a forced continuation; limits this evaluation to screening so continuation can never loop."
+      }
+    },
+    "required": ["session_id", "transcript_path", "final_message", "continuation"],
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "properties": {
+      "verdict": { "type": "string", "enum": ["silence", "flag"] },
+      "message": {
+        "type": ["string", "null"],
+        "description": "Assembled flag citing the two conflicting statements; null when silence."
+      },
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "enum": ["self_contradiction"] },
+            "evidence": { "type": "string" }
+          },
+          "required": ["kind", "evidence"],
+          "additionalProperties": false
+        }
+      },
+      "suppressed": { "type": "boolean" },
+      "fail_open": { "type": "boolean" },
+      "latency_ms": { "type": "integer" }
+    },
+    "required": ["verdict", "message", "signals", "suppressed", "fail_open", "latency_ms"],
+    "additionalProperties": false
+  }
+}

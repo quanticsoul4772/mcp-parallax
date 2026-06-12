@@ -175,9 +175,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `005-deterministic-layer` — [spec](specs/005-deterministic-layer/spec.md) ·
-[plan](specs/005-deterministic-layer/plan.md) · [research](specs/005-deterministic-layer/research.md) ·
-[data model](specs/005-deterministic-layer/data-model.md) · [contracts](specs/005-deterministic-layer/contracts/)
+Current feature: `006-checkpoint-layer` — [spec](specs/006-checkpoint-layer/spec.md) ·
+[plan](specs/006-checkpoint-layer/plan.md) · [research](specs/006-checkpoint-layer/research.md) ·
+[data model](specs/006-checkpoint-layer/data-model.md) · [contracts](specs/006-checkpoint-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
