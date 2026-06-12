@@ -1,5 +1,5 @@
 {
-  "_comment": "Parallax checkpoint layer - sensor plane (006). Shape verified against the Claude Code settings schema (S1, 2026-06-12): mcp_tool hooks take server + tool (bare name) + an explicit input map with ${path} substitution from the hook event JSON. Merge the 'hooks' object into your .claude/settings.json (server name must match your MCP registration, here 'parallax'). Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session.",
+  "_comment": "Parallax checkpoint layer - sensor plane (006), live-verified by the S1 spike (examples/spike_hooks.md, 2026-06-12): all three hooks fire; flag results block with the message fed to the model; hold results raise a permission prompt quoting the conflicting memory; silence is a no-op. Merge the 'hooks' object into your .claude/settings.json (server name must match your MCP registration, here 'parallax'). Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session.",
   "hooks": {
     "PreToolUse": [
       {

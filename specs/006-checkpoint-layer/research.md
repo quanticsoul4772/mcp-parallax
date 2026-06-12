@@ -29,6 +29,16 @@ supervision patterns) and are recorded in the corpus amendment
   `mcp-parallax` binary (stdin: hook JSON → stdout: hook JSON; shared SQLite
   via `DATABASE_PATH`). S1 then also decides how credentials reach the hook
   environment (hook-level `env`, or degraded no-recall gate).
+- **S1 VERDICT (2026-06-12, three live rounds — `examples/spike_hooks.md`)**:
+  `mcp_tool` STANDS; the fallback is not needed. Two corrections from
+  measurement: the handler takes `server` + bare `tool` + an explicit
+  `input` map with `${path}` substitution (the event payload is not
+  auto-passed), and the harness parses the tool's result as hook-output
+  JSON — so flag/hold results carry the mapping themselves
+  (`decision:"block"`+`reason` / `hookSpecificOutput.permissionDecision:
+  "ask"`). Live-verified: flags block the model with the message, holds
+  raise a real permission prompt, silence is a no-op, hooks fail open
+  when the server is down.
 
 ## D2 — Boundary → hook event mapping
 
@@ -50,6 +60,10 @@ supervision patterns) and are recorded in the corpus amendment
 - **Alternatives**: `PostToolUse` per call (5–10× volume for no v1 detection
   gain — rejected by clarification); `UserPromptSubmit` for sycophancy
   pushback detection (deferred with the sycophancy signal).
+- **S1 CONFIRMATIONS**: `PostToolBatch` and `Stop` exist and fire in
+  Claude Code 2.1.176; `stop_hook_active` and `last_assistant_message`
+  are the field names (booleans arrive stringified through `${...}`
+  substitution — the contract's lenient `continuation` absorbs it).
 
 ## D3 — Trajectory access: `TrajectoryReader` seam over the transcript file
 

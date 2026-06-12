@@ -129,12 +129,14 @@ beyond wiring hook events to the three tools.
 ## Complexity Tracking
 
 No constitution violations to justify. Two named engineering risks, both
-spiked before dependent work (research.md). *Implementation status note:*
-S2 ran and its decision is recorded (research.md D4); **S1 is still
-pending a live session against a build that serves the checkpoint tools**
-— the sensor plane shipped as an explicitly-marked DRAFT
-(`integrations/claude-code/`, `examples/spike_hooks.md`) until S1's
-findings land, a named deviation from the planned ordering.
+spiked (research.md). S2 ran first and fixed the gate-latency story
+(D4). S1 ran across three live rounds AFTER the server side shipped — a
+named inversion of the planned ordering forced by reality (the spike
+needs a deployed build serving the tools); its findings reshaped the
+hook config (schema-correct `mcp_tool` shape) and the wire contract
+(results carry the hook-output mapping; lenient `continuation`;
+`description` dropped from action identity). Full record:
+`examples/spike_hooks.md`.
 
 - **S1 — hook→tool plumbing** (gates the sensor plane): whether the `mcp_tool`
   hook handler delivers the documented event payload as tool input and maps

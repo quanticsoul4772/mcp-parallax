@@ -1,10 +1,9 @@
 # S1 spike: hook → checkpoint-tool plumbing (006, research.md D1/D2)
 
-**Status: PROTOCOL — findings not yet recorded.** This spike needs a live
-Claude Code session running a build that serves the `checkpoint_*` tools
-(merge `006-checkpoint-layer`, rebuild, restart). It gates the final shape
-of `integrations/claude-code/hooks.json`, which ships as a draft until the
-boxes below are checked.
+**Status: COMPLETE (2026-06-12, three rounds).** Every protocol item ran
+live; `integrations/claude-code/hooks.json` is final (schema-correct
+`mcp_tool` shape; results carry the hook-output mapping). Verdict: the
+`mcp_tool` handler design stands — no CLI fallback needed.
 
 ## What S1 must verify
 
@@ -132,15 +131,34 @@ errored — see finding 5. Answers to the round-2 questions:
    one batch; detection then fires on the next checkpoint. Acceptable —
    named, not fixed (the signal arrives one batch late at worst).
 
-### Round 3 — remaining (after rebuild + restart with these fixes)
+### Round 3 (2026-06-12, rebuilt binary with the round-2 fixes) — ALL PASS
 
-- [ ] Flag delivery in anger: induced loop -> `decision: "block"` feeds the
-      flag message back to the model.
-- [ ] Hold delivery: seeded constraint + conflicting risky command -> the
-      permission prompt appears quoting the memory (FR-011 ask).
-- [ ] Stop boundary end-to-end: turn review runs (continuation string
-      accepted); forced continuation on a confirmed contradiction.
-- [ ] SC-004 live kill-test; SC-006 inertness after uninstall.
+- [x] **Flag delivery**: an induced loop produced
+      `PostToolBatch hook stopped continuation: Trajectory checkpoint
+      (automated): ...` — the flag message reached the model as blocking
+      feedback and the model course-corrected. Bonus: with `description`
+      normalization fixed, the round-2 probes (same command, varied
+      descriptions) fired retroactively — two `repeated_failure` signals
+      named in one flag, both keys in `delivered_keys`.
+- [x] **Hold delivery**: seeded constraint + conflicting (harmless) command
+      -> the user received a real permission prompt and approved; the
+      command then ran unmodified (US2-AS4 live). `hookSpecificOutput.
+      permissionDecision: "ask"` from the mcp_tool result is honored.
+- [x] **Stop boundary**: turn row with `review_ran = 1` (3.1 s) — the
+      stringified `"false"` accepted by the lenient deserializer, real
+      transcript mined, candidates found, the live review hop ran and
+      correctly cleared them (decline bias held; no false alarm).
+- [x] **Cooldown in anger**: 18 suppressed batch rows while the old probe
+      signals stayed in the window — zero noise reached the model.
+- [x] **SC-004 (layer unreachable)**: during the mid-session server
+      restart, both hooks errored `MCP server 'parallax' not connected`
+      as NON-BLOCKING errors and the session proceeded unimpeded.
+- [x] **SC-006 (inertness)**: round 1 is the evidence — an entire working
+      session with the hooks absent produced zero checkpoint rows.
+
+Session totals at spike close: 33 action evaluations (2 holds, both
+seeded tests), 37 batch (3 flags, 18 suppressed), 2 turn (1 with the
+review hop), 0 fail-open rows.
 
 ### Round 2 — open questions (answered above; kept for the protocol record)
 
