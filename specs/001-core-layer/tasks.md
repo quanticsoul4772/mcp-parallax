@@ -27,9 +27,9 @@ implementable and testable.
 
 **Purpose**: Dependencies and the shared vocabulary every story uses
 
-- [ ] T001 Add core dependencies to Cargo.toml: rmcp 1.x (server/macros/transport-io/schemars), reqwest (rustls, no default tls), schemars 1.x, jsonschema, sqlx (sqlite/runtime-tokio-rustls), uuid; dev-deps: wiremock. Run `cargo build` to lock. (Exact rmcp minor pinned later by T006.)
-- [ ] T002 [P] Extend Config with `ANTHROPIC_MODEL` (default `claude-opus-4-8`), `VERIFY_ENSEMBLE_K` (default 3, validated ≥ 1 — 0 is a config error), and `VERIFY_MAX_CLAIM_CHARS` (default 50000) in src/config.rs, with unit tests for defaults, the ≥1 bound, and the present-but-invalid hard-error contract
-- [ ] T003 [P] Add the Outcome taxonomy (success, refusal, truncation, timeout, retries_exhausted, invalid_input, validation_failure, config_error, cancelled) and matching AppError variants with distinct, descriptive Display messages in src/error.rs, with unit tests asserting each message names its class (data-model.md §6)
+- [X] T001 Add core dependencies to Cargo.toml: rmcp 1.x (server/macros/transport-io/schemars), reqwest (rustls, no default tls), schemars 1.x, jsonschema, sqlx (sqlite/runtime-tokio-rustls), uuid; dev-deps: wiremock. Run `cargo build` to lock. (Exact rmcp minor pinned later by T006.)
+- [X] T002 [P] Extend Config with `ANTHROPIC_MODEL` (default `claude-opus-4-8`), `VERIFY_ENSEMBLE_K` (default 3, validated ≥ 1 — 0 is a config error), and `VERIFY_MAX_CLAIM_CHARS` (default 50000) in src/config.rs, with unit tests for defaults, the ≥1 bound, and the present-but-invalid hard-error contract
+- [X] T003 [P] Add the Outcome taxonomy (success, refusal, truncation, timeout, retries_exhausted, invalid_input, validation_failure, config_error, cancelled) and matching AppError variants with distinct, descriptive Display messages in src/error.rs, with unit tests asserting each message names its class (data-model.md §6)
 
 ---
 
@@ -39,13 +39,13 @@ implementable and testable.
 
 **⚠️ CRITICAL**: The spikes validate the load-bearing glue BEFORE the modules are built; T007–T012 must be complete before any user story phase
 
-- [ ] T004 [P] Spike 1 — schema sanitizer fidelity in examples/spike_sanitizer.rs: derive the Verdict schema via schemars, transform to the Anthropic grammar subset, assert additionalProperties:false everywhere, constraints stripped, required complete (exit criteria in research.md)
-- [ ] T005 [P] Spike 3 — rmcp `Json<T>` round-trip in examples/spike_roundtrip.rs: in-process rmcp client sees `outputSchema` in the catalog and `structured_content` in the result
-- [ ] T006 Pin the exact rmcp minor that provides `Json<T>` in Cargo.toml based on T005's finding (depends on T005)
-- [ ] T007 [P] Spike 2 — one real structured-outputs call in examples/spike_client.rs (manual-run, needs ANTHROPIC_API_KEY, real spend): confirm `content[0].text` parses against a tiny schema and the documented `stop_reason` behavior
-- [ ] T008 [P] Spike 4 — thinking + `output_config` compatibility in examples/spike_thinking.rs (manual-run, real spend); record the yes/no finding in docs/design/SDK_USAGE_CORE.md (core does not depend on the answer)
-- [ ] T009 Schema sanitizer module in src/schema/sanitize.rs + src/schema/mod.rs (promotes T004's validated transform), unit tests covering every stripped keyword and the additionalProperties/required guarantees (depends on T004)
-- [ ] T010 [P] Defense-in-depth validator in src/schema/validate.rs using the jsonschema crate against the UNSANITIZED schema, unit tests proving it re-imposes exactly what the sanitizer strips (ranges, lengths, non-empty findings)
+- [X] T004 [P] Spike 1 — schema sanitizer fidelity in examples/spike_sanitizer.rs: derive the Verdict schema via schemars, transform to the Anthropic grammar subset, assert additionalProperties:false everywhere, constraints stripped, required complete (exit criteria in research.md)
+- [X] T005 [P] Spike 3 — rmcp `Json<T>` round-trip in examples/spike_roundtrip.rs: in-process rmcp client sees `outputSchema` in the catalog and `structured_content` in the result
+- [X] T006 Pin the exact rmcp minor that provides `Json<T>` in Cargo.toml based on T005's finding (depends on T005)
+- [X] T007 [P] Spike 2 — one real structured-outputs call in examples/spike_client.rs (manual-run, needs ANTHROPIC_API_KEY, real spend): confirm `content[0].text` parses against a tiny schema and the documented `stop_reason` behavior
+- [X] T008 [P] Spike 4 — thinking + `output_config` compatibility in examples/spike_thinking.rs (manual-run, real spend); record the yes/no finding in docs/design/SDK_USAGE_CORE.md (core does not depend on the answer)
+- [X] T009 Schema sanitizer module in src/schema/sanitize.rs + src/schema/mod.rs (promotes T004's validated transform), unit tests covering every stripped keyword and the additionalProperties/required guarantees (depends on T004)
+- [X] T010 [P] Defense-in-depth validator in src/schema/validate.rs using the jsonschema crate against the UNSANITIZED schema, unit tests proving it re-imposes exactly what the sanitizer strips (ranges, lengths, non-empty findings)
 - [ ] T011 Thin Anthropic client implementing ModelClient in src/client/anthropic.rs + src/client/mod.rs: `output_config.format` request body, stop_reason → Outcome mapping (end_turn/refusal/max_tokens), retry with backoff honoring MAX_RETRIES, REQUEST_TIMEOUT_MS; wiremock unit tests for each stop_reason, timeout, and retry exhaustion — no real network (depends on T003, T009)
 - [ ] T012 Mode registry in src/modes/mod.rs: CorrectiveMode struct (id, description, prompt_template, output_schema, ensemble_k), startup assertion that every registered schema is flat + closed (illegal schema fails boot), unit tests for the assertion both ways (depends on T009)
 

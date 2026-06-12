@@ -176,7 +176,7 @@ async fn complete(&self, prompt: &str, schema: &Value) -> Result<Value, AppError
 ### Strict-tool alternative
 
 For cases that map to a tool call rather than a free JSON response, put `strict: true`
-+ `input_schema` on the tool; the model returns `content[].type == "tool_use"` with an
+plus `input_schema` on the tool; the model returns `content[].type == "tool_use"` with an
 **already-parsed** `input` and `stop_reason == "tool_use"`. Either mode satisfies the
 constrained-output contract; pick per primitive.
 
@@ -213,9 +213,14 @@ redundant.
   cached 24h. Stable schemas (modes-as-data) benefit; don't churn schemas per call.
 - **Limits:** ≤20 strict tools/request, ≤24 optional params, ≤16 union-typed params,
   180s compile timeout. Keep mode schemas small and flat.
-- **Extended thinking compatibility:** docs don't explicitly confirm `output_config` +
-  thinking together — **verify in the spike** before relying on it for the deep/maximum
-  thinking modes.
+- **Extended thinking compatibility:** **verified 2026-06-11** (spike 4,
+  `examples/spike_thinking.rs`, live against Opus 4.8): adaptive thinking
+  (`thinking: {type: "adaptive"}` + `output_config.effort`) **composes** with
+  `output_config.format` — `stop_reason: end_turn`, schema-valid JSON in the text
+  block after the thinking block(s). The legacy `thinking: {type: "enabled",
+  budget_tokens}` shape is **rejected** by Opus 4.8 with a 400 ("use
+  thinking.type.adaptive and output_config.effort"). When reading the response
+  with thinking on, find the `text` block — it is not necessarily `content[0]`.
 - **Retry/backoff/timeouts:** copy mcp-reasoning's `anthropic/client.rs` pattern (it's a
   solved, lift-and-shift problem); the structured-outputs change is only the request
   body + response parsing above.
