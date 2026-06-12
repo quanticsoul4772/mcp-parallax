@@ -216,10 +216,14 @@ set. The tool never emits an ungrounded claim.
 
 | | angles | max_sources | verifier votes K | completeness loops | typical budget |
 |---|---|---|---|---|---|
-| **quick** | 3 | 8 | 1 | 0 | ~40k tok |
-| **standard** | 5 | 25 | 2 | 0 | ~120k tok |
-| **deep** | 8 | 60 | 3 (diverse lenses) | 1 | ~350k tok |
-| **exhaustive** | 12 | 120 | 3–5 (diverse) | 2 | ~800k tok |
+| **quick** | 3 | 8 | 1 | 0 | ~150k tok |
+| **standard** | 5 | 25 | 2 | 0 | ~450k tok |
+| **deep** | 8 | 60 | 3 (diverse lenses) | 1 | ~1M tok |
+| **exhaustive** | 12 | 120 | 3–5 (diverse) | 2 | ~2.5M tok |
+
+*(Budgets amended 2026-06-12 from v1 live measurement: the original
+40k/120k/350k/800k estimates starved real runs mid-verification — claim
+extraction alone costs ~4k input tokens per source.)*
 
 `budget_tokens`/`deadline_ms` always override the tier: hitting either triggers a
 **graceful early synthesize** over whatever is verified so far, with `stopped_early`

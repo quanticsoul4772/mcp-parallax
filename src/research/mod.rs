@@ -41,6 +41,8 @@ pub enum Depth {
     Standard,
     /// 8 angles, 60 sources, 3 votes — a deep investigation.
     Deep,
+    // Budget defaults were re-tuned against live runs (2026-06-12): the
+    // corpus's 40k/120k/350k estimates starved real runs mid-verification.
 }
 
 /// Tier defaults; explicit caller constraints always override (FR-006).
@@ -67,22 +69,22 @@ impl Depth {
                 angles: 3,
                 max_sources: 8,
                 verify_k: 1,
-                default_deadline_ms: 90_000,
-                default_budget_tokens: 40_000,
+                default_deadline_ms: 120_000,
+                default_budget_tokens: 150_000,
             },
             Self::Standard => DepthTier {
                 angles: 5,
                 max_sources: 25,
                 verify_k: 2,
                 default_deadline_ms: 240_000,
-                default_budget_tokens: 120_000,
+                default_budget_tokens: 450_000,
             },
             Self::Deep => DepthTier {
                 angles: 8,
                 max_sources: 60,
                 verify_k: 3,
                 default_deadline_ms: 480_000,
-                default_budget_tokens: 350_000,
+                default_budget_tokens: 1_000_000,
             },
         }
     }

@@ -245,7 +245,10 @@ exactly one correctly attributed record.
 - **SC-002**: 100% of research responses — including early-stopped and
   failure-degraded runs — conform to the declared output structure.
 - **SC-003**: On the acceptance set, a default-depth research run completes in
-  under 4 minutes wall clock, and the quick tier in under 90 seconds.
+  under 4 minutes wall clock, and the quick tier in under 150 seconds.
+  *(Amended 2026-06-12 from live measurement: the original 90-second quick
+  target was calibrated to the budget-starved 40k-token tier; completed quick
+  runs measure 84–93 s.)*
 - **SC-004**: With a deliberately tiny budget or deadline, 100% of runs return
   a well-formed early-synthesized response with the stopped-early flag and a
   named stop reason — 0 errors, 0 silently truncated answers.

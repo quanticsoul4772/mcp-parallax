@@ -188,9 +188,15 @@ by unanswered sub-questions (design §4.2).
 
 | tier | angles | max_sources | verify K | default deadline | default budget |
 |---|---|---|---|---|---|
-| quick | 3 | 8 | 1 | 90 s | 40k tok |
-| standard (default) | 5 | 25 | 2 | 240 s | 120k tok |
-| deep | 8 | 60 | 3 | 480 s | 350k tok |
+| quick | 3 | 8 | 1 | 120 s | 150k tok |
+| standard (default) | 5 | 25 | 2 | 240 s | 450k tok |
+| deep | 8 | 60 | 3 | 480 s | 1M tok |
+
+Budgets re-tuned against the live acceptance run (2026-06-12): the corpus's
+original 40k/120k/350k estimates starved every real run mid-verification
+(extraction alone costs ~4k input tokens per source), producing honest but
+empty early-stopped answers. The corpus §5 table is amended in the same
+change.
 
 Exhaustive deferred (spec assumption). Explicit `constraints` always override
 tier defaults (FR-006). Ceiling enforcement: the pipeline probes

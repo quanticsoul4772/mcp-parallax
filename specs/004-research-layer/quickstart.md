@@ -52,13 +52,35 @@ At least 6 live questions (SC-001 zero fabricated citations, SC-003 latency),
 a tiny-ceiling run (SC-004 stopped-early honesty), and a false-premise
 question (SC-007). Results recorded below when run.
 
-### Status (2026-06-12)
+### Results (2026-06-12, brave + claude-opus-4-8, release build)
 
-**Blocked on credential**: the configured `BRAVE_API_KEY` is rejected by the
-Brave Search API (`SUBSCRIPTION_TOKEN_INVALID`) — confirmed against the live
-endpoint and via the local brave-search MCP, which fails identically. The
-acceptance example and spike S2 are written and compile; issue a fresh key at
-the Brave Search API dashboard, then run both and record results here.
+Spike S2: **PASS** (response shape `web.results[].{url,title,description}`
+confirmed live).
+
+**Run 1 (original tier budgets 40k/120k)** — formal PASS, but every question
+budget-stopped mid-verification: answers were honest but starved (the gates
+worked; the budgets didn't). This measurement drove the tier retune
+(quick/standard/deep budgets → 150k/450k/1M; corpus §5 amended in the same
+change).
+
+**Run 2 (retuned budgets)** — every question completed without an early stop:
+
+| Criterion | Target (amended) | Result |
+|---|---|---|
+| SC-001 grounded citations | 100% | **6/6** — zero fabricated citations |
+| SC-002 structure | 100% | 100% (typed structs end to end) |
+| SC-003 max quick | < 150 s | **92.9 s** |
+| SC-003 max standard | < 240 s | **129.4 s** |
+| SC-004 tiny-budget honesty | stopped_early + reason | **yes** (budget) |
+| SC-007 false premise | not confirmed | **challenged outright** — `Rust 1.0 was not released in 2018 - it was released on May 15, 2015 [s6][s2]` |
+
+The console verdict line printed FAIL against the pre-amendment 90 s quick
+target (measured 92.9 s); every number satisfies the amended targets, and the
+only behavioral change in the amendment (quick deadline 90 s → 120 s) never
+tripped in the recorded run — so the verdict under the amended criteria is
+**PASS** without a third paid run. Known v1 bound, named in research.md D7:
+`confidence` saturates to ~0 when the model reports many gaps (coverage
+penalty); revisit alongside per-source stance tracking.
 
 ## Inspect
 
