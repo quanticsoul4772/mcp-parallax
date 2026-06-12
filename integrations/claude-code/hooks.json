@@ -1,0 +1,40 @@
+{
+  "_comment": "Parallax checkpoint layer - sensor plane (006). DRAFT pending S1 verification (examples/spike_hooks.md): the mcp_tool handler payload/result mapping is the documented shape, not yet live-verified. Merge the 'hooks' object into your .claude/settings.json. Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "tool": "mcp__parallax__checkpoint_action",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "matcher": "^(?!mcp__parallax__).*",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "tool": "mcp__parallax__checkpoint_batch",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "tool": "mcp__parallax__checkpoint_turn",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -51,15 +51,16 @@ async fn main() {
     }
 
     latencies_ms.sort_unstable();
-    let p = |q: f64| latencies_ms[((latencies_ms.len() as f64 * q) as usize).min(SAMPLES - 1)];
+    // Integer percentile index: idx = len * pct / 100 (len is 50 - no overflow).
+    let p = |pct: usize| latencies_ms[(latencies_ms.len() * pct / 100).min(SAMPLES - 1)];
     println!("samples : {SAMPLES} sequential query embeds (voyage-4)");
     println!("min     : {} ms", latencies_ms[0]);
-    println!("p50     : {} ms", p(0.50));
-    println!("p90     : {} ms", p(0.90));
-    println!("p95     : {} ms", p(0.95));
+    println!("p50     : {} ms", p(50));
+    println!("p90     : {} ms", p(90));
+    println!("p95     : {} ms", p(95));
     println!("max     : {} ms", latencies_ms[SAMPLES - 1]);
     let budget_ok = latencies_ms[SAMPLES - 1] < 500;
-    let sc003_ok = p(0.95) < 150;
+    let sc003_ok = p(95) < 150;
     println!("fits GATE_BUDGET_MS (500 ms hard): {budget_ok}");
     println!("fits SC-003 p95 (< 150 ms)       : {sc003_ok}");
 }

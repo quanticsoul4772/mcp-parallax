@@ -193,6 +193,18 @@ supervision patterns) and are recorded in the corpus amendment
   embeds from the dev machine, report p50/p95. Decision recorded in this
   file's D4.
 
+## Post-review named deferrals (2026-06-12, T020 reviewer findings)
+
+- **`run.rs` exceeds the 500-line target** (~430 production + ~430 test
+  lines). Named deferral: split into per-boundary submodules when a fourth
+  boundary or signal lands; the orchestration spine reads best unbroken at
+  the current size.
+- **Fail-open rows record zero tokens/cost** even when an embed succeeded
+  before the failing step. This matches the 001-core convention ("token
+  usage on failed invocations is not attributable — recorded as zero") and
+  is kept for consistency; revisit only if checkpoint cost attribution
+  starts to matter.
+
 ## Resolved Technical Context items
 
 | Unknown | Resolution |

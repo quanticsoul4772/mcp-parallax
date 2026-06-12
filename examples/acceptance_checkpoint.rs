@@ -58,7 +58,7 @@ fn config() -> Config {
     }
 }
 
-/// Write a transcript: each item is (assistant_text_or_empty, commands).
+/// Write a transcript: each item is `(assistant_text_or_empty, commands)`.
 fn write_transcript(
     dir: &std::path::Path,
     name: &str,

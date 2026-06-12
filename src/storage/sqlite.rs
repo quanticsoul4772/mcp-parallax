@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS checkpoint_records (
     boundary          TEXT NOT NULL,
     signals_evaluated TEXT NOT NULL,
     signals_fired     TEXT NOT NULL,
+    delivered_keys    TEXT NOT NULL,
     review_ran        INTEGER NOT NULL,
     verdict           TEXT NOT NULL,
     suppressed        INTEGER NOT NULL,
@@ -171,8 +172,8 @@ impl SqliteStorage {
     pub async fn list_checkpoints(&self) -> Result<Vec<CheckpointRecord>, AppError> {
         let rows = sqlx::query(
             "SELECT id, session_id, boundary, signals_evaluated, signals_fired,
-                    review_ran, verdict, suppressed, fail_open, latency_ms,
-                    cost_usd, created_at
+                    delivered_keys, review_ran, verdict, suppressed, fail_open,
+                    latency_ms, cost_usd, created_at
              FROM checkpoint_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -213,6 +214,9 @@ impl SqliteStorage {
                 let fired_text: String = row.get("signals_fired");
                 let signals_fired: Vec<Signal> = serde_json::from_str(&fired_text)
                     .map_err(|e| AppError::Storage(format!("signals_fired corrupt: {e}")))?;
+                let delivered_text: String = row.get("delivered_keys");
+                let delivered_keys: Vec<String> = serde_json::from_str(&delivered_text)
+                    .map_err(|e| AppError::Storage(format!("delivered_keys corrupt: {e}")))?;
                 let created_text: String = row.get("created_at");
                 let created_at = DateTime::parse_from_rfc3339(&created_text)
                     .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
@@ -230,6 +234,7 @@ impl SqliteStorage {
                     boundary,
                     signals_evaluated,
                     signals_fired,
+                    delivered_keys,
                     review_ran: review_ran != 0,
                     verdict,
                     suppressed: suppressed != 0,
@@ -371,15 +376,19 @@ impl Storage for SqliteStorage {
         sqlx::query(
             "INSERT INTO checkpoint_records
                 (id, session_id, boundary, signals_evaluated, signals_fired,
-                 review_ran, verdict, suppressed, fail_open, latency_ms,
-                 cost_usd, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 delivered_keys, review_ran, verdict, suppressed, fail_open,
+                 latency_ms, cost_usd, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
         .bind(record.boundary.as_str())
         .bind(evaluated)
         .bind(fired)
+        .bind(
+            serde_json::to_string(&record.delivered_keys)
+                .map_err(|e| AppError::Storage(format!("delivered_keys serialization: {e}")))?,
+        )
         .bind(i64::from(record.review_ran))
         .bind(record.verdict.as_str())
         .bind(i64::from(record.suppressed))
@@ -399,9 +408,8 @@ impl Storage for SqliteStorage {
         since: DateTime<Utc>,
     ) -> Result<Vec<String>, AppError> {
         let rows = sqlx::query(
-            "SELECT signals_fired FROM checkpoint_records
-             WHERE session_id = ? AND created_at >= ?
-               AND suppressed = 0 AND verdict != 'silence'",
+            "SELECT delivered_keys FROM checkpoint_records
+             WHERE session_id = ? AND created_at >= ?",
         )
         .bind(session_id)
         .bind(since.to_rfc3339())
@@ -411,10 +419,10 @@ impl Storage for SqliteStorage {
 
         let mut keys = Vec::new();
         for row in rows {
-            let fired_text: String = row.get("signals_fired");
-            let fired: Vec<Signal> = serde_json::from_str(&fired_text)
-                .map_err(|e| AppError::Storage(format!("signals_fired corrupt: {e}")))?;
-            keys.extend(fired.into_iter().map(|s| s.signal_key));
+            let delivered_text: String = row.get("delivered_keys");
+            let delivered: Vec<String> = serde_json::from_str(&delivered_text)
+                .map_err(|e| AppError::Storage(format!("delivered_keys corrupt: {e}")))?;
+            keys.extend(delivered);
         }
         Ok(keys)
     }
@@ -662,6 +670,14 @@ mod tests {
                     "the action `bash cargo test` was invoked 4 times".into(),
                     "bash cargo test",
                 )]
+            },
+            delivered_keys: if verdict == Verdict::Silence {
+                vec![]
+            } else {
+                vec![
+                    Signal::new(SignalKind::Repetition, String::new(), "bash cargo test")
+                        .signal_key,
+                ]
             },
             review_ran: false,
             verdict,

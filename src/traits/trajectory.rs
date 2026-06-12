@@ -66,8 +66,13 @@ impl TrajectoryReader for FsTrajectoryReader {
         } else {
             false
         };
+        // Hard read limiter: the file may grow between the stat and the read
+        // (the harness appends to live transcripts) — `take` enforces the
+        // bound regardless (review finding 1).
         let mut bytes = Vec::with_capacity(usize::try_from(len.min(WINDOW_BYTES)).unwrap_or(0));
-        file.read_to_end(&mut bytes)
+        let mut limited = file.take(WINDOW_BYTES);
+        limited
+            .read_to_end(&mut bytes)
             .await
             .map_err(|e| AppError::Storage(format!("transcript read failed: {e}")))?;
         let text = String::from_utf8_lossy(&bytes);

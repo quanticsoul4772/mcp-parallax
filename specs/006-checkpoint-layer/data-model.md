@@ -116,7 +116,8 @@ CREATE TABLE checkpoint_records (
   session_id TEXT NOT NULL,
   boundary TEXT NOT NULL,              -- action | batch | turn
   signals_evaluated TEXT NOT NULL,     -- JSON array of SignalKind
-  signals_fired TEXT NOT NULL,         -- JSON array of {kind, signal_key}
+  signals_fired TEXT NOT NULL,         -- JSON array of {kind, evidence, signal_key} (audit view)
+  delivered_keys TEXT NOT NULL,        -- JSON array of keys actually delivered (the FR-010 cooldown feed)
   review_ran INTEGER NOT NULL,         -- 0/1 (turn boundary only)
   verdict TEXT NOT NULL,               -- silence | flag | hold
   suppressed INTEGER NOT NULL,         -- cooldown downgrade happened
@@ -127,8 +128,9 @@ CREATE TABLE checkpoint_records (
 );
 ```
 
-Queries: cooldown lookup (`signal_key` ∈ `signals_fired`, same session,
-within window — D7); rate metrics (flag rate, hold rate, suppression rate,
+Queries: cooldown lookup (`signal_key` ∈ `delivered_keys`, same session,
+within window — D7; a partially suppressed flag feeds only its delivered
+subset, so undelivered signals never have their cooldown extended); rate metrics (flag rate, hold rate, suppression rate,
 fail-open rate) as plain SQL (SC-005). One row per evaluation, plus the
 standard invocation record via `run_recorded` (tool ids
 `checkpoint_action`/`checkpoint_batch`/`checkpoint_turn`).
@@ -144,7 +146,9 @@ turn:   candidates = mine(window, recall)
         candidates = ∅                                  → Silence (no hop)
         hop says contradicts                            → Flag(message cites a & b) [forced continuation]
         hop says no                                     → Silence (record: review cleared)
-        continuation == true                            → screening only; flags cooldown-checked (FR-014)
+        continuation == true                            → immediate silence, nothing evaluated (FR-014: a
+                                                          screening flag here could only deliver via a second
+                                                          forced continuation, which FR-014 forbids)
 any:    error / timeout anywhere                        → Silence + fail_open (FR-008)
 ```
 

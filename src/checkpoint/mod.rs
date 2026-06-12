@@ -37,8 +37,9 @@ pub const FAILURE_THRESHOLD: usize = 3;
 pub const GATE_BUDGET_MS: u64 = 500;
 
 /// Minimum cosine relevance for a constraint memory to hold an action (D4).
-/// Placeholder pending S2 + acceptance evidence (T006/T018) — moves only
-/// with measurement.
+///
+/// Validated by acceptance run 1 (2026-06-12: 3/3 seeded holds, 0/60 false
+/// holds on benign risk-matched actions) — moves only with new measurement.
 pub const GATE_RELEVANCE_TAU: f32 = 0.55;
 
 /// Minimum cosine relevance for a memory to become a review candidate (D6).
@@ -198,8 +199,13 @@ pub struct CheckpointRecord {
     pub boundary: Boundary,
     /// Every detector this evaluation ran.
     pub signals_evaluated: Vec<SignalKind>,
-    /// The signals that fired (pre-cooldown).
+    /// The signals that fired (pre-cooldown — the audit view).
     pub signals_fired: Vec<Signal>,
+    /// The signal keys actually DELIVERED by this evaluation — the FR-010
+    /// cooldown feed. A partially suppressed flag delivers only its
+    /// unsuppressed subset; recording all fired keys here would extend the
+    /// cooldown of signals that were never redelivered (review finding 2).
+    pub delivered_keys: Vec<String>,
     /// Whether the review hop ran (turn boundary only).
     pub review_ran: bool,
     /// The delivered verdict (post-cooldown).

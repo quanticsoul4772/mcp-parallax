@@ -156,7 +156,11 @@ pub fn mine_candidates(
         }
     }
 
-    candidates.dedup();
+    // Dedup on the statement pair (non-adjacent repeats across assistant
+    // entries differ only in `between` and would burn the cap — review
+    // finding 6); first occurrence wins.
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    candidates.retain(|c| seen.insert((c.earlier.clone(), c.final_statement.clone())));
     candidates.truncate(REVIEW_CANDIDATES_MAX);
     candidates
 }
@@ -211,7 +215,20 @@ pub async fn review_once(
         .map_err(|e| AppError::ValidationFailure(format!("review shape: {e}")))?;
 
     let flagged = if out.contradicts {
-        let identity = format!("{}|{}", out.statement_a, out.statement_b);
+        // Cooldown identity from the MINED pair, not the model's echo —
+        // wording drift between turns must not defeat FR-010 suppression
+        // (review finding 7). Best-overlap match back to a candidate;
+        // the echo is the fallback if nothing matches.
+        let identity = candidates
+            .iter()
+            .max_by_key(|c| {
+                overlap(&c.earlier, &out.statement_a)
+                    + overlap(&c.final_statement, &out.statement_b)
+            })
+            .map_or_else(
+                || format!("{}|{}", out.statement_a, out.statement_b),
+                |c| format!("{}|{}", c.earlier, c.final_statement),
+            );
         let signal = Signal::new(
             SignalKind::SelfContradiction,
             format!(

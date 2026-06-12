@@ -50,6 +50,9 @@ pub struct CheckpointDeps {
 struct Evaluated {
     signal_kinds: Vec<SignalKind>,
     fired: Vec<Signal>,
+    /// Keys actually delivered (FR-010 cooldown feed) — the unsuppressed
+    /// subset for flags, the held signal for holds, empty otherwise.
+    delivered_keys: Vec<String>,
     review_ran: bool,
     result: CheckpointResult,
     cost_usd: f64,
@@ -62,6 +65,7 @@ impl Evaluated {
         Self {
             signal_kinds,
             fired,
+            delivered_keys: vec![],
             review_ran: false,
             result,
             cost_usd: 0.0,
@@ -98,16 +102,24 @@ pub async fn run_batch(
             ));
         }
         let remaining = unsuppressed(deps, &params.session_id, &fired).await?;
-        let result = if remaining.is_empty() {
-            CheckpointResult::suppressed(&fired, elapsed_ms(started))
+        let (result, delivered_keys) = if remaining.is_empty() {
+            (
+                CheckpointResult::suppressed(&fired, elapsed_ms(started)),
+                vec![],
+            )
         } else {
-            CheckpointResult::flag(
-                batch_flag_message(&remaining),
-                &remaining,
-                elapsed_ms(started),
+            (
+                CheckpointResult::flag(
+                    batch_flag_message(&remaining),
+                    &remaining,
+                    elapsed_ms(started),
+                ),
+                remaining.iter().map(|s| s.signal_key.clone()).collect(),
             )
         };
-        Ok::<Evaluated, AppError>(Evaluated::pure(evaluated_kinds.clone(), fired, result))
+        let mut evaluation = Evaluated::pure(evaluated_kinds.clone(), fired, result);
+        evaluation.delivered_keys = delivered_keys;
+        Ok::<Evaluated, AppError>(evaluation)
     }
     .await;
 
@@ -180,13 +192,16 @@ pub async fn run_action(
         let mut evaluation = match held {
             // FR-011: holds escalate to the user; FR-010: never rate-limited.
             Some((signal, memory_content)) => {
+                let delivered_keys = vec![signal.signal_key.clone()];
                 let fired = vec![signal];
                 let result = CheckpointResult::hold(
                     hold_message(&memory_content),
                     &fired,
                     elapsed_ms(started),
                 );
-                Evaluated::pure(evaluated_kinds.clone(), fired, result)
+                let mut held_evaluation = Evaluated::pure(evaluated_kinds.clone(), fired, result);
+                held_evaluation.delivered_keys = delivered_keys;
+                held_evaluation
             }
             None => Evaluated::pure(
                 evaluated_kinds.clone(),
@@ -263,6 +278,7 @@ pub async fn run_turn(
         input_tokens += inp;
         let cost_usd = telemetry::cost_usd(&deps.model, inp, out);
 
+        let mut delivered_keys: Vec<String> = vec![];
         let (fired, result) = match flagged {
             None => (vec![], CheckpointResult::silence(elapsed_ms(started))),
             Some((signal, message)) => {
@@ -271,6 +287,7 @@ pub async fn run_turn(
                 let result = if remaining.is_empty() {
                     CheckpointResult::suppressed(&fired, elapsed_ms(started))
                 } else {
+                    delivered_keys = remaining.iter().map(|s| s.signal_key.clone()).collect();
                     CheckpointResult::flag(message, &remaining, elapsed_ms(started))
                 };
                 (fired, result)
@@ -279,6 +296,7 @@ pub async fn run_turn(
         Ok::<Evaluated, AppError>(Evaluated {
             signal_kinds: evaluated_kinds.clone(),
             fired,
+            delivered_keys,
             review_ran: true,
             result,
             cost_usd,
@@ -364,6 +382,7 @@ async fn record(
             boundary,
             signals_evaluated: evaluation.signal_kinds.clone(),
             signals_fired: evaluation.fired.clone(),
+            delivered_keys: evaluation.delivered_keys.clone(),
             review_ran: evaluation.review_ran,
             verdict: evaluation.result.verdict,
             suppressed: evaluation.result.suppressed,
