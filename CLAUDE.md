@@ -32,7 +32,7 @@ amendment): three harness-triggered tools (`checkpoint_action` gate /
 `checkpoint_batch` loop screening / `checkpoint_turn` review with the
 layer's only model hop), always in the catalog but **off by default** — the
 sensor plane is an installable hooks config in `integrations/claude-code/`
-(draft pending the S1 live spike, `examples/spike_hooks.md`); verdicts are
+(live-verified by the S1 spike, `examples/spike_hooks.md`); verdicts are
 silence/flag/hold, server-assembled, fail-open, one `checkpoint_records`
 audit row per evaluation. One invocation record per call in SQLite. Build
 note: `z3` (bundled) needs cmake — first clean build ~5 min; on Windows set

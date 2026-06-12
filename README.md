@@ -32,9 +32,8 @@ the thesis: a second vantage point reveals what one frame can't.
 > stored memory, end-of-turn contradiction review). **Off by default**:
 > install the hooks in
 > [`integrations/claude-code/`](integrations/claude-code/README.md) to enable
-> the sensor plane (currently a **draft pending the S1 live spike** —
-> `examples/spike_hooks.md`); everything fails open and never rewrites the
-> model's work. Every invocation is recorded (tool, model, tokens, cost, latency,
+> the sensor plane (live-verified — `examples/spike_hooks.md`); everything
+> fails open and never rewrites the model's work. Every invocation is recorded (tool, model, tokens, cost, latency,
 > outcome) in SQLite.
 >
 > Research cost note: records carry summed LLM tokens; Brave bills

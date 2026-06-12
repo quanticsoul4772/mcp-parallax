@@ -90,6 +90,17 @@ boundaries, 12 seeded, 1 FR-004(d) negative case, 5 fail-open):
 `GATE_RELEVANCE_TAU = 0.55` is validated by this evidence (3/3 true holds,
 0/60 false) and is no longer a placeholder.
 
+**T011 live protocol (S1 round 3, hooks installed — full record in
+`examples/spike_hooks.md`)**: induced loop → the flag blocked the model
+with the named evidence and it course-corrected; seeded constraint +
+conflicting command → a real permission prompt quoting the memory
+(approved → ran unmodified, US2-AS4); end-of-turn review ran live and
+cleared a benign turn (no false alarm); SC-004 — hooks errored
+non-blocking during a mid-session server restart, session proceeded;
+SC-006 — a full pre-install session produced zero checkpoint rows.
+Session totals: 33 action / 37 batch / 2 turn evaluations, 3 flags,
+2 holds (both seeded), 18 cooldown-suppressed, 0 fail-open rows.
+
 ## Inspect
 
 ```bash

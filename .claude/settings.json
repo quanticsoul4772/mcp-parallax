@@ -34,6 +34,26 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "parallax",
+            "tool": "checkpoint_action",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "tool_name": "${tool_name}",
+              "tool_input": "${tool_input}"
+            },
+            "timeout": 5,
+            "statusMessage": "checkpoint: pre-action gate"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -42,6 +62,42 @@
             "type": "command",
             "command": "cargo fmt --all",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "parallax",
+            "tool": "checkpoint_batch",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}"
+            },
+            "timeout": 10,
+            "statusMessage": "checkpoint: trajectory screen"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "parallax",
+            "tool": "checkpoint_turn",
+            "input": {
+              "session_id": "${session_id}",
+              "transcript_path": "${transcript_path}",
+              "final_message": "${last_assistant_message}",
+              "continuation": "${stop_hook_active}"
+            },
+            "timeout": 60,
+            "statusMessage": "checkpoint: end-of-turn review"
           }
         ]
       }

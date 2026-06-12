@@ -1,9 +1,10 @@
 # Parallax checkpoint layer — Claude Code sensor plane
 
-> **Status: DRAFT pending the S1 live spike** (`examples/spike_hooks.md`).
-> The hook entry shapes follow the documented contracts; the `mcp_tool`
-> payload/result mapping has not been live-verified yet. Until S1's findings
-> land, treat installation as part of running the spike.
+> **Status: live-verified** by the S1 spike (`examples/spike_hooks.md`,
+> 2026-06-12, Claude Code 2.1.176): flags block with the message fed back to
+> the model, holds raise a real permission prompt quoting the conflicting
+> memory, silence is a no-op, and everything fails open when the server is
+> unreachable.
 
 The checkpoint layer is the watchdog re-grounded for MCP
 (`docs/design/WATCHDOG_LAYER.md`, 2026-06-12 amendment): the harness's hooks
