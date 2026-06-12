@@ -47,8 +47,8 @@ network/disk state. The acceptance example is manual-run live spend.
 
 ## Phase 6: Polish
 
-- [ ] T016 [P] Acceptance example examples/acceptance_memory.rs (live: VOYAGE_API_KEY + ANTHROPIC_API_KEY): 12 saves + 10 paraphrased queries (SC-001 ≥9/10 top-3, ≥7/10 top-1), trust scenarios (SC-003), latency (SC-004); record results in quickstart.md
-- [ ] T017 [P] Docs: README/CLAUDE.md status + env tables (memory capability, off by default)
+- [X] T016 [P] Acceptance example examples/acceptance_memory.rs (live: VOYAGE_API_KEY + ANTHROPIC_API_KEY): 12 saves + 10 paraphrased queries (SC-001 ≥9/10 top-3, ≥7/10 top-1), trust scenarios (SC-003), latency (SC-004); record results in quickstart.md
+- [X] T017 [P] Docs: README/CLAUDE.md status + env tables (memory capability, off by default)
 - [ ] T018 Full gate + code-reviewer and design-reviewer agent passes over the branch diff
 
 ## Dependencies

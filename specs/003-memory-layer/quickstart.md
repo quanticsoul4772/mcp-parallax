@@ -45,6 +45,20 @@ cargo run --example acceptance_memory
 12 saves + 10 paraphrased recall queries (SC-001 precision), trust scenarios
 (SC-003), latency (SC-004). Results recorded below when run.
 
+### Results (2026-06-11, voyage-4 + claude-opus-4-8, release build)
+
+| Criterion | Target | Result |
+|---|---|---|
+| SC-001 top-3 | ≥ 9/10 | **10/10** |
+| SC-001 top-1 | ≥ 7/10 | **10/10** |
+| SC-002 structure | 100% | 100% (typed structs end to end) |
+| SC-003 unverified external labeled untrusted | yes | yes |
+| SC-003 refuted external save rejected with findings | yes | yes (Apollo 11 1972 claim refuted, 3 findings) |
+| SC-004 max recall latency | < 5000 ms | **237 ms** |
+| SC-004 max save latency (no verification) | < 10000 ms | **430 ms** |
+
+Verdict: **PASS** — every paraphrased query ranked its intended memory first.
+
 ## Inspect
 
 ```bash

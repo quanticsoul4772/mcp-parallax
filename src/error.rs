@@ -124,9 +124,10 @@ pub enum AppError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
-    /// The returned value failed local schema validation (the constraints the
-    /// provider grammar cannot enforce).
-    #[error("response failed local schema validation: {0}")]
+    /// A result failed local validation: schema constraints the provider
+    /// grammar cannot enforce, a semantic contract (e.g. unstick restating a
+    /// tried item), or verification refuting a save.
+    #[error("validation failure: {0}")]
     ValidationFailure(String),
 
     /// The client abandoned the invocation.
@@ -199,7 +200,7 @@ mod tests {
             ),
             (
                 AppError::ValidationFailure("confidence out of range".into()),
-                "schema validation",
+                "validation failure",
             ),
             (AppError::Cancelled, "cancelled"),
             (
