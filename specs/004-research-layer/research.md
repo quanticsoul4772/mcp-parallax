@@ -38,6 +38,12 @@ page-type-aware. crates.io search (2026-06-12) confirms `rs-trafilatura`
 `article_scraper` 2.3.1) if quality disappoints. Spike S1 (below) validates
 compile + extraction quality on fixture HTML before the pipeline is built.
 
+**Spike S1 result (2026-06-12): PASS** — all three fixtures extract the main
+text and exclude the boilerplate markers. Protocol-safety check: the crate
+emits `DEBUG:` diagnostics, but they are `eprintln!` (stderr) gated on
+`cfg!(debug_assertions)` — silent in release, never stdout; verified against
+the 0.2.2 source. Stdout stays clean for MCP.
+
 **Alternatives considered**: Firecrawl (managed, top quality — second paid
 dependency, against the landscape's own preference); `article_scraper`
 (fivefilters configs + Readability — heavier, pulls libxml).
@@ -139,9 +145,10 @@ order** (the order is load-bearing — the verify ensemble resolves ties to
 refuted, so the contested band must be checked *before* trusting the
 aggregate verdict, or genuinely contested claims silently drop):
 
-1. **contested** if the winning side's share of passes < 2/3 (covers the
-   K=2 1–1 split and the K=3 2–1 case; K=1 can never be contested);
-2. **refuted** if the aggregate verdict is refuted (≥ 2/3 share) — dropped
+1. **contested** if the winning side's share of passes is ≤ 2/3 — integer
+   rule `3·majority ≤ 2·completed`, so K=2 1–1 (share 1/2) and K=3 2–1
+   (share exactly 2/3) are contested while K=1 (share 1) never is;
+2. **refuted** if the aggregate verdict is refuted (share > 2/3) — dropped
    from the body, counted;
 3. **confirmed** if supported with `n ≥ 2` independent sources;
 4. **unverified** if supported with `n = 1` (never stated as fact).

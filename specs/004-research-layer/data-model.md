@@ -62,10 +62,11 @@ conservative, explainable). Never a body (FR-012).
 
 - `support(passes, agreement, verdict, n_sources) -> Support` — mapping per
   research.md D7, **order-sensitive**: Contested first (winning-side share of
-  passes < 2/3 — the verify ensemble resolves ties to refuted, so contested
-  must be detected before the aggregate verdict is trusted), then Refuted
-  (aggregate refuted at ≥ 2/3), then Confirmed (supported, n ≥ 2), then
-  Unverified (supported, n = 1).
+  passes ≤ 2/3, integer rule `3·majority ≤ 2·completed` — the verify ensemble
+  resolves ties to refuted, so contested must be detected before the
+  aggregate verdict is trusted), then Refuted (aggregate refuted at share
+  > 2/3), then Confirmed (supported, n ≥ 2), then Unverified (supported,
+  n = 1).
 - `claim_confidence(agreement, n_sources, mean_credibility) -> f32` —
   clamped 0..=1, weights are constants (tuned offline, never at runtime).
 - `overall_confidence(findings, settled, total_subqs) -> f32` —

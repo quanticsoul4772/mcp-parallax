@@ -20,6 +20,7 @@
         "retries_exhausted",
         "invalid_input",
         "validation_failure",
+        "search_provider",
         "embedding_provider",
         "cancelled"
       ],

@@ -44,6 +44,7 @@ pub mod config;
 pub mod error;
 pub mod memory;
 pub mod modes;
+pub mod research;
 pub mod schema;
 pub mod server;
 pub mod storage;

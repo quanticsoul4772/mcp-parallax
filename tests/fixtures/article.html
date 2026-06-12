@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Why Brute-Force Vector Search Wins at Small Scale</title>
+  <meta name="author" content="A. Writer">
+</head>
+<body>
+  <nav class="site-nav">
+    <ul><li><a href="/">Home</a></li><li><a href="/blog">Blog</a></li><li><a href="/about">About</a></li></ul>
+  </nav>
+  <header class="masthead"><h1>Engineering Notes</h1><p>A blog about systems.</p></header>
+  <main>
+    <article>
+      <h1>Why Brute-Force Vector Search Wins at Small Scale</h1>
+      <p>When a corpus holds fewer than ten thousand embeddings, a linear scan with
+      cosine similarity completes in single-digit milliseconds on commodity hardware.
+      Approximate nearest neighbor indexes buy their speed with build time, memory
+      overhead, and recall loss that small corpora never amortize.</p>
+      <p>We measured a 5,000 by 1,024 dimension scan at roughly three milliseconds in
+      release mode. The index alternative added a dependency, an unsafe FFI boundary,
+      and a background build step, and saved nothing measurable at this size.</p>
+      <p>The lesson generalizes: pick the simplest structure that meets the latency
+      budget, and measure before adding infrastructure.</p>
+    </article>
+  </main>
+  <aside class="related"><h3>Related posts</h3><ul><li><a href="/p1">Post one</a></li><li><a href="/p2">Post two</a></li></ul></aside>
+  <footer class="site-footer"><p>Copyright 2026 Engineering Notes. Subscribe to our newsletter. Privacy policy. Terms of service.</p></footer>
+</body>
+</html>

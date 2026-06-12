@@ -30,6 +30,8 @@ pub enum Outcome {
     /// out-of-contract provider response (unexpected `stop_reason`, unparseable
     /// body).
     ValidationFailure,
+    /// The search provider failed (research capability).
+    SearchProvider,
     /// The embedding provider failed (memory capability).
     EmbeddingProvider,
     /// Startup configuration was missing or invalid (never recorded).
@@ -50,6 +52,7 @@ impl Outcome {
             "retries_exhausted" => Some(Self::RetriesExhausted),
             "invalid_input" => Some(Self::InvalidInput),
             "validation_failure" => Some(Self::ValidationFailure),
+            "search_provider" => Some(Self::SearchProvider),
             "embedding_provider" => Some(Self::EmbeddingProvider),
             "config_error" => Some(Self::ConfigError),
             "cancelled" => Some(Self::Cancelled),
@@ -68,6 +71,7 @@ impl Outcome {
             Self::RetriesExhausted => "retries_exhausted",
             Self::InvalidInput => "invalid_input",
             Self::ValidationFailure => "validation_failure",
+            Self::SearchProvider => "search_provider",
             Self::EmbeddingProvider => "embedding_provider",
             Self::ConfigError => "config_error",
             Self::Cancelled => "cancelled",
@@ -137,6 +141,10 @@ pub enum AppError {
     /// The embedding provider failed (memory capability).
     #[error("embedding provider error: {0}")]
     EmbeddingProvider(String),
+
+    /// The search provider failed (research capability).
+    #[error("search provider error: {0}")]
+    SearchProvider(String),
 }
 
 impl AppError {
@@ -158,6 +166,7 @@ impl AppError {
             Self::InvalidInput(_) => Outcome::InvalidInput,
             Self::Cancelled => Outcome::Cancelled,
             Self::EmbeddingProvider(_) => Outcome::EmbeddingProvider,
+            Self::SearchProvider(_) => Outcome::SearchProvider,
         }
     }
 }
@@ -206,6 +215,10 @@ mod tests {
             (
                 AppError::EmbeddingProvider("voyage 503".into()),
                 "embedding provider",
+            ),
+            (
+                AppError::SearchProvider("brave 503".into()),
+                "search provider",
             ),
             (
                 AppError::Config(ConfigError::MissingRequired("ANTHROPIC_API_KEY")),
@@ -265,6 +278,10 @@ mod tests {
             Outcome::EmbeddingProvider
         );
         assert_eq!(
+            AppError::SearchProvider(String::new()).outcome(),
+            Outcome::SearchProvider
+        );
+        assert_eq!(
             AppError::Storage(String::new()).outcome(),
             Outcome::ConfigError
         );
@@ -286,6 +303,11 @@ mod tests {
         assert_eq!(
             Outcome::parse("embedding_provider"),
             Some(Outcome::EmbeddingProvider)
+        );
+        assert_eq!(Outcome::SearchProvider.as_str(), "search_provider");
+        assert_eq!(
+            Outcome::parse("search_provider"),
+            Some(Outcome::SearchProvider)
         );
     }
 }

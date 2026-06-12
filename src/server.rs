@@ -4,7 +4,7 @@
 //! point where every invocation — success, failure, or abandonment — leaves
 //! exactly one record (FR-010).
 
-use crate::client::VoyageClient;
+use crate::client::{BraveClient, VoyageClient};
 use crate::config::Config;
 use crate::error::{AppError, Outcome};
 use crate::memory::tools::{
@@ -14,9 +14,13 @@ use crate::memory::tools::{
 use crate::modes::unstick::{self, NextStep, UnstickParams, UNSTICK_ID};
 use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
+use crate::research::contract::{ResearchParams, ResearchResult};
+use crate::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
+use crate::research::pipeline::{self, ResearchDeps};
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
 use crate::traits::embedder::Embedder;
+use crate::traits::search::SearchProvider;
 use crate::traits::storage::Storage;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
@@ -40,6 +44,11 @@ pub struct Parallax {
     /// (no `VOYAGE_API_KEY`), in which case the tools are absent from the
     /// catalog too (FR-007).
     memory: Option<Arc<MemoryDeps>>,
+    /// Research dependencies — `None` when the capability is disabled
+    /// (no `BRAVE_API_KEY`); same catalog honesty.
+    research: Option<Arc<ResearchDeps>>,
+    /// Per-source fetch timeout for research runs (`FETCH_TIMEOUT_MS`).
+    fetch_timeout_ms: u64,
     /// Per-process session UUID (one stdio connection per process).
     session_id: String,
     model: String,
@@ -66,11 +75,15 @@ impl Parallax {
             Some(_) => Some(Arc::new(VoyageClient::new(config)?)),
             None => None,
         };
-        Self::with_embedder(client, storage, clock, config, embedder)
+        let search: Option<Arc<dyn SearchProvider>> = match config.brave_api_key {
+            Some(_) => Some(Arc::new(BraveClient::new(config)?)),
+            None => None,
+        };
+        Self::with_capabilities(client, storage, clock, config, embedder, search)
     }
 
-    /// [`Parallax::new`] with the embedder injected (tests pass a mock; the
-    /// memory capability — tools, catalog entries — is on iff `Some`).
+    /// [`Parallax::new`] with the embedder injected and research off (003-era
+    /// test constructor, kept for the existing suites).
     ///
     /// # Errors
     ///
@@ -82,28 +95,66 @@ impl Parallax {
         config: &Config,
         embedder: Option<Arc<dyn Embedder>>,
     ) -> Result<Self, AppError> {
+        Self::with_capabilities(client, storage, clock, config, embedder, None)
+    }
+
+    /// [`Parallax::new`] with every gated capability injected (tests pass
+    /// mocks): memory is on iff `embedder` is `Some`, research iff `search`
+    /// is `Some`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the registry's flat+closed schema assertion.
+    pub fn with_capabilities(
+        client: Arc<dyn ModelClient>,
+        storage: Arc<dyn Storage>,
+        clock: Arc<dyn TimeProvider>,
+        config: &Config,
+        embedder: Option<Arc<dyn Embedder>>,
+        search: Option<Arc<dyn SearchProvider>>,
+    ) -> Result<Self, AppError> {
         let mut registry = ModeRegistry::new();
         verify::register(&mut registry, config.verify_ensemble_k)?;
         unstick::register(&mut registry)?;
+        // Research-internal modes register unconditionally — their flat+closed
+        // assertion belongs at boot whether or not the capability is on.
+        pipeline::register(&mut registry)?;
 
-        let memory = match embedder {
-            Some(embedder) => {
-                let verify_mode = registry
-                    .get(VERIFY_ID)
-                    .ok_or_else(|| {
-                        AppError::Client("verify mode not registered at boot".to_string())
-                    })?
-                    .clone();
-                Some(Arc::new(MemoryDeps {
-                    embedder,
-                    storage: Arc::clone(&storage),
-                    clock: Arc::clone(&clock),
-                    model_client: Arc::clone(&client),
-                    verify_mode,
-                    input_max_chars: config.input_max_chars,
-                    default_recall_limit: config.memory_recall_limit,
-                }))
-            }
+        let verify_mode = registry
+            .get(VERIFY_ID)
+            .ok_or_else(|| AppError::Client("verify mode not registered at boot".to_string()))?
+            .clone();
+        let mode = |id: &str| -> Result<crate::modes::CorrectiveMode, AppError> {
+            registry
+                .get(id)
+                .cloned()
+                .ok_or_else(|| AppError::Client(format!("mode {id} not registered at boot")))
+        };
+
+        let memory = embedder.map(|embedder| {
+            Arc::new(MemoryDeps {
+                embedder,
+                storage: Arc::clone(&storage),
+                clock: Arc::clone(&clock),
+                model_client: Arc::clone(&client),
+                verify_mode: verify_mode.clone(),
+                input_max_chars: config.input_max_chars,
+                default_recall_limit: config.memory_recall_limit,
+            })
+        });
+
+        let research = match search {
+            Some(search) => Some(Arc::new(ResearchDeps {
+                model_client: Arc::clone(&client),
+                search,
+                clock: Arc::clone(&clock),
+                scope_mode: mode(pipeline::SCOPE_MODE_ID)?,
+                extract_mode: mode(pipeline::EXTRACT_MODE_ID)?,
+                synth_mode: mode(pipeline::SYNTH_MODE_ID)?,
+                verify_mode: pipeline::research_verify_mode(&verify_mode),
+                input_max_chars: config.input_max_chars,
+                concurrency: usize::from(config.research_concurrency),
+            })),
             None => None,
         };
 
@@ -115,6 +166,9 @@ impl Parallax {
                 tool_router.remove_route(name);
             }
         }
+        if research.is_none() {
+            tool_router.remove_route("research");
+        }
 
         Ok(Self {
             tool_router,
@@ -123,6 +177,8 @@ impl Parallax {
             clock,
             registry: Arc::new(registry),
             memory,
+            research,
+            fetch_timeout_ms: config.fetch_timeout_ms,
             session_id: uuid::Uuid::new_v4().to_string(),
             model: config.anthropic_model.clone(),
             max_claim_chars: config.input_max_chars,
@@ -213,6 +269,25 @@ impl Parallax {
         self.forget_with_ct(params, context.ct).await
     }
 
+    /// The `research` tool: offloaded, cited, adversarially-verified answers.
+    #[tool(
+        name = "research",
+        description = "Offload a research question; get back a short, cited, \
+        adversarially-verified answer - not a pile of links. Runs scoped parallel searches, \
+        fetches and extracts sources, verifies every claim with independent refute-biased \
+        passes, and synthesizes a compact answer with inline citations, surfaced \
+        disagreements, and honest gaps. Depth scales rigor; budget and deadline ceilings \
+        synthesize early and say so. Every citation resolves to a source fetched during the \
+        run."
+    )]
+    pub async fn research(
+        &self,
+        Parameters(params): Parameters<ResearchParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<ResearchResult>, ErrorData> {
+        self.research_with_ct(params, context.ct).await
+    }
+
     async fn verify_with_ct(
         &self,
         params: VerifyParams,
@@ -285,6 +360,35 @@ impl Parallax {
         let model = deps.embedder.model_id().to_string();
         self.run_recorded("recall", model, ct, async {
             memory_tools::recall(&deps, &params).await
+        })
+        .await
+    }
+
+    async fn research_with_ct(
+        &self,
+        params: ResearchParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<ResearchResult>, ErrorData> {
+        let deps = Arc::clone(self.research.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "research capability is disabled (BRAVE_API_KEY is not configured)".to_string(),
+                None,
+            )
+        })?);
+        // The fetcher is per-run: the robots cache is run-scoped and the
+        // allow/deny lists come from the call's constraints (research.md D5).
+        let constraints = params.constraints.clone().unwrap_or_default();
+        let policy = FetchPolicy {
+            timeout_ms: self.fetch_timeout_ms,
+            domains_allow: constraints.domains_allow.unwrap_or_default(),
+            domains_deny: constraints.domains_deny.unwrap_or_default(),
+            domain_spacing_ms: DOMAIN_SPACING_MS,
+        };
+        // LLM calls dominate research cost; Brave bills per-request, not
+        // per-token — attribute the record to the anthropic model (plan.md).
+        self.run_recorded("research", self.model.clone(), ct, async {
+            let fetcher = HygieneFetcher::new(policy)?;
+            pipeline::run(&deps, &fetcher, &params).await
         })
         .await
     }
@@ -367,6 +471,12 @@ impl ServerHandler for Parallax {
                  memory by id.",
             );
         }
+        if self.research.is_some() {
+            instructions.push_str(
+                " Call `research` to offload a web research question to a separate \
+                 budget and get back a short, cited, adversarially-verified answer.",
+            );
+        }
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)
     }
@@ -391,6 +501,9 @@ mod tests {
             voyage_api_key: None,
             voyage_model: "voyage-4".into(),
             memory_recall_limit: 5,
+            brave_api_key: None,
+            fetch_timeout_ms: 10_000,
+            research_concurrency: 8,
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,
@@ -422,13 +535,78 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_a_voyage_key_the_catalog_is_exactly_the_correctives() {
+    async fn without_capability_keys_the_catalog_is_exactly_the_correctives() {
         let (server, _) = server_with(MockModelClient::new()).await;
         assert_eq!(catalog(&server), ["unstick", "verify"]);
         assert!(server.memory.is_none());
+        assert!(server.research.is_none());
         // The instructions don't advertise tools that aren't there.
         let info = server.get_info();
-        assert!(!info.instructions.unwrap().contains("recall"));
+        let instructions = info.instructions.unwrap();
+        assert!(!instructions.contains("recall"));
+        assert!(!instructions.contains("research"));
+    }
+
+    #[tokio::test]
+    async fn with_a_search_provider_the_research_tool_joins_the_catalog() {
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let search = crate::traits::search::MockSearchProvider::new();
+        let server = Parallax::with_capabilities(
+            Arc::new(MockModelClient::new()),
+            storage,
+            Arc::new(SystemClock),
+            &test_config(),
+            None,
+            Some(Arc::new(search)),
+        )
+        .unwrap();
+        assert_eq!(catalog(&server), ["research", "unstick", "verify"]);
+        let info = server.get_info();
+        assert!(info.instructions.unwrap().contains("research"));
+    }
+
+    #[tokio::test]
+    async fn research_records_one_invocation_attributed_to_the_anthropic_model() {
+        // Scope fails with a refusal — the cheapest full path through
+        // run_recorded; the record carries the class and the model.
+        let mut client = MockModelClient::new();
+        client
+            .expect_complete()
+            .returning(|_, _| Err(AppError::Refusal("declined".into())));
+        let mut search = crate::traits::search::MockSearchProvider::new();
+        search.expect_search().times(0);
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let server = Parallax::with_capabilities(
+            Arc::new(client),
+            storage.clone(),
+            Arc::new(SystemClock),
+            &test_config(),
+            None,
+            Some(Arc::new(search)),
+        )
+        .unwrap();
+
+        let Err(err) = server
+            .research_with_ct(
+                ResearchParams {
+                    question: "q?".into(),
+                    depth: None,
+                    focus: None,
+                    constraints: None,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+        else {
+            panic!("expected the refusal to surface")
+        };
+        assert!(err.message.starts_with("[refusal]"), "{}", err.message);
+
+        let records = storage.list_invocations().await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tool, "research");
+        assert_eq!(records[0].model, "claude-opus-4-8");
+        assert_eq!(records[0].outcome, Outcome::Refusal);
     }
 
     #[tokio::test]
