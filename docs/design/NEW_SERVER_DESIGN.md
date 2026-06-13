@@ -95,9 +95,19 @@ backs a longer, cited list:
 | **Unfaithful reasoning / post-hoc rationalization** | stated reasoning is theater; biasing input flips the answer without changing the explanation ([CoT not faithful](https://arxiv.org/abs/2503.08679)) | **test the decision, not the explanation** |
 | **Wrong objective** | solves the *assumed* problem correctly | preference elicitation + enforcement |
 | **Egocentric anchoring (curse of knowledge)** | assumes others share its knowledge ([Ullman]) | perception→belief perspective-taking |
+| **Context-curation bias (self-graded evidence)** | a stance-blind verifier is only as good as the context it is fed; a paraphrased or conclusion-laden context rubber-stamps the claim (observed live during 008 spec-conformance review: *supported* on a paraphrase, *refuted* on the verbatim code) | **grounded-verify** — the server reads the verbatim source the caller *names* but does not get to paraphrase; the model judges machine-assembled evidence |
 
 Every entry is a place the model is predictably weak *and blind to from inside*. None
 is the final list — the citations turn this from priors into something grounded.
+
+> **2026-06-13 amendment (008, `grounded-verify`).** `grounded-verify` was not in
+> the original corpus; the "context-curation bias" row above and this note register
+> it per the constitution's Design-Corpus Fidelity principle (amend the corpus in the
+> same change that adds the feature). It is a **Verify-family** corrective: the
+> stance-blind ensemble of §4, with the evidence assembled *mechanically* from
+> caller-named source locators rather than hand-written into the context — closing
+> `verify`'s residual trust gap, where the caller curates (and can bias) the context.
+> Trace: [`specs/008-grounded-verify/`](../../specs/008-grounded-verify/).
 
 ---
 

@@ -88,6 +88,11 @@ pub struct Verdict {
     pub passes: u32,
 }
 
+/// One completed pass reduced to what aggregation needs: verdict, findings, and
+/// (input, output) token usage. Shared by `verify` and `grounded_verify` via
+/// [`aggregate_core`].
+pub(crate) type PassTuple = (VerdictKind, Vec<String>, u64, u64);
+
 /// One Verify run: the aggregated verdict plus summed token usage for the
 /// invocation record.
 #[derive(Debug)]
@@ -165,8 +170,11 @@ pub async fn run(
     let passes =
         futures::future::join_all((0..mode.ensemble_k).map(|_| one_pass(client, mode, &prompt)))
             .await;
-
-    aggregate(passes, mode.ensemble_k)
+    let core = passes
+        .into_iter()
+        .map(|pass| pass.map(|(v, inp, out)| (v.verdict, v.findings, inp, out)))
+        .collect();
+    aggregate_core(core, mode.ensemble_k)
 }
 
 /// One blind pass: constrained completion → local validation → typed verdict.
@@ -192,18 +200,18 @@ async fn one_pass(
 /// Aggregate per data-model.md §4: majority verdict (tie → refuted, noted),
 /// findings deduplicated from the majority side, confidence = agreement ratio
 /// over completed passes, quorum ⌈k/2⌉.
-fn aggregate(
-    passes: Vec<Result<(PassVerdict, u64, u64), AppError>>,
+pub(crate) fn aggregate_core(
+    passes: Vec<Result<PassTuple, AppError>>,
     k: u8,
 ) -> Result<VerifyRun, AppError> {
-    let mut completed: Vec<PassVerdict> = Vec::new();
+    let mut completed: Vec<(VerdictKind, Vec<String>)> = Vec::new();
     let mut failures: Vec<AppError> = Vec::new();
     let (mut input_tokens, mut output_tokens) = (0_u64, 0_u64);
 
     for pass in passes {
         match pass {
-            Ok((verdict, inp, out)) => {
-                completed.push(verdict);
+            Ok((verdict, findings, inp, out)) => {
+                completed.push((verdict, findings));
                 input_tokens += inp;
                 output_tokens += out;
             }
@@ -218,7 +226,7 @@ fn aggregate(
 
     let refuted = completed
         .iter()
-        .filter(|p| p.verdict == VerdictKind::Refuted)
+        .filter(|p| p.0 == VerdictKind::Refuted)
         .count();
     let supported = completed.len() - refuted;
     let tie = refuted == supported;
@@ -230,8 +238,8 @@ fn aggregate(
     };
 
     let mut findings: Vec<String> = Vec::new();
-    for pass in completed.iter().filter(|p| p.verdict == verdict) {
-        for finding in &pass.findings {
+    for pass in completed.iter().filter(|p| p.0 == verdict) {
+        for finding in &pass.1 {
             if !finding.trim().is_empty() && !findings.contains(finding) {
                 findings.push(finding.clone());
             }

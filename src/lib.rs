@@ -44,6 +44,7 @@ pub mod client;
 pub mod config;
 pub mod deterministic;
 pub mod error;
+pub mod grounded;
 pub mod memory;
 pub mod modes;
 pub mod observability;

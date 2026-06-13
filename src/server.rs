@@ -19,6 +19,9 @@ use crate::memory::tools::{
     self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
     SaveParams, SaveResult,
 };
+use crate::modes::grounded_verify::{
+    self, GroundedDeps, GroundedVerdict, GroundedVerifyParams, GROUNDED_VERIFY_ID,
+};
 use crate::modes::unstick::{self, NextStep, UnstickParams, UNSTICK_ID};
 use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
@@ -56,6 +59,10 @@ pub struct Parallax {
     /// Research dependencies — `None` when the capability is disabled
     /// (no `BRAVE_API_KEY`); same catalog honesty.
     research: Option<Arc<ResearchDeps>>,
+    /// Grounded-verify dependencies — `None` when the capability is disabled
+    /// (no `GROUNDED_VERIFY_ROOT`); the tool is then absent from the catalog
+    /// and no file-read path exists (008 FR-001).
+    grounded: Option<Arc<GroundedDeps>>,
     /// Deterministic-check dependencies — always present (pure in-process
     /// engines need no gate; FR-010).
     deterministic: Arc<CheckDeps>,
@@ -139,6 +146,9 @@ impl Parallax {
         pipeline::register(&mut registry)?;
         deterministic_translate::register(&mut registry)?;
         checkpoint_review::register(&mut registry)?;
+        // Grounded-verify's mode registers unconditionally (its flat+closed
+        // assertion belongs at boot); the tool is gated below on the root.
+        grounded_verify::register(&mut registry, config.verify_ensemble_k)?;
 
         let verify_mode = registry
             .get(VERIFY_ID)
@@ -189,6 +199,23 @@ impl Parallax {
             None => None,
         };
 
+        // Grounded-verify is enabled iff a source root is configured. The
+        // reader canonicalizes the root once here — a missing/invalid root is a
+        // loud startup error (008 FR-001/FR-004).
+        let grounded = match &config.grounded_verify_root {
+            Some(root) => Some(Arc::new(GroundedDeps {
+                model_client: Arc::clone(&client),
+                reader: Arc::new(crate::grounded::reader::SystemSourceReader::new(root)?),
+                mode: mode(GROUNDED_VERIFY_ID)?,
+                limits: crate::grounded::AssemblyLimits {
+                    max_bytes: config.grounded_verify_max_bytes,
+                    max_locators: config.grounded_verify_max_locators,
+                },
+                max_claim_chars: config.input_max_chars,
+            })),
+            None => None,
+        };
+
         let deterministic = Arc::new(CheckDeps {
             model_client: Arc::clone(&client),
             translate_mode: mode(deterministic_translate::TRANSLATE_MODE_ID)?,
@@ -206,6 +233,9 @@ impl Parallax {
         if research.is_none() {
             tool_router.remove_route("research");
         }
+        if grounded.is_none() {
+            tool_router.remove_route(GROUNDED_VERIFY_ID);
+        }
 
         Ok(Self {
             tool_router,
@@ -215,6 +245,7 @@ impl Parallax {
             registry: Arc::new(registry),
             memory,
             research,
+            grounded,
             deterministic,
             checkpoint,
             fetch_timeout_ms: config.fetch_timeout_ms,
@@ -326,6 +357,26 @@ impl Parallax {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<ResearchResult>, ErrorData> {
         self.research_with_ct(params, context.ct).await
+    }
+
+    /// The `grounded_verify` tool: verify against machine-assembled verbatim
+    /// source (008). Gated on `GROUNDED_VERIFY_ROOT`.
+    #[tool(
+        name = "grounded_verify",
+        description = "Verify a claim against verbatim source you name. You give a claim and a set \
+        of source locators (file paths or file/line ranges within the configured root); the server \
+        reads that exact text and runs independent stance-blind passes over it - you cannot \
+        paraphrase or bias the evidence. Returns a verdict (supported/refuted), findings citing \
+        the source, a confidence from cross-pass agreement, an evidence manifest of exactly what \
+        was read, and a completeness signal naming any evidence you did not provide. Use when a \
+        claim must be checked against source you should not be trusted to summarize."
+    )]
+    pub async fn grounded_verify(
+        &self,
+        Parameters(params): Parameters<GroundedVerifyParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<GroundedVerdict>, ErrorData> {
+        self.grounded_verify_with_ct(params, context.ct).await
     }
 
     /// The `check` tool: checkable claims settled by execution, not judgment.
@@ -547,6 +598,27 @@ impl Parallax {
         .await
     }
 
+    async fn grounded_verify_with_ct(
+        &self,
+        params: GroundedVerifyParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<GroundedVerdict>, ErrorData> {
+        let deps = Arc::clone(self.grounded.as_ref().ok_or_else(|| {
+            ErrorData::internal_error(
+                "grounded_verify capability is disabled (GROUNDED_VERIFY_ROOT is not configured)"
+                    .to_string(),
+                None,
+            )
+        })?);
+        // The stance-blind passes dominate cost — attribute to the anthropic model.
+        self.run_recorded(GROUNDED_VERIFY_ID, self.model.clone(), ct, async {
+            deps.evaluate(&params)
+                .await
+                .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
     async fn forget_with_ct(
         &self,
         params: ForgetParams,
@@ -633,6 +705,13 @@ impl ServerHandler for Parallax {
                  budget and get back a short, cited, adversarially-verified answer.",
             );
         }
+        if self.grounded.is_some() {
+            instructions.push_str(
+                " Call `grounded_verify` to verify a claim against verbatim source you name \
+                 (file paths or line ranges) - the server reads the exact text, so you cannot \
+                 paraphrase the evidence.",
+            );
+        }
         instructions.push_str(
             " The `checkpoint_*` tools are trajectory checkpoints triggered by the \
              harness's hooks when the checkpoint integration is installed - they are \
@@ -667,6 +746,9 @@ mod tests {
             research_concurrency: 8,
             fetch_allow_private: false,
             checkpoint_gate_patterns: vec![],
+            grounded_verify_root: None,
+            grounded_verify_max_bytes: 262_144,
+            grounded_verify_max_locators: 64,
             database_path: ":memory:".into(),
             log_level: "info".into(),
             request_timeout_ms: 2_000,

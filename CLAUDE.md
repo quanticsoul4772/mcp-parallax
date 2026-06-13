@@ -117,7 +117,12 @@ presence enables the memory tools; absent, they are not in the catalog),
 `FETCH_TIMEOUT_MS` (default `10000`), `RESEARCH_CONCURRENCY` (default `8`,
 1..=32), `FETCH_ALLOW_PRIVATE` (default `false` — SSRF guard for research
 fetches), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
-substrings extending the gate's built-in risk patterns), `DATABASE_PATH`
+substrings extending the gate's built-in risk patterns),
+`GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
+tool; the single root that locators resolve within, confined at startup;
+absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
+(default `262144`), `GROUNDED_VERIFY_MAX_LOCATORS` (default `64`),
+`DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
 `REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
 A present-but-unparseable value is an error, never a silent fallback to the
@@ -154,19 +159,21 @@ src/
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
-├── modes/            # mode registry + verify/unstick (prompt + schema + run logic)
+├── modes/            # mode registry + verify/unstick/grounded_verify (prompt + schema + run logic)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
+├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008)
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing
-└── traits/           # the six mockable seams
+└── traits/           # the mockable seams (clock/client/embedder/search/fetcher/source/storage/trajectory)
     ├── clock.rs      # TimeProvider + SystemClock
     ├── client.rs     # ModelClient — the constrained-output contract (prompt + schema → JSON)
     ├── embedder.rs   # Embedder — asymmetric document/query embeddings
     ├── search.rs     # SearchProvider — web search hits
     ├── fetcher.rs    # Fetcher — hygiene-enforced page fetches
+    ├── source.rs     # SourceReader — root-confined verbatim source reads (008)
     └── storage.rs    # Storage — sessions, memories, records
 docs/design/          # the full design corpus (north star)
 ```
@@ -193,9 +200,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `007-observability-layer` — [spec](specs/007-observability-layer/spec.md) ·
-[plan](specs/007-observability-layer/plan.md) · [research](specs/007-observability-layer/research.md) ·
-[data model](specs/007-observability-layer/data-model.md) · [contracts](specs/007-observability-layer/contracts/)
+Current feature: `008-grounded-verify` — [spec](specs/008-grounded-verify/spec.md) ·
+[plan](specs/008-grounded-verify/plan.md) · [research](specs/008-grounded-verify/research.md) ·
+[data model](specs/008-grounded-verify/data-model.md) · [contracts](specs/008-grounded-verify/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style

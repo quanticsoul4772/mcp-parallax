@@ -2,7 +2,11 @@
 //! over an in-process duplex transport, with the Anthropic API mocked by
 //! wiremock (localhost). No real network, no pre-existing disk state.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_pass_by_value
+)]
 
 use mcp_parallax::client::AnthropicClient;
 use mcp_parallax::config::Config;
@@ -34,6 +38,9 @@ fn test_config(timeout_ms: u64) -> Config {
         research_concurrency: 8,
         fetch_allow_private: false,
         checkpoint_gate_patterns: vec![],
+        grounded_verify_root: None,
+        grounded_verify_max_bytes: 262_144,
+        grounded_verify_max_locators: 64,
         database_path: ":memory:".into(),
         log_level: "info".into(),
         request_timeout_ms: timeout_ms,
@@ -2033,4 +2040,229 @@ fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
         }
     }
     let _ = std::fs::remove_file(&db);
+}
+
+// ---- 008-grounded-verify --------------------------------------------------
+
+/// Build the server with grounded-verify enabled against a real source root.
+async fn serve_with_grounded(
+    mock: &MockServer,
+    root: &str,
+) -> (
+    rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+    Arc<SqliteStorage>,
+    rmcp::service::RunningService<rmcp::service::RoleServer, Parallax>,
+) {
+    let mut config = test_config(2_000);
+    config.grounded_verify_root = Some(root.to_string());
+    let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+    let anthropic =
+        Arc::new(AnthropicClient::with_base_url(&config, &mock.uri()).with_backoff_base_ms(1));
+    let server = Parallax::new(anthropic, storage.clone(), Arc::new(SystemClock), &config).unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move { server.serve(server_io).await });
+    let client = ().serve(client_io).await.expect("client init");
+    let running_server = server_task.await.expect("join").expect("server init");
+    (client, storage, running_server)
+}
+
+fn grounded_call(claim: &str, locators: Value) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new("grounded_verify");
+    params.arguments = json!({ "claim": claim, "locators": locators })
+        .as_object()
+        .cloned();
+    params
+}
+
+fn grounded_pass(verdict: &str, findings: Value, missing: Value) -> Value {
+    json!({ "verdict": verdict, "findings": findings, "missing_evidence": missing })
+}
+
+async fn tool_names(
+    client: &rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+) -> Vec<String> {
+    client
+        .list_all_tools()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.name.to_string())
+        .collect()
+}
+
+// US1 + SC-005: gating — absent root ⇒ tool absent; present ⇒ tool listed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_a_source_root_the_catalog_has_no_grounded_verify() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+    assert!(!tool_names(&client)
+        .await
+        .contains(&"grounded_verify".to_string()));
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_a_source_root_grounded_verify_joins_the_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    assert!(tool_names(&client)
+        .await
+        .contains(&"grounded_verify".to_string()));
+    client.cancel().await.unwrap();
+}
+
+// US1/US2 + SC-001/SC-002 + FR-007/M2: the verbatim source reaches the pass
+// (the mock matches only on the file's contents being in the request body), the
+// verdict is returned faithfully, the manifest mirrors the locator, the
+// completeness signal is surfaced, and exactly one record is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_judges_verbatim_source_with_manifest_and_one_record() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pub.rs"),
+        "pub fn publish(&self) { self.emit(); telemetry(); }\n",
+    )
+    .unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        // Only matches if the verbatim source reached the model — proves the
+        // evidence (not caller prose) is what the pass judges.
+        .and(body_string_contains("self.emit()"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_pass(
+                "supported",
+                json!([]),
+                json!(["the definition of telemetry()"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let result = client
+        .call_tool(grounded_call(
+            "publish emits the tracing event",
+            json!([{ "path": "pub.rs", "start_line": 1, "end_line": 1 }]),
+        ))
+        .await
+        .unwrap();
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    assert_eq!(structured["verdict"], "supported");
+    assert_eq!(structured["manifest"][0]["path"], "pub.rs");
+    assert_eq!(structured["manifest"][0]["start_line"], 1);
+    assert!(structured["manifest"][0]["bytes"].as_u64().unwrap() > 0);
+    assert_eq!(
+        structured["missing_evidence"],
+        json!(["the definition of telemetry()"])
+    );
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "grounded_verify");
+    assert_eq!(records[0].outcome, Outcome::Success);
+
+    client.cancel().await.unwrap();
+}
+
+// US1 + FR-009: an unresolvable locator aborts the whole call, named, with no
+// verdict — and no model call happens (no mounts).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_unresolvable_locator_errors_named_with_no_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("present.rs"), "fn x() {}\n").unwrap();
+    let mock = MockServer::start().await;
+    let (client, storage, _server) = serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let err = client
+        .call_tool(grounded_call(
+            "claim",
+            json!([{ "path": "present.rs" }, { "path": "gone.rs" }]),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("source not found: gone.rs"),
+        "{err}"
+    );
+
+    // The aborted call still leaves exactly one record (invalid_input).
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::InvalidInput);
+
+    client.cancel().await.unwrap();
+}
+
+// L1: a glob metacharacter is not interpreted (globs deferred) — the literal
+// path simply does not resolve, and the error names it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_rejects_a_glob_path() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "fn x() {}\n").unwrap();
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let err = client
+        .call_tool(grounded_call("claim", json!([{ "path": "*.rs" }])))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("*.rs"), "{err}");
+
+    client.cancel().await.unwrap();
+}
+
+// US2 (manifest fidelity over a mixed locator set, incl. a line range) + US3
+// (the completeness signal is empty when the model reports nothing missing).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_manifest_covers_each_locator_and_completeness_can_be_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "line1\nline2\nline3\n").unwrap();
+    std::fs::write(dir.path().join("b.rs"), "only\n").unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_pass(
+                "supported",
+                json!([]),
+                json!([]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let result = client
+        .call_tool(grounded_call(
+            "c",
+            json!([
+                { "path": "a.rs", "start_line": 2, "end_line": 3 },
+                { "path": "b.rs" }
+            ]),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    assert_eq!(s["manifest"].as_array().unwrap().len(), 2);
+    assert_eq!(s["manifest"][0]["path"], "a.rs");
+    assert_eq!(s["manifest"][0]["start_line"], 2);
+    assert_eq!(s["manifest"][0]["end_line"], 3);
+    assert_eq!(s["manifest"][1]["path"], "b.rs");
+    assert!(s["manifest"][1]["start_line"].is_null());
+    assert_eq!(s["missing_evidence"], json!([]));
+
+    client.cancel().await.unwrap();
 }

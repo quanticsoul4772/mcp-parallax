@@ -2,13 +2,15 @@
 //!
 //! Composition over trait inheritance: each component holds the concrete
 //! dependencies it needs behind these traits, rather than inheriting behavior.
-//! The seams: time, the model client, storage, embeddings, search, and fetch.
+//! The seams: time, the model client, storage, embeddings, search, fetch, the
+//! trajectory reader, and the source reader.
 
 pub mod client;
 pub mod clock;
 pub mod embedder;
 pub mod fetcher;
 pub mod search;
+pub mod source;
 pub mod storage;
 pub mod trajectory;
 
@@ -17,5 +19,6 @@ pub use clock::{SystemClock, TimeProvider};
 pub use embedder::{Embedder, Embedding};
 pub use fetcher::{FetchedPage, Fetcher};
 pub use search::{SearchHit, SearchProvider};
+pub use source::{SourceContent, SourceReader};
 pub use storage::Storage;
 pub use trajectory::{FsTrajectoryReader, TrajectoryReader};
