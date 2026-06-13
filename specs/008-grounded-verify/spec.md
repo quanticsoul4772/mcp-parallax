@@ -154,7 +154,7 @@ silently rendering a verdict as if the evidence were complete.
 - **SC-003**: For every named source that is missing, empty, out of range, or non-text, the call returns a loud error naming the offending locator and aborts — 0% of such cases produce a verdict over the remaining sources.
 - **SC-004**: 100% of locators that resolve outside the configured source root (traversal or symlink escape) are rejected before any byte is read.
 - **SC-005**: With no source root configured, the tool is absent from the catalog and performs zero file reads over a full test session.
-- **SC-006**: Over a seeded set of claims each missing one required source, the completeness signal names the missing source in a measurable majority of cases (target reported as a recall figure), and is empty for claims whose evidence is complete.
+- **SC-006**: Over a seeded set of claims each missing one required source, the completeness signal names the missing source in **≥70%** of cases (recall over the seeded set), and is empty for **100%** of claims whose evidence is complete.
 
 ## Assumptions
 

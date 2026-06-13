@@ -32,7 +32,7 @@ with tests, and every prior layer shipped them.
 
 - [ ] T010 [US1] Implement the `grounded_verify` mode in `src/modes/grounded_verify.rs`: the prompt, the flat + closed pass schema `{ verdict, findings, missing_evidence }` (validated by the local validator), and `run = assemble → shared ensemble → server-assembled result (verdict, findings, confidence)`; register it in `src/modes/mod.rs`.
 - [ ] T011 [US1] Wire the `grounded_verify` tool in `src/server.rs`: present in the catalog only when `grounded_verify_root` is set; inject the `SourceReader` dependency; record exactly one invocation via the existing `run_recorded` path (OTLP-exported when telemetry is configured).
-- [ ] T012 [P] [US1] Integration tests in `tests/integration.rs` (008 block): catalog gating (no root ⇒ tool absent; root ⇒ present), verbatim-flips-verdict, exactly one invocation record, and an unresolvable locator surfaces a named `invalid_params` error with no verdict.
+- [ ] T012 [P] [US1] Integration tests in `tests/integration.rs` (008 block): catalog gating (no root ⇒ tool absent; root ⇒ present), verbatim-flips-verdict, exactly one invocation record, an unresolvable locator surfaces a named `invalid_params` error with no verdict, a glob-metacharacter path (e.g. `*`) errors named (globs deferred — L1), and the pass input contains only the claim plus assembled evidence — no other caller field reaches it (FR-007 independence — M2).
 - [ ] T013 [P] [US1] Schema/contract test: the pass schema is flat + closed and passes the sanitizer/validator; the result shape matches `contracts/grounded-verify.md`.
 
 **Checkpoint**: US1 is independently shippable — the MVP corrective works end to end.
@@ -62,7 +62,7 @@ with tests, and every prior layer shipped them.
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [ ] T018 [P] **Corpus amendment (Principle I)**: register `grounded-verify` in `docs/design/NEW_SERVER_DESIGN.md` (failure-mode catalog: "context-curation trust gap"; primitives: a Verify-family corrective) and add a routing note in `docs/design/CORRECTIVE_SELECTION.md`, tracing to this spec.
-- [ ] T019 [P] Acceptance example `examples/acceptance_grounded_verify.rs` exercising SC-001..006 (verbatim-flips-verdict, manifest fidelity, all-or-nothing named errors, root confinement incl. symlink, catalog gating when unset, completeness over seeded omissions).
+- [ ] T019 [P] Acceptance example `examples/acceptance_grounded_verify.rs` exercising SC-001..006 (verbatim-flips-verdict, manifest fidelity, all-or-nothing named errors, root confinement incl. symlink, catalog gating when unset, and completeness over seeded omissions asserting ≥70% recall with an empty signal on complete-evidence cases — SC-006).
 - [ ] T020 [P] Docs sync: add the Tools-table row and the three Configuration rows to `README.md`, and update `CLAUDE.md` (status line, config section, repo layout for `src/grounded/` and the 8th seam).
 - [ ] T021 Full gate: `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`; record results in `quickstart.md` and check off this file.
 
