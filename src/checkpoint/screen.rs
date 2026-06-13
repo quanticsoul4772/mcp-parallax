@@ -89,29 +89,47 @@ pub fn repetition(window: &TrajectoryWindow) -> Vec<Signal> {
 }
 
 /// US1-AS2: the same normalized action failing ≥ [`FAILURE_THRESHOLD`]
-/// times consecutively.
+/// times consecutively, with the streak's LATEST failure inside the last
+/// [`WINDOW_BATCHES`] batches.
 ///
 /// Consecutive among that action's own invocations — interleaved other
-/// actions don't reset the streak; its own success does.
+/// actions don't reset the streak; its own success does. The recency bound
+/// mirrors [`repetition`]'s: without it, a long-resolved streak re-flags
+/// every cooldown expiry for as long as it stays in the entry window
+/// (post-merge live finding, 2026-06-12 — the S1 spike probes re-delivered
+/// 30 minutes after resolution).
 #[must_use]
 pub fn repeated_failure(window: &TrajectoryWindow) -> Vec<Signal> {
-    let mut streaks: HashMap<String, (usize, String)> = HashMap::new();
-    let mut fired: HashMap<String, (usize, String)> = HashMap::new();
+    let max_batch = window
+        .entries
+        .iter()
+        .filter_map(|e| match e {
+            TrajectoryEntry::ToolCall { batch_index, .. } => Some(*batch_index),
+            TrajectoryEntry::Assistant { .. } => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let floor = max_batch.saturating_sub(WINDOW_BATCHES - 1);
+
+    // (count, display, batch index of the streak's latest failure)
+    let mut streaks: HashMap<String, (usize, String, u32)> = HashMap::new();
+    let mut fired: HashMap<String, (usize, String, u32)> = HashMap::new();
 
     for entry in &window.entries {
         if let TrajectoryEntry::ToolCall {
+            batch_index,
             tool_name,
             normalized_input,
             failed,
-            ..
         } = entry
         {
             let identity = action_identity(tool_name, normalized_input);
             if *failed {
-                let slot = streaks
-                    .entry(identity.clone())
-                    .or_insert_with(|| (0, action_display(tool_name, normalized_input)));
+                let slot = streaks.entry(identity.clone()).or_insert_with(|| {
+                    (0, action_display(tool_name, normalized_input), *batch_index)
+                });
                 slot.0 += 1;
+                slot.2 = *batch_index;
                 if slot.0 >= FAILURE_THRESHOLD {
                     fired.insert(identity, slot.clone());
                 }
@@ -121,12 +139,15 @@ pub fn repeated_failure(window: &TrajectoryWindow) -> Vec<Signal> {
             }
         }
     }
+    // The recency bound: a streak whose last failure predates the batch
+    // window is history, not a live loop.
+    fired.retain(|_, (_, _, last_batch)| *last_batch >= floor);
 
-    let mut sorted: Vec<(String, (usize, String))> = fired.into_iter().collect();
+    let mut sorted: Vec<(String, (usize, String, u32))> = fired.into_iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     sorted
         .into_iter()
-        .map(|(identity, (count, display))| {
+        .map(|(identity, (count, display, _))| {
             Signal::new(
                 SignalKind::RepeatedFailure,
                 format!(
@@ -221,6 +242,32 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert_eq!(signals[0].kind, SignalKind::RepeatedFailure);
         assert!(signals[0].evidence.contains("npm run build"));
+        assert!(signals[0].evidence.contains("3 consecutive"));
+    }
+
+    // Post-merge live finding: a resolved streak that has aged past the
+    // batch window must NOT re-flag (it re-delivered every cooldown expiry
+    // in the live session until this bound existed).
+    #[test]
+    fn stale_failure_streaks_outside_the_batch_window_are_history() {
+        let w = window(vec![
+            call(1, "bash", "{command=x;}", true),
+            call(2, "bash", "{command=x;}", true),
+            call(3, "bash", "{command=x;}", true),
+            // 12 batches of unrelated progress later...
+            call(15, "read", "{file_path=a.rs;}", false),
+        ]);
+        assert!(repeated_failure(&w).is_empty());
+
+        // ...but a streak whose latest failure is recent still fires, even
+        // if it began long ago.
+        let live = window(vec![
+            call(5, "bash", "{command=y;}", true),
+            call(6, "bash", "{command=y;}", true),
+            call(15, "bash", "{command=y;}", true),
+        ]);
+        let signals = repeated_failure(&live);
+        assert_eq!(signals.len(), 1);
         assert!(signals[0].evidence.contains("3 consecutive"));
     }
 
