@@ -585,8 +585,10 @@ mod tests {
     // SC-001 unit slice: field-for-field span equality against the record.
     #[test]
     fn invocation_span_matches_the_record_field_for_field() {
+        // No reset(): the exporter is process-global and shared across
+        // parallel tests — a reset here races other tests' emit/read windows
+        // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
-        spans.reset();
         let record = sample_invocation(Outcome::Success);
         emit_invocation(&record);
         guard.tracer_provider.force_flush().unwrap();
@@ -645,8 +647,10 @@ mod tests {
 
     #[test]
     fn error_outcomes_carry_error_status_and_type() {
+        // No reset(): the exporter is process-global and shared across
+        // parallel tests — a reset here races other tests' emit/read windows
+        // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
-        spans.reset();
         let mut record = sample_invocation(Outcome::Timeout);
         record.tool = "research".into();
         emit_invocation(&record);
@@ -666,8 +670,10 @@ mod tests {
 
     #[test]
     fn voyage_models_attribute_the_voyage_provider() {
+        // No reset(): the exporter is process-global and shared across
+        // parallel tests — a reset here races other tests' emit/read windows
+        // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
-        spans.reset();
         let mut record = sample_invocation(Outcome::Success);
         record.tool = "recall".into();
         record.model = "voyage-4".into();
@@ -690,8 +696,10 @@ mod tests {
     // FR-008: checkpoint spans carry signal KINDS, never evidence strings.
     #[test]
     fn checkpoint_span_matches_the_record_and_omits_evidence() {
+        // No reset(): the exporter is process-global and shared across
+        // parallel tests — a reset here races other tests' emit/read windows
+        // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
-        spans.reset();
         let record = sample_checkpoint();
         emit_checkpoint(&record);
         guard.tracer_provider.force_flush().unwrap();
