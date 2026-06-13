@@ -51,6 +51,29 @@ collector → behavior identical, bounded shutdown), SC-005 (attribute audit
 finds no content/credentials), SC-006 (GenAI names present). Results
 recorded below when run.
 
+### Results (2026-06-12)
+
+- **S1 spike (`spike_otlp`): PASS on the first run** — env-gated init,
+  retroactive spans, GenAI constants under `semconv_experimental`,
+  `application/x-protobuf` on the wire, bounded shutdown, zero requests
+  with the endpoint env absent. One stack correction recorded in
+  research.md: the otlp crate's `reqwest-rustls-webpki-roots` feature is
+  incompatible with reqwest 0.13 (TLS rides the workspace-unified
+  `rustls` feature instead).
+- **Acceptance (`acceptance_otlp`): PASS** — SC-003 disabled fast path
+  **6 ns/call** (bound 1000) and zero telemetry requests pre-enable;
+  SC-001 **10/10 spans matched their stored records** (7 invocation
+  records across success/invalid-input + 3 checkpoint rows spanning
+  flag/silence/fail-open); SC-002 telemetry-computed counts equal
+  record-computed counts (successes, flags, fail-opens); SC-005 **139
+  attribute values audited** — no claim text, no credentials, no
+  checkpoint evidence; SC-006 GenAI names resolve in the decoded
+  payloads.
+- **SC-004 session-level**: the spawn-the-binary smoke test runs the
+  server with telemetry enabled against an unreachable collector —
+  protocol behavior identical, stdout protocol-only, and the process
+  exits within the bounded flush window (no hang).
+
 ## Inspect locally
 
 Any OTLP collector works; the zero-infra option used in tests is the

@@ -222,7 +222,16 @@ pipeline.
 
 - **OpenTelemetry (Rust) + OTLP** — `opentelemetry`, `opentelemetry-otlp`,
   `tracing-opentelemetry` (bridges the existing `tracing` to OTel), and
-  `opentelemetry-appender-tracing`. **GenAI semantic conventions exist as of 2026**
+  `opentelemetry-appender-tracing`. *Amended 2026-06-12 (007 shipped):* the
+  bridge crates were **dropped** — telemetry derives directly from the
+  per-call records at their write points (one measurement, two sinks), so no
+  `tracing`-to-OTel bridge exists; the validated stack is the **0.32 train**
+  (`opentelemetry` + `opentelemetry_sdk` + `opentelemetry-otlp` with
+  `http-proto` + blocking reqwest — no tonic/protoc; the
+  `reqwest-rustls-webpki-roots` feature is incompatible with reqwest 0.13,
+  TLS rides the unified workspace `rustls`). `OTEL_SDK_DISABLED` is not
+  implemented by the Rust SDK (upstream #1936) and is honored app-side.
+  **GenAI semantic conventions exist as of 2026**
   (`gen_ai.request.model`, `gen_ai.usage.input_tokens`/`output_tokens`,
   `gen_ai.response.finish_reasons`, message attributes) — so token/model/cost/latency
   are *standard span attributes*, satisfying the design's "observability designed in

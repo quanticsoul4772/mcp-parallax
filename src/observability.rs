@@ -81,6 +81,21 @@ pub struct Guard {
 }
 
 impl Guard {
+    /// Flush buffered telemetry without shutting down (test harnesses read
+    /// in-memory exporters between emissions).
+    ///
+    /// # Errors-as-logs
+    ///
+    /// Failures are warn-logged, never propagated (FR-006).
+    pub fn flush(&self) {
+        if let Err(e) = self.tracer_provider.force_flush() {
+            tracing::warn!("telemetry trace flush failed: {e}");
+        }
+        if let Err(e) = self.meter_provider.force_flush() {
+            tracing::warn!("telemetry metric flush failed: {e}");
+        }
+    }
+
     /// Flush buffered telemetry and shut both providers down within the
     /// bounded window (FR-010). Failures are warn-logged, never propagated —
     /// a dead collector must not affect exit.

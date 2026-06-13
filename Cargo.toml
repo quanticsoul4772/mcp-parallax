@@ -81,6 +81,9 @@ wiremock = "0.6.5"
 tempfile = "3"
 # In-memory span/metric exporters for observability tests (007) — no network
 opentelemetry_sdk = { version = "0.32.1", features = ["trace", "metrics", "testing"] }
+# Decode OTLP protobuf payloads in the acceptance example (007 T009)
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace", "metrics"] }
+prost = "0.14"
 
 [lints.rust]
 unsafe_code = "forbid"
