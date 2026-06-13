@@ -2266,3 +2266,91 @@ async fn grounded_verify_manifest_covers_each_locator_and_completeness_can_be_em
 
     client.cancel().await.unwrap();
 }
+
+// ---- 009-glob-locators ----------------------------------------------------
+
+// US1 + SC-001/002: a glob expands, server-side, to its sorted matching files,
+// each a manifest entry; non-matching files are excluded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_glob_expands_to_the_matching_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.path().join("src/b.rs"), "fn b() {}\n").unwrap();
+    std::fs::write(dir.path().join("src/notes.txt"), "ignore\n").unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_pass(
+                "supported",
+                json!([]),
+                json!([]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let result = client
+        .call_tool(grounded_call(
+            "the src files compile",
+            json!([{ "glob": "src/*.rs" }]),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert_eq!(s["verdict"], "supported");
+    let paths: Vec<&str> = s["manifest"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]); // sorted; .txt excluded
+
+    client.cancel().await.unwrap();
+}
+
+// US2 + SC-004: a zero-match glob is a loud named error, no verdict.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_zero_match_glob_errors_named() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "x\n").unwrap();
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    let err = client
+        .call_tool(grounded_call("c", json!([{ "glob": "nope/*.rs" }])))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("matched no files"), "{err}");
+    client.cancel().await.unwrap();
+}
+
+// US3 + FR-007: a glob carrying a line range is rejected, named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_glob_with_a_line_range_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "x\n").unwrap();
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    let err = client
+        .call_tool(grounded_call(
+            "c",
+            json!([{ "glob": "*.rs", "start_line": 1, "end_line": 2 }]),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("a line range is not allowed with a glob"),
+        "{err}"
+    );
+    client.cancel().await.unwrap();
+}

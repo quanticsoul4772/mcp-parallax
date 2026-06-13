@@ -7,18 +7,18 @@ correctness-critical piece and gets an exhaustive ground-truth table.
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `regex` and `walkdir` to `Cargo.toml` `[dependencies]`; `cargo build` to confirm they resolve and the lockfile updates.
-- [ ] T002 [P] Extend `SourceLocator` in `src/grounded/mod.rs` to the path-XOR-glob shape (`path: Option<String>`, `glob: Option<String>`, `start_line`, `end_line`) with serde + `schemars::JsonSchema`, preserving wire-compatibility for the existing `{ "path": ... }` form.
-- [ ] T003 [P] Scaffold the `grounded::glob` submodule — `src/grounded/glob/mod.rs` with the public `expand` entry signature and `GlobError`→`AppError::InvalidInput` mapping — and register `pub mod glob;` in `src/grounded/mod.rs`.
+- [x] T001 Add `regex` and `walkdir` to `Cargo.toml` `[dependencies]`; `cargo build` to confirm they resolve and the lockfile updates.
+- [x] T002 [P] Extend `SourceLocator` in `src/grounded/mod.rs` to the path-XOR-glob shape (`path: Option<String>`, `glob: Option<String>`, `start_line`, `end_line`) with serde + `schemars::JsonSchema`, preserving wire-compatibility for the existing `{ "path": ... }` form.
+- [x] T003 [P] Scaffold the `grounded::glob` submodule — `src/grounded/glob/mod.rs` with the public `expand` entry signature and `GlobError`→`AppError::InvalidInput` mapping — and register `pub mod glob;` in `src/grounded/mod.rs`.
 
 ## Phase 2: Foundational (blocking prerequisites)
 
 **Goal**: the deterministic substrate — a pure pattern→regex translator and a root-confined expander — that the user stories build on.
 
-- [ ] T004 Implement the extended-glob → anchored-regex translator in `src/grounded/glob/translate.rs`: `*`, `**` (recursive), `?`, `[class]`/`[!class]`, brace `{a,b}` (nestable), extglob `@(...)` `?(...)` `*(...)` `+(...)` `!(...)`, and leading `!` (whole-pattern negation). Matching is **case-sensitive**; `*`/`**` **match dotfiles**; extglob groups are **segment-scoped** — never cross `/`, and `!(p)` matches a single segment not matching `p` (FR-010). A malformed pattern (unbalanced `(`/`[`/`{`, empty alternation) is a named `InvalidInput`. Pure — string in, compiled `Regex` out.
-- [ ] T005 [P] Unit tests for the translator in `src/grounded/glob/translate.rs` (ground-truth table): each construct matches the intended paths and rejects others; `**` crosses segments while `*` does not; nested brace; each extglob operator incl. `!(...)` as a segment-scoped negation (does not cross `/`); case-sensitivity (a differently-cased path does not match); dotfile matching (`*`/`**` match a leading-dot file); malformed patterns rejected named. No disk.
-- [ ] T006 Implement the expander in `src/grounded/glob/expand.rs`: walk the canonical root with `walkdir` set to NOT follow symlinks; take each file's root-relative path; match against the compiled regex; sort matches lexicographically; re-confine each via the reader's canonical-prefix check; return the ordered `Vec<PathBuf>`. Zero matches ⇒ named `InvalidInput` identifying the pattern.
-- [ ] T007 [P] Unit tests for the expander in `src/grounded/glob/expand.rs` (tempdir fixtures): expands to the sorted set; deterministic order across runs; zero-match errors named; a file reached only through a symlinked directory is not matched (no symlink follow).
+- [x] T004 Implement the extended-glob → anchored-regex translator in `src/grounded/glob/translate.rs`: `*`, `**` (recursive), `?`, `[class]`/`[!class]`, brace `{a,b}` (nestable), extglob `@(...)` `?(...)` `*(...)` `+(...)` `!(...)`, and leading `!` (whole-pattern negation). Matching is **case-sensitive**; `*`/`**` **match dotfiles**; extglob groups are **segment-scoped** — never cross `/`, and `!(p)` matches a single segment not matching `p` (FR-010). A malformed pattern (unbalanced `(`/`[`/`{`, empty alternation) is a named `InvalidInput`. Pure — string in, compiled `Regex` out.
+- [x] T005 [P] Unit tests for the translator in `src/grounded/glob/translate.rs` (ground-truth table): each construct matches the intended paths and rejects others; `**` crosses segments while `*` does not; nested brace; each extglob operator incl. `!(...)` as a segment-scoped negation (does not cross `/`); case-sensitivity (a differently-cased path does not match); dotfile matching (`*`/`**` match a leading-dot file); malformed patterns rejected named. No disk.
+- [x] T006 Implement the expander in `src/grounded/glob/expand.rs`: walk the canonical root with `walkdir` set to NOT follow symlinks; take each file's root-relative path; match against the compiled regex; sort matches lexicographically; re-confine each via the reader's canonical-prefix check; return the ordered `Vec<PathBuf>`. Zero matches ⇒ named `InvalidInput` identifying the pattern.
+- [x] T007 [P] Unit tests for the expander in `src/grounded/glob/expand.rs` (tempdir fixtures): expands to the sorted set; deterministic order across runs; zero-match errors named; a file reached only through a symlinked directory is not matched (no symlink follow).
 
 **Checkpoint**: translation and expansion exist and are unit-tested — US1 can begin.
 
@@ -28,9 +28,9 @@ correctness-critical piece and gets an exhaustive ground-truth table.
 
 **Independent test**: a glob matching several files yields a verdict over all of them and a manifest naming each expanded file.
 
-- [ ] T008 [US1] Validate `SourceLocator` in `src/grounded/mod.rs`: exactly one of `path`/`glob` present; a line range only with `path`; a `glob` with a range is a named `InvalidInput` (FR-007). Unit-tested.
-- [ ] T009 [US1] In `src/grounded/assemble.rs`, expand every glob locator (via `grounded::glob::expand`) into its sorted concrete path locators before the existing read loop, then feed the unified locator list through 008's per-locator read + manifest + total-byte loop unchanged (FR-002/FR-009).
-- [ ] T010 [P] [US1] Integration tests in `tests/integration.rs` (009 block): a glob expands to multiple files with one manifest entry each (concrete paths, not the pattern); the same glob over unchanged files yields byte-identical evidence twice (determinism); a glob mixed with an exact-path locator in one call; and the existing 008 path/range tests pass unchanged.
+- [x] T008 [US1] Validate `SourceLocator` in `src/grounded/mod.rs`: exactly one of `path`/`glob` present; a line range only with `path`; a `glob` with a range is a named `InvalidInput` (FR-007). Unit-tested.
+- [x] T009 [US1] In `src/grounded/assemble.rs`, expand every glob locator (via `grounded::glob::expand`) into its sorted concrete path locators before the existing read loop, then feed the unified locator list through 008's per-locator read + manifest + total-byte loop unchanged (FR-002/FR-009).
+- [x] T010 [P] [US1] Integration tests in `tests/integration.rs` (009 block): a glob expands to multiple files with one manifest entry each (concrete paths, not the pattern); the same glob over unchanged files yields byte-identical evidence twice (determinism); a glob mixed with an exact-path locator in one call; and the existing 008 path/range tests pass unchanged.
 
 **Checkpoint**: US1 independently shippable — globs work end to end.
 
@@ -40,7 +40,7 @@ correctness-critical piece and gets an exhaustive ground-truth table.
 
 **Independent test**: a glob matching no file returns a named error and renders no verdict.
 
-- [ ] T011 [US2] Integration test in `tests/integration.rs`: a glob that matches no file under the root returns a named `invalid_params` error identifying the pattern, with no verdict and (per the all-or-nothing record path) one `invalid_input` invocation record.
+- [x] T011 [US2] Integration test in `tests/integration.rs`: a glob that matches no file under the root returns a named `invalid_params` error identifying the pattern, with no verdict and (per the all-or-nothing record path) one `invalid_input` invocation record.
 
 ## Phase 5: User Story 3 - Expansion respects the ceilings (P3)
 
@@ -48,17 +48,17 @@ correctness-critical piece and gets an exhaustive ground-truth table.
 
 **Independent test**: an over-locator-ceiling glob and an over-byte-ceiling glob each return a named error and no verdict.
 
-- [ ] T012 [US3] In `src/grounded/assemble.rs`, enforce `GROUNDED_VERIFY_MAX_LOCATORS` against the running total as globs expand (loud named error on overflow, never truncation); confirm the 008 total-byte and per-file ceilings still apply to every expanded file.
-- [ ] T013 [P] [US3] Integration tests in `tests/integration.rs`: a glob expanding past the locator ceiling errors named; a glob whose expanded files exceed the byte ceiling errors named; a glob carrying a line range is rejected named (FR-007 end-to-end).
+- [x] T012 [US3] In `src/grounded/assemble.rs`, enforce `GROUNDED_VERIFY_MAX_LOCATORS` against the running total as globs expand (loud named error on overflow, never truncation); confirm the 008 total-byte and per-file ceilings still apply to every expanded file.
+- [x] T013 [P] [US3] Integration tests in `tests/integration.rs`: a glob expanding past the locator ceiling errors named; a glob whose expanded files exceed the byte ceiling errors named; a glob carrying a line range is rejected named (FR-007 end-to-end).
 
 **Checkpoint**: all three stories complete.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T014 [P] Corpus currency (Principle I): one-line note in `docs/design/NEW_SERVER_DESIGN.md` that `grounded-verify` locators include glob patterns (refining the 008 entry).
-- [ ] T015 [P] Extend `examples/acceptance_grounded_verify.rs` with a glob pass covering SC-001..005: expand-to-set + manifest, determinism across runs, zero-match error, ceiling overflow error, and root confinement via a symlinked directory.
-- [ ] T016 [P] Docs sync: note glob locators in the `grounded_verify` README Tools row, and add `src/grounded/glob/` to the CLAUDE.md repo layout.
-- [ ] T017 Full gate: `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`; record results in `quickstart.md` and check off this file.
+- [x] T014 [P] Corpus currency (Principle I): one-line note in `docs/design/NEW_SERVER_DESIGN.md` that `grounded-verify` locators include glob patterns (refining the 008 entry).
+- [x] T015 [P] Extend `examples/acceptance_grounded_verify.rs` with a glob pass covering SC-001..005: expand-to-set + manifest, determinism across runs, zero-match error, ceiling overflow error, and root confinement via a symlinked directory.
+- [x] T016 [P] Docs sync: note glob locators in the `grounded_verify` README Tools row, and add `src/grounded/glob/` to the CLAUDE.md repo layout.
+- [x] T017 Full gate: `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`; record results in `quickstart.md` and check off this file.
 
 ## Dependencies & Execution Order
 

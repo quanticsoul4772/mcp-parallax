@@ -22,10 +22,11 @@ temp dirs, like 008's confinement tests.
 **Language/Version**: Rust 1.94 (edition 2021) — the existing crate.
 
 **Primary Dependencies**: existing 008 grounded layer (`SystemSourceReader`
-confinement, all-or-nothing `assemble`). New: `regex` (compile the translated
-pattern) and `walkdir` (non-symlink-following directory walk). Both are vetted,
-widely-used crates; this is a small SDK-landscape addition documented in
-research.md.
+confinement, all-or-nothing `assemble`). New: `fancy-regex` (compile the
+translated pattern — backtracking, for the lookahead that correct extglob
+`!(...)` needs; the RE2-style `regex` crate cannot, a plan-discovered
+correction) and `walkdir` (non-symlink-following directory walk). Both vetted;
+documented in research.md D6.
 
 **Storage**: none new — one `invocation_record` per call, unchanged.
 

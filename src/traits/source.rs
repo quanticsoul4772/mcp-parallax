@@ -36,6 +36,15 @@ pub trait SourceReader: Send + Sync {
         start_line: Option<u32>,
         end_line: Option<u32>,
     ) -> Result<SourceContent, AppError>;
+
+    /// List every regular file under the configured root, as root-relative,
+    /// `/`-separated paths. Used by glob expansion (009); symlinks are not
+    /// followed, so nothing outside the root is listed.
+    ///
+    /// # Errors
+    ///
+    /// [`AppError::Storage`] if the root cannot be walked.
+    fn list_files(&self) -> Result<Vec<String>, AppError>;
 }
 
 #[cfg(test)]

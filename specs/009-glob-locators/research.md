@@ -86,15 +86,18 @@ and the read/manifest path is 008 verbatim (FR-008/FR-009).
 **Alternatives**: expand inside the reader — rejected (mixes expansion with
 confinement/read; harder to test and reason about).
 
-## D6 — Two new dependencies: `regex`, `walkdir`
+## D6 — Two new dependencies: `fancy-regex`, `walkdir`
 
-**Decision**: add `regex` (compile/match the translated pattern) and `walkdir`
-(the rooted, non-symlink-following walk). Both are widely-used, audited crates
-already common in the ecosystem.
+**Decision**: add `fancy-regex` (compile/match the translated pattern) and
+`walkdir` (the rooted, non-symlink-following walk).
 
-**Rationale**: an SDK-landscape addition justified by the custom-engine decision;
-hand-rolling either would reinvent vetted code. Subject to the weekly
-`cargo audit` gate like every dependency.
+**Rationale**: an SDK-landscape addition justified by the custom-engine
+decision; hand-rolling either would reinvent vetted code. **Implementation
+discovery**: the plan first named `regex`, but the RE2-style `regex` crate has
+no lookahead, and correct extglob negation `!(p)` (with a suffix after the
+group) requires a negative lookahead — so `fancy-regex` (backtracking) is the
+necessary engine. Subject to the weekly `cargo audit` gate like every
+dependency.
 
 ## D7 — Corpus currency (Principle I)
 

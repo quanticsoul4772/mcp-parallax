@@ -294,7 +294,8 @@ mod tests {
             locators: paths
                 .iter()
                 .map(|p| SourceLocator {
-                    path: (*p).to_string(),
+                    path: Some((*p).to_string()),
+                    glob: None,
                     start_line: None,
                     end_line: None,
                 })

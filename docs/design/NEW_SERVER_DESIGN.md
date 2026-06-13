@@ -105,7 +105,8 @@ is the final list — the citations turn this from priors into something grounde
 > it per the constitution's Design-Corpus Fidelity principle (amend the corpus in the
 > same change that adds the feature). It is a **Verify-family** corrective: the
 > stance-blind ensemble of §4, with the evidence assembled *mechanically* from
-> caller-named source locators rather than hand-written into the context — closing
+> caller-named source locators (exact paths and line ranges; 009 adds glob
+> patterns) rather than hand-written into the context — closing
 > `verify`'s residual trust gap, where the caller curates (and can bias) the context.
 > Trace: [`specs/008-grounded-verify/`](../../specs/008-grounded-verify/).
 

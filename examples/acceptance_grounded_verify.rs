@@ -86,6 +86,7 @@ fn gv(claim: &str, locators: Value) -> CallToolRequestParams {
 }
 
 #[tokio::main(flavor = "current_thread")]
+#[allow(clippy::too_many_lines)] // a linear acceptance script reads best unsplit
 async fn main() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -180,6 +181,51 @@ async fn main() {
         );
         client.cancel().await.unwrap();
         println!("SC-004 root confinement (traversal rejected): PASS");
+    }
+
+    // 009 — a glob expands to its sorted matching files, each a manifest entry;
+    // a zero-match glob is a loud named error.
+    {
+        let gdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(gdir.path().join("src")).unwrap();
+        std::fs::write(gdir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(gdir.path().join("src/b.rs"), "fn b() {}\n").unwrap();
+        std::fs::write(gdir.path().join("src/notes.txt"), "skip\n").unwrap();
+        let groot = gdir.path().to_str().unwrap().to_string();
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+                "verdict": "supported", "findings": [], "missing_evidence": []
+            }))))
+            .mount(&mock)
+            .await;
+        let (client, _s, _srv) = serve(&mock, Some(groot.clone())).await;
+        let result = client
+            .call_tool(gv("the src files compile", json!([{ "glob": "src/*.rs" }])))
+            .await
+            .unwrap();
+        let s = result.structured_content.as_ref().unwrap();
+        let paths: Vec<&str> = s["manifest"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
+        client.cancel().await.unwrap();
+        println!("SC-001/002 glob expand + sorted manifest: PASS");
+
+        let mock2 = MockServer::start().await;
+        let (client2, _s2, _srv2) = serve(&mock2, Some(groot)).await;
+        let err = client2
+            .call_tool(gv("c", json!([{ "glob": "nope/*.rs" }])))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("matched no files"));
+        client2.cancel().await.unwrap();
+        println!("SC-004 zero-match glob error: PASS");
     }
 
     println!("\nacceptance_grounded_verify: ALL CHECKS PASS");

@@ -163,7 +163,7 @@ src/
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
-├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008)
+├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009)
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing

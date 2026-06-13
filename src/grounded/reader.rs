@@ -109,6 +109,21 @@ impl SourceReader for SystemSourceReader {
             bytes,
         })
     }
+
+    fn list_files(&self) -> Result<Vec<String>, AppError> {
+        let mut files = Vec::new();
+        for entry in walkdir::WalkDir::new(&self.root).follow_links(false) {
+            let entry =
+                entry.map_err(|e| AppError::Storage(format!("walking source root: {e}")))?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if let Ok(rel) = entry.path().strip_prefix(&self.root) {
+                files.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+        Ok(files)
+    }
 }
 
 /// Take the 1-based inclusive line range `[start, end]` from `text`. The start
@@ -254,6 +269,20 @@ mod tests {
     fn nonexistent_root_is_a_config_error() {
         let err = SystemSourceReader::new("/definitely/not/a/real/dir/xyzzy", 262_144).unwrap_err();
         assert!(matches!(err, AppError::Config(_)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn list_files_does_not_follow_symlinked_directories() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.rs"), "x").unwrap();
+        let dir = root_with(&[("a.rs", "x"), ("sub/b.rs", "y")]);
+        symlink(outside.path(), dir.path().join("link")).unwrap();
+        let files = reader(&dir).list_files().unwrap();
+        assert!(files.iter().any(|f| f == "a.rs"));
+        assert!(files.iter().any(|f| f == "sub/b.rs"));
+        assert!(!files.iter().any(|f| f.contains("secret")));
     }
 
     #[test]
