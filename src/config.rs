@@ -17,6 +17,14 @@ pub const MEMORY_RECALL_LIMIT_MAX: u8 = 20;
 /// Server-side ceiling on research concurrency.
 pub const RESEARCH_CONCURRENCY_MAX: u8 = 32;
 
+/// Default total assembled-evidence ceiling for grounded-verify, in bytes
+/// (256 KiB). `GROUNDED_VERIFY_MAX_BYTES`.
+pub const DEFAULT_GROUNDED_VERIFY_MAX_BYTES: usize = 262_144;
+
+/// Default maximum locators accepted in one grounded-verify call.
+/// `GROUNDED_VERIFY_MAX_LOCATORS`.
+pub const DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS: usize = 64;
+
 /// Server configuration. Every field is sourced from an environment variable so
 /// the binary is configured the same way in every host (Claude Code / Desktop).
 #[derive(Debug, Clone)]
@@ -126,8 +134,14 @@ impl Config {
         let grounded_verify_root = std::env::var("GROUNDED_VERIFY_ROOT")
             .ok()
             .filter(|root| !root.trim().is_empty());
-        let grounded_verify_max_bytes = parse_env("GROUNDED_VERIFY_MAX_BYTES", 262_144_usize)?;
-        let grounded_verify_max_locators = parse_env("GROUNDED_VERIFY_MAX_LOCATORS", 64_usize)?;
+        let grounded_verify_max_bytes = parse_env(
+            "GROUNDED_VERIFY_MAX_BYTES",
+            DEFAULT_GROUNDED_VERIFY_MAX_BYTES,
+        )?;
+        let grounded_verify_max_locators = parse_env(
+            "GROUNDED_VERIFY_MAX_LOCATORS",
+            DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS,
+        )?;
         let database_path =
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/parallax.db".to_string());
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
@@ -275,5 +289,13 @@ mod tests {
     fn default_models_are_the_corpus_targets() {
         assert_eq!(DEFAULT_MODEL, "claude-opus-4-8");
         assert_eq!(DEFAULT_VOYAGE_MODEL, "voyage-4");
+    }
+
+    #[test]
+    fn grounded_verify_defaults_match_the_documented_values() {
+        // The README/CLAUDE config tables and the spec cite these — keep them
+        // in lockstep with the named constants `from_env` uses.
+        assert_eq!(DEFAULT_GROUNDED_VERIFY_MAX_BYTES, 262_144);
+        assert_eq!(DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS, 64);
     }
 }
