@@ -203,8 +203,15 @@ and shutdown completes within the bounded flush window.
   store: no request/response text, no claim/query/memory/transcript
   content, no credentials.
 - **FR-009**: The stored records remain the canonical source of truth;
-  telemetry MUST be derived from the same values at the same exit points so
-  the two surfaces cannot disagree (one measurement, two sinks).
+  telemetry MUST be derived from the same record value at the same exit
+  point, so the two surfaces cannot report **different values** for a
+  recorded invocation or checkpoint (one measurement, two sinks). The
+  guarantee is over values, not presence: telemetry is emitted before the
+  fallible record write, so a storage-write failure leaves a call visible in
+  telemetry but absent from the database. This is intended — telemetry is the
+  more-available sink and an unpersisted call is one worth observing — and it
+  is why "cannot disagree" is scoped to values. (SC-002's record/telemetry
+  equality therefore holds over a run with no storage-write failures.)
 - **FR-010**: On clean shutdown the system MUST flush buffered telemetry
   within a bounded time and MUST NOT hang the process if the collector is
   unreachable.
