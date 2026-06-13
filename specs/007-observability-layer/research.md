@@ -49,6 +49,15 @@ into spike S1.
   honoring it app-side is a named upstream-gap workaround, kept so the
   spec-standard kill switch works for operators with globally inherited
   endpoints (the spec clarification's documented-not-gated posture).
+- **`OTEL_SDK_DISABLED` parse semantics**: the OTel specification's —
+  case-insensitive `"true"` disables, any other value (including garbage)
+  means not-disabled. A named exception to this project's
+  loud-on-malformed config convention: the variable belongs to OTel's
+  contract, and erroring on values the OTel spec accepts would break the
+  standard behavior operators expect. Pinned in T003's truth table.
+- **Gate testability**: the gate is a pure function over an env-lookup
+  closure so its truth table tests with injected maps — `std::env::set_var`
+  in parallel tests is a race (analysis finding U1).
 - Endpoint/protocol/headers/timeout details beyond presence are left to
   the exporter's own env handling (it reads the full
   `OTEL_EXPORTER_OTLP_*` family at `build()`, signal-specific over generic

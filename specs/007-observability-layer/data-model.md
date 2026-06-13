@@ -34,6 +34,12 @@ propagated, run in `main` before exit.
 
 ## 3. Invocation span ← `InvocationRecord` (emitted in `RecordGuard::finish`)
 
+FR-009's "source of truth" is the record **value** at the exit point (the
+struct both sinks consume), not the database write: telemetry emits
+fire-and-forget even if the row write fails (one sink's availability never
+gates the other). SC-001's equality criterion applies where both sinks
+landed.
+
 | Span field | Derivation |
 |---|---|
 | name | `parallax.{tool}` |

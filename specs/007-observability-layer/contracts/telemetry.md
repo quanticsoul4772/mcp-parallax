@@ -43,7 +43,7 @@ OK on success; ERROR with the outcome class otherwise.
 | `gen_ai.request.model` | string | attributed model id |
 | `gen_ai.usage.input_tokens` | int | summed input tokens |
 | `gen_ai.usage.output_tokens` | int | summed output tokens |
-| `gen_ai.provider.name` | string | `anthropic` \| `voyageai` |
+| `gen_ai.provider.name` | string | `anthropic` \| `voyageai` (the Voyage well-known value is unconfirmed against the conventions' registry — verified at implementation; any correction lands here in the same change) |
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
 | `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `search_provider`, `embedding_provider`, `cancelled`) |

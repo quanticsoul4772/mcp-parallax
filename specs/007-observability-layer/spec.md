@@ -238,9 +238,10 @@ and shutdown completes within the bounded flush window.
   checkpoint flag/hold/suppression/fail-open rates are each computable from
   the exported telemetry alone, and match the same figures computed from
   the local records over the same run.
-- **SC-003**: With telemetry disabled, a benchmark run shows no measurable
-  per-invocation latency difference versus the prior release, and zero
-  telemetry network egress.
+- **SC-003**: With telemetry disabled, the per-emission overhead is
+  demonstrably the fast-path check alone (measured: a large batch of
+  disabled emission calls stays under a microseconds-per-call bound), and
+  zero telemetry network egress occurs.
 - **SC-004**: With an unreachable collector, 100% of invocations in a test
   session complete with results, records, and error surfaces identical to a
   telemetry-disabled run, and clean shutdown completes within the bounded
