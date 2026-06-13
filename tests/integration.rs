@@ -1895,6 +1895,70 @@ async fn telemetry_spans_match_the_stored_records() {
         );
     }
 
+    // --- the cancelled exit emits too, not just the success path ---
+    // An abandoned invocation records `cancelled` and must mirror to telemetry
+    // with that outcome, twinning its SQLite row. Drive a real abandoned
+    // verify (client torn down mid-flight) and assert the twin span. Guards
+    // the cancellation exit against losing its telemetry pairing.
+    let slow = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(end_turn(&json!({ "verdict": "supported", "findings": [] })))
+                .set_delay(Duration::from_mins(1)),
+        )
+        .mount(&slow)
+        .await;
+    let (slow_client, slow_storage, slow_server) = serve(&slow, 120_000).await;
+    let call_task = tokio::spawn(async move {
+        slow_client
+            .call_tool(tool_call("verify", &json!({ "claim": "abandoned twin" })))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    call_task.abort();
+    let _ = call_task.await;
+    let _ = slow_server.cancel().await;
+
+    // publish() fires synchronously at the exit, before the row is persisted —
+    // so once the cancelled row is visible, the span is already queued.
+    let cancelled = {
+        let mut found = None;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Some(r) = slow_storage
+                .list_invocations()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|r| r.outcome == Outcome::Cancelled)
+            {
+                found = Some(r);
+                break;
+            }
+        }
+        found.expect("abandoned invocation recorded cancelled")
+    };
+
+    guard.flush();
+    let spans = span_exporter.get_finished_spans().unwrap();
+    let cancelled_span = spans
+        .iter()
+        .find(|s| {
+            s.name == "parallax.verify"
+                && attr(&s.attributes, "parallax.session_id").as_deref()
+                    == Some(cancelled.session_id.as_str())
+        })
+        .expect("cancelled invocation span exported — the exit must emit");
+    assert_eq!(
+        attr(&cancelled_span.attributes, "parallax.outcome").as_deref(),
+        Some("cancelled")
+    );
+    // Retroactive timing twins the record, same as the finish() path.
+    let cend: std::time::SystemTime = cancelled.created_at.into();
+    assert_eq!(cancelled_span.end_time, cend);
+
     client.cancel().await.unwrap();
 }
 

@@ -46,6 +46,21 @@ jobs:
       - run: cargo test --all-features --tests
       - run: cargo check --all-features --examples
 
+  # Line-coverage gate. Runs the `cov` alias from .cargo/config.toml so the
+  # floor is defined in exactly one place (local `cargo cov` and CI agree).
+  # The alias carries --fail-under-lines, so a drop below the floor fails here.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo cov --summary-only
+
   # Verify the crate still builds on its declared MSRV (Cargo.toml
   # `rust-version`). The other jobs run @stable; without this the real
   # floor can drift and only surface later. Bump in lockstep with

@@ -102,10 +102,22 @@ impl InvocationRecord {
         }
     }
 
+    /// Publish the record to every observability sink at an invocation exit
+    /// point: the structured tracing event (stderr) and the OTLP telemetry
+    /// mirror. This single call is the structural guarantee behind the
+    /// "one measurement, two sinks" contract (007 FR-009) — both surfaces
+    /// derive from the same record value here, so an exit point cannot wire up
+    /// one sink and silently forget the other. [`Self::emit`] is private for
+    /// exactly this reason: `publish` is the only door.
+    pub fn publish(&self) {
+        self.emit();
+        crate::observability::emit_invocation(self);
+    }
+
     /// Emit the record as a structured tracing event with GenAI
-    /// semantic-convention attribute names (stderr now; OTLP later without
-    /// re-instrumentation).
-    pub fn emit(&self) {
+    /// semantic-convention attribute names. Private: every exit point goes
+    /// through [`Self::publish`] so tracing and telemetry cannot diverge.
+    fn emit(&self) {
         tracing::info!(
             invocation.id = %self.id,
             session.id = %self.session_id,

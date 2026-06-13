@@ -2,9 +2,13 @@
 # Quick gates — run before every commit
 ci = "check --all-features"
 lint = "clippy -- -D warnings"
-# Coverage report (no hard gate yet — the crate is a scaffold; add
-# --fail-under-lines once there is meaningful logic to cover).
-cov = "llvm-cov --ignore-filename-regex 'main\\.rs'"
+# Coverage gate. --tests (not examples — linking the z3/aws-lc/OTel examples
+# under instrumentation exhausts the linker, same reason ci.yml uses --tests).
+# main.rs is the binary shell (arg parsing, tracing/telemetry wiring) and is
+# exercised by the live quickstarts, not unit tests, so it is excluded. The
+# 90% line floor sits ~6pt below the current 95.8% — headroom for normal churn,
+# tight enough to catch a real regression. CI runs this same alias.
+cov = "llvm-cov --all-features --tests --ignore-filename-regex 'main\\.rs' --fail-under-lines 90"
 
 [build]
 incremental = true
