@@ -32,5 +32,5 @@
 ## Notes
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`
-- One design choice is deliberately deferred to `/speckit-clarify` rather than blocking the spec: the **completeness signal (US3 / FR-010)** is bounded as the lowest-priority slice and explicitly marked deferrable, so the MVP (US1) does not depend on it. No `[NEEDS CLARIFICATION]` marker was needed because a reasonable default (include it as P3) exists.
-- "Source root", "byte ceiling", and "locator types" are described as capabilities, not as concrete variable names or formats — those are planning-phase decisions, kept out of the spec per the no-implementation-detail rule.
+- `/speckit-clarify` (Session 2026-06-13) resolved four scope/behavior decisions, now recorded in the spec's Clarifications section: v1 locators are **paths + line-ranges** (globs deferred); the **completeness signal (US3 / FR-010) is in v1 scope**; locator resolution is **all-or-nothing** (any failure aborts the call); and v1 supports a **single source root**.
+- "Source root", "byte ceiling", and "locator types" remain described as capabilities, not as concrete variable names or formats — those are planning-phase decisions, kept out of the spec per the no-implementation-detail rule.
