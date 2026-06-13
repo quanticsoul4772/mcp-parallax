@@ -37,6 +37,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # z3's C++ build + the OTel/aws-lc dep tree + test binaries sit near the
+      # runner's ~14 GB free; the libz3.a link intermittently fails with ENOSPC.
+      # Reclaim the unused preinstalled toolchains (~20 GB) first.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # --tests: linking every example exhausts the runner (each statically
@@ -54,6 +61,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # Coverage instrumentation ~doubles object-file size; on top of z3's
+      # large C++ build the runner's default ~14 GB free isn't enough (libz3.a
+      # link fails with ENOSPC). Reclaim the preinstalled toolchains we don't
+      # use (~20 GB) before building.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
