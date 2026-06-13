@@ -193,9 +193,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `007-observability-layer` — [spec](specs/007-observability-layer/spec.md) ·
-[plan](specs/007-observability-layer/plan.md) · [research](specs/007-observability-layer/research.md) ·
-[data model](specs/007-observability-layer/data-model.md) · [contracts](specs/007-observability-layer/contracts/)
+Current feature: `008-grounded-verify` — [spec](specs/008-grounded-verify/spec.md) ·
+[plan](specs/008-grounded-verify/plan.md) · [research](specs/008-grounded-verify/research.md) ·
+[data model](specs/008-grounded-verify/data-model.md) · [contracts](specs/008-grounded-verify/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
