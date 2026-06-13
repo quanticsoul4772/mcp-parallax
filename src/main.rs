@@ -40,9 +40,13 @@ async fn main() {
     }
 
     // Initialize logging to stderr only (stdout is for MCP JSON-RPC).
-    let filter = tracing_subscriber::EnvFilter::new(
-        std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
-    );
+    // OTel's internal diagnostics flow through `tracing` (internal-logs) —
+    // default them to warn so a misconfigured collector is visible without
+    // drowning the log (007 D8); LOG_LEVEL directives can still override.
+    let filter = tracing_subscriber::EnvFilter::new(format!(
+        "{},opentelemetry=warn,opentelemetry_sdk=warn,opentelemetry-otlp=warn",
+        std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string())
+    ));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -85,12 +89,24 @@ async fn main() {
         }
     };
 
+    // Telemetry (007): off unless a standard OTLP endpoint variable is set
+    // (and OTEL_SDK_DISABLED is not true); a malformed variable fails boot,
+    // named, like every other config error.
+    let telemetry = match mcp_parallax::observability::init(server.session_id()) {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::error!("telemetry configuration error: {e}");
+            std::process::exit(1);
+        }
+    };
+
     tracing::info!(
         database = %config.database_path,
         model = %config.anthropic_model,
         ensemble_k = config.verify_ensemble_k,
         timeout_ms = config.request_timeout_ms,
         max_retries = config.max_retries,
+        telemetry = telemetry.is_some(),
         "parallax: serving MCP over stdio"
     );
 
@@ -101,7 +117,13 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    if let Err(e) = service.waiting().await {
+    let result = service.waiting().await;
+    // Flush buffered telemetry within the bounded window before exit
+    // (007 FR-010) — a dead collector never hangs shutdown.
+    if let Some(guard) = telemetry {
+        guard.shutdown();
+    }
+    if let Err(e) = result {
         tracing::error!("server terminated with error: {e}");
         std::process::exit(1);
     }

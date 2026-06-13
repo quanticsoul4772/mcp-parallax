@@ -46,6 +46,7 @@ pub mod deterministic;
 pub mod error;
 pub mod memory;
 pub mod modes;
+pub mod observability;
 pub mod research;
 pub mod schema;
 pub mod server;

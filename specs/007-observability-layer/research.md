@@ -33,6 +33,25 @@ into spike S1.
   telemetry surface to log statements instead of the canonical records,
   violating FR-009's one-measurement rule).
 
+### S1 RESULT (2026-06-12, `examples/spike_otlp.rs` — PASS first run)
+
+- The 0.32 API compiled and ran exactly as researched: env-driven exporter
+  build, retroactive span (`with_start_time` + `start_with_context` +
+  `end_with_timestamp`) accepted end to end, `application/x-protobuf` on
+  the wire to `/v1/traces` + `/v1/metrics`, `force_flush` +
+  `shutdown_with_timeout(5s)` clean.
+- **Flagged uncertainty (a) resolved**: the `GEN_AI_*` constants compile
+  with `semconv_experimental` enabled — the feature stays.
+- **New finding**: `opentelemetry-otlp`'s `reqwest-rustls-webpki-roots`
+  feature is incompatible with reqwest 0.13 (it requires a `webpki-roots`
+  reqwest feature that no 0.13.x version has). Dropped; TLS comes from the
+  workspace-unified reqwest `rustls` feature (recorded in Cargo.toml).
+- **API note for the module**: `opentelemetry::global::meter` is NOT wired
+  to a provider unless the global provider is installed — the module holds
+  its instruments in a process-local handle created from its own provider
+  at init (no global-provider registration), which also keeps tests
+  injectable.
+
 ## D2 — Enablement gating (FR-004/FR-005, Constitution VI)
 
 - **Decision**: at startup, telemetry initializes **iff** any of

@@ -453,6 +453,13 @@ impl Parallax {
         .await
     }
 
+    /// The per-process session id (one stdio connection per process) —
+    /// telemetry's `service.instance.id` (007 D6).
+    #[must_use]
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
     /// The memory deps, or the internal error for a tool that should not have
     /// been reachable — the catalog omits memory tools when disabled (FR-007),
     /// so a call without deps is a client ignoring the catalog.

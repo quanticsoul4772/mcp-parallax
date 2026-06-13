@@ -375,23 +375,24 @@ async fn record(
     session_id: &str,
     evaluation: &Evaluated,
 ) -> Result<(), AppError> {
-    deps.storage
-        .record_checkpoint(&CheckpointRecord {
-            id: uuid::Uuid::new_v4().to_string(),
-            session_id: session_id.to_string(),
-            boundary,
-            signals_evaluated: evaluation.signal_kinds.clone(),
-            signals_fired: evaluation.fired.clone(),
-            delivered_keys: evaluation.delivered_keys.clone(),
-            review_ran: evaluation.review_ran,
-            verdict: evaluation.result.verdict,
-            suppressed: evaluation.result.suppressed,
-            fail_open: evaluation.result.fail_open,
-            latency_ms: evaluation.result.latency_ms,
-            cost_usd: evaluation.cost_usd,
-            created_at: deps.clock.now(),
-        })
-        .await
+    let row = CheckpointRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.to_string(),
+        boundary,
+        signals_evaluated: evaluation.signal_kinds.clone(),
+        signals_fired: evaluation.fired.clone(),
+        delivered_keys: evaluation.delivered_keys.clone(),
+        review_ran: evaluation.review_ran,
+        verdict: evaluation.result.verdict,
+        suppressed: evaluation.result.suppressed,
+        fail_open: evaluation.result.fail_open,
+        latency_ms: evaluation.result.latency_ms,
+        cost_usd: evaluation.cost_usd,
+        created_at: deps.clock.now(),
+    };
+    // One measurement, two sinks (007 FR-009) — same value, same exit point.
+    crate::observability::emit_checkpoint(&row);
+    deps.storage.record_checkpoint(&row).await
 }
 
 /// Fixed message templates (FR-005/SC-007): parameterized only by evidence.
