@@ -61,7 +61,8 @@ recorded below when run.
   incompatible with reqwest 0.13 (TLS rides the workspace-unified
   `rustls` feature instead).
 - **Acceptance (`acceptance_otlp`): PASS** — SC-003 disabled fast path
-  **6 ns/call** (bound 1000) and zero telemetry requests pre-enable;
+  **6 ns/call** (bound 1000); the zero-egress half holds by construction
+  (disabled init returns no providers, so no exporter exists to send);
   SC-001 **10/10 spans matched their stored records** (7 invocation
   records across success/invalid-input + 3 checkpoint rows spanning
   flag/silence/fail-open); SC-002 telemetry-computed counts equal

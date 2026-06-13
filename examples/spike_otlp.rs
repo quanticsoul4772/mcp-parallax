@@ -42,7 +42,8 @@ fn endpoint_present() -> bool {
     .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
 }
 
-#[tokio::main]
+// current_thread: set_var below must not race getenv on worker threads.
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     // Phase A: endpoint env absent -> the gate says disabled; nothing is
     // ever built, so zero requests are possible by construction.
@@ -67,8 +68,9 @@ async fn main() {
         .mount(&collector)
         .await;
 
-    // The exporter reads the env at build() (research D2). Example main is
-    // single-threaded at this point — set_var is safe here.
+    // The exporter reads the env at build() (research D2). The runtime is
+    // current_thread and we hold it, so no other thread can getenv during
+    // the mutation (review finding 3).
     std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", collector.uri());
     assert!(endpoint_present());
 

@@ -106,7 +106,9 @@ fn write_transcript(dir: &std::path::Path, session: &str, commands: &[(&str, boo
     file_path.to_string_lossy().to_string()
 }
 
-#[tokio::main]
+// current_thread: the set_var enabling telemetry must not race getenv on
+// worker threads (review finding 3).
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     // ---- SC-003 (overhead half): disabled emission is the fast path ------
     let probe = mcp_parallax::telemetry::InvocationRecord {

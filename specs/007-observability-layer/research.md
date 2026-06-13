@@ -168,6 +168,17 @@ into spike S1.
 6. Shutdown must run before tokio teardown; abrupt exit drops the queue
    tail.
 
+## Post-review named notes (T011)
+
+- `src/observability.rs` is ~760 lines with its inline unit-test module
+  (production code ≈ 450). Named deferral consistent with `run.rs` (006):
+  the init/emit split is the natural seam if a future signal pushes
+  production code past the target.
+- `Guard::shutdown` deliberately does NOT pre-flush: `shutdown_with_timeout`
+  drains the queue itself, and a pre-flush would wait on the SDK's internal
+  flush timeout first, pushing worst-case exit past the bound (review
+  finding; `Guard::flush` remains for test harnesses).
+
 ## Test strategy (Principle IV without a bespoke seam)
 
 - **Unit/integration**: a test constructor injects the SDK's

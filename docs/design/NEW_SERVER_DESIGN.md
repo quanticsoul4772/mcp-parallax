@@ -246,6 +246,13 @@ loops and others are server-owned.
 
 ### 6. Observability designed in, not bolted on
 
+*Amended 2026-06-12 (007 shipped):* the export story is **OTLP to standard
+backends** — spans and metrics derived from the per-call records at their
+write points, GenAI semantic conventions, gated on the standard OTel env
+vars. The shared-sink + separate-dashboard-binary design below (and the
+`--demo` replay mode) is superseded: any OTLP backend is the dashboard;
+bespoke dashboard tooling is a named deferral, not a plan.
+
 - The metric/event record carries **tokens, model, cost, latency, and session** from
   the first commit.
 - Activity events publish to a **shared sink** (localhost UDP, named pipe, or

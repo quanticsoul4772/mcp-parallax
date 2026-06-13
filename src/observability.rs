@@ -96,17 +96,14 @@ impl Guard {
         }
     }
 
-    /// Flush buffered telemetry and shut both providers down within the
-    /// bounded window (FR-010). Failures are warn-logged, never propagated —
-    /// a dead collector must not affect exit.
+    /// Shut both providers down within the bounded window (FR-010) —
+    /// shutdown drains and exports the queue itself, so no separate flush
+    /// (a pre-flush would wait on the SDK's own internal timeout FIRST,
+    /// pushing the worst case past the bound — review finding 2). Failures
+    /// are warn-logged, never propagated — a dead collector must not
+    /// affect exit. Worst case: 2 × `FLUSH_TIMEOUT_MS`.
     pub fn shutdown(&self) {
         let timeout = Duration::from_millis(FLUSH_TIMEOUT_MS);
-        if let Err(e) = self.tracer_provider.force_flush() {
-            tracing::warn!("telemetry trace flush failed: {e}");
-        }
-        if let Err(e) = self.meter_provider.force_flush() {
-            tracing::warn!("telemetry metric flush failed: {e}");
-        }
         if let Err(e) = self.tracer_provider.shutdown_with_timeout(timeout) {
             tracing::warn!("telemetry trace shutdown failed: {e}");
         }
@@ -181,7 +178,9 @@ pub fn init(instance_id: &str) -> Result<Option<Guard>, ConfigError> {
         Ok(exporter) => exporter,
         Err(e) => {
             tracing::error!("OTLP span exporter construction failed: {e}");
-            return Err(ConfigError::Invalid("OTEL_EXPORTER_OTLP_ENDPOINT"));
+            return Err(ConfigError::Invalid(
+                "OTEL_EXPORTER_OTLP_* (exporter construction - see stderr)",
+            ));
         }
     };
     let metric_exporter = match opentelemetry_otlp::MetricExporter::builder()
@@ -191,7 +190,9 @@ pub fn init(instance_id: &str) -> Result<Option<Guard>, ConfigError> {
         Ok(exporter) => exporter,
         Err(e) => {
             tracing::error!("OTLP metric exporter construction failed: {e}");
-            return Err(ConfigError::Invalid("OTEL_EXPORTER_OTLP_ENDPOINT"));
+            return Err(ConfigError::Invalid(
+                "OTEL_EXPORTER_OTLP_* (exporter construction - see stderr)",
+            ));
         }
     };
     Ok(Some(init_with_exporters(
@@ -269,8 +270,13 @@ where
     };
     // First init wins; a second init (tests) keeps the existing handles —
     // emission still flows to the first exporters, which is what the
-    // process-global test harness expects.
-    let _ = HANDLES.set(handles);
+    // process-global test harness expects. The warn makes the disconnect
+    // visible if production ever inits twice (review finding 6).
+    if HANDLES.set(handles).is_err() {
+        tracing::warn!(
+            "telemetry handles already initialized - emission flows to the first init's exporters"
+        );
+    }
     ENABLED.store(true, Ordering::Release);
 
     Guard {
@@ -744,19 +750,6 @@ mod tests {
                 names.contains(&expected.to_string()),
                 "missing {expected}: {names:?}"
             );
-        }
-    }
-
-    #[test]
-    fn disabled_emission_is_a_no_op() {
-        // ENABLED may already be true from other tests in this binary — this
-        // asserts the pure precondition instead: with the flag off, emit
-        // returns before touching handles. (Run in isolation via a child
-        // check of the flag path.)
-        if !ENABLED.load(Ordering::Acquire) {
-            emit_invocation(&sample_invocation(Outcome::Success));
-            emit_checkpoint(&sample_checkpoint());
-            // No handles set -> nothing to assert beyond "did not panic".
         }
     }
 }

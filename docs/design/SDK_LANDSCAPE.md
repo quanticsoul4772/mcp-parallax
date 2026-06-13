@@ -54,7 +54,7 @@ convention.
 | Deterministic — code exec | **wasmtime** in-proc; microsandbox/E2B for Python | `wasmtime`; E2B/microsandbox (opt-in) | sandbox is non-negotiable; §deterministic |
 | Research — search | **Brave** (default) or **Tavily** (answers+cites) | Brave Search API / Tavily | Brave: lowest latency (~669ms); you already have the Brave MCP |
 | Research — fetch/extract | **rs-trafilatura** (local) or Firecrawl (managed) | `rs-trafilatura` / `article_scraper` | local extraction avoids a second API |
-| Observability | **OpenTelemetry + OTLP** | `opentelemetry`, `opentelemetry-otlp`, `tracing-opentelemetry` | GenAI semantic conventions exist; feeds the watchdog/dashboard |
+| Observability | **OpenTelemetry + OTLP** (0.32 train, shipped in 007) | `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` (http-proto; no bridge crates — telemetry derives from the records) | GenAI semantic conventions on spans/metrics; export story only (the watchdog feeds on hooks per the 2026-06-12 amendment) |
 
 ---
 

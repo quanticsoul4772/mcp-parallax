@@ -43,7 +43,7 @@ OK on success; ERROR with the outcome class otherwise.
 | `gen_ai.request.model` | string | attributed model id |
 | `gen_ai.usage.input_tokens` | int | summed input tokens |
 | `gen_ai.usage.output_tokens` | int | summed output tokens |
-| `gen_ai.provider.name` | string | `anthropic` \| `voyageai` (the Voyage well-known value is unconfirmed against the conventions' registry — verified at implementation; any correction lands here in the same change) |
+| `gen_ai.provider.name` | string | `anthropic` (registry well-known value) \| `voyageai` (verified 2026-06-12: the conventions' registry has **no** Voyage entry, so this is a deliberate custom value in the registry's naming style) |
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
 | `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `search_provider`, `embedding_provider`, `cancelled`) |
@@ -64,7 +64,7 @@ data).
 | `parallax.checkpoint.fail_open` | bool | evaluation degraded |
 | `parallax.checkpoint.review_ran` | bool | the review hop ran (turn boundary) |
 | `parallax.checkpoint.cost_usd` | double | review-hop cost (0 for pure paths) |
-| `parallax.session_id` | string | per-process session UUID |
+| `parallax.session_id` | string | the **harness session id** from the hook params (note: invocation spans carry the server's per-process session UUID; checkpoint spans carry the harness's — the useful correlation key at each level) |
 
 ## Metrics
 

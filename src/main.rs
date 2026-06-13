@@ -43,8 +43,11 @@ async fn main() {
     // OTel's internal diagnostics flow through `tracing` (internal-logs) —
     // default them to warn so a misconfigured collector is visible without
     // drowning the log (007 D8); LOG_LEVEL directives can still override.
+    // Defaults come FIRST: EnvFilter replaces duplicate-target directives
+    // with the later one, so user LOG_LEVEL directives genuinely override
+    // these (review finding 1).
     let filter = tracing_subscriber::EnvFilter::new(format!(
-        "{},opentelemetry=warn,opentelemetry_sdk=warn,opentelemetry-otlp=warn",
+        "opentelemetry=warn,opentelemetry_sdk=warn,opentelemetry-otlp=warn,{}",
         std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string())
     ));
     tracing_subscriber::fmt()
