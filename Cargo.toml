@@ -54,6 +54,14 @@ robotstxt = "0.3.0"
 z3 = { version = "0.20", features = ["bundled"] }
 evalexpr = "13"
 
+# Glob locators (009): the extended-glob grammar (incl. extglob) has no
+# off-the-shelf Rust crate, so a custom pattern->regex translator compiles to a
+# regex matched over a non-symlink-following `walkdir` of the root. extglob
+# negation `!(...)` needs lookahead, which the RE2-style `regex` crate lacks —
+# hence `fancy-regex` (backtracking, supports lookahead).
+fancy-regex = "0.14"
+walkdir = "2"
+
 # Observability: OTLP export (007) — the 0.32 release train, pinned together
 # (the ecosystem breaks API across minors; research.md 007 D1). http-proto +
 # blocking reqwest is the documented pairing for the SDK's background-thread

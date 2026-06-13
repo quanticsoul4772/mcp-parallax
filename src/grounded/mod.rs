@@ -8,21 +8,82 @@
 //! smuggle a conclusion into it.
 
 pub mod assemble;
+pub mod glob;
 pub mod reader;
 
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 
-/// A caller-supplied reference to evidence, interpreted within the configured
-/// source root. Globs are deferred (008 clarification) — `path` is a literal.
+/// A caller-supplied reference to evidence.
+///
+/// Interpreted within the configured source root: a locator is *either* an
+/// exact `path` (optionally with a line range, 008) *or* a `glob` pattern (009)
+/// — never both.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct SourceLocator {
-    /// Relative path within the configured source root.
-    pub path: String,
-    /// 1-based inclusive start line. With `end_line`, restricts to a range;
-    /// both omitted reads the whole file. Must be paired with `end_line`.
+    /// Exact relative path within the configured source root. Mutually
+    /// exclusive with `glob`.
+    pub path: Option<String>,
+    /// Extended-glob pattern (009), expanded within the root. Mutually
+    /// exclusive with `path`; may not carry a line range.
+    pub glob: Option<String>,
+    /// 1-based inclusive start line (only with `path`). With `end_line`,
+    /// restricts to a range; both omitted reads the whole file.
     pub start_line: Option<u32>,
-    /// 1-based inclusive end line. Must be paired with `start_line`.
+    /// 1-based inclusive end line (only with `path`). Must be paired with
+    /// `start_line`.
     pub end_line: Option<u32>,
+}
+
+/// The validated shape of a locator: exactly one of an exact path or a glob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocatorKind<'a> {
+    /// An exact path, optionally restricted to a line range.
+    Path {
+        /// The relative path.
+        path: &'a str,
+        /// 1-based inclusive start line, if a range was given.
+        start_line: Option<u32>,
+        /// 1-based inclusive end line, if a range was given.
+        end_line: Option<u32>,
+    },
+    /// A glob pattern to expand within the root.
+    Glob {
+        /// The extended-glob pattern.
+        pattern: &'a str,
+    },
+}
+
+impl SourceLocator {
+    /// Validate and classify the locator (009 FR-007, data-model v2).
+    ///
+    /// # Errors
+    ///
+    /// [`AppError::InvalidInput`] when neither or both of `path`/`glob` are
+    /// given, or a `glob` carries a line range.
+    pub fn classify(&self) -> Result<LocatorKind<'_>, AppError> {
+        match (self.path.as_deref(), self.glob.as_deref()) {
+            (Some(path), None) => Ok(LocatorKind::Path {
+                path,
+                start_line: self.start_line,
+                end_line: self.end_line,
+            }),
+            (None, Some(pattern)) => {
+                if self.start_line.is_some() || self.end_line.is_some() {
+                    return Err(AppError::InvalidInput(format!(
+                        "a line range is not allowed with a glob: {pattern}"
+                    )));
+                }
+                Ok(LocatorKind::Glob { pattern })
+            }
+            (Some(_), Some(_)) => Err(AppError::InvalidInput(
+                "locator cannot give both a path and a glob".to_string(),
+            )),
+            (None, None) => Err(AppError::InvalidInput(
+                "locator must give a path or a glob".to_string(),
+            )),
+        }
+    }
 }
 
 /// One entry of the evidence manifest — the auditable record of exactly what

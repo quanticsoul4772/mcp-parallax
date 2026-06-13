@@ -163,7 +163,7 @@ src/
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
-├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008)
+├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009)
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing
@@ -200,9 +200,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `008-grounded-verify` — [spec](specs/008-grounded-verify/spec.md) ·
-[plan](specs/008-grounded-verify/plan.md) · [research](specs/008-grounded-verify/research.md) ·
-[data model](specs/008-grounded-verify/data-model.md) · [contracts](specs/008-grounded-verify/contracts/)
+Current feature: `009-glob-locators` — [spec](specs/009-glob-locators/spec.md) ·
+[plan](specs/009-glob-locators/plan.md) · [research](specs/009-glob-locators/research.md) ·
+[data model](specs/009-glob-locators/data-model.md) · [contracts](specs/009-glob-locators/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
