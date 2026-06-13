@@ -39,7 +39,12 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
+      # --tests: linking every example exhausts the runner (each statically
+      # links z3 + aws-lc + the OTel tree; rust-lld dies with SIGBUS once
+      # 007 added two more). Examples are compile-verified without linking
+      # in the next step and exercised manually/live per the quickstarts.
+      - run: cargo test --all-features --tests
+      - run: cargo check --all-features --examples
 
   # Verify the crate still builds on its declared MSRV (Cargo.toml
   # `rust-version`). The other jobs run @stable; without this the real
