@@ -107,10 +107,11 @@ error and no verdict.
 - **FR-003**: Glob expansion MUST be deterministic: the same pattern over an unchanged file set MUST yield the same ordered set, so assembled evidence is identical across repeated calls (preserving 008's determinism guarantee).
 - **FR-004**: Every expanded path MUST be confined to the configured root — re-checked against the canonicalized root so no match can escape via traversal or a symlinked directory — before it is read.
 - **FR-005**: A glob that matches zero files MUST be a loud error naming the pattern; no verdict is rendered.
-- **FR-006**: Glob expansion MUST be subject to the existing per-call ceilings — the maximum locator count and the maximum total evidence bytes. Exceeding either MUST be a loud named error, never a silent truncation.
+- **FR-006**: Glob expansion MUST be subject to the existing per-call ceilings, enforced at the stage each naturally applies: the **locator count** during expansion (the running total of expanded plus literal locators), and the **total evidence bytes** during the read of the expanded set (008's existing total-byte and per-file guards). Exceeding either MUST be a loud named error identifying the cause, never a silent truncation.
 - **FR-007**: A locator that is both a glob and a line range MUST be rejected with a loud named error (a range across multiple files is meaningless).
 - **FR-008**: The whole call remains all-or-nothing: if any expanded file fails to resolve (non-text, unreadable, or any ceiling breach), the entire call fails with a named error and renders no verdict.
 - **FR-009**: The feature MUST add only the new locator shape; the exact-path and line-range code paths, their behaviour, and their tests MUST be unchanged.
+- **FR-010**: Matching MUST be **case-sensitive** (matched against each file's root-relative path, predictable and platform-independent) and MUST **match dotfiles** — `*` and `**` match leading-dot files, since source evidence often lives in dotfiles (`.github/workflows/…`, `.cargo/config.toml`). Extglob groups are **segment-scoped**: an extglob operator (`@()`, `?()`, `*()`, `+()`, `!()`) matches within a single path segment and never crosses a `/`, and `!(p)` matches a segment that does not match `p` (cross-segment recursion is `**`).
 
 ### Key Entities
 

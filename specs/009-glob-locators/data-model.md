@@ -39,8 +39,13 @@ Supported constructs (the clarified grammar):
 | `?(p)` | zero or one |
 | `*(p)` | zero or more |
 | `+(p)` | one or more |
-| `!(p)` | anything that does not match `p` (segment-scoped) |
+| `!(p)` | a single path segment that does NOT match `p` (segment-scoped; never crosses `/`) |
 | leading `!` | negates the whole pattern's match result |
+
+**Matching semantics (FR-010)**: case-sensitive; `*` and `**` match dotfiles
+(leading-dot files are evidence); every extglob group is segment-scoped and
+never crosses `/` (cross-segment recursion is `**` only). `*` matches a run of
+non-`/` characters; `**` matches any number of whole segments.
 
 A malformed pattern (unbalanced `(`/`[`/`{`, empty alternation) is a loud
 `InvalidInput` naming the pattern — never a silent empty match.
