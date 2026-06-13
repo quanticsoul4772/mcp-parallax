@@ -8,6 +8,12 @@
 
 **Input**: User description: "Glob locators for grounded-verify (the deferred slice of 008): a glob pattern as a new source-locator shape, resolved server-side to the matching files within the configured root — deterministic, root-confined, all-or-nothing."
 
+## Clarifications
+
+### Session 2026-06-13
+
+- Q: What glob syntax should 009 support? → A: Full extended globbing — standard globs (`*`, `?`, `[class]`, `**` recursive) plus brace expansion `{a,b}`, extglob (`!(...)`, `+(...)`, `@(...)`, etc.), and negation. (Planning implication: the chosen engine must support this grammar; the standard `glob` crate does not — crate selection is a `/speckit-plan` decision. Zero-match and all-or-nothing rules apply to the *net* expanded set after negation.)
+
 ## User Scenarios & Testing *(mandatory)*
 
 `grounded_verify` (008) lets the caller name source as exact file paths and
@@ -96,7 +102,7 @@ error and no verdict.
 
 ### Functional Requirements
 
-- **FR-001**: A source locator MAY be a glob pattern, in addition to the exact path and file/line range shapes from 008. The existing shapes are unchanged.
+- **FR-001**: A source locator MAY be a glob pattern, in addition to the exact path and file/line range shapes from 008. The existing shapes are unchanged. The supported grammar is full extended globbing: standard wildcards (`*`, `?`, `[class]`, `**` recursive) plus brace expansion (`{a,b}`), extglob operators (`!(...)`, `+(...)`, `@(...)`, `?(...)`, `*(...)`), and negation. Zero-match and ceiling rules apply to the net expanded set.
 - **FR-002**: The server MUST expand a glob, within the single configured source root, to the set of matching files, and treat each match as it treats an exact-path locator — read verbatim, judged as evidence, and recorded as its own manifest entry naming the concrete file (not the pattern).
 - **FR-003**: Glob expansion MUST be deterministic: the same pattern over an unchanged file set MUST yield the same ordered set, so assembled evidence is identical across repeated calls (preserving 008's determinism guarantee).
 - **FR-004**: Every expanded path MUST be confined to the configured root — re-checked against the canonicalized root so no match can escape via traversal or a symlinked directory — before it is read.
@@ -127,4 +133,4 @@ error and no verdict.
 - **The all-or-nothing and confinement guarantees come from 008** — this feature reuses the existing root-confined reader and assembly; the only new machinery is deterministic expansion of a pattern into the concrete file set before assembly.
 - **Text-only and per-file/total byte guards from 008 apply unchanged** to every expanded file.
 - **A glob expands to files, not directories** — directories among the matches are not read as evidence.
-- **Pattern syntax follows a standard, widely-understood glob convention** (e.g. `*`, `**`, `?`, character classes); the exact supported syntax is a planning detail, but `**` recursive matching is in scope since "every file under a subtree" is the motivating case.
+- **Pattern syntax is full extended globbing** (clarified 2026-06-13): standard wildcards plus brace expansion, extglob, and negation. The standard `glob` crate does not cover this grammar, so engine selection (e.g. a crate that supports brace/extglob, or composing one) is a `/speckit-plan` decision — but the *grammar* is fixed here.

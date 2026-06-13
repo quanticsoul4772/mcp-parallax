@@ -32,4 +32,4 @@
 ## Notes
 
 - This is a tightly-scoped follow-on to 008: it adds exactly one locator shape and reuses 008's confinement, all-or-nothing assembly, and byte/locator ceilings. No `[NEEDS CLARIFICATION]` markers were needed — the description fixed the behaviour on every axis (determinism, confinement, zero-match, ceilings, glob+range rejection).
-- One detail deferred to `/speckit-clarify` or `/speckit-plan` rather than blocking the spec: the **exact glob syntax** supported (which metacharacters, case-sensitivity, dotfile handling). The spec fixes that `**` recursive matching is in scope (the motivating case) and leaves the precise grammar as a planning decision, per the no-implementation-detail rule.
+- The glob-syntax question was resolved (Clarifications, 2026-06-13): **full extended globbing** — standard wildcards plus brace expansion, extglob, and negation. The remaining open item is purely a `/speckit-plan` decision: which engine/crate provides that grammar (the standard `glob` crate does not), and case-sensitivity/dotfile defaults — implementation details kept out of the spec.
