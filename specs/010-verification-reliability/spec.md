@@ -8,6 +8,13 @@
 
 **Input**: User description: "Two reliability findings surfaced by dogfooding Parallax against its own codebase. (1) `verify` runs k *identical* passes, so its agreement-derived confidence is near-binary — across 8 live calls, including 5 deliberately borderline claims, it returned 1.0 every time; the graduated-confidence signal it advertises does not materialize. (2) `grounded_verify` routed a *computable* claim (a file's line count) to judgment passes, which estimated wrong and returned a confident refutation (confidence 1.0) of a true claim — while its own missing-evidence field said an exact count was needed. Fix both: lens-diversify verify's passes so confidence is a real signal; make grounded_verify settle computable sub-claims deterministically or abstain, and bound its confidence by its own missing-evidence signal."
 
+## Clarifications
+
+### Session 2026-06-13
+
+- Q: For a computable sub-claim, should grounded_verify compute it or abstain in v1? → A: **Abstain + route** — detect computability by reusing the `check` layer's existing checkability classifier (005), and return an explicit route-to-`check` result. v1 does **not** compute the property; actually settling it via the `check` engine over the read bytes is a named follow-up.
+- Q: How is an inconclusive / abstained / evidence-missing result surfaced? → A: An explicit **`inconclusive`** verdict value on grounded_verify's server-assembled output. The per-pass output schema and `verify`'s supported/refuted output are unchanged (verify gains only graduated confidence, no new verdict value).
+
 ## User Scenarios & Testing *(mandatory)*
 
 Parallax exists to catch the calling model's confidently-wrong reasoning. Dogfooding
@@ -104,13 +111,12 @@ evidence does not report confidence 1.0. Testable through tool output alone.
 **Acceptance Scenarios**:
 
 1. **Given** a claim whose truth is a computable property of the named source (e.g.
-   "file X has more than N lines"), **When** `grounded_verify` runs, **Then** the
-   property is decided by deterministic computation over the read bytes, or the tool
-   returns an explicit not-judgment-verifiable signal — **never** a confident judgment
-   verdict it did not compute.
+   "file X has more than N lines"), **When** `grounded_verify` runs, **Then** the tool
+   detects the claim is computable and returns an explicit `inconclusive` verdict routing
+   the caller to `check` — **never** a confident judgment verdict it did not compute.
 2. **Given** the reproduction case — claim "`src/server.rs` exceeds 1000 lines", file is
-   1224 lines — **When** `grounded_verify` runs, **Then** it returns `supported` (or an
-   explicit abstention), and **does not** return `refuted` at confidence 1.0.
+   1224 lines — **When** `grounded_verify` runs, **Then** it returns the `inconclusive`
+   verdict (route to `check`), and **does not** return `refuted` at confidence 1.0.
 3. **Given** a run whose passes flag the decisive evidence as missing
    (`missing_evidence` non-empty and decisive), **When** the verdict is aggregated,
    **Then** the reported confidence is bounded below maximal — a confident verdict is
@@ -149,18 +155,25 @@ evidence does not report confidence 1.0. Testable through tool output alone.
   majority side, confidence = majority/completed, sub-quorum → dominant failure — MUST
   have deterministic test coverage driven by constructed vote vectors, independent of
   organic pass disagreement.
-- **FR-005**: `grounded_verify` MUST settle a **computable** sub-claim (counts,
-  presence/absence, numeric comparison over the read text) by deterministic computation
-  over the bytes it read, OR return an explicit not-judgment-verifiable signal — it MUST
-  NOT emit a confident judgment verdict on a property it did not compute.
-- **FR-006**: `grounded_verify`'s reported confidence MUST be bounded by its own
-  missing-evidence signal: a run whose `missing_evidence` names decisive missing
-  evidence MUST NOT report maximal confidence.
+- **FR-005**: When a claim's truth is a **computable** property (counts,
+  presence/absence, numeric comparison over the read text), `grounded_verify` MUST
+  detect it — reusing the `check` layer's checkability classifier (005) — and return an
+  explicit `inconclusive` verdict routing the caller to `check`, rather than emitting a
+  judgment verdict on a property it did not compute. (Actually settling the property via
+  the `check` engine over the read bytes is a **named follow-up**, not v1.)
+- **FR-006**: A `grounded_verify` run whose `missing_evidence` names decisive missing
+  evidence MUST NOT emit a confident supported/refuted verdict — it MUST return the
+  `inconclusive` verdict instead (the confidence bound realized as an explicit
+  non-decision, not a quietly-capped number).
 - **FR-007**: `grounded_verify` MUST preserve the stance-blind judgment path unchanged
   for genuine judgment claims about source content.
 - **FR-008**: Both fixes MUST ship with acceptance tests that reproduce the two
   dogfooding cases (the all-1.0 borderline battery for US1; the `server.rs` line-count
   miss for US2).
+- **FR-009**: `grounded_verify`'s server-assembled output gains an explicit
+  **`inconclusive`** verdict value (alongside supported/refuted) for the
+  abstain-on-computable (FR-005) and decisive-evidence-missing (FR-006) cases. The
+  per-pass constrained-output schema and `verify`'s verdict set are **unchanged**.
 
 ### Key Entities
 
@@ -180,11 +193,12 @@ evidence does not report confidence 1.0. Testable through tool output alone.
   **0 of 8** observed — demonstrating the signal is graduated.
 - **SC-002**: `verify` retains **100%** of its current correct verdicts on the
   regression set (named-error refutation, no over-refutation, authority-blindness).
-- **SC-003**: The reproduction claim "`src/server.rs` exceeds 1000 lines" returns a
-  correct or explicitly-abstaining result — **never** a confident refutation — for the
-  actual 1224-line file.
-- **SC-004**: `grounded_verify` reports maximal confidence on **0%** of runs whose own
-  missing-evidence list names decisive missing evidence.
+- **SC-003**: The reproduction claim "`src/server.rs` exceeds 1000 lines" returns the
+  `inconclusive` (abstain → route to `check`) result — **never** a confident refutation —
+  for the actual 1224-line file.
+- **SC-004**: `grounded_verify` emits a confident supported/refuted verdict on **0%** of
+  runs whose own missing-evidence list names decisive missing evidence — such runs return
+  `inconclusive`.
 - **SC-005**: The `verify` split / tie / sub-quorum aggregation branches each have direct
   passing unit coverage.
 
@@ -192,9 +206,11 @@ evidence does not report confidence 1.0. Testable through tool output alone.
 
 - The model client and the native-structured-output contract are unchanged; this feature
   changes pass *orchestration* and *verdict assembly*, not the provider API.
-- The concrete lens set, the lens↔`k` assignment rule, and the computable-claim
-  decomposition/computation mechanism are **`/speckit-plan` decisions** (mirroring how
-  009 deferred engine/crate choice to planning).
+- The concrete lens set and the lens↔`k` assignment rule are **`/speckit-plan`
+  decisions** (mirroring how 009 deferred engine/crate choice to planning). The
+  computable-claim handling is settled (clarification): v1 **abstains and routes** to
+  `check`, detecting computability via the `check` layer's classifier; actually computing
+  the property is a deferred follow-up.
 - `VERIFY_ENSEMBLE_K` semantics (default 3, the quorum rule) are unchanged; only what
   each pass does differs.
 - `grounded_verify`'s root-confinement, locator model (008/009), and evidence manifest
