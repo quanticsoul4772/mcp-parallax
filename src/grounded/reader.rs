@@ -14,17 +14,23 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct SystemSourceReader {
     root: PathBuf,
+    /// Per-file ceiling: a file larger than this is rejected by metadata
+    /// *before* it is read into memory, so a single oversized locator cannot
+    /// spike memory ahead of the assembly stage's total-bytes check. Set to the
+    /// per-call evidence ceiling (`GROUNDED_VERIFY_MAX_BYTES`).
+    max_file_bytes: u64,
 }
 
 impl SystemSourceReader {
-    /// Canonicalize `root` once and confirm it is a directory.
+    /// Canonicalize `root` once and confirm it is a directory. `max_file_bytes`
+    /// caps any single read (the per-call evidence ceiling).
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Config`] (`GROUNDED_VERIFY_ROOT`) when the root does
     /// not exist or is not a directory — a startup misconfiguration, loud and
     /// named.
-    pub fn new(root: &str) -> Result<Self, AppError> {
+    pub fn new(root: &str, max_file_bytes: usize) -> Result<Self, AppError> {
         let canonical = std::fs::canonicalize(root)
             .map_err(|_| AppError::Config(ConfigError::Invalid("GROUNDED_VERIFY_ROOT")))?;
         if !canonical.is_dir() {
@@ -32,7 +38,10 @@ impl SystemSourceReader {
                 "GROUNDED_VERIFY_ROOT",
             )));
         }
-        Ok(Self { root: canonical })
+        Ok(Self {
+            root: canonical,
+            max_file_bytes: max_file_bytes as u64,
+        })
     }
 
     /// Resolve a relative path within the root, rejecting any escape.
@@ -66,6 +75,17 @@ impl SourceReader for SystemSourceReader {
         };
 
         let resolved = self.resolve(path)?;
+        // Reject an oversized file by metadata before reading it into memory.
+        let on_disk = std::fs::metadata(&resolved)
+            .map_err(|_| AppError::InvalidInput(format!("source not found: {path}")))?
+            .len();
+        if on_disk > self.max_file_bytes {
+            return Err(AppError::InvalidInput(format!(
+                "source '{path}' is {on_disk} bytes, over the per-file limit of {} \
+                 (GROUNDED_VERIFY_MAX_BYTES); raise the ceiling to read it",
+                self.max_file_bytes
+            )));
+        }
         let raw = std::fs::read(&resolved)
             .map_err(|_| AppError::InvalidInput(format!("source not found: {path}")))?;
         let text = String::from_utf8(raw)
@@ -138,7 +158,7 @@ mod tests {
     }
 
     fn reader(dir: &tempfile::TempDir) -> SystemSourceReader {
-        SystemSourceReader::new(dir.path().to_str().unwrap()).unwrap()
+        SystemSourceReader::new(dir.path().to_str().unwrap(), 262_144).unwrap()
     }
 
     #[test]
@@ -232,7 +252,15 @@ mod tests {
 
     #[test]
     fn nonexistent_root_is_a_config_error() {
-        let err = SystemSourceReader::new("/definitely/not/a/real/dir/xyzzy").unwrap_err();
+        let err = SystemSourceReader::new("/definitely/not/a/real/dir/xyzzy", 262_144).unwrap_err();
         assert!(matches!(err, AppError::Config(_)));
+    }
+
+    #[test]
+    fn a_file_over_the_per_file_limit_is_rejected_before_read() {
+        let dir = root_with(&[("big.rs", "0123456789")]); // 10 bytes
+        let reader = SystemSourceReader::new(dir.path().to_str().unwrap(), 5).unwrap();
+        let err = reader.read("big.rs", None, None).unwrap_err();
+        assert!(err.to_string().contains("per-file limit"), "{err}");
     }
 }

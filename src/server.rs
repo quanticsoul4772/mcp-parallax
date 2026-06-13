@@ -130,6 +130,7 @@ impl Parallax {
     /// # Errors
     ///
     /// Propagates the registry's flat+closed schema assertion.
+    #[allow(clippy::too_many_lines)] // linear capability-wiring composition root
     pub fn with_capabilities(
         client: Arc<dyn ModelClient>,
         storage: Arc<dyn Storage>,
@@ -205,7 +206,10 @@ impl Parallax {
         let grounded = match &config.grounded_verify_root {
             Some(root) => Some(Arc::new(GroundedDeps {
                 model_client: Arc::clone(&client),
-                reader: Arc::new(crate::grounded::reader::SystemSourceReader::new(root)?),
+                reader: Arc::new(crate::grounded::reader::SystemSourceReader::new(
+                    root,
+                    config.grounded_verify_max_bytes,
+                )?),
                 mode: mode(GROUNDED_VERIFY_ID)?,
                 limits: crate::grounded::AssemblyLimits {
                     max_bytes: config.grounded_verify_max_bytes,
