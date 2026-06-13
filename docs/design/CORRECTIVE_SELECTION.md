@@ -51,6 +51,14 @@ multi-round debate. This routing earns its keep because the server knows things 
 client doesn't — whether a claim is checkable, what each path costs. *This* is the
 routing worth building.
 
+A verification claim splits one level deeper (008): if the caller can name the
+**source** the claim should be judged against — files, line ranges — route to
+**`grounded-verify`**, which reads that verbatim source server-side so the caller
+cannot paraphrase or bias the evidence. Plain `verify` remains right when the
+evidence is the caller's own prose (no nameable source) and `check` when the claim is
+executable. The selection cue: *is there a verbatim source the model shouldn't be
+trusted to summarize?* If yes, ground the verification.
+
 ### 3. Escalation — cascades. Keep it, but on a **reliable** signal
 
 Try cheap first, escalate on the cheap result's own uncertainty. It's the most robust

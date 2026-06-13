@@ -61,6 +61,16 @@ pub struct Config {
     /// `CHECKPOINT_GATE_PATTERNS`, default empty. A present value with an
     /// empty entry (`"a,,b"`) is an error, never silently skipped.
     pub checkpoint_gate_patterns: Vec<String>,
+    /// The single source root for the `grounded_verify` tool (008). **Optional
+    /// — its presence enables the tool**; absent, the tool does not exist and
+    /// no file-read path is ever taken. `GROUNDED_VERIFY_ROOT`.
+    pub grounded_verify_root: Option<String>,
+    /// Total assembled-evidence byte ceiling for one `grounded_verify` call.
+    /// `GROUNDED_VERIFY_MAX_BYTES`, default `262144` (256 KiB).
+    pub grounded_verify_max_bytes: usize,
+    /// Maximum locators accepted in one `grounded_verify` call.
+    /// `GROUNDED_VERIFY_MAX_LOCATORS`, default `64`.
+    pub grounded_verify_max_locators: usize,
     /// Path to the SQLite database file. `DATABASE_PATH`, default `./data/parallax.db`.
     pub database_path: String,
     /// Log-level filter. `LOG_LEVEL`, default `info`.
@@ -113,6 +123,11 @@ impl Config {
         let fetch_allow_private = parse_env("FETCH_ALLOW_PRIVATE", false)?;
         let checkpoint_gate_patterns =
             parse_gate_patterns(std::env::var("CHECKPOINT_GATE_PATTERNS").ok().as_deref())?;
+        let grounded_verify_root = std::env::var("GROUNDED_VERIFY_ROOT")
+            .ok()
+            .filter(|root| !root.trim().is_empty());
+        let grounded_verify_max_bytes = parse_env("GROUNDED_VERIFY_MAX_BYTES", 262_144_usize)?;
+        let grounded_verify_max_locators = parse_env("GROUNDED_VERIFY_MAX_LOCATORS", 64_usize)?;
         let database_path =
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/parallax.db".to_string());
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
@@ -132,6 +147,9 @@ impl Config {
             research_concurrency,
             fetch_allow_private,
             checkpoint_gate_patterns,
+            grounded_verify_root,
+            grounded_verify_max_bytes,
+            grounded_verify_max_locators,
             database_path,
             log_level,
             request_timeout_ms,
