@@ -51,6 +51,16 @@ server, an embedding timeout — all degrade to silence (recorded with
 Claude Code itself ignores failing hook handlers. A broken checkpoint layer
 cannot block your session.
 
+## Telemetry
+
+If a standard OpenTelemetry endpoint is configured
+(`OTEL_EXPORTER_OTLP_ENDPOINT` — note these variables are shared across
+OTel-aware processes by design, so a globally set endpoint enables Parallax
+too), every checkpoint evaluation also exports a span + metrics (boundary,
+verdict, suppression, fail-open — never evidence text), so flag/hold/noise
+rates are chartable in any OTLP backend. See
+`specs/007-observability-layer/contracts/telemetry.md`.
+
 ## Audit
 
 ```bash

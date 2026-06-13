@@ -65,6 +65,9 @@ impl RecordGuard {
             self.started_at,
         );
         record.emit();
+        // One measurement, two sinks (007 FR-009): telemetry derives from
+        // the same record value at the same exit point, fire-and-forget.
+        crate::observability::emit_invocation(&record);
         if let Err(e) = self.storage.record_invocation(&record).await {
             // The record write itself failed — surface loudly on the
             // diagnostic stream; never on the protocol channel.
@@ -91,6 +94,7 @@ impl Drop for RecordGuard {
             self.started_at,
         );
         record.emit();
+        crate::observability::emit_invocation(&record);
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {

@@ -1732,3 +1732,241 @@ async fn checkpoint_action_passes_non_risk_and_continuation_turns_are_silent() {
 
     client.cancel().await.unwrap();
 }
+
+// ---- 007-observability-layer ---------------------------------------------
+
+/// T005 + T007: spans and metrics derived from the records, end to end
+/// through the real server (in-memory exporters injected through the SDK's
+/// own exporter abstraction). One process-global telemetry init — this is
+/// the single enabled-path test; every other test's emissions land in the
+/// same in-memory sink harmlessly, so assertions filter by this test's
+/// session id. (Strict telemetry==records rate equality runs in the
+/// acceptance example, which owns a clean process.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)] // one process-global telemetry init = one comprehensive test
+async fn telemetry_spans_match_the_stored_records() {
+    use mcp_parallax::observability;
+    use opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
+
+    let span_exporter = InMemorySpanExporter::default();
+    let metric_exporter = InMemoryMetricExporter::default();
+    let guard = observability::init_with_exporters(
+        span_exporter.clone(),
+        metric_exporter.clone(),
+        "itest-instance",
+    );
+
+    // A successful verify (3-pass ensemble via the wiremock Anthropic).
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "verdict": "supported", "findings": []
+        }))))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+    client
+        .call_tool(tool_call("verify", &json!({ "claim": "telemetry twin" })))
+        .await
+        .unwrap();
+
+    // A checkpoint flag (seeded loop transcript).
+    let dir = tempfile::tempdir().unwrap();
+    let transcript = write_transcript(
+        dir.path(),
+        "otlp-loop",
+        &[
+            ("cargo test", true),
+            ("cargo test", true),
+            ("cargo test", true),
+            ("cargo test", true),
+        ],
+    );
+    client
+        .call_tool(tool_call(
+            "checkpoint_batch",
+            &json!({ "session_id": "otlp-loop", "transcript_path": transcript }),
+        ))
+        .await
+        .unwrap();
+
+    guard.flush();
+
+    // --- invocation span == stored record, field for field (SC-001) ---
+    let invocation = storage
+        .list_invocations()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.tool == "verify")
+        .expect("verify record stored");
+    let spans = span_exporter.get_finished_spans().unwrap();
+    let attr = |attrs: &[opentelemetry::KeyValue], key: &str| -> Option<String> {
+        attrs
+            .iter()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| kv.value.to_string())
+    };
+    let span = spans
+        .iter()
+        .find(|s| {
+            s.name == "parallax.verify"
+                && attr(&s.attributes, "parallax.session_id").as_deref()
+                    == Some(invocation.session_id.as_str())
+        })
+        .expect("invocation span exported");
+    assert_eq!(
+        attr(&span.attributes, "gen_ai.request.model").as_deref(),
+        Some(invocation.model.as_str())
+    );
+    assert_eq!(
+        attr(&span.attributes, "gen_ai.usage.input_tokens").as_deref(),
+        Some(invocation.input_tokens.to_string().as_str())
+    );
+    assert_eq!(
+        attr(&span.attributes, "gen_ai.usage.output_tokens").as_deref(),
+        Some(invocation.output_tokens.to_string().as_str())
+    );
+    assert_eq!(
+        attr(&span.attributes, "parallax.outcome").as_deref(),
+        Some("success")
+    );
+    assert_eq!(
+        attr(&span.attributes, "parallax.cost_usd").as_deref(),
+        Some(invocation.cost_usd.to_string().as_str())
+    );
+    // Retroactive timing equals the record's window.
+    let end: std::time::SystemTime = invocation.created_at.into();
+    assert_eq!(span.end_time, end);
+    assert_eq!(
+        span.start_time,
+        end - std::time::Duration::from_millis(invocation.latency_ms)
+    );
+
+    // --- checkpoint span == stored audit row (FR-008: kinds, no evidence) ---
+    let checkpoint = storage
+        .list_checkpoints()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.session_id == "otlp-loop")
+        .expect("checkpoint row stored");
+    assert_eq!(checkpoint.verdict.as_str(), "flag");
+    let cp_span = spans
+        .iter()
+        .find(|s| {
+            s.name == "parallax.checkpoint.batch"
+                && attr(&s.attributes, "parallax.session_id").as_deref() == Some("otlp-loop")
+        })
+        .expect("checkpoint span exported");
+    assert_eq!(
+        attr(&cp_span.attributes, "parallax.checkpoint.verdict").as_deref(),
+        Some("flag")
+    );
+    for kv in &cp_span.attributes {
+        assert!(
+            !kv.value.to_string().contains("invoked 4 times"),
+            "evidence leaked into checkpoint span attribute {}",
+            kv.key
+        );
+    }
+
+    // --- metric instruments present with our scenario's series ---
+    let metrics = metric_exporter.get_finished_metrics().unwrap();
+    let names: Vec<String> = metrics
+        .iter()
+        .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+        .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+        .map(|m| m.name().to_string())
+        .collect();
+    for expected in [
+        "parallax.invocations",
+        "parallax.invocation.duration",
+        "parallax.cost",
+        "gen_ai.client.token.usage",
+        "parallax.checkpoint.evaluations",
+        "parallax.checkpoint.duration",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "missing metric {expected}: {names:?}"
+        );
+    }
+
+    client.cancel().await.unwrap();
+}
+
+/// T008(a)(b)(c): the spawn-the-binary smoke test with telemetry enabled
+/// against an UNREACHABLE collector — env-driven init for real, identical
+/// protocol behavior, stdout carries only protocol frames, and the process
+/// exits within the bounded flush window instead of hanging (FR-006/007/010,
+/// SC-004's session-level half).
+#[test]
+#[allow(clippy::panic)] // deadline violation IS the test failure
+fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let db = std::env::temp_dir().join(format!("parallax-otlp-smoke-{}.db", uuid::Uuid::new_v4()));
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mcp-parallax"))
+        .env("ANTHROPIC_API_KEY", "dummy-key-no-model-call-happens")
+        .env_remove("VOYAGE_API_KEY")
+        .env_remove("BRAVE_API_KEY")
+        // Telemetry ON, collector unreachable (nothing listens on port 9).
+        .env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
+        .env("DATABASE_PATH", db.to_string_lossy().to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("binary spawns");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18","capabilities":{{}},"clientInfo":{{"name":"smoke","version":"0"}}}}}}"#
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    stdout.read_line(&mut line).unwrap();
+    let init: Value = serde_json::from_str(&line).expect("first stdout line is JSON-RPC");
+    assert_eq!(init["jsonrpc"], "2.0");
+
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
+    )
+    .unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list"}}"#).unwrap();
+    stdin.flush().unwrap();
+
+    line.clear();
+    stdout.read_line(&mut line).unwrap();
+    let tools: Value = serde_json::from_str(&line).expect("tools/list reply is JSON-RPC");
+    // Behavior identical to a telemetry-disabled run: full default catalog.
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 6);
+
+    // Close stdin -> transport EOF -> graceful shutdown path runs the
+    // telemetry flush against the dead collector. The process must exit
+    // within the bounded window, not hang (FR-010).
+    drop(stdin);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        match child.try_wait().expect("wait") {
+            Some(status) => {
+                assert!(status.success(), "clean exit, got {status:?}");
+                break;
+            }
+            None if std::time::Instant::now() > deadline => {
+                let _ = child.kill();
+                panic!("process hung past the bounded flush window with a dead collector");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+    let _ = std::fs::remove_file(&db);
+}

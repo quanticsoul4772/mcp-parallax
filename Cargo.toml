@@ -54,6 +54,24 @@ robotstxt = "0.3.0"
 z3 = { version = "0.20", features = ["bundled"] }
 evalexpr = "13"
 
+# Observability: OTLP export (007) — the 0.32 release train, pinned together
+# (the ecosystem breaks API across minors; research.md 007 D1). http-proto +
+# blocking reqwest is the documented pairing for the SDK's background-thread
+# batch processors; rustls rides the in-tree stack; no tonic, no protoc.
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32.1", features = ["trace", "metrics"] }
+# (the `reqwest-rustls-webpki-roots` feature is incompatible with reqwest
+# 0.13's renamed features — S1 finding; TLS comes from the workspace-unified
+# reqwest `rustls` feature instead)
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+    "trace",
+    "metrics",
+    "http-proto",
+    "reqwest-blocking-client",
+    "internal-logs",
+] }
+opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_experimental"] }
+
 [dev-dependencies]
 # Trait mocking — the whole server tests without network or disk
 mockall = "0.14"
@@ -61,6 +79,11 @@ rmcp = { version = "1.7.0", features = ["client"] }
 wiremock = "0.6.5"
 # Transcript fixtures for FsTrajectoryReader tests (checkpoint layer)
 tempfile = "3"
+# In-memory span/metric exporters for observability tests (007) — no network
+opentelemetry_sdk = { version = "0.32.1", features = ["trace", "metrics", "testing"] }
+# Decode OTLP protobuf payloads in the acceptance example (007 T009)
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace", "metrics"] }
+prost = "0.14"
 
 [lints.rust]
 unsafe_code = "forbid"

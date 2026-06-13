@@ -54,7 +54,7 @@ convention.
 | Deterministic — code exec | **wasmtime** in-proc; microsandbox/E2B for Python | `wasmtime`; E2B/microsandbox (opt-in) | sandbox is non-negotiable; §deterministic |
 | Research — search | **Brave** (default) or **Tavily** (answers+cites) | Brave Search API / Tavily | Brave: lowest latency (~669ms); you already have the Brave MCP |
 | Research — fetch/extract | **rs-trafilatura** (local) or Firecrawl (managed) | `rs-trafilatura` / `article_scraper` | local extraction avoids a second API |
-| Observability | **OpenTelemetry + OTLP** | `opentelemetry`, `opentelemetry-otlp`, `tracing-opentelemetry` | GenAI semantic conventions exist; feeds the watchdog/dashboard |
+| Observability | **OpenTelemetry + OTLP** (0.32 train, shipped in 007) | `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` (http-proto; no bridge crates — telemetry derives from the records) | GenAI semantic conventions on spans/metrics; export story only (the watchdog feeds on hooks per the 2026-06-12 amendment) |
 
 ---
 
@@ -222,7 +222,16 @@ pipeline.
 
 - **OpenTelemetry (Rust) + OTLP** — `opentelemetry`, `opentelemetry-otlp`,
   `tracing-opentelemetry` (bridges the existing `tracing` to OTel), and
-  `opentelemetry-appender-tracing`. **GenAI semantic conventions exist as of 2026**
+  `opentelemetry-appender-tracing`. *Amended 2026-06-12 (007 shipped):* the
+  bridge crates were **dropped** — telemetry derives directly from the
+  per-call records at their write points (one measurement, two sinks), so no
+  `tracing`-to-OTel bridge exists; the validated stack is the **0.32 train**
+  (`opentelemetry` + `opentelemetry_sdk` + `opentelemetry-otlp` with
+  `http-proto` + blocking reqwest — no tonic/protoc; the
+  `reqwest-rustls-webpki-roots` feature is incompatible with reqwest 0.13,
+  TLS rides the unified workspace `rustls`). `OTEL_SDK_DISABLED` is not
+  implemented by the Rust SDK (upstream #1936) and is honored app-side.
+  **GenAI semantic conventions exist as of 2026**
   (`gen_ai.request.model`, `gen_ai.usage.input_tokens`/`output_tokens`,
   `gen_ai.response.finish_reasons`, message attributes) — so token/model/cost/latency
   are *standard span attributes*, satisfying the design's "observability designed in

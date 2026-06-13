@@ -34,7 +34,11 @@ the thesis: a second vantage point reveals what one frame can't.
 > [`integrations/claude-code/`](integrations/claude-code/README.md) to enable
 > the sensor plane (live-verified — `examples/spike_hooks.md`); everything
 > fails open and never rewrites the model's work. Every invocation is recorded (tool, model, tokens, cost, latency,
-> outcome) in SQLite.
+> outcome) in SQLite — and, when a standard OpenTelemetry endpoint is
+> configured, exported as **OTLP traces and metrics** (GenAI semantic
+> conventions; spans and metrics are derived from the same records, so the
+> two surfaces cannot disagree; telemetry failures never affect the
+> server).
 >
 > Research cost note: records carry summed LLM tokens; Brave bills
 > per-request, so its fee is not in `cost_usd` (a named inexactness).
@@ -87,6 +91,8 @@ cargo clippy -- -D warnings
 | `LOG_LEVEL` | no | `info` | `error\|warn\|info\|debug\|trace` |
 | `REQUEST_TIMEOUT_MS` | no | `30000` | Per-request timeout (ms) |
 | `MAX_RETRIES` | no | `3` | Maximum API retry attempts |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | unset | Presence enables OTLP telemetry export (traces + metrics); the full standard `OTEL_*` family is honored. **Note:** these variables are shared across OTel-aware processes by design — a globally set endpoint enables Parallax too (exported data is record metadata only: never input text, memory/transcript content, or credentials). 0.32 gotcha: schemeless endpoints default to `https` — use an explicit `http://localhost:4318` for local collectors |
+| `OTEL_SDK_DISABLED` | no | unset | `true` (case-insensitive) force-disables telemetry regardless of endpoint (honored app-side) |
 
 ## Conventions (carried over from `mcp-reasoning`, enforced)
 

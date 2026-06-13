@@ -13,7 +13,7 @@ vantage point reveals what one frame can't. It is a **catalog of correctives for
 calling model's predictable failure modes** — metacognition the model can't run on
 itself.
 
-**Status: core + memory + research + deterministic + checkpoint layers.** The server
+**Status: all corpus layers built — core + memory + research + deterministic + checkpoint + observability.** The server
 speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
 passes, agreement-derived confidence), **`unstick`** (one committed next
 step, single pass), **`check`** (always on, no gate — pure in-process
@@ -34,7 +34,13 @@ layer's only model hop), always in the catalog but **off by default** — the
 sensor plane is an installable hooks config in `integrations/claude-code/`
 (live-verified by the S1 spike, `examples/spike_hooks.md`); verdicts are
 silence/flag/hold, server-assembled, fail-open, one `checkpoint_records`
-audit row per evaluation. One invocation record per call in SQLite. Build
+audit row per evaluation. One invocation record per call in SQLite;
+**OTLP export** (gated on the standard `OTEL_EXPORTER_OTLP_ENDPOINT` —
+unset means no providers, no egress) mirrors every invocation record and
+checkpoint record as traces + metrics with GenAI semconv names, derived at
+the same exit points so the surfaces cannot disagree
+(`specs/007-observability-layer/contracts/telemetry.md` is the exported
+surface). Build
 note: `z3` (bundled) needs cmake — first clean build ~5 min; on Windows set
 `CMAKE` to the VS Build Tools cmake path. Feature artifacts:
 `specs/001-core-layer/` through `specs/006-checkpoint-layer/`.
@@ -115,7 +121,10 @@ substrings extending the gate's built-in risk patterns), `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
 `REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
 A present-but-unparseable value is an error, never a silent fallback to the
-default.
+default. Telemetry is enabled solely by the standard OTel variables
+(`OTEL_EXPORTER_OTLP_ENDPOINT` et al.; `OTEL_SDK_DISABLED=true` honored
+app-side, OTel-spec lenient semantics — the one named exception to the
+loud-malformed convention).
 
 ## Conventions (carried over from `mcp-reasoning`, compiler-enforced)
 
@@ -184,9 +193,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `006-checkpoint-layer` — [spec](specs/006-checkpoint-layer/spec.md) ·
-[plan](specs/006-checkpoint-layer/plan.md) · [research](specs/006-checkpoint-layer/research.md) ·
-[data model](specs/006-checkpoint-layer/data-model.md) · [contracts](specs/006-checkpoint-layer/contracts/)
+Current feature: `007-observability-layer` — [spec](specs/007-observability-layer/spec.md) ·
+[plan](specs/007-observability-layer/plan.md) · [research](specs/007-observability-layer/research.md) ·
+[data model](specs/007-observability-layer/data-model.md) · [contracts](specs/007-observability-layer/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
