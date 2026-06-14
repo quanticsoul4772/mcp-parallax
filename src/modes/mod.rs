@@ -6,6 +6,7 @@
 //! makes the pattern visible (research.md 002 D3). Adding a mode is a registry
 //! entry plus its run function — not a new subsystem.
 
+pub mod grounded_compute;
 pub mod grounded_verify;
 pub mod unstick;
 pub mod verify;

@@ -9,8 +9,9 @@
 //! `missing_evidence` field, and the manifest are new.
 
 use crate::error::AppError;
-use crate::grounded::assemble::assemble;
+use crate::grounded::assemble::{assemble, RawUnit};
 use crate::grounded::{AssemblyLimits, ManifestEntry, SourceLocator};
+use crate::modes::grounded_compute::{agreed_spec, settle};
 use crate::modes::verify::{aggregate_core, VerdictKind};
 use crate::modes::{CorrectiveMode, ModeRegistry};
 use crate::schema::validate;
@@ -86,7 +87,17 @@ const PROMPT_TEMPLATE: &str = "You are an independent verifier. Judge the claim 
     matches, a byte/size measure, or a numeric comparison that depends on such a count. In that \
     case a deterministic engine, not a reader's estimate, must decide it. Set it false for ordinary \
     judgment claims about what the source says or does.\n\
-    5. Findings and missing_evidence entries are self-contained single sentences.\n\
+    5. When (and only when) you set `needs_computation`, also describe the computation so the engine \
+    can run it: set `compute_property` to one of \"lines\", \"bytes\", or \"matches\"; \
+    `compute_match_literal` to the exact string to count (only for \"matches\", else null); \
+    `compute_operator` to one of \">\", \">=\", \"<\", \"<=\", \"==\", \"!=\"; and \
+    `compute_threshold` to the integer the claim compares against. If the claim's computable part \
+    is none of line/byte/match counts, leave these null - the server will route it onward. Never \
+    state the counted value or the final verdict yourself; only name what to count and the bound.\n\
+    6. When you set `needs_computation`, set `verdict` to \"supported\" and leave `findings` empty - \
+    your verdict is not used for a computed claim; the engine decides. Do NOT add a refutation \
+    finding for a computable claim.\n\
+    7. Findings and missing_evidence entries are self-contained single sentences.\n\
     \n\
     Claim to verify:\n<<claim>>\n\
     \n\
@@ -122,6 +133,17 @@ pub struct GroundedPass {
     /// **only** abstain trigger (010, FR-005/FR-006): a majority routes the
     /// claim to the deterministic `check` layer instead of judging it.
     pub needs_computation: bool,
+    /// What to count (011): `"lines"` | `"bytes"` | `"matches"`, else null.
+    /// A **nullable string**, not an enum — `Option<enum>` would emit `anyOf`,
+    /// which the flat-schema gate rejects; the closed set is server-validated.
+    pub compute_property: Option<String>,
+    /// The literal to count, for `compute_property == "matches"` (011); null otherwise.
+    pub compute_match_literal: Option<String>,
+    /// The comparison the claim asserts (011): `">"` | `">="` | `"<"` | `"<="`
+    /// | `"=="` | `"!="`, else null. Nullable string, server-validated (see above).
+    pub compute_operator: Option<String>,
+    /// The numeric bound the claim compares against (011); null otherwise.
+    pub compute_threshold: Option<i64>,
 }
 
 /// The server-assembled output verdict (010).
@@ -172,6 +194,14 @@ pub struct GroundedVerdict {
     /// Why the verdict is `inconclusive` (route-to-`check`); absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The comparison the engine decided (e.g. `1224 > 1000`), present only on a
+    /// settled compute verdict (011); absent on judgment and abstain paths.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executed_form: Option<String>,
+    /// The engine's raw result text for a settled compute verdict (011); absent
+    /// otherwise. Mirrors `check`'s auditable output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine_result: Option<String>,
 }
 
 /// One grounded-verify run: the verdict plus summed usage for the record.
@@ -251,7 +281,12 @@ pub async fn run(
         futures::future::join_all((0..mode.ensemble_k).map(|_| one_pass(client, mode, &prompt)))
             .await;
 
-    aggregate(passes, mode.ensemble_k, assembled.manifest)
+    aggregate(
+        passes,
+        mode.ensemble_k,
+        assembled.manifest,
+        &assembled.units,
+    )
 }
 
 /// One blind pass: constrained completion → local validation → typed pass.
@@ -275,24 +310,35 @@ async fn one_pass(
 }
 
 /// Aggregate: union the completeness signals, count the abstain self-reports,
-/// then share verify's verdict math. `needs_computation` (a majority of
-/// completed passes) is the **only** abstain trigger — it overrides the
-/// supported/refuted verdict with `inconclusive` (route to `check`); a non-empty
-/// `missing_evidence` is carried through as advisory and never abstains (010).
+/// then either **settle** a computable claim (011) or share verify's verdict
+/// math. `needs_computation` (a majority of completed passes) routes to compute:
+/// an agreed in-class single-source purely-computable spec is counted and
+/// settled by the engine; otherwise it abstains with `inconclusive` (010). A
+/// non-empty `missing_evidence` is carried through as advisory and never abstains.
 fn aggregate(
     passes: Vec<Result<(GroundedPass, u64, u64), AppError>>,
     k: u8,
     manifest: Vec<ManifestEntry>,
+    units: &[RawUnit],
 ) -> Result<GroundedRun, AppError> {
     // Completeness is the union/dedup of every completed pass's missing list;
-    // tally the abstain self-reports over the same completed passes.
+    // tally the abstain self-reports and collect the `needs_computation` passes
+    // (for the compute spec) over the same completed passes.
     let mut missing_evidence: Vec<String> = Vec::new();
     let mut completed = 0_usize;
     let mut needs_computation = 0_usize;
+    let mut nc_passes: Vec<&GroundedPass> = Vec::new();
+    // A computable pass should carry no judgment finding (analyze M1/M2); if one
+    // does, the claim is compound — settle nothing, abstain (M2).
+    let mut compound = false;
     for (pass, _, _) in passes.iter().filter_map(|p| p.as_ref().ok()) {
         completed += 1;
         if pass.needs_computation {
             needs_computation += 1;
+            nc_passes.push(pass);
+            if pass.findings.iter().any(|f| !f.trim().is_empty()) {
+                compound = true;
+            }
         }
         for item in &pass.missing_evidence {
             if !item.trim().is_empty() && !missing_evidence.contains(item) {
@@ -300,6 +346,17 @@ fn aggregate(
             }
         }
     }
+
+    let nc_majority = needs_computation * 2 > completed;
+    // Settle only an agreed, in-class, single-source, purely-computable claim
+    // (T006). The else-branch (no agreed spec / multi-source / compound / engine
+    // error) falls through to the 010 abstain below (T008). Computed before
+    // `passes` is consumed into `core` (the `nc_passes` borrows end here).
+    let settled = if nc_majority && !compound && units.len() == 1 {
+        agreed_spec(&nc_passes).and_then(|spec| settle(&spec, &units[0]))
+    } else {
+        None
+    };
 
     let core = passes
         .into_iter()
@@ -309,28 +366,48 @@ fn aggregate(
     // counts (both tally the same Ok set).
     let run = aggregate_core(core, k)?;
 
-    // A strict majority of completed passes self-reporting `needs_computation`
-    // routes the claim to `check` rather than judging a property no pass could
-    // compute (FR-005/FR-006). Advisory `missing_evidence` does not trigger this.
-    let (verdict, reason) = if needs_computation * 2 > completed {
-        (
-            GroundedVerdictKind::Inconclusive,
-            Some("computable property — route to `check`".to_string()),
-        )
-    } else {
-        (GroundedVerdictKind::from(run.verdict.verdict), None)
-    };
-
-    Ok(GroundedRun {
-        verdict: GroundedVerdict {
-            verdict,
+    // Three exits: a settled compute verdict (011), the 010 abstain on a
+    // `needs_computation` majority that did not settle, or the judgment verdict.
+    let verdict = if let Some(settled) = settled {
+        GroundedVerdict {
+            verdict: settled.verdict,
+            findings: vec![settled.note],
+            confidence: 1.0, // a deterministic settle, not an agreement ratio
+            passes: run.verdict.passes,
+            missing_evidence,
+            manifest,
+            reason: None,
+            executed_form: Some(settled.executed_form),
+            engine_result: Some(settled.engine_result),
+        }
+    } else if nc_majority {
+        GroundedVerdict {
+            verdict: GroundedVerdictKind::Inconclusive,
             findings: run.verdict.findings,
             confidence: run.verdict.confidence,
             passes: run.verdict.passes,
             missing_evidence,
             manifest,
-            reason,
-        },
+            reason: Some("computable property — route to `check`".to_string()),
+            executed_form: None,
+            engine_result: None,
+        }
+    } else {
+        GroundedVerdict {
+            verdict: GroundedVerdictKind::from(run.verdict.verdict),
+            findings: run.verdict.findings,
+            confidence: run.verdict.confidence,
+            passes: run.verdict.passes,
+            missing_evidence,
+            manifest,
+            reason: None,
+            executed_form: None,
+            engine_result: None,
+        }
+    };
+
+    Ok(GroundedRun {
+        verdict,
         input_tokens: run.input_tokens,
         output_tokens: run.output_tokens,
     })
@@ -624,5 +701,272 @@ mod tests {
             GroundedVerdictKind::from(VerdictKind::Refuted),
             GroundedVerdictKind::Refuted
         );
+    }
+
+    // ---- 011: compute-settle helpers ---------------------------------------
+
+    /// A computable pass: needs_computation set, verdict supported + empty
+    /// findings (M1), and the compute fields naming the property/operator/bound.
+    fn gcompute(property: &str, op: &str, threshold: i64, literal: Option<&str>) -> Value {
+        json!({
+            "verdict": "supported",
+            "findings": [],
+            "missing_evidence": [],
+            "needs_computation": true,
+            "compute_property": property,
+            "compute_match_literal": literal,
+            "compute_operator": op,
+            "compute_threshold": threshold,
+        })
+    }
+
+    fn reader_returning(text: String) -> MockSourceReader {
+        let mut mock = MockSourceReader::new();
+        mock.expect_read().returning(move |_, _, _| {
+            Ok(SourceContent {
+                text: text.clone(),
+                #[allow(clippy::cast_possible_truncation)]
+                bytes: text.len() as u64,
+            })
+        });
+        mock
+    }
+
+    // The pure counting / spec-validation tests live with the unit in
+    // `grounded_compute`; the tests below exercise the wired path through `run`.
+
+    // ---- T007: settle the in-class single-source claim ---------------------
+
+    #[tokio::test]
+    async fn computable_line_count_over_1000_settles_supported() {
+        let mode = test_mode(3);
+        let reader = reader_returning("x\n".repeat(1224)); // 1224 lines
+        let client = scripted_client(vec![
+            gcompute("lines", ">", 1000, None),
+            gcompute("lines", ">", 1000, None),
+            gpass("supported", json!([]), json!([]), false),
+        ]);
+
+        let out = run(
+            &client,
+            &reader,
+            &mode,
+            &params("c", &["server.rs"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert_eq!(out.executed_form.as_deref(), Some("1224 > 1000"));
+        assert_eq!(out.engine_result.as_deref(), Some("true"));
+        assert_eq!(out.findings, vec!["counted 1224 lines".to_string()]);
+        assert!((out.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(out.reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn computable_line_count_over_5000_settles_refuted() {
+        let mode = test_mode(3);
+        let reader = reader_returning("x\n".repeat(1224));
+        let client = scripted_client(vec![
+            gcompute("lines", ">", 5000, None),
+            gcompute("lines", ">", 5000, None),
+            gcompute("lines", ">", 5000, None),
+        ]);
+
+        let out = run(
+            &client,
+            &reader,
+            &mode,
+            &params("c", &["server.rs"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Refuted);
+        assert_eq!(out.executed_form.as_deref(), Some("1224 > 5000"));
+        assert_eq!(out.engine_result.as_deref(), Some("false"));
+    }
+
+    #[tokio::test]
+    async fn computable_byte_and_match_specs_settle() {
+        let mode = test_mode(1);
+        // bytes: "abcde" = 5 bytes, > 3 → supported.
+        let out = run(
+            &scripted_client(vec![gcompute("bytes", ">", 3, None)]),
+            &reader_returning("abcde".to_string()),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert_eq!(out.executed_form.as_deref(), Some("5 > 3"));
+
+        // matches: "ababab" has 3 "ab", == 3 → supported.
+        let out = run(
+            &scripted_client(vec![gcompute("matches", "==", 3, Some("ab"))]),
+            &reader_returning("ababab".to_string()),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert_eq!(out.executed_form.as_deref(), Some("3 == 3"));
+    }
+
+    #[tokio::test]
+    async fn a_lone_computable_pass_is_accepted_not_dropped() {
+        // M1: verdict=supported + empty findings + compute fields passes one_pass.
+        let mode = test_mode(1);
+        let out = run(
+            &scripted_client(vec![gcompute("lines", ">", 0, None)]),
+            &reader_returning("a\nb\n".to_string()),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert_eq!(out.executed_form.as_deref(), Some("2 > 0"));
+    }
+
+    // ---- T009: the abstain fallbacks (no over-reach) -----------------------
+
+    #[tokio::test]
+    async fn disagreeing_compute_specs_abstain() {
+        let mode = test_mode(3);
+        let client = scripted_client(vec![
+            gcompute("lines", ">", 1000, None),
+            gcompute("lines", ">", 2000, None),
+            gcompute("bytes", "<", 50, None),
+        ]);
+        let out = run(
+            &client,
+            &reader_returning("x\n".repeat(1224)),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
+        assert!(out.executed_form.is_none());
+    }
+
+    #[tokio::test]
+    async fn out_of_class_property_abstains() {
+        let mode = test_mode(3);
+        let client = scripted_client(vec![
+            gcompute("functions", ">", 5, None),
+            gcompute("functions", ">", 5, None),
+            gpass("supported", json!([]), json!([]), false),
+        ]);
+        let out = run(
+            &client,
+            &reader_returning("x\n".repeat(10)),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
+        assert!(out.executed_form.is_none());
+    }
+
+    #[tokio::test]
+    async fn multi_source_computable_abstains() {
+        let mode = test_mode(3);
+        let client = scripted_client(vec![
+            gcompute("lines", ">", 1000, None),
+            gcompute("lines", ">", 1000, None),
+            gcompute("lines", ">", 1000, None),
+        ]);
+        // Two locators → two read units → not single-source → abstain.
+        let out = run(
+            &client,
+            &reader_returning("x\n".repeat(1224)),
+            &mode,
+            &params("c", &["a", "b"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
+        assert!(out.executed_form.is_none());
+    }
+
+    #[tokio::test]
+    async fn compound_claim_with_a_judgment_finding_abstains() {
+        // M2: a computable spec but with a substantive judgment finding → compound.
+        let mode = test_mode(3);
+        let mut compound = gcompute("lines", ">", 1000, None);
+        compound["findings"] = json!(["the module is also poorly structured"]);
+        // findings non-empty + refuted-with-finding is fine; set verdict refuted so
+        // one_pass accepts the finding, and needs_computation marks it computable.
+        compound["verdict"] = json!("refuted");
+        let client = scripted_client(vec![
+            compound.clone(),
+            compound,
+            gpass("supported", json!([]), json!([]), false),
+        ]);
+        let out = run(
+            &client,
+            &reader_returning("x\n".repeat(1224)),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
+        assert!(out.executed_form.is_none());
+    }
+
+    #[tokio::test]
+    async fn non_computable_judgment_path_has_no_executed_form() {
+        let mode = test_mode(3);
+        let client = scripted_client(vec![
+            gpass("supported", json!([]), json!([]), false),
+            gpass("supported", json!([]), json!([]), false),
+            gpass("supported", json!([]), json!([]), false),
+        ]);
+        let out = run(
+            &client,
+            &reader_returning("x".to_string()),
+            &mode,
+            &params("c", &["f"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert!(out.executed_form.is_none());
+        assert!(out.engine_result.is_none());
     }
 }

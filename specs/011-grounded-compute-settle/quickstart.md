@@ -51,3 +51,29 @@ Each compared with a numeric threshold (`>`, `>=`, `<`, `<=`, `==`, `!=`), over 
   computable claim returns `inconclusive`; a non-computable claim is unchanged. All
   deterministic — the value is server-counted, so unlike 010 there is **no**
   live-model-only check here.
+
+## Validation results (full gate, 2026-06-14)
+
+`cargo fmt --all -- --check` clean · `cargo clippy --all-features --all-targets -- -D
+warnings` clean · `cargo test` **319 lib + 53 integration, 0 failed** ·
+`cargo run --example acceptance_grounded_verify` ALL CHECKS PASS (incl. `011 SC-001
+computable claim ⇒ settled supported (1224 > 1000)`).
+
+New coverage:
+
+- **Counting (pure):** line convention pinned (LF-terminated and unterminated both → N;
+  empty → 0); byte and literal-match counts; `ComputeSpec::from_pass` validates the
+  property/operator strings server-side (unrecognized → out-of-class), `matches` requires
+  a non-empty literal.
+- **Settle (US1):** `lines > 1000` over a 1224-line source → `supported`, `1224 > 1000`,
+  `engine_result` `true`, `findings` `["counted 1224 lines"]`, confidence 1.0;
+  `> 5000` → `refuted`; byte and match specs settle; a lone computable pass (supported +
+  empty findings) is accepted by `one_pass`, not dropped (M1).
+- **Abstain (US2):** disagreeing specs, out-of-class property, multi-source
+  (`units.len() == 2`), and **compound claims** (a valid spec plus a substantive judgment
+  finding, M2) all return `inconclusive`; the non-computable judgment path carries no
+  `executed_form`.
+- **H1 confirmed:** the nullable-string compute fields register flat+closed at boot
+  (`pass_schema_registers_flat_and_closed...` passes) — no `anyOf` rejection.
+
+**011 is complete** — fully offline (no live dogfood needed; the value is server-counted).

@@ -160,7 +160,7 @@ src/
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
-├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / grounded_verify (needs_computation → inconclusive abstain, 010)
+├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding

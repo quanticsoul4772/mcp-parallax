@@ -22,6 +22,20 @@ pub struct AssembledEvidence {
     pub text: String,
     /// The audit manifest — one entry per resolved file, in order.
     pub manifest: Vec<ManifestEntry>,
+    /// The raw per-read-unit content, in order — the verbatim source as the
+    /// reader returned it, **without** the provenance headers framing `text`.
+    /// The compute-settle path (011) counts over this, never over `text`; a
+    /// single unit (`units.len() == 1`) is the single-source gate.
+    pub units: Vec<RawUnit>,
+}
+
+/// The verbatim content of one resolved read unit (011) — what a count runs over.
+#[derive(Debug, Clone)]
+pub struct RawUnit {
+    /// The raw source text as read (no provenance header).
+    pub text: String,
+    /// The reader's byte length for this unit (mirrors the manifest entry).
+    pub bytes: u64,
 }
 
 /// One concrete file to read: a path with an optional line range.
@@ -74,6 +88,7 @@ pub fn assemble(
     // Phase 2: read every unit all-or-nothing (008's read/manifest/byte loop).
     let mut manifest = Vec::with_capacity(units.len());
     let mut sections = Vec::with_capacity(units.len());
+    let mut raw_units = Vec::with_capacity(units.len());
     let mut total: usize = 0;
     for (path, start, end) in &units {
         let content = reader.read(path, *start, *end)?;
@@ -95,11 +110,18 @@ pub fn assemble(
             end_line: *end,
             bytes: content.bytes,
         });
+        // The verbatim source, kept separate from the framed `text` so the
+        // compute-settle count (011) never includes the provenance headers.
+        raw_units.push(RawUnit {
+            text: content.text,
+            bytes: content.bytes,
+        });
     }
 
     Ok(AssembledEvidence {
         text: sections.join("\n\n"),
         manifest,
+        units: raw_units,
     })
 }
 
