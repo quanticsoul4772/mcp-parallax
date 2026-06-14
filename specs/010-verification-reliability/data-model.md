@@ -28,7 +28,7 @@ findings[] }`.
 | verdict | enum `supported`\|`refuted` | unchanged |
 | findings | string[] | unchanged |
 | missing_evidence | string[] | unchanged (008) |
-| **needs_computation** | boolean | **NEW** — set when the claim's truth hinges on an exact computation of the source the pass cannot perform by reading (a precise count/measure). |
+| **needs_computation** | boolean | **NEW** — set when the **decisive** fact is a computation of the source the pass cannot perform by reading (a precise count/measure/comparison). This is the abstain trigger; `missing_evidence` stays an advisory completeness signal and does **not** trigger abstention. |
 
 ## GroundedVerdictKind (output, NEW)
 
@@ -37,8 +37,7 @@ per-pass `VerdictKind`.
 
 `Supported | Refuted | Inconclusive`
 
-- `Inconclusive` carries a short `reason` (computable → route to `check`; or decisive
-  evidence missing).
+- `Inconclusive` carries a short `reason` (computable property → route to `check`).
 - `verify`'s output verdict is **not** changed — it stays `{ supported, refuted }`
   with graduated confidence (FR-009).
 
@@ -52,10 +51,10 @@ differ.
 
 1. If a **majority** of completed passes set `needs_computation` → `Inconclusive`
    (reason: computable property; route to `check`).
-2. Else if the aggregated `missing_evidence` is non-empty (decisive) → `Inconclusive`
-   (reason: decisive evidence missing).
-3. Else → the majority `Supported`/`Refuted` (008 behavior), with the
-   agreement-derived confidence.
+2. Else → the majority `Supported`/`Refuted` (008 behavior), with the
+   agreement-derived confidence. A non-empty aggregated `missing_evidence` is carried
+   through as the advisory completeness signal (008) and does **not** force
+   `Inconclusive` — no over-abstention.
 
 ## Configuration
 

@@ -102,9 +102,9 @@ specs/010-verification-reliability/
 ```text
 src/modes/
 ├── verify.rs            # MODIFIED — LENSES const; PROMPT_TEMPLATE gains <<lens>>; run() assigns lens[i % len] per pass; aggregation unchanged; deterministic vote-vector tests
-└── grounded_verify.rs   # MODIFIED — GroundedPass gains `needs_computation: bool`; GroundedVerdict.verdict becomes a 3-value GroundedVerdictKind {supported, refuted, inconclusive}; server maps (majority needs_computation | decisive missing_evidence) → inconclusive, routing computable claims to check
+└── grounded_verify.rs   # MODIFIED — GroundedPass gains `needs_computation: bool`; GroundedVerdict.verdict becomes a 3-value GroundedVerdictKind {supported, refuted, inconclusive}; server maps majority needs_computation → inconclusive (the only abstain trigger), routing computable claims to check; missing_evidence stays advisory (no over-abstention)
 
-tests/integration.rs     # MODIFIED — 010 block: inconclusive on the server.rs reproduction; no-confident-verdict when missing_evidence decisive; judgment path unchanged
+tests/integration.rs     # MODIFIED — 010 block: inconclusive on the server.rs reproduction (needs_computation); confident verdict still stands when only advisory missing_evidence is listed (no over-abstention); judgment path unchanged
 examples/                # MODIFIED/NEW — acceptance: the borderline battery (live) + the reproduction case
 ```
 

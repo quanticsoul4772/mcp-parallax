@@ -89,9 +89,10 @@ unchanged. The result carries a short `reason` (e.g. "computable property — ro
 `check`") so the caller knows what to do next.
 
 **Mapping (server)**: after aggregation — if a majority of passes set
-`needs_computation` → `Inconclusive` (reason: route to `check`); else if the
-aggregated `missing_evidence` is non-empty and decisive → `Inconclusive` (reason:
-decisive evidence missing); else the majority `supported`/`refuted` as today.
+`needs_computation` → `Inconclusive` (reason: route to `check`); else the majority
+`supported`/`refuted` as today. `needs_computation` is the **only** abstain trigger; a
+non-empty aggregated `missing_evidence` stays the advisory completeness signal (008)
+and does **not** force `Inconclusive` (no over-abstention — analyze remediation M1).
 
 ## D6 — Graduated confidence is a live-model property (testing)
 

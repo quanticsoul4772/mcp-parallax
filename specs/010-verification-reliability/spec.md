@@ -12,7 +12,7 @@
 
 ### Session 2026-06-13
 
-- Q: For a computable sub-claim, should grounded_verify compute it or abstain in v1? → A: **Abstain + route** — detect computability by reusing the `check` layer's existing checkability classifier (005), and return an explicit route-to-`check` result. v1 does **not** compute the property; actually settling it via the `check` engine over the read bytes is a named follow-up.
+- Q: For a computable sub-claim, should grounded_verify compute it or abstain in v1? → A: **Abstain + route** — detect computability and return an explicit route-to-`check` result. v1 does **not** compute the property; actually settling it via the `check` engine over the read bytes is a named follow-up. (Plan-discovered correction, research D4: detection is a per-pass `needs_computation` self-report, **not** the `check` classifier — the classifier is decline-biased toward arithmetic-over-given-values and does not recognize the countable-property-of-source class. See FR-005.)
 - Q: How is an inconclusive / abstained / evidence-missing result surfaced? → A: An explicit **`inconclusive`** verdict value on grounded_verify's server-assembled output. The per-pass output schema and `verify`'s supported/refuted output are unchanged (verify gains only graduated confidence, no new verdict value).
 
 ## User Scenarios & Testing *(mandatory)*
@@ -105,8 +105,9 @@ layer. The fix applies that existing principle inside `grounded_verify`.
 
 **Independent Test**: Issue the reproduction claim (`server.rs` > 1000 lines, file is
 1224) and confirm the verdict is correct (or an explicit abstention) and not a confident
-refutation; and confirm that any run whose missing-evidence list names decisive missing
-evidence does not report confidence 1.0. Testable through tool output alone.
+refutation; and confirm that any run whose passes set `needs_computation` (the decisive
+fact is uncomputable from the source) returns `inconclusive` rather than a confident
+verdict. Testable through tool output alone.
 
 **Acceptance Scenarios**:
 
@@ -117,10 +118,11 @@ evidence does not report confidence 1.0. Testable through tool output alone.
 2. **Given** the reproduction case — claim "`src/server.rs` exceeds 1000 lines", file is
    1224 lines — **When** `grounded_verify` runs, **Then** it returns the `inconclusive`
    verdict (route to `check`), and **does not** return `refuted` at confidence 1.0.
-3. **Given** a run whose passes flag the decisive evidence as missing
-   (`missing_evidence` non-empty and decisive), **When** the verdict is aggregated,
-   **Then** the reported confidence is bounded below maximal — a confident verdict is
-   not emitted over self-reported missing decisive evidence.
+3. **Given** a run whose passes self-report (`needs_computation`) that the decisive fact
+   cannot be determined from the source, **When** the verdict is aggregated, **Then** the
+   result is `inconclusive` — a confident verdict is not emitted over self-reported
+   missing decisive evidence. An advisory-only `missing_evidence` list (no
+   `needs_computation`) does **not** force this — the confident verdict still stands.
 4. **Given** a genuine judgment claim about source content (not computable — "does this
    function handle the empty-input case"), **When** `grounded_verify` runs, **Then** it
    uses the stance-blind passes as today — no regression for the judgment path.
@@ -155,16 +157,20 @@ evidence does not report confidence 1.0. Testable through tool output alone.
   majority side, confidence = majority/completed, sub-quorum → dominant failure — MUST
   have deterministic test coverage driven by constructed vote vectors, independent of
   organic pass disagreement.
-- **FR-005**: When a claim's truth is a **computable** property (counts,
-  presence/absence, numeric comparison over the read text), `grounded_verify` MUST
-  detect it — reusing the `check` layer's checkability classifier (005) — and return an
-  explicit `inconclusive` verdict routing the caller to `check`, rather than emitting a
-  judgment verdict on a property it did not compute. (Actually settling the property via
-  the `check` engine over the read bytes is a **named follow-up**, not v1.)
-- **FR-006**: A `grounded_verify` run whose `missing_evidence` names decisive missing
-  evidence MUST NOT emit a confident supported/refuted verdict — it MUST return the
-  `inconclusive` verdict instead (the confidence bound realized as an explicit
-  non-decision, not a quietly-capped number).
+- **FR-005**: When a claim's truth is a **computable** property of the read source (a
+  count, a numeric comparison) that the passes cannot determine by reading,
+  `grounded_verify` MUST return an explicit `inconclusive` verdict routing the caller to
+  `check`, rather than a judgment verdict on a property it did not compute. Detection is
+  a per-pass **`needs_computation`** self-report (research D4) — **not** the `check`
+  classifier, which is decline-biased toward arithmetic-over-given-values and does not
+  recognize this class. (Settling the property via the `check` engine is a **named
+  follow-up**, not v1.)
+- **FR-006**: When a majority of passes set `needs_computation` — self-reporting that the
+  **decisive** fact (a computation or a specific piece of evidence) cannot be determined
+  from the provided source — `grounded_verify` MUST return `inconclusive`, not a
+  confident supported/refuted verdict. The advisory `missing_evidence` completeness
+  signal (008) alone MUST NOT force `inconclusive`: a confident verdict may still list
+  helpful-but-non-decisive missing evidence (no over-abstention).
 - **FR-007**: `grounded_verify` MUST preserve the stance-blind judgment path unchanged
   for genuine judgment claims about source content.
 - **FR-008**: Both fixes MUST ship with acceptance tests that reproduce the two
@@ -172,7 +178,7 @@ evidence does not report confidence 1.0. Testable through tool output alone.
   miss for US2).
 - **FR-009**: `grounded_verify`'s server-assembled output gains an explicit
   **`inconclusive`** verdict value (alongside supported/refuted) for the
-  abstain-on-computable (FR-005) and decisive-evidence-missing (FR-006) cases. The
+  abstain-on-computable (FR-005) and majority-`needs_computation` (FR-006) cases. The
   per-pass constrained-output schema and `verify`'s verdict set are **unchanged**.
 
 ### Key Entities
@@ -188,8 +194,8 @@ evidence does not report confidence 1.0. Testable through tool output alone.
 
 ### Measurable Outcomes
 
-- **SC-001**: On a fixed battery of contestable claims, `verify` returns a confidence
-  strictly between 0 and 1 on a meaningful fraction of them — versus the current
+- **SC-001**: On a fixed battery of **6** contestable claims, `verify` returns a
+  confidence strictly between 0 and 1 on **at least 2** of them — versus the current
   **0 of 8** observed — demonstrating the signal is graduated.
 - **SC-002**: `verify` retains **100%** of its current correct verdicts on the
   regression set (named-error refutation, no over-refutation, authority-blindness).
@@ -197,8 +203,9 @@ evidence does not report confidence 1.0. Testable through tool output alone.
   `inconclusive` (abstain → route to `check`) result — **never** a confident refutation —
   for the actual 1224-line file.
 - **SC-004**: `grounded_verify` emits a confident supported/refuted verdict on **0%** of
-  runs whose own missing-evidence list names decisive missing evidence — such runs return
-  `inconclusive`.
+  runs whose passes set `needs_computation` by majority — such runs return `inconclusive`.
+  Conversely, a run that lists only advisory (non-decisive) `missing_evidence` while no
+  pass sets `needs_computation` still returns its confident verdict (no over-abstention).
 - **SC-005**: The `verify` split / tie / sub-quorum aggregation branches each have direct
   passing unit coverage.
 
@@ -209,8 +216,9 @@ evidence does not report confidence 1.0. Testable through tool output alone.
 - The concrete lens set and the lens↔`k` assignment rule are **`/speckit-plan`
   decisions** (mirroring how 009 deferred engine/crate choice to planning). The
   computable-claim handling is settled (clarification): v1 **abstains and routes** to
-  `check`, detecting computability via the `check` layer's classifier; actually computing
-  the property is a deferred follow-up.
+  `check`, detecting computability via a per-pass `needs_computation` self-report
+  (research D4 — not the `check` classifier); actually computing the property is a
+  deferred follow-up.
 - `VERIFY_ENSEMBLE_K` semantics (default 3, the quorum rule) are unchanged; only what
   each pass does differs.
 - `grounded_verify`'s root-confinement, locator model (008/009), and evidence manifest

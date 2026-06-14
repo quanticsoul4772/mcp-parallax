@@ -40,7 +40,8 @@ stance-blind passes and returns `supported`/`refuted`.
 
 - Offline (`cargo test`): the *k* lens prompts differ; `aggregate_core` returns
   ≈0.67 / 0.5 / sub-quorum on constructed vote vectors; `grounded_verify` returns
-  `inconclusive` on the reproduction and when `missing_evidence` is decisive.
+  `inconclusive` when a majority of passes set `needs_computation`, and still returns a
+  confident verdict when only advisory `missing_evidence` is listed (no over-abstention).
 - **Live** (dogfood): SC-001 — that real contestable claims actually scatter across
   lenses to produce graduated confidence — is confirmed against the running model
   (a mock can't disagree with itself). Re-run the borderline battery that returned

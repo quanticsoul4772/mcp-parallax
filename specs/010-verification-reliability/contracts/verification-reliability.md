@@ -52,8 +52,11 @@ Server-assembled output verdict gains a value:
 | Condition | Verdict | reason |
 |---|---|---|
 | majority of passes set `needs_computation` | `inconclusive` | computable property — route to `check` |
-| aggregated `missing_evidence` non-empty (decisive) | `inconclusive` | decisive evidence missing |
 | otherwise | `supported`/`refuted` (008) | — |
+
+`needs_computation` is the **only** abstain trigger. A non-empty `missing_evidence`
+is carried through as the advisory completeness signal (008) on a confident verdict —
+it does **not** force `inconclusive` (no over-abstention).
 
 ### Reproduction (the dogfooded bug)
 
