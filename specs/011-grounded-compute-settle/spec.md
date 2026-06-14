@@ -21,6 +21,20 @@ comparisons over those); anything it cannot compute cheaply still abstains with
 inconclusive as 010 does. The check translation and engine are reused, not
 reimplemented. This is the named follow-up deferred by 010 FR-005."
 
+## Clarifications
+
+### Session 2026-06-14
+
+- Q: What is the v1 supported computable class — which properties may
+  `grounded_verify` compute-and-settle (everything else abstains)? → A: **Line
+  counts, byte/size measures, and counts of a literal match**, each compared to a
+  numeric threshold. Exactly these in v1; broader properties (ranges, presence
+  predicates) abstain.
+- Q: When a claim's count would span multiple locators, what should v1 do? → A:
+  **Abstain (single-source only)** — v1 settles a count over one named source; an
+  aggregate across multiple locators returns `inconclusive` (route to `check`).
+  Aggregate counts are a later follow-up.
+
 ## User Scenarios & Testing *(mandatory)*
 
 010 made `grounded_verify` stop emitting a confident wrong verdict on a computable
@@ -105,10 +119,10 @@ verdict over a value the server could not actually derive.
 
 ### Edge Cases
 
-- **Ambiguous count over multiple sources**: a comparison whose property would be
-  counted across several locators (e.g. "these files total more than N lines"). The
-  decomposition decides whether a well-defined aggregate count exists; if it is
-  ambiguous, abstain (US2). (`/speckit-plan` settles the aggregation rule.)
+- **Count over multiple sources**: a comparison whose property would be counted across
+  several locators (e.g. "these files total more than N lines"). v1 does **not** settle
+  aggregates — it abstains (`inconclusive`, route to `check`); only single-source counts
+  are settled (clarification 2026-06-14). Aggregate counts are a later follow-up.
 - **The computed comparison and a judgment both matter** (compound claim — part
   countable, part judged): which result governs the verdict, and is the executed form
   still surfaced? (`/speckit-plan`.)
@@ -135,11 +149,12 @@ verdict over a value the server could not actually derive.
   read — never a model estimate. The model's role stays bounded to flagging
   computability (010) and identifying the property/threshold; the *value* is counted by
   the server and the *decision* is the engine's.
-- **FR-004**: The supported computable class MUST be limited to simple, safe properties
+- **FR-004**: The supported computable class MUST be **exactly** these properties of a
+  **single** named source, each compared with a numeric threshold: line counts,
+  byte/size measures, and counts of a literal match (clarification 2026-06-14). They are
   derivable from the read bytes without external execution or parsing the server does
-  not already perform: at minimum line counts, byte/size measures, and counts of a
-  literal match, each compared with a numeric threshold. Properties outside this class
-  MUST fall through to FR-005.
+  not already perform. Any other property — and any count that would span multiple
+  locators — MUST fall through to FR-005.
 - **FR-005**: When the claim is flagged computable but the property is **not** in the
   supported class (FR-004) — or the value cannot be derived unambiguously — the server
   MUST fall back to 010's `inconclusive` verdict (route to `check`). The compute path
