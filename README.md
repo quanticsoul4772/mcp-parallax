@@ -7,7 +7,7 @@ An LLM-augmentation MCP server: a catalog of correctives for the calling model's
 
 When Claude calls a reasoning tool, Claude is calling Claude — so the value is not reasoning *harder*. The value is an external, **independent** pass that catches the ways the model reliably goes wrong and cannot see from inside its own context: anchoring, sycophancy, drift, overconfident wrong answers. The name is the thesis — a second vantage point reveals what one frame can't.
 
-Parallax speaks MCP over stdio and exposes eleven tools across four layers: cognitive correctives the model asks for (`verify`, `unstick`, `diverge`), a deterministic engine that settles checkable claims by execution rather than judgment (`check`), durable cross-session memory with verified-before-stored trust (`save` / `recall` / `forget`), an adversarially-verified research offload (`research`), and harness-triggered trajectory checkpoints for the failures a model can't self-diagnose to call (`checkpoint_action` / `checkpoint_batch` / `checkpoint_turn`).
+Parallax speaks MCP over stdio and exposes twelve tools across four layers: cognitive correctives the model asks for (`verify`, `unstick`, `diverge`), a deterministic engine that settles checkable claims by execution rather than judgment (`check`), a source-grounded verifier that checks a claim against verbatim files you name — settling computable properties on the engine, abstaining otherwise (`grounded_verify`), durable cross-session memory with verified-before-stored trust (`save` / `recall` / `forget`), an adversarially-verified research offload (`research`), and harness-triggered trajectory checkpoints for the failures a model can't self-diagnose to call (`checkpoint_action` / `checkpoint_batch` / `checkpoint_turn`).
 
 Status: experimental, v0.1.0, all corpus layers built. Every capability that does network egress or code execution is gated and **off by default** — with only `ANTHROPIC_API_KEY` set, you get the always-on correctives and nothing leaves the process but Anthropic API calls. Not published to a registry; build from source.
 
@@ -58,7 +58,7 @@ Verify the binary independently of any client:
 
 ## Tools
 
-Transport is **stdio**. The catalog is gated by configuration: the four always-on correctives are present whenever the server runs; memory, research, and the checkpoint sensor plane appear only when their key/integration is configured (see [Configuration](#configuration)).
+Transport is **stdio**. The catalog is gated by configuration: the four always-on correctives are present whenever the server runs; `grounded_verify`, memory, research, and the checkpoint sensor plane appear only when their root/key/integration is configured (see [Configuration](#configuration)).
 
 | Tool | Purpose | Availability |
 |---|---|---|
