@@ -1,6 +1,6 @@
 # Parallax
 
-A stdio MCP server that runs corrective passes over a language model's output, each pass seeing only the claim or task under review — not the surrounding conversation, the caller's stance, or the original framing.
+Parallax is an MCP server that gives a language model tools to check its own work: verify a claim, run a deterministic check, store and recall memory, research a question, and review its trajectory.
 
 [![CI](https://github.com/quanticsoul4772/mcp-parallax/actions/workflows/ci.yml/badge.svg)](https://github.com/quanticsoul4772/mcp-parallax/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
@@ -47,7 +47,7 @@ Parallax is a stdio MCP server — a client launches the binary and speaks JSON-
 }
 ```
 
-Restart the client and the catalog appears. Ask the model to settle a checkable claim and the deterministic engine answers — no judge involved:
+Restart the client and the catalog appears. Ask the model to settle a checkable claim and the deterministic engine answers:
 
 ```text
 > use check: "256 = 2 * 128"
@@ -68,20 +68,20 @@ Transport is **stdio**. The catalog is gated by configuration: the six always-on
 
 | Tool | Purpose | Availability |
 |---|---|---|
-| `verify` | Independently verify a claim across parallel stance-blind passes, each applying a distinct critical lens so genuine disagreement surfaces; returns supported/refuted, concrete findings, and an agreement-derived confidence. For when being confidently wrong is costly. | always |
-| `unstick` | Break a stuck loop by committing to exactly one concrete next step (rationale included) — never a menu, never a plan. | always |
-| `diverge` | Break out of a single framing: parallel stance-blind passes each attack the problem from a distinct angle (invert the goal, change the actor, shift the horizon, deny the load-bearing assumption, reframe the problem class) and the server returns a deterministically deduplicated set of genuinely different framings, each labeled with its angle. For anchoring / tunnel vision — the opening-up counterpart to `verify`. | always |
-| `decide` | Choose among two or more options under tradeoffs, with the work shown: a single pass applies a fitting methodology (weigh / causal / probabilistic) and scores every option; the server picks the top, names the runner-up and why it lost, surfaces the deciding factors and methodology, and reports a confidence calibrated to the score margin. The choice is computed from the scores, never a hidden gut pick or an unresolved menu. For indecision / miscalibration on a choice. | always |
-| `elicit` | Surface the objective you're about to pursue and the preferences that should govern it, before you commit — the corrective for solving the *assumed* problem instead of the user's real one. Returns the assumed objective, the governing preferences (each traced to its signal; revealed/stored ones outrank merely stated ones), and the divergence points worth resolving first. Inference, not interrogation — with little signal it says so. When a Voyage key is set it also consults your stored verified preferences. Surfaces only; never blocks or modifies (that's the checkpoint layer). | always |
+| `verify` | Verify a claim across parallel passes, each applying a distinct critical lens; returns supported/refuted, findings, and a confidence derived from how much the passes agree. | always |
+| `unstick` | Returns exactly one concrete next step with a rationale — not a menu or a plan. | always |
+| `diverge` | Returns alternative framings of a problem: parallel passes each apply a distinct angle (invert the goal, change the actor, shift the horizon, deny a load-bearing assumption, reframe the problem class); the server deduplicates and labels each framing with its angle. | always |
+| `decide` | Selects among two or more supplied options: a single pass applies a methodology (weigh / causal / probabilistic) and scores each option; the server picks the highest score and reports the runner-up, the deciding factors, the methodology, and a confidence derived from the score margin. | always |
+| `elicit` | Surfaces the objective a request implies and the preferences that should govern it: returns the assumed objective, the governing preferences (each traced to its signal; revealed and stored preferences outrank stated ones), and the divergence points worth resolving first. Reports when signal is low rather than inventing preferences. With a Voyage key set it also consults stored verified preferences. Surfaces only — it does not block or modify (that is the checkpoint layer). | always |
 | `check` | Settle a checkable claim by execution: the model translates to a small formal target (arithmetic or an SMT/constraint system), a deterministic engine decides, and the executed form + raw result are returned for audit. Unformalizable claims return `not_checkable`. | always |
 | `save` | Store a skill, lesson, or fact for future sessions with provenance; external memories are untrusted unless verification is requested. | `VOYAGE_API_KEY` |
-| `recall` | Retrieve memories relevant to the current work, ranked by semantic relevance and labeled with trust standing. Call before re-deriving prior work. | `VOYAGE_API_KEY` |
+| `recall` | Retrieve memories relevant to the current work, ranked by semantic relevance and labeled with trust standing. | `VOYAGE_API_KEY` |
 | `forget` | Permanently delete a memory by id. Irreversible. | `VOYAGE_API_KEY` |
-| `research` | Offload a question; get back a short, cited, adversarially-verified answer — scoped parallel searches, hygiene-enforced fetching, refute-biased per-claim verification, and a grounding gate so no fabricated citation leaves the server. | `BRAVE_API_KEY` |
-| `grounded_verify` | Verify a claim against verbatim source the caller names (file paths, line ranges, or glob patterns within a configured root): the server reads the exact text, so the caller can't paraphrase the evidence. Returns the verdict — supported/refuted; for a computable property of a single source (a line/byte/match count vs a threshold) the server counts over the read bytes and the deterministic engine settles it, returning the executed form (e.g. `1224 > 1000`); anything broader or compound returns `inconclusive` routing to `check` — plus findings, an audit manifest of what was read, and a completeness signal naming omitted evidence. | `GROUNDED_VERIFY_ROOT` |
-| `checkpoint_action` | Pre-action gate: evaluate one risk-matched pending action against verified stored constraints; returns `hold` (escalate, quoting the conflicting memory) or silence. Fails open; never modifies the action. | hooks (off by default) |
-| `checkpoint_batch` | Post-batch screen: deterministically detect loops and repeated failures in the recent trajectory; flags the specific repeated action and count, or silence. Pure and local — no model call. | hooks (off by default) |
-| `checkpoint_turn` | End-of-turn review: mine the turn for contradictions against earlier committed statements and verified decisions; a confirmed contradiction is delivered as forced continuation. One independent blind review pass, server-assembled verdict. | hooks (off by default) |
+| `research` | Run a web query and return a short, cited, per-claim-verified answer: scoped parallel searches, hygiene-enforced fetching, refute-biased per-claim verification, and a grounding gate that drops unsupported citations. | `BRAVE_API_KEY` |
+| `grounded_verify` | Verify a claim against verbatim source the caller names (file paths, line ranges, or glob patterns within a configured root): the server reads the exact text. Returns supported/refuted; for a computable property of a single source (a line/byte/match count vs a threshold) the server counts over the read bytes and the deterministic engine settles it, returning the executed form (e.g. `1224 > 1000`); anything broader or compound returns `inconclusive`. Also returns findings, an audit manifest of what was read, and a completeness signal naming omitted evidence. | `GROUNDED_VERIFY_ROOT` |
+| `checkpoint_action` | Pre-action gate: evaluate one risk-matched pending action against verified stored constraints; returns `hold` (quoting the conflicting memory) or silence. Fails open; does not modify the action. | hooks (off by default) |
+| `checkpoint_batch` | Post-batch screen: detect loops and repeated failures in the recent trajectory; flags the repeated action and count, or silence. Local, no model call. | hooks (off by default) |
+| `checkpoint_turn` | End-of-turn review: check the turn for contradictions against earlier committed statements and verified decisions; a confirmed contradiction is delivered as forced continuation. One blind review pass, server-assembled verdict. | hooks (off by default) |
 
 The `checkpoint_*` tools are designed to be invoked by the harness's hooks, not by the model itself; calling them directly behaves identically. Install the sensor plane from [`integrations/claude-code/`](integrations/claude-code/README.md) to enable them. Every verdict fails open and never rewrites the model's work.
 
