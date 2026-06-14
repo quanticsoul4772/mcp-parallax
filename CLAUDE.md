@@ -211,9 +211,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `013-decide-methodology` — [spec](specs/013-decide-methodology/spec.md) ·
-[plan](specs/013-decide-methodology/plan.md) · [research](specs/013-decide-methodology/research.md) ·
-[data model](specs/013-decide-methodology/data-model.md) · [contracts](specs/013-decide-methodology/contracts/)
+Current feature: `014-preference-elicitation` — [spec](specs/014-preference-elicitation/spec.md) ·
+[plan](specs/014-preference-elicitation/plan.md) · [research](specs/014-preference-elicitation/research.md) ·
+[data model](specs/014-preference-elicitation/data-model.md) · [contracts](specs/014-preference-elicitation/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
