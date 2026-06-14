@@ -22,6 +22,20 @@ model's structured output; the recommendation and calibration are server-assembl
 that assessment so the choice traces to the stated criteria. Always in the catalog, no
 new gate."
 
+## Clarifications
+
+### Session 2026-06-14
+
+- Q: How is the recommendation derived from the model's per-option assessment? → A:
+  **Model scores; server picks the top.** The model emits a numeric score per option;
+  the server selects the highest, names the runner-up, and derives confidence from the
+  score margin — making FR-004/FR-005 structural (the pick and confidence are
+  deterministic functions of the scores, not a model preference).
+- Q: Single structured pass or an ensemble — and where does the confidence come from? →
+  A: **Single pass; confidence from the score margin.** One model call assesses all
+  options; the server computes confidence from how far the winner leads (near-tie → low,
+  dominant winner → high). No ensemble.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Parallax catches the ways the calling model reliably goes wrong from inside its own
@@ -133,12 +147,15 @@ expressed in the terms of that methodology (criteria scores vs. caused/prevented
 - **FR-003**: `Decide` MUST select and **surface a decision methodology** matched to the
   decision's shape (multi-criteria → weighing; downstream effects → causal; uncertainty →
   probabilistic), and express the rationale in that methodology's terms.
-- **FR-004**: The recommendation and the confidence MUST be **server-assembled from the
-  model's structured per-option assessment** — the choice traces to the assessed factors,
-  not an unexamined model preference asserted directly.
-- **FR-005**: The reported confidence MUST be **calibrated to how close the decision is**:
-  a dominant winner yields high confidence; a near-tie yields low confidence (it is not a
-  fixed or model-self-reported constant).
+- **FR-004**: The model MUST emit a **numeric score per option**; the server MUST select
+  the **highest-scored** option as the recommendation and the next-highest as the
+  runner-up (clarification). The model does **not** name the winner directly — the choice
+  is a deterministic function of the per-option scores, so it traces to the assessed
+  factors, not an unexamined preference.
+- **FR-005**: The reported confidence MUST be **server-derived from the score margin**
+  between the top option and the runner-up (clarification): a dominant winner (large
+  margin) yields high confidence; a near-tie (small margin) yields low confidence. It is
+  **not** model-self-reported and **not** a fixed constant.
 - **FR-006**: `Decide` MUST return a **resolved recommendation**, never a menu handed back
   unresolved — it does the choosing (distinct from listing options).
 - **FR-007**: `Decide` MUST stay within scope: it chooses among given options under
@@ -156,8 +173,9 @@ expressed in the terms of that methodology (criteria scores vs. caused/prevented
 - **Decision**: the question to settle plus the set of candidate options (two or more) and
   optional context/criteria — the primary input.
 - **Option assessment**: the model's structured evaluation of one option under the chosen
-  methodology (its standing on the deciding factors). The set of assessments is what the
-  server derives the recommendation from.
+  methodology — its standing on the deciding factors plus a **numeric score**. The server
+  ranks options by score to derive the recommendation, runner-up, and confidence
+  (clarification).
 - **Methodology**: the named decision frame applied — weighing (criteria), causal
   (effects), or probabilistic (uncertainty) — surfaced in the output.
 - **Recommendation**: the server-assembled result — the chosen option, the runner-up and
@@ -189,14 +207,15 @@ expressed in the terms of that methodology (criteria scores vs. caused/prevented
   this feature implements an existing catalog entry, and the constitution's
   design-corpus-fidelity check is an application, not a deviation (confirmed at
   `/speckit-plan`).
-- It reuses the constrained-output contract: the per-option assessment and the
-  methodology selection are the model's flat structured output; the recommendation, the
-  runner-up determination, and the calibrated confidence are **server-assembled** from
-  that assessment.
-- The concrete methodology set, how the per-option assessment is structured, the
-  server-side recommendation/calibration rule (how confidence maps to closeness), and
-  whether a single pass or an ensemble is used are **`/speckit-plan` decisions** (mirroring
-  how `verify`/`diverge` deferred lens/mechanism choices to planning).
+- It reuses the constrained-output contract: the per-option assessment (with its numeric
+  score) and the methodology selection are the model's flat structured output; the
+  recommendation, the runner-up, and the margin-derived confidence are **server-assembled**
+  from those scores (clarification). A **single** model pass produces the assessment — no
+  ensemble (clarification).
+- The concrete methodology set, the exact per-option assessment fields (beyond the score),
+  the score scale, and the **margin→confidence mapping** (how a score gap becomes a
+  confidence value) are **`/speckit-plan` decisions** (mirroring how `verify`/`diverge`
+  deferred lens/mechanism choices to planning).
 - The minimum option count is **two**; the maximum and the input bound reuse the existing
   `INPUT_MAX_CHARS` family limit unless planning decides otherwise.
 - The output is an advisory recommendation for the caller to act on — `Decide` does not
