@@ -124,8 +124,10 @@ verdict over a value the server could not actually derive.
   aggregates — it abstains (`inconclusive`, route to `check`); only single-source counts
   are settled (clarification 2026-06-14). Aggregate counts are a later follow-up.
 - **The computed comparison and a judgment both matter** (compound claim — part
-  countable, part judged): which result governs the verdict, and is the executed form
-  still surfaced? (`/speckit-plan`.)
+  countable, part judged): the server does **not** settle on the count alone. If the
+  computable-flagged passes also report a substantive judgment finding, the claim is
+  compound and the server **abstains** (`inconclusive`) rather than returning a verdict
+  that ignores the judgment half (resolved 2026-06-14; data-model aggregation step 2).
 - **A property the passes flag but the comparison target is non-numeric** (e.g. "file X
   has an even number of lines" — a parity predicate, not a `>`/`<`): whether the
   supported class includes such predicates or abstains on them. (`/speckit-plan`.)
@@ -156,10 +158,12 @@ verdict over a value the server could not actually derive.
   not already perform. Any other property — and any count that would span multiple
   locators — MUST fall through to FR-005.
 - **FR-005**: When the claim is flagged computable but the property is **not** in the
-  supported class (FR-004) — or the value cannot be derived unambiguously — the server
-  MUST fall back to 010's `inconclusive` verdict (route to `check`). The compute path
-  MUST NEVER emit a verdict over a value it could not actually derive (no regression of
-  010's no-confidently-wrong guarantee).
+  supported class (FR-004), the value cannot be derived unambiguously, the count would
+  span multiple sources, **or the claim is compound** (the computable-flagged passes also
+  report a substantive judgment finding), the server MUST fall back to 010's
+  `inconclusive` verdict (route to `check`). The compute path MUST NEVER emit a verdict
+  over a value it could not actually derive, **nor settle a compound claim on its
+  countable part alone** (no regression of 010's no-confidently-wrong guarantee).
 - **FR-006**: The stance-blind judgment path for non-computable claims (010 FR-007)
   MUST be unchanged: a claim the passes do not flag computable is judged by the passes
   as today, with no computation attempted.

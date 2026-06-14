@@ -19,13 +19,19 @@ claim (else null). Flat + closed preserved.
     "findings": { "type": "array", "items": { "type": "string" } },
     "missing_evidence": { "type": "array", "items": { "type": "string" } },
     "needs_computation": { "type": "boolean" },
-    "compute_property": { "type": ["string", "null"], "enum": ["lines", "bytes", "matches", null] },
+    "compute_property": { "type": ["string", "null"] },
     "compute_match_literal": { "type": ["string", "null"] },
-    "compute_operator": { "type": ["string", "null"], "enum": [">", ">=", "<", "<=", "==", "!=", null] },
+    "compute_operator": { "type": ["string", "null"] },
     "compute_threshold": { "type": ["integer", "null"] }
   }
 }
 ```
+
+`compute_property` and `compute_operator` are nullable **strings**, not enums (analyze
+H1: `Option<enum>` would emit `anyOf`, which the flat-schema gate rejects at boot). The
+closed value sets — `lines`/`bytes`/`matches` and the six comparisons — are enforced by a
+**server-side validator**, not the grammar: an unrecognized value is treated as
+out-of-class and the call abstains (`inconclusive`).
 
 ## Server-assembled output (extends 010)
 
@@ -47,8 +53,8 @@ claim (else null). Flat + closed preserved.
 | Condition | Verdict | extra fields |
 |---|---|---|
 | not a `needs_computation` majority | `supported`/`refuted` (010 judgment) | — |
-| `needs_computation` majority, agreed in-class single-source spec | `supported`/`refuted` (counted + engine) | `executed_form`, `engine_result` |
-| `needs_computation` majority, no agreed in-class single-source spec | `inconclusive` (010 abstain) | `reason` |
+| `needs_computation` majority, agreed in-class single-source spec, **purely computable** | `supported`/`refuted` (counted + engine) | `executed_form`, `engine_result` |
+| `needs_computation` majority, no agreed spec / multi-source / **compound (judgment finding present)** / engine error | `inconclusive` (010 abstain) | `reason` |
 
 The compute verdict is settled by `arithmetic::evaluate` over a server-counted value —
 never a model estimate, never a model verdict.

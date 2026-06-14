@@ -58,11 +58,14 @@ optional output fields. No new module, no new trait seam.
   step further than 010: a computable property is settled by the solver, not abstained
   on. It is the explicitly-named 010 follow-up (FR-005), not a new corrective — no tool
   is added, `grounded_verify`'s role is unchanged. No amendment needed.
-- **II. Constrained-Output Contract** — ✅ the pass schema gains four **flat** nullable
-  scalars/enums (`compute_property`, `compute_match_literal`, `compute_operator`,
-  `compute_threshold`); the `assert_flat` gate already admits exactly these shapes. The
-  settled output's two new fields (`executed_form`, `engine_result`) are
-  **server-assembled**, not in any model schema.
+- **II. Constrained-Output Contract** — ✅ the pass schema gains four **flat nullable
+  scalars** (`compute_property` and `compute_operator` as nullable **strings** —
+  server-validated against their closed sets, **not** nullable enums, which `schemars`
+  would emit as `anyOf` and `assert_flat` rejects at boot, analyze H1;
+  `compute_match_literal` nullable string; `compute_threshold` nullable integer); the
+  `assert_flat` gate admits exactly these `type: ["scalar","null"]` shapes (008
+  `Option<T>` precedent). The settled output's two new fields (`executed_form`,
+  `engine_result`) are **server-assembled**, not in any model schema.
 - **III. Compiler-Enforced Discipline** — ✅ no `unwrap`/`expect` in production; the
   count and the comparison construction are total functions over validated inputs;
   lints unchanged.
@@ -100,7 +103,7 @@ specs/011-grounded-compute-settle/
 ### Source Code (repository root)
 
 ```text
-src/modes/grounded_verify.rs   # MODIFIED — GroundedPass gains compute_property/_match_literal/_operator/_threshold (flat nullable); GroundedVerdict gains optional executed_form + engine_result; aggregation: majority-agreed in-class single-source spec → count + arithmetic::evaluate → supported/refuted; else 010 inconclusive
+src/modes/grounded_verify.rs   # MODIFIED — GroundedPass gains compute_property/_operator (nullable string, server-validated) + _match_literal + _threshold; GroundedVerdict gains optional executed_form + engine_result; aggregation: majority-agreed in-class single-source PURELY-computable spec → count + arithmetic::evaluate → supported/refuted; else (disagree/multi-source/compound/engine-error) 010 inconclusive
 src/grounded/assemble.rs        # MODIFIED — AssembledEvidence also surfaces the raw per-unit content (text+bytes) so the count runs over verbatim source, not the header-framed block; single-unit detection
 tests/integration.rs            # MODIFIED — 011 block: server.rs>1000 → supported (1224>1000); >5000 → refuted; out-of-class/multi-source computable → inconclusive; judgment path unchanged
 examples/acceptance_grounded_verify.rs  # MODIFIED — the compute-settle reproduction

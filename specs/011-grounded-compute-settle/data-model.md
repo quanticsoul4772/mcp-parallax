@@ -15,10 +15,17 @@ they are null. Flat + closed preserved (nullable scalars and scalar enums are th
 | findings | string[] | unchanged |
 | missing_evidence | string[] | unchanged (advisory, 010) |
 | needs_computation | boolean | unchanged (010) — the abstain/compute trigger |
-| **compute_property** | enum `lines`\|`bytes`\|`matches`, nullable | **NEW** — what to count; null unless an in-class computable claim |
+| **compute_property** | **string, nullable** | **NEW** — what to count; one of `lines`/`bytes`/`matches`, **validated server-side** (any other → out-of-class → abstain). Nullable *string*, not enum (analyze H1: `Option<enum>` would emit `anyOf`, which `assert_flat` rejects). |
 | **compute_match_literal** | string, nullable | **NEW** — the literal to count; only with `matches` |
-| **compute_operator** | enum `>`\|`>=`\|`<`\|`<=`\|`==`\|`!=`, nullable | **NEW** — the comparison the claim asserts |
+| **compute_operator** | **string, nullable** | **NEW** — the comparison; one of `>`/`>=`/`<`/`<=`/`==`/`!=`, **validated server-side** (any other → abstain). Nullable *string*, not enum (H1). |
 | **compute_threshold** | integer, nullable | **NEW** — the numeric bound |
+
+**Per-pass verdict on a computable claim (analyze M1)**: a pass that sets
+`needs_computation` still emits the required `verdict` + `findings`. The prompt
+instructs `verdict: supported` with **empty** `findings` (a brief computable note may go
+in the field but findings stays empty) so it never trips 010's "refutation without
+findings is a failed pass" guard and is never dropped. The server ignores this
+pass-level verdict on the compute path.
 
 ## ComputeSpec (server-internal, US1)
 
@@ -27,13 +34,14 @@ the agreeing passes' fields.
 
 | Field | Type | Notes |
 |---|---|---|
-| property | `Property { Lines, Bytes, Matches(String) }` | the in-class property + literal for `matches` |
-| operator | `Op { Gt, Ge, Lt, Le, Eq, Ne }` | from `compute_operator` |
+| property | `Property { Lines, Bytes, Matches(String) }` | parsed from the validated `compute_property` string (+ literal for `matches`) |
+| operator | `Op { Gt, Ge, Lt, Le, Eq, Ne }` | parsed from the validated `compute_operator` string |
 | threshold | `i64` | from `compute_threshold` |
 
 - Built only if a **majority of the `needs_computation` passes** carry an identical,
-  complete, in-class spec (same property, operator, threshold, and literal for
-  `matches`). Disagreement or any missing/out-of-class field → no spec → abstain.
+  complete, in-class spec (server-validated property + operator strings, same threshold,
+  and same literal for `matches`). Disagreement, any missing field, or an
+  unrecognized property/operator string → no spec → abstain.
 
 ## AssembledEvidence (extended)
 
@@ -92,12 +100,14 @@ to 010.
 After 010's pass aggregation and the `needs_computation`-majority check:
 
 1. Not a `needs_computation` majority → 010 judgment verdict (`supported`/`refuted`).
-2. `needs_computation` majority, but no agreed in-class single-source `ComputeSpec`
-   (disagreement, out-of-class property, missing field, or `units.len() != 1`) →
-   `inconclusive` (010 abstain, route to `check`).
+2. `needs_computation` majority, but **any** of: no agreed in-class single-source
+   `ComputeSpec` (disagreement, unrecognized property/operator, missing field),
+   `units.len() != 1` (multi-source), **a substantive judgment finding among the
+   agreeing passes** (compound claim, analyze M2), or an `arithmetic::evaluate` error
+   → `inconclusive` (010 abstain, route to `check`).
 3. `needs_computation` majority **and** an agreed in-class single-source `ComputeSpec`
-   → count → `arithmetic::evaluate` → `supported`/`refuted` with `executed_form` +
-   `engine_result`.
+   **and** the claim is purely computable (no judgment findings) → count →
+   `arithmetic::evaluate` → `supported`/`refuted` with `executed_form` + `engine_result`.
 
 ## Configuration
 

@@ -7,12 +7,14 @@ resolve the mechanism against the existing code.
 ## D1 — How the property + threshold reach the server
 
 **Decision**: extend the per-pass `GroundedPass` schema (010) with **flat nullable
-fields** the model fills when it sets `needs_computation` and the property is in the
-supported class:
+string/integer fields** the model fills when it sets `needs_computation` and the
+property is in the supported class:
 
-- `compute_property`: nullable enum `["lines","bytes","matches"]`.
+- `compute_property`: nullable **string** — one of `"lines"`, `"bytes"`, `"matches"`,
+  **validated server-side** against that set; any other value is out-of-class → abstain.
 - `compute_match_literal`: nullable string (the literal to count; only for `matches`).
-- `compute_operator`: nullable enum `[">", ">=", "<", "<=", "==", "!="]`.
+- `compute_operator`: nullable **string** — one of `">"`, `">="`, `"<"`, `"<="`,
+  `"=="`, `"!="`, **validated server-side**; any other value → abstain.
 - `compute_threshold`: nullable integer (the numeric bound the claim asserts).
 
 **Rationale**: the model is the only party that can read the claim and name *what* to
@@ -21,14 +23,27 @@ count and *against what bound* — but it must not produce the *value* or the *v
 bounded to identification; the server counts and the engine decides. No extra model hop:
 the existing passes already run, so the fields ride the pass they already emit.
 
-**Constitution II (flat + closed)**: each field is a nullable scalar or a scalar enum —
-exactly the shapes `assert_flat` already admits (nullable scalars and scalar enums are
-explicitly allowed; verified by the 010 `needs_computation` boolean and the existing
-`Option<T>` precedent). No nested object, so the pass schema stays flat + closed.
+**Why nullable *string*, not nullable *enum* (analyze H1).** `schemars` encodes an
+`Option<SomeEnum>` as an `anyOf`/`allOf` wrapper, and the flat-schema gate
+(`modes/mod.rs` `assert_flat`) **rejects `anyOf` at boot** — so a nullable Rust enum
+field would fail startup. The only nullable precedent in the codebase is nullable
+*scalars* (008 `SourceLocator`'s `Option<String>`/`Option<u32>`), never a nullable enum.
+Representing `compute_property`/`compute_operator` as `Option<String>` keeps the
+`type: ["string","null"]` shape `assert_flat` already admits, and the closed value set
+is enforced by a **server-side validator** (an unrecognized value is treated as
+out-of-class → abstain, FR-005), not by the grammar. This trades a grammar-level enum
+constraint for a server check — consistent with the project's existing thin-validator
+posture, and strictly safer than risking a boot failure.
 
-**Alternatives**: a second extraction model-call (rejected — an extra hop to re-derive
-what the passes already read); server-side regex parsing of the claim (rejected —
-brittle, and it re-implements claim understanding the model already does).
+**Constitution II (flat + closed)**: each field is a nullable scalar (`type:
+["string","null"]` / `["integer","null"]`) — exactly the shapes `assert_flat` admits
+(verified by the 010 `needs_computation` boolean and the 008 `Option<T>` precedent). No
+enum, no `anyOf`, no nested object; the pass schema stays flat + closed.
+
+**Alternatives**: nullable enum fields (rejected — the H1 boot-failure risk above); a
+second extraction model-call (rejected — an extra hop to re-derive what the passes
+already read); server-side regex parsing of the claim (rejected — brittle, and it
+re-implements claim understanding the model already does).
 
 ## D2 — What the count runs over
 
@@ -79,20 +94,47 @@ extra hop and a new failure surface); a fresh arithmetic evaluator (rejected —
 `needs_computation`, examine their compute fields:
 
 1. The agreeing passes must converge on a **single in-class spec**: same
-   `compute_property` (in `{lines,bytes,matches}`), same `compute_operator`, same
-   `compute_threshold`, and (for `matches`) same `compute_match_literal`. Take the spec
-   held by a majority of the needs_computation passes.
+   `compute_property` (validated in `{lines,bytes,matches}`), same `compute_operator`
+   (validated in the six comparisons), same `compute_threshold`, and (for `matches`)
+   same `compute_match_literal`. Take the spec held by a majority of the
+   needs_computation passes.
 2. **And** assembly produced exactly one read unit (single-source, D2).
-3. If both hold → the server counts the property and calls `arithmetic::evaluate`;
+3. **And** the claim is **purely computable** — the agreeing passes carry no substantive
+   judgment `findings` (the compound-claim gate, D6). A claim like "X is over 1000 lines
+   *and well-structured*" is **not** purely computable and must not be settled on its
+   count alone.
+4. If all hold → the server counts the property and calls `arithmetic::evaluate`;
    verdict = `supported`/`refuted` from `holds`, with the executed form and result.
-4. Otherwise (passes disagree on the spec, property out of class, multi-source, or any
-   missing field) → **abstain** with 010's `inconclusive` (route to `check`). No verdict
-   is ever emitted over a value the server did not derive (FR-005, the 010 guarantee).
+5. Otherwise (passes disagree on the spec, property/operator out of class, multi-source,
+   any missing field, an `arithmetic::evaluate` error, or a non-empty judgment component)
+   → **abstain** with 010's `inconclusive` (route to `check`). No verdict is ever emitted
+   over a value the server did not derive **or** over a claim with an unsettled judgment
+   half (FR-005, the 010 guarantee).
 
-**Rationale**: requiring an agreed, in-class, single-source spec is the conservative
-gate that makes the compute path provably correct on exactly the clarified class and
-defers everything else to the safe 010 behavior. Disagreement among passes about *what*
-to count is itself a signal to abstain.
+**Rationale**: requiring an agreed, in-class, single-source, *purely computable* spec is
+the conservative gate that makes the compute path provably correct on exactly the
+clarified class and defers everything else to the safe 010 behavior. Disagreement among
+passes about *what* to count — or a judgment component the count cannot settle — is
+itself a signal to abstain.
+
+## D6 — Per-pass verdict on a computable claim, and the compound-claim gate (analyze M1/M2)
+
+**Decision (M1)**: a pass that flags `needs_computation` MUST still emit a valid
+`verdict` + `findings` (both are required, 010). The prompt instructs it to emit
+`verdict: "supported"` with a one-line note (e.g. "computable: line count needed") and
+**empty** `findings` — so it never trips the 010 "refutation with no findings is a
+failed pass" guard (`one_pass`) and is never dropped, which would risk quorum loss. The
+server ignores this pass-level verdict on the compute path; the engine decides.
+
+**Decision (M2)**: the compound-claim gate (D4 step 3) keys off the agreeing passes'
+`findings`: if a `needs_computation` pass also reports a substantive judgment finding,
+the claim is compound and the server abstains rather than settling on the count alone.
+This prevents the worst regression — `supported` on the count while a false judgment half
+is ignored. Pinned by a test (a compound claim → `inconclusive`).
+
+**Rationale**: M1 keeps the compute fields riding a structurally valid pass; M2 keeps the
+settle path from answering more than the count actually settles. Both are conservative —
+they expand the abstain set, never the confidently-answered set.
 
 ## D5 — Output surface
 
