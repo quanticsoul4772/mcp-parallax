@@ -2457,3 +2457,126 @@ async fn grounded_verify_judgment_claim_keeps_its_confident_verdict() {
 
     client.cancel().await.unwrap();
 }
+
+// 011 — a computable pass body: needs_computation set + the compute fields.
+fn grounded_compute_pass(property: &str, op: &str, threshold: i64, literal: Value) -> Value {
+    json!({
+        "verdict": "supported", "findings": [], "missing_evidence": [], "needs_computation": true,
+        "compute_property": property, "compute_match_literal": literal,
+        "compute_operator": op, "compute_threshold": threshold,
+    })
+}
+
+// 011 US1 / SC-001/SC-002/SC-005: a computable claim is *settled* over the real
+// file's line count via the engine — supported with the executed form, not the
+// 010 inconclusive abstain. The server counts the actual 1224-line file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_computable_claim_is_settled_supported_with_executed_form() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("server.rs"), "line\n".repeat(1224)).unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_compute_pass(
+                "lines",
+                ">",
+                1000,
+                Value::Null,
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let s = client
+        .call_tool(grounded_call(
+            "src/server.rs is over 1000 lines",
+            json!([{ "path": "server.rs" }]),
+        ))
+        .await
+        .unwrap();
+    let s = s.structured_content.as_ref().expect("structured_content");
+
+    assert_eq!(s["verdict"], "supported");
+    assert_eq!(s["executed_form"], "1224 > 1000");
+    assert_eq!(s["engine_result"], "true");
+    assert_eq!(s["findings"], json!(["counted 1224 lines"]));
+    assert_ne!(s["verdict"], "inconclusive"); // the 010 behavior is superseded
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success);
+    client.cancel().await.unwrap();
+}
+
+// 011 US1 / SC-002: the engine decides direction — a false comparison refutes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_computable_false_comparison_settles_refuted() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("server.rs"), "line\n".repeat(1224)).unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_compute_pass(
+                "lines",
+                ">",
+                5000,
+                Value::Null,
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let s = client
+        .call_tool(grounded_call(
+            "src/server.rs is over 5000 lines",
+            json!([{ "path": "server.rs" }]),
+        ))
+        .await
+        .unwrap();
+    let s = s.structured_content.as_ref().expect("structured_content");
+    assert_eq!(s["verdict"], "refuted");
+    assert_eq!(s["executed_form"], "1224 > 5000");
+    assert_eq!(s["engine_result"], "false");
+    client.cancel().await.unwrap();
+}
+
+// 011 US2 / SC-003: a multi-locator computable claim is not single-source, so it
+// abstains (inconclusive) — never a computed verdict over an aggregate.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_multi_source_computable_abstains() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "line\n".repeat(600)).unwrap();
+    std::fs::write(dir.path().join("b.rs"), "line\n".repeat(700)).unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_compute_pass(
+                "lines",
+                ">",
+                1000,
+                Value::Null,
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let s = client
+        .call_tool(grounded_call(
+            "these files total over 1000 lines",
+            json!([{ "path": "a.rs" }, { "path": "b.rs" }]),
+        ))
+        .await
+        .unwrap();
+    let s = s.structured_content.as_ref().expect("structured_content");
+    assert_eq!(s["verdict"], "inconclusive");
+    assert!(s.get("executed_form").is_none() || s["executed_form"].is_null());
+    client.cancel().await.unwrap();
+}

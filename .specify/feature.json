@@ -1,1 +1,3 @@
-{ "feature_directory": "specs/010-verification-reliability" }
+{
+  "feature_directory": "specs/011-grounded-compute-settle"
+}

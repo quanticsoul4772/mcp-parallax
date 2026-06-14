@@ -265,5 +265,44 @@ async fn main() {
         println!("010 SC-003 computable claim ⇒ inconclusive (route to check): PASS");
     }
 
+    // 011 SC-001/SC-005 — the same computable claim is now SETTLED: the passes
+    // name the computation (lines > 1000), the server counts the real 1224-line
+    // file and the engine decides → supported, with the executed form.
+    {
+        let cdir = tempfile::tempdir().unwrap();
+        std::fs::write(cdir.path().join("server.rs"), "line\n".repeat(1224)).unwrap();
+        let croot = cdir.path().to_str().unwrap().to_string();
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+                "verdict": "supported",
+                "findings": [],
+                "missing_evidence": [],
+                "needs_computation": true,
+                "compute_property": "lines",
+                "compute_match_literal": null,
+                "compute_operator": ">",
+                "compute_threshold": 1000
+            }))))
+            .mount(&mock)
+            .await;
+        let (client, _s, _srv) = serve(&mock, Some(croot)).await;
+        let result = client
+            .call_tool(gv(
+                "src/server.rs is over 1000 lines",
+                json!([{ "path": "server.rs" }]),
+            ))
+            .await
+            .unwrap();
+        let s = result.structured_content.as_ref().unwrap();
+        assert_eq!(s["verdict"], "supported");
+        assert_eq!(s["executed_form"], "1224 > 1000");
+        assert_eq!(s["engine_result"], "true");
+        client.cancel().await.unwrap();
+        println!("011 SC-001 computable claim ⇒ settled supported (1224 > 1000): PASS");
+    }
+
     println!("\nacceptance_grounded_verify: ALL CHECKS PASS");
 }
