@@ -21,6 +21,18 @@ machinery: the model writes only the per-pass perspective under a flat constrain
 schema; the server assembles the deduplicated set. No new capability gate. Distinct from
 unstick (commit to one next step) and verify (judge a claim true/false)."
 
+## Clarifications
+
+### Session 2026-06-14
+
+- Q: How should Diverge deduplicate near-identical perspectives across passes? → A:
+  **Deterministic, server-side** — the server collapses near-identical framings with
+  deterministic logic (no extra model call), mirroring verify's server-assembled finding
+  dedup and the deterministic-over-probabilistic principle. No model dedup/synthesis hop.
+- Q: How many perspectives may each stance-blind pass emit? → A: **One perspective per
+  pass** — each pass returns exactly one framing under its lens; the per-pass schema stays
+  flat (like verify), and the returned set is the k passes deduplicated (≤ k distinct).
+
 ## User Scenarios & Testing *(mandatory)*
 
 Parallax exists to catch the ways the calling model reliably goes wrong from inside its
@@ -121,11 +133,13 @@ contradict) the stated preference — the caller's leaning does not dominate the
   its key implication or what it would change.
 - **FR-002**: `Diverge` MUST run **k stance-blind passes**, each assigned a **distinct
   divergence lens**, so the passes are pushed off the anchored framing in different
-  directions (not one prompt replicated `k` times).
+  directions (not one prompt replicated `k` times). Each pass emits **exactly one
+  perspective** under its lens, keeping the per-pass output schema flat (clarification).
 - **FR-003**: Each returned perspective MUST be **labeled with the divergence lens** that
   produced it, so the caller can see why each framing differs.
-- **FR-004**: The server MUST **deduplicate** near-identical perspectives across passes,
-  returning a set of materially distinct framings rather than reworded restatements.
+- **FR-004**: The server MUST **deduplicate** near-identical perspectives across passes
+  using **deterministic, server-side** logic (no model dedup/synthesis hop), returning a
+  set of materially distinct framings rather than reworded restatements (clarification).
 - **FR-005**: `Diverge` MUST be **stance-blind**: a pass sees only the problem statement
   and optional neutral context — never the caller's preferred framing, stance, identity,
   or conversation history (blindness is structural, as in `verify`).
@@ -148,8 +162,9 @@ contradict) the stated preference — the caller's leaning does not dominate the
   specific direction (e.g. invert-the-goal, change-the-actor, shift-the-horizon,
   attack-the-assumption, reframe-the-class). The set and the lens↔`k` assignment are a
   planning decision.
-- **Perspective**: one pass's output — a distinct reframing plus its key implication,
-  carrying the lens that produced it. The server's returned set is the deduplicated union.
+- **Perspective**: one pass's single output — a distinct reframing plus its key
+  implication, carrying the lens that produced it. The server's returned set is the
+  deterministic deduplicated union of the k passes' perspectives (≤ k distinct).
 
 ## Success Criteria *(mandatory)*
 
@@ -178,9 +193,10 @@ contradict) the stated preference — the caller's leaning does not dominate the
   the constrained-output contract that `verify`/`grounded_verify` use); the model writes
   only the per-pass perspective under a flat schema, and the server assembles and
   deduplicates the set.
-- The concrete divergence lens set, the lens↔`k` assignment rule, and the dedup mechanism
-  are **`/speckit-plan` decisions** (mirroring how `verify`'s lens set and 009/010
-  deferred mechanism choices to planning).
+- The concrete divergence lens set and the lens↔`k` assignment rule are **`/speckit-plan`
+  decisions** (mirroring how `verify`'s lens set was a planning choice). The dedup
+  approach is settled (clarification): **deterministic, server-side**; the dedup
+  *predicate* (how near-identical is detected) is the remaining plan detail.
 - `VERIFY_ENSEMBLE_K` (or an analogous pass count) governs how many passes run; reusing
   the existing default is assumed unless planning decides otherwise.
 - The output is advisory framings for the caller to act on — `Diverge` neither ranks the
