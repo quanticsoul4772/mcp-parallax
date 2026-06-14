@@ -334,8 +334,9 @@ pub(crate) fn aggregate_core(
 }
 
 /// Pick the most frequent failure class from `failures` (helper for quorum
-/// failure; separated for testability).
-fn dominant_failure(failures: Vec<AppError>) -> AppError {
+/// failure; separated for testability). Reused by `diverge` for its
+/// zero-completion case (012, no shared aggregation otherwise).
+pub(crate) fn dominant_failure(failures: Vec<AppError>) -> AppError {
     use std::collections::HashMap;
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
     for failure in &failures {

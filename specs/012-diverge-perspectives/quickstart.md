@@ -44,3 +44,29 @@ from the preference.
 - **Live** (dogfood): SC-001 — that real problems scatter into ≥3 distinct framings — and
   SC-003 — that a stated stance does not narrow the set — are confirmed against the running
   model (a mock cannot diverge), as `verify`'s SC-001 was.
+
+## Validation results (full gate, 2026-06-14)
+
+`cargo fmt --all -- --check` clean · `cargo clippy --all-features --all-targets -- -D
+warnings` clean · `cargo test` **331 lib + 56 integration, 0 failed** ·
+`cargo run --example acceptance_diverge` ALL CHECKS PASS.
+
+New coverage:
+
+- **Pure:** the `k` lens prompts are pairwise distinct; `LENSES` is non-empty with unique
+  names and cycles at `k > len`; `normalize`/`jaccard` behave; `dedup` collapses
+  near-identical framings (Jaccard ≥ 0.8, earliest lens kept) and keeps distinct ones;
+  the per-pass schema registers flat + closed (two string fields, no `lens` model field).
+- **Wired (mocked):** one lens-labeled `Perspective` per completed pass (invert/actor/
+  horizon at k=3); an empty-`framing` pass is dropped; zero completions → dominant
+  failure; an empty problem is rejected before any model call; identical framings across
+  passes deduplicate to one.
+- **Integration:** `diverge` is always in the catalog (no gate); distinct per-lens
+  framings return lens-labeled and deduplicated with **no** `verdict`/`confidence` field
+  and exactly one record; a stated preference in `context` is accepted and the tool stays
+  blind (no extra stance slot).
+
+**Pending live (T013, post-rebuild):** SC-001 (≥3 distinct framings), SC-003 (stance does
+not narrow the set), and SC-004 (no over-divergence on a narrow problem) — the
+offline-impossible checks (a mock cannot diverge). The `acceptance_diverge` example is the
+offline scaffold.

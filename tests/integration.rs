@@ -405,6 +405,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "diverge",
             "unstick",
             "verify"
         ]
@@ -637,6 +638,7 @@ async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "diverge",
             "unstick",
             "verify"
         ]
@@ -660,6 +662,7 @@ async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "diverge",
             "forget",
             "recall",
             "save",
@@ -1095,6 +1098,7 @@ async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "diverge",
             "research",
             "unstick",
             "verify"
@@ -2019,7 +2023,7 @@ fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
     stdout.read_line(&mut line).unwrap();
     let tools: Value = serde_json::from_str(&line).expect("tools/list reply is JSON-RPC");
     // Behavior identical to a telemetry-disabled run: full default catalog.
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
 
     // Close stdin -> transport EOF -> graceful shutdown path runs the
     // telemetry flush against the dead collector. The process must exit
@@ -2578,5 +2582,170 @@ async fn grounded_verify_multi_source_computable_abstains() {
     let s = s.structured_content.as_ref().expect("structured_content");
     assert_eq!(s["verdict"], "inconclusive");
     assert!(s.get("executed_form").is_none() || s["executed_form"].is_null());
+    client.cancel().await.unwrap();
+}
+
+// ---- 012-diverge ----------------------------------------------------------
+
+fn diverge_call(problem: &str, context: Option<&str>) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new("diverge");
+    let args = context.map_or_else(
+        || json!({ "problem": problem }),
+        |c| json!({ "problem": problem, "context": c }),
+    );
+    params.arguments = args.as_object().cloned();
+    params
+}
+
+fn diverge_pass(framing: &str, implication: &str) -> Value {
+    json!({ "framing": framing, "implication": implication })
+}
+
+// 012 US1 + FR-009 / SC-002 / FR-007: diverge is always in the catalog; distinct
+// per-lens framings come back lens-labeled and deduplicated, with no verdict or
+// confidence field, and exactly one record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn diverge_returns_distinct_lens_labeled_framings_and_one_record() {
+    let mock = MockServer::start().await;
+    // A distinct framing per lens, matched on the lens directive in the prompt body
+    // (k=3 → invert / actor / horizon).
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("Flip the goal"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&diverge_pass(
+                "What if more steps is the fix, each one earning trust?",
+                "Reframes the goal from brevity to confidence.",
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("Change whose problem"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&diverge_pass(
+                "Is this the user's problem, or the team's metric?",
+                "If users aren't dropping off, step count is a vanity concern.",
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("Shift the time scale"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&diverge_pass(
+                "At a one-year horizon, is onboarding length even the lever?",
+                "The durable lever may be activation, not first-session speed.",
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(diverge_call("We need to cut steps from onboarding.", None))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    // Always in the catalog.
+    assert!(tool_names(&client).await.contains(&"diverge".to_string()));
+    // Three distinct framings, each lens-labeled; no verdict/confidence.
+    let perspectives = s["perspectives"].as_array().unwrap();
+    assert_eq!(perspectives.len(), 3);
+    let lenses: Vec<&str> = perspectives
+        .iter()
+        .map(|p| p["lens"].as_str().unwrap())
+        .collect();
+    assert_eq!(lenses, vec!["invert", "actor", "horizon"]);
+    for p in perspectives {
+        assert!(!p["framing"].as_str().unwrap().is_empty());
+        assert!(!p["implication"].as_str().unwrap().is_empty());
+    }
+    assert_eq!(s["passes"], 3);
+    assert!(s.get("verdict").is_none());
+    assert!(s.get("confidence").is_none());
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "diverge");
+    assert_eq!(records[0].outcome, Outcome::Success);
+
+    client.cancel().await.unwrap();
+}
+
+// 012 US1 / FR-004: identical framings across passes collapse to one (the server
+// deduplicates deterministically), keeping the earliest lens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn diverge_deduplicates_identical_framings() {
+    let mock = MockServer::start().await;
+    // Every pass returns the same framing → collapses to one perspective.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&diverge_pass(
+                "This is really a naming problem, not a flow problem.",
+                "Renaming the steps may resolve the felt friction.",
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(diverge_call("Cut onboarding steps.", None))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    let perspectives = s["perspectives"].as_array().unwrap();
+    assert_eq!(perspectives.len(), 1); // 3 identical → deduped to 1
+    assert_eq!(perspectives[0]["lens"], "invert"); // earliest kept
+    assert_eq!(s["passes"], 3); // all 3 completed; dedup is post-collection
+    client.cancel().await.unwrap();
+}
+
+// 012 US2 / FR-005: a stated preference in `context` does not break the tool — it
+// reaches a pass only as context (no extra stance slot); perspectives still come
+// back and one record is written. (The "does not narrow" property is the live dogfood.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn diverge_accepts_a_stance_in_context_and_stays_blind() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&diverge_pass(
+                "What if the rewrite is the risk, not the fix?",
+                "A rewrite resets hard-won edge-case knowledge.",
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(diverge_call(
+            "Our service is hard to maintain.",
+            Some("I think we should just rewrite it."),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert!(!s["perspectives"].as_array().unwrap().is_empty());
+    assert!(s.get("verdict").is_none());
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "diverge");
     client.cancel().await.unwrap();
 }
