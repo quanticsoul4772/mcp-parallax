@@ -56,10 +56,11 @@ the same exit points so the surfaces cannot disagree
 surface). Build
 note: `z3` (bundled) needs cmake — first clean build ~5 min; on Windows set
 `CMAKE` to the VS Build Tools cmake path. Feature artifacts:
-`specs/001-core-layer/` through `specs/012-diverge-perspectives/` (core +
+`specs/001-core-layer/` through `specs/014-preference-elicitation/` (core +
 memory + research + deterministic + checkpoint + observability, then
 grounded-verify 008 / glob-locators 009 / verification-reliability 010 /
-grounded-compute-settle 011 / diverge 012).
+grounded-compute-settle 011 / diverge 012 / decide 013 / elicit 014 — the
+four-corrective cognitive set plus preference elicitation now complete).
 
 ## The design is the source of truth
 
@@ -216,9 +217,12 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `014-preference-elicitation` — [spec](specs/014-preference-elicitation/spec.md) ·
+No active feature — the design corpus's corrective catalog is fully built (last merged:
+`014-preference-elicitation` — [spec](specs/014-preference-elicitation/spec.md) ·
 [plan](specs/014-preference-elicitation/plan.md) · [research](specs/014-preference-elicitation/research.md) ·
-[data model](specs/014-preference-elicitation/data-model.md) · [contracts](specs/014-preference-elicitation/contracts/)
+[data model](specs/014-preference-elicitation/data-model.md) · [contracts](specs/014-preference-elicitation/contracts/)).
+Open follow-ups are the three live dogfoods needing the rebuilt binary: 012 T013 (diverge),
+013 T010 (decide), 014 T012 (elicit).
 <!-- SPECKIT END -->
 
 ## Working style
