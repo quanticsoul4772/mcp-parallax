@@ -23,8 +23,10 @@ objects — only scalars, scalar enums, and arrays of scalars are legal. A per-o
 flat-compliant encoding of a variable-length per-option structure; the server **zips**
 them with the input option labels (by index) into the assessment it ranks. The model
 scores option *i* (the prompt lists the options in order); the server validates that
-`option_scores.len() == option_rationales.len() == options.len()` — a mismatch is a
-failed pass, never a silent realign.
+`option_scores.len() == option_rationales.len() == options.len()` **and every score is
+within 0–100** — a mismatch or an out-of-range score is a **failed pass**, never a silent
+realign or clamp (loud-over-silent, Constitution III; analyze M1). The grammar drops
+numeric range constraints, so the range check is the thin validator's job.
 
 `methodology` is a **proper scalar enum** (not a nullable string): a non-null enum is
 grammar-enforced and flat-legal (verify's `VerdictKind` is the precedent). The 011 H1
@@ -64,7 +66,9 @@ top_score − runner_up_score` and `SCALE = 100` (the score range). Clamped to `
 
 **Rationale**: a deterministic, monotonic map from "how close the call is" to a confidence
 value (FR-005, SC-001/SC-002). It is calibrated to the *margin*, not model self-report and
-not a constant. `0.5` floor reflects that having picked *an* option from ≥2 is never worse
+not a constant. **Semantics** (analyze L2): confidence measures the certainty the
+recommended option beats the **runner-up**, not its lead over the whole field — a close
+top-two that both dominate a third option correctly reads ~0.5. `0.5` floor reflects that having picked *an* option from ≥2 is never worse
 than a coin flip. The `0.5 + 0.5·…` form is the v1 mapping; `SCALE`/floor live as named
 constants (Scope discipline), tunable without a config var.
 

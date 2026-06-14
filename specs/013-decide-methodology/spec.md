@@ -151,7 +151,9 @@ expressed in the terms of that methodology (criteria scores vs. caused/prevented
   the **highest-scored** option as the recommendation and the next-highest as the
   runner-up (clarification). The model does **not** name the winner directly — the choice
   is a deterministic function of the per-option scores, so it traces to the assessed
-  factors, not an unexamined preference.
+  factors, not an unexamined preference. A **malformed assessment** — a score count that
+  does not match the options, or a score outside the stated range — is a **failed pass**
+  (loud), never silently normalized or clamped (loud-over-silent convention).
 - **FR-005**: The reported confidence MUST be **server-derived from the score margin**
   between the top option and the runner-up (clarification): a dominant winner (large
   margin) yields high confidence; a near-tie (small margin) yields low confidence. It is

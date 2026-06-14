@@ -32,9 +32,11 @@ array of objects is illegal under `assert_flat`), index-aligned to `DecideParams
 | option_rationales | string[] | one per input option — why it scored that |
 | deciding_factors | string[] | the factors/criteria the methodology used |
 
-- **Arity validation** (a failed pass otherwise, FR-004): `option_scores.len() ==
-  option_rationales.len() == options.len()`, and `deciding_factors` non-empty. Scores out
-  of 0–100 are clamped to range by the server (defensive; the prompt states the scale).
+- **Well-formedness validation** (a failed pass otherwise, FR-004): `option_scores.len()
+  == option_rationales.len() == options.len()`, `deciding_factors` non-empty, and **every
+  score within 0–100**. A score outside the range is a **failed pass** (loud), not clamped
+  — a malformed assessment is treated like the arity mismatch, matching the project's
+  loud-over-silent convention.
 
 ## OptionAssessment (server-internal / output element)
 
@@ -43,7 +45,7 @@ The server **zips** the parallel arrays with the option labels:
 | Field | Type | Notes |
 |---|---|---|
 | option | String | from `DecideParams.options[i]` |
-| score | i64 | from `option_scores[i]` (clamped 0–100) |
+| score | i64 | from `option_scores[i]` (validated 0–100; out-of-range → failed pass) |
 | rationale | String | from `option_rationales[i]` |
 
 ## Rank + calibrate (server, pure, deterministic) — research D2/D3
@@ -53,7 +55,9 @@ The server **zips** the parallel arrays with the option labels:
    earlier option ahead). The top is `recommended`, the next is `runner_up`.
 3. `margin = recommended.score − runner_up.score`.
 4. `confidence = 0.5 + 0.5 * min(margin, SCALE) / SCALE`, `SCALE = 100`, clamped
-   `[0.5, 1.0]`. Tie (margin 0) → `0.5`; 100-point lead → `1.0`.
+   `[0.5, 1.0]`. Tie (margin 0) → `0.5`; 100-point lead → `1.0`. **Semantics**: confidence
+   is the certainty the recommended option beats the **runner-up**, not its lead over the
+   whole field — a close top-two (both far above a third option) correctly reads ~0.5.
 5. `runner_up_reason` is composed server-side: `"scored {margin} below {recommended}:
    {runner_up.rationale}"`.
 

@@ -35,8 +35,9 @@ recommendation with its scored rationale. No verdict, no gate.
 
 Per-option data is **parallel scalar arrays** index-aligned to the input `options` (an
 array of objects is illegal under the flat-schema gate). The server validates
-`option_scores.len() == option_rationales.len() == options.len()`; a mismatch is a failed
-pass. The model **does not** name the winner — it only scores.
+`option_scores.len() == option_rationales.len() == options.len()` **and every score within
+0–100**; a mismatch or out-of-range score is a failed pass (loud, never clamped). The
+model **does not** name the winner — it only scores.
 
 ## Tool output (server-assembled)
 
