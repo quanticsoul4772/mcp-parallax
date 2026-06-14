@@ -19,6 +19,7 @@ use crate::memory::tools::{
     self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
     SaveParams, SaveResult,
 };
+use crate::modes::diverge::{self, DivergeParams, DivergeResult, DIVERGE_ID};
 use crate::modes::grounded_verify::{
     self, GroundedDeps, GroundedVerdict, GroundedVerifyParams, GROUNDED_VERIFY_ID,
 };
@@ -142,6 +143,7 @@ impl Parallax {
         let mut registry = ModeRegistry::new();
         verify::register(&mut registry, config.verify_ensemble_k)?;
         unstick::register(&mut registry)?;
+        diverge::register(&mut registry, config.verify_ensemble_k)?;
         // Research-internal modes register unconditionally — their flat+closed
         // assertion belongs at boot whether or not the capability is on.
         pipeline::register(&mut registry)?;
@@ -294,6 +296,27 @@ impl Parallax {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<NextStep>, ErrorData> {
         self.unstick_with_ct(params, context.ct).await
+    }
+
+    /// The `diverge` tool: k stance-blind passes under distinct generative
+    /// lenses, returning a deduplicated set of distinct framings.
+    #[tool(
+        name = "diverge",
+        description = "Break out of a single framing of a problem. Runs parallel stance-blind \
+        passes, each attacking the problem from a distinct angle (invert the goal, change whose \
+        problem it is, shift the time horizon, deny the load-bearing assumption, reframe the \
+        problem class), and returns a deduplicated set of genuinely different framings - each a \
+        one-line reframing plus what it changes, labeled with the angle that produced it. Use \
+        when you are anchored or tunnel-visioned and need real alternatives, not a more confident \
+        version of the framing you already hold. To judge whether a claim is true use verify; to \
+        commit to one next step use unstick."
+    )]
+    pub async fn diverge(
+        &self,
+        Parameters(params): Parameters<DivergeParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<DivergeResult>, ErrorData> {
+        self.diverge_with_ct(params, context.ct).await
     }
 
     /// The `save` tool: store one memory with derived trust.
@@ -504,6 +527,22 @@ impl Parallax {
             unstick::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
                 .await
                 .map(|run| (run.step, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
+    async fn diverge_with_ct(
+        &self,
+        params: DivergeParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<DivergeResult>, ErrorData> {
+        let mode = self.registry.get(DIVERGE_ID).ok_or_else(|| {
+            ErrorData::internal_error("diverge mode not registered".to_string(), None)
+        })?;
+        self.run_recorded(DIVERGE_ID, self.model.clone(), ct, async {
+            diverge::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
+                .await
+                .map(|run| (run.result, run.input_tokens, run.output_tokens))
         })
         .await
     }
@@ -793,6 +832,7 @@ mod tests {
                 "checkpoint_action",
                 "checkpoint_batch",
                 "checkpoint_turn",
+                "diverge",
                 "unstick",
                 "verify"
             ]
@@ -826,6 +866,7 @@ mod tests {
                 "checkpoint_action",
                 "checkpoint_batch",
                 "checkpoint_turn",
+                "diverge",
                 "research",
                 "unstick",
                 "verify"
@@ -901,6 +942,7 @@ mod tests {
                 "checkpoint_action",
                 "checkpoint_batch",
                 "checkpoint_turn",
+                "diverge",
                 "forget",
                 "recall",
                 "save",

@@ -17,7 +17,10 @@ itself.
 speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
 passes, each under a distinct critical lens so disagreement can surface,
 agreement-derived confidence — 010), **`unstick`** (one committed next
-step, single pass), **`check`** (always on, no gate — pure in-process
+step, single pass), **`diverge`** (k stance-blind passes under distinct
+*generative* lenses — invert/actor/horizon/assumption/class — returning a
+deterministically deduplicated set of distinct problem framings; the
+divergence counterpart to verify, always on — 012), **`check`** (always on, no gate — pure in-process
 engines: the model classifies checkability and translates to a small typed
 formal target, evalexpr or Z3 executes, and verdict + explanation are
 server-assembled; one violation-fed retry on real engine signals only), the
@@ -160,7 +163,7 @@ src/
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
-├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
+├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
@@ -201,9 +204,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `011-grounded-compute-settle` — [spec](specs/011-grounded-compute-settle/spec.md) ·
-[plan](specs/011-grounded-compute-settle/plan.md) · [research](specs/011-grounded-compute-settle/research.md) ·
-[data model](specs/011-grounded-compute-settle/data-model.md) · [contracts](specs/011-grounded-compute-settle/contracts/)
+Current feature: `012-diverge-perspectives` — [spec](specs/012-diverge-perspectives/spec.md) ·
+[plan](specs/012-diverge-perspectives/plan.md) · [research](specs/012-diverge-perspectives/research.md) ·
+[data model](specs/012-diverge-perspectives/data-model.md) · [contracts](specs/012-diverge-perspectives/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
