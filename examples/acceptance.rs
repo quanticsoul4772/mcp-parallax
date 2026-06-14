@@ -95,6 +95,9 @@ async fn main() {
     let mut max_latency_ms = 0_u128;
     let mut catches = 0_u32;
     let mut false_refutations = 0_u32;
+    // 010 SC-001: with per-pass lenses, confidence should become graduated —
+    // count runs landing strictly between 0 and 1 (was 0/8 before lenses).
+    let mut graduated_confidence = 0_u32;
     let mut bare_verdicts: Vec<(String, VerdictKind)> = Vec::new();
 
     println!("=== SC-002/SC-003: 20-claim run (seeded + sound + varied) ===");
@@ -113,6 +116,9 @@ async fn main() {
                 // unsanitized schema — reaching Ok IS schema validity.
                 schema_valid += 1;
                 let verdict = run.verdict.verdict;
+                if run.verdict.confidence > 0.0 && run.verdict.confidence < 1.0 {
+                    graduated_confidence += 1;
+                }
                 bare_verdicts.push((claim.to_string(), verdict));
                 match (must_refute, verdict) {
                     (Some(true), VerdictKind::Refuted) => catches += 1,
@@ -159,6 +165,10 @@ async fn main() {
     println!("SC-003 seeded-error catches : {catches}/10 (target: >=9)");
     println!("SC-003 false refutations    : {false_refutations}/6 sound claims (target: 0)");
     println!("SC-004 stance flips         : {stance_flips}/6 (target: 0)");
+    println!(
+        "010 SC-001 graduated conf    : {graduated_confidence}/{total_runs} runs in (0,1) \
+         (target: > 0 — lenses make confidence a real signal)"
+    );
     println!("SC-006 max single-call ms   : {max_latency_ms} (target: < 30000)");
 
     let pass = schema_valid == total_runs

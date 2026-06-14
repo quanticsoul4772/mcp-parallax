@@ -15,7 +15,8 @@ itself.
 
 **Status: all corpus layers built — core + memory + research + deterministic + checkpoint + observability.** The server
 speaks MCP over stdio and serves **`verify`** (k parallel stance-blind
-passes, agreement-derived confidence), **`unstick`** (one committed next
+passes, each under a distinct critical lens so disagreement can surface,
+agreement-derived confidence — 010), **`unstick`** (one committed next
 step, single pass), **`check`** (always on, no gate — pure in-process
 engines: the model classifies checkability and translates to a small typed
 formal target, evalexpr or Z3 executes, and verdict + explanation are
@@ -159,7 +160,7 @@ src/
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
-├── modes/            # mode registry + verify/unstick/grounded_verify (prompt + schema + run logic)
+├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / grounded_verify (needs_computation → inconclusive abstain, 010)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
@@ -200,9 +201,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `009-glob-locators` — [spec](specs/009-glob-locators/spec.md) ·
-[plan](specs/009-glob-locators/plan.md) · [research](specs/009-glob-locators/research.md) ·
-[data model](specs/009-glob-locators/data-model.md) · [contracts](specs/009-glob-locators/contracts/)
+Current feature: `010-verification-reliability` — [spec](specs/010-verification-reliability/spec.md) ·
+[plan](specs/010-verification-reliability/plan.md) · [research](specs/010-verification-reliability/research.md) ·
+[data model](specs/010-verification-reliability/data-model.md) · [contracts](specs/010-verification-reliability/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
