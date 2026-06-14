@@ -405,6 +405,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "decide",
             "diverge",
             "unstick",
             "verify"
@@ -638,6 +639,7 @@ async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "decide",
             "diverge",
             "unstick",
             "verify"
@@ -662,6 +664,7 @@ async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "decide",
             "diverge",
             "forget",
             "recall",
@@ -1098,6 +1101,7 @@ async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
             "checkpoint_action",
             "checkpoint_batch",
             "checkpoint_turn",
+            "decide",
             "diverge",
             "research",
             "unstick",
@@ -2023,7 +2027,7 @@ fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
     stdout.read_line(&mut line).unwrap();
     let tools: Value = serde_json::from_str(&line).expect("tools/list reply is JSON-RPC");
     // Behavior identical to a telemetry-disabled run: full default catalog.
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 8);
 
     // Close stdin -> transport EOF -> graceful shutdown path runs the
     // telemetry flush against the dead collector. The process must exit
@@ -2747,5 +2751,94 @@ async fn diverge_accepts_a_stance_in_context_and_stays_blind() {
     let records = storage.list_invocations().await.unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].tool, "diverge");
+    client.cancel().await.unwrap();
+}
+
+// ---- 013-decide -----------------------------------------------------------
+
+fn decide_call(decision: &str, options: Value) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new("decide");
+    params.arguments = json!({ "decision": decision, "options": options })
+        .as_object()
+        .cloned();
+    params
+}
+
+fn decide_assessment(methodology: &str, scores: Value, rationales: Value, factors: Value) -> Value {
+    json!({
+        "methodology": methodology,
+        "option_scores": scores,
+        "option_rationales": rationales,
+        "deciding_factors": factors,
+    })
+}
+
+// 013 US1 + FR-002/004/005/007 + SC-001/003: a scored single pass yields a
+// server-derived recommendation with margin-calibrated confidence, the full
+// breakdown, the surfaced methodology, no verdict/next_step, and one record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decide_returns_calibrated_recommendation_and_one_record() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&decide_assessment(
+                "weigh",
+                json!([85, 40]),
+                json!([
+                    "safe and reversible at each step",
+                    "fast but no incremental rollback"
+                ]),
+                json!(["blast radius", "rollback speed"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(decide_call(
+            "How should we ship the migration?",
+            json!(["feature-flag ramp", "big-bang cutover"]),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    assert!(tool_names(&client).await.contains(&"decide".to_string()));
+    assert_eq!(s["recommended"], "feature-flag ramp");
+    assert_eq!(s["runner_up"], "big-bang cutover");
+    assert!(s["runner_up_reason"].as_str().unwrap().contains("45 below"));
+    assert!((s["confidence"].as_f64().unwrap() - 0.725).abs() < 1e-9); // margin 45
+    assert_eq!(s["methodology"], "weigh");
+    assert_eq!(
+        s["deciding_factors"],
+        json!(["blast radius", "rollback speed"])
+    );
+    assert_eq!(s["assessments"].as_array().unwrap().len(), 2);
+    assert!(s.get("verdict").is_none());
+    assert!(s.get("next_step").is_none());
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "decide");
+    assert_eq!(records[0].outcome, Outcome::Success);
+    assert_eq!(records[0].input_tokens, 100); // single pass, not x3
+    client.cancel().await.unwrap();
+}
+
+// 013 SC-005 / FR-008: fewer than two options is rejected, no model call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decide_rejects_fewer_than_two_options() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+    let err = client
+        .call_tool(decide_call("pick", json!(["only one"])))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("at least two options"), "{err}");
     client.cancel().await.unwrap();
 }

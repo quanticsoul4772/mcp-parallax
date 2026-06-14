@@ -20,7 +20,11 @@ agreement-derived confidence — 010), **`unstick`** (one committed next
 step, single pass), **`diverge`** (k stance-blind passes under distinct
 *generative* lenses — invert/actor/horizon/assumption/class — returning a
 deterministically deduplicated set of distinct problem framings; the
-divergence counterpart to verify, always on — 012), **`check`** (always on, no gate — pure in-process
+divergence counterpart to verify, always on — 012), **`decide`** (single
+scored pass over ≥2 options — the model picks a methodology
+(weigh/causal/probabilistic) and scores each option, the server argmax-picks the
+top and calibrates confidence from the score margin; choose-among-options, always
+on — 013), **`check`** (always on, no gate — pure in-process
 engines: the model classifies checkability and translates to a small typed
 formal target, evalexpr or Z3 executes, and verdict + explanation are
 server-assembled; one violation-fed retry on real engine signals only), the
@@ -166,7 +170,7 @@ src/
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
-├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
+├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / decide (scored single pass → argmax + margin confidence, 013) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
@@ -207,11 +211,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-No active feature. Last merged: `012-diverge-perspectives` —
-[spec](specs/012-diverge-perspectives/spec.md) · [plan](specs/012-diverge-perspectives/plan.md) ·
-[research](specs/012-diverge-perspectives/research.md) ·
-[data model](specs/012-diverge-perspectives/data-model.md) · [contracts](specs/012-diverge-perspectives/contracts/).
-Its one open item is the live dogfood (T013: SC-001/SC-003/SC-004), which needs the rebuilt binary.
+Current feature: `013-decide-methodology` — [spec](specs/013-decide-methodology/spec.md) ·
+[plan](specs/013-decide-methodology/plan.md) · [research](specs/013-decide-methodology/research.md) ·
+[data model](specs/013-decide-methodology/data-model.md) · [contracts](specs/013-decide-methodology/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
