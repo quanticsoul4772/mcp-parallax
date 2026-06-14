@@ -25,11 +25,17 @@ pub const VERIFY_DESCRIPTION: &str = "Independently verify a claim. Runs multipl
 
 /// The calibrated verifier profile (design §5): every refutation must name a
 /// specific concrete error, and the claim is steelmanned before judgment.
-/// Placeholders exist for the claim and context ONLY — the requester's stance,
+/// Placeholders exist for the **lens** (a fixed critical perspective, not
+/// caller-supplied), the claim, and the context ONLY — the requester's stance,
 /// history, and identity have no slot to flow through (blindness is
-/// structural, not behavioral).
+/// structural, not behavioral). The `<<lens>>` slot carries one of [`LENSES`],
+/// assigned per pass so the `k` passes scrutinize differently and genuine
+/// disagreement can surface (US1; design §"Designing real independence").
 const PROMPT_TEMPLATE: &str = "You are an independent verifier. Judge the claim below on its \
     own merits. You know nothing about who made it or how confident they are.\n\
+    \n\
+    Critical lens for this pass — it shapes HOW you scrutinize the claim, not what you assume \
+    about who asked:\n<<lens>>\n\
     \n\
     Rules:\n\
     1. Steelman first: consider the strongest reasonable reading of the claim before judging.\n\
@@ -42,6 +48,54 @@ const PROMPT_TEMPLATE: &str = "You are an independent verifier. Judge the claim 
     Claim to verify:\n<<claim>>\n\
     \n\
     Context provided with the claim (may be empty):\n<<context>>\n";
+
+/// A named critical perspective assigned to a verification pass (data-model.md
+/// §Lens). The lens changes *how* a pass probes the claim — never *what it
+/// knows about the asker* — so stance-blindness is preserved (research D3).
+#[derive(Debug, Clone, Copy)]
+struct Lens {
+    /// Short identifier, prepended to the directive so the pass names its angle.
+    name: &'static str,
+    /// The one-paragraph instruction injected at the `<<lens>>` slot.
+    directive: &'static str,
+}
+
+/// The fixed lens set (research D1). Pass `i` uses `LENSES[i % LENSES.len()]`
+/// (research D2): with the default `k=3` the first three run; higher `k` cycles
+/// deterministically. These are critical angles, not the caller's stance — the
+/// agreement ratio only means something if the passes could genuinely disagree.
+const LENSES: &[Lens] = &[
+    Lens {
+        name: "literal",
+        directive: "Read the claim at face value. Take the plain, ordinary meaning of its \
+            words and judge whether that literal reading holds — do not silently repair it \
+            into a more defensible claim than what was written.",
+    },
+    Lens {
+        name: "counterexample",
+        directive: "Actively hunt for a single case, edge condition, or boundary where the \
+            claim fails. If you can name one concrete counterexample, the claim as stated is \
+            refuted; if a determined search finds none, that supports it.",
+    },
+    Lens {
+        name: "definitional",
+        directive: "Scrutinize the key terms. Is the claim true only under a loose, shifted, \
+            or idiosyncratic definition of its words, and false under the standard one? \
+            Pin down what each term must mean for the claim to hold.",
+    },
+    Lens {
+        name: "evidential",
+        directive: "Ask what would have to be true for this claim to hold, and whether that \
+            is actually established or merely assumed. Distinguish what is demonstrated from \
+            what is asserted without support.",
+    },
+    Lens {
+        name: "scope",
+        directive: "Test for overgeneralization. Is the claim true in some cases but asserted \
+            as universal — quantifier creep from \"sometimes\" or \"often\" to \"always\"? \
+            Judge whether the breadth claimed is the breadth justified.",
+    },
+];
 
 /// Tool input (data-model.md §2).
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -122,9 +176,12 @@ pub fn register(registry: &mut ModeRegistry, ensemble_k: u8) -> Result<(), AppEr
     )
 }
 
-/// Build the per-pass prompt. Claim and context are the ONLY dynamic content.
-fn build_prompt(template: &str, claim: &str, context: Option<&str>) -> String {
+/// Build the per-pass prompt. The lens (a fixed critical perspective), the
+/// claim, and the context are the only dynamic content; the lens does not carry
+/// any caller stance.
+fn build_prompt(template: &str, lens: &str, claim: &str, context: Option<&str>) -> String {
     template
+        .replace("<<lens>>", lens)
         .replace("<<claim>>", claim)
         .replace("<<context>>", context.unwrap_or(""))
 }
@@ -161,15 +218,21 @@ pub async fn run(
     max_claim_chars: usize,
 ) -> Result<VerifyRun, AppError> {
     check_input(params, max_claim_chars)?;
-    let prompt = build_prompt(
-        mode.prompt_template,
-        &params.claim,
-        params.context.as_deref(),
-    );
 
-    let passes =
-        futures::future::join_all((0..mode.ensemble_k).map(|_| one_pass(client, mode, &prompt)))
-            .await;
+    // Each pass scrutinizes under a distinct lens (research D1/D2): pass i uses
+    // LENSES[i % LENSES.len()], so genuinely contestable claims scatter and the
+    // agreement-ratio confidence spans its range. Aggregation is unchanged.
+    let passes = futures::future::join_all((0..mode.ensemble_k).map(|i| {
+        let lens = LENSES[usize::from(i) % LENSES.len()];
+        let prompt = build_prompt(
+            mode.prompt_template,
+            &format!("{}: {}", lens.name, lens.directive),
+            &params.claim,
+            params.context.as_deref(),
+        );
+        async move { one_pass(client, mode, &prompt).await }
+    }))
+    .await;
     let core = passes
         .into_iter()
         .map(|pass| pass.map(|(v, inp, out)| (v.verdict, v.findings, inp, out)))
@@ -400,23 +463,77 @@ mod tests {
         );
     }
 
-    // ---- T019: stance-blindness is structural ------------------------------
+    // ---- T019 / T003: stance-blindness is structural -----------------------
 
     #[test]
-    fn prompt_contains_claim_and_context_verbatim_and_nothing_else() {
+    fn prompt_contains_lens_claim_and_context_verbatim_and_nothing_else() {
+        let lens = "literal: read the claim at face value.";
         let claim = "The Battle of Hastings was fought in 1067.";
         let context = "From a history quiz.";
-        let prompt = build_prompt(PROMPT_TEMPLATE, claim, Some(context));
+        let prompt = build_prompt(PROMPT_TEMPLATE, lens, claim, Some(context));
 
-        // Exactly the template with the two substitutions — byte-for-byte.
+        // Exactly the template with the three substitutions — byte-for-byte.
         let expected = PROMPT_TEMPLATE
+            .replace("<<lens>>", lens)
             .replace("<<claim>>", claim)
             .replace("<<context>>", context);
         assert_eq!(prompt, expected);
 
-        // No other placeholder exists for stance/history/identity to flow through.
-        assert_eq!(PROMPT_TEMPLATE.matches("<<").count(), 2);
-        assert!(PROMPT_TEMPLATE.contains("<<claim>>") && PROMPT_TEMPLATE.contains("<<context>>"));
+        // The only placeholders are the (fixed) lens and the two subject inputs
+        // — no slot for stance/history/identity to flow through. The lens is a
+        // critical perspective drawn from LENSES, never caller-supplied prose.
+        assert_eq!(PROMPT_TEMPLATE.matches("<<").count(), 3);
+        assert!(
+            PROMPT_TEMPLATE.contains("<<lens>>")
+                && PROMPT_TEMPLATE.contains("<<claim>>")
+                && PROMPT_TEMPLATE.contains("<<context>>")
+        );
+    }
+
+    // ---- T003: the k passes apply distinct lenses --------------------------
+
+    #[test]
+    fn each_pass_gets_a_pairwise_distinct_lens() {
+        // Build the prompts the way run() does, one per lens in the set.
+        let claim = "Some contestable claim.";
+        let prompts: Vec<String> = (0..LENSES.len())
+            .map(|i| {
+                let lens = LENSES[i % LENSES.len()];
+                build_prompt(
+                    PROMPT_TEMPLATE,
+                    &format!("{}: {}", lens.name, lens.directive),
+                    claim,
+                    None,
+                )
+            })
+            .collect();
+
+        // Every pair of pass prompts differs (the lens is what varies).
+        for a in 0..prompts.len() {
+            for b in (a + 1)..prompts.len() {
+                assert_ne!(
+                    prompts[a], prompts[b],
+                    "lenses {a} and {b} produced identical prompts"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lens_set_is_nonempty_with_unique_names() {
+        assert!(!LENSES.is_empty());
+        let mut names: Vec<&str> = LENSES.iter().map(|l| l.name).collect();
+        names.sort_unstable();
+        let unique = names.len();
+        names.dedup();
+        assert_eq!(names.len(), unique, "lens names must be unique");
+    }
+
+    #[test]
+    fn lens_cycles_when_k_exceeds_the_lens_count() {
+        // Assignment is LENSES[i % len]: pass `len` reuses lens 0 (research D2).
+        let i = LENSES.len(); // first index past the set
+        assert_eq!(LENSES[i % LENSES.len()].name, LENSES[0].name);
     }
 
     // ---- T022 half: input validation before any model call -----------------

@@ -81,7 +81,12 @@ const PROMPT_TEMPLATE: &str = "You are an independent verifier. Judge the claim 
     present in the evidence (for example, \"the definition of the function under test\"). Leave it \
     empty when the evidence is sufficient. Do not refuse for missing evidence - judge on what is \
     present and list what is missing.\n\
-    4. Findings and missing_evidence entries are self-contained single sentences.\n\
+    4. Set `needs_computation` to true ONLY when the claim's truth hinges on an exact computation \
+    over the source that you cannot perform reliably by reading - a precise line count, a count of \
+    matches, a byte/size measure, or a numeric comparison that depends on such a count. In that \
+    case a deterministic engine, not a reader's estimate, must decide it. Set it false for ordinary \
+    judgment claims about what the source says or does.\n\
+    5. Findings and missing_evidence entries are self-contained single sentences.\n\
     \n\
     Claim to verify:\n<<claim>>\n\
     \n\
@@ -97,8 +102,11 @@ pub struct GroundedVerifyParams {
     pub locators: Vec<SourceLocator>,
 }
 
-/// What each pass is grammar-constrained to produce — verify's `PassVerdict`
-/// plus `missing_evidence`. Flat + closed (Constitution II).
+/// What each pass is grammar-constrained to produce.
+///
+/// Verify's `PassVerdict` plus `missing_evidence` and `needs_computation`. Flat
+/// and closed (Constitution II): all four properties are scalars or arrays of
+/// scalars.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GroundedPass {
     /// supported | refuted.
@@ -106,16 +114,50 @@ pub struct GroundedPass {
     /// Specific findings; non-empty when refuting (validator-enforced).
     pub findings: Vec<String>,
     /// Source classes the pass would need but was not given; empty when the
-    /// evidence suffices.
+    /// evidence suffices. Advisory completeness signal (008) — it does **not**
+    /// trigger abstention.
     pub missing_evidence: Vec<String>,
+    /// Set when the claim's truth is a computable property of the source the
+    /// pass cannot settle by reading (a precise count/measure/comparison). The
+    /// **only** abstain trigger (010, FR-005/FR-006): a majority routes the
+    /// claim to the deterministic `check` layer instead of judging it.
+    pub needs_computation: bool,
+}
+
+/// The server-assembled output verdict (010).
+///
+/// Distinct from the per-pass [`VerdictKind`] (shared with `verify`): a
+/// non-decision is a first-class outcome here, and keeping `Inconclusive` out of
+/// the shared per-pass enum is what lets `verify` stay unchanged (FR-009).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(inline)]
+pub enum GroundedVerdictKind {
+    /// The evidence supports the claim under its strongest reading.
+    Supported,
+    /// The evidence contradicts the claim with a named concrete error.
+    Refuted,
+    /// The passes self-report (`needs_computation`) that the decisive fact is a
+    /// computation they cannot perform — route to `check`.
+    Inconclusive,
+}
+
+impl From<VerdictKind> for GroundedVerdictKind {
+    fn from(v: VerdictKind) -> Self {
+        match v {
+            VerdictKind::Supported => Self::Supported,
+            VerdictKind::Refuted => Self::Refuted,
+        }
+    }
 }
 
 /// The aggregated tool output (data-model.md). `confidence` and `manifest` are
 /// server-assembled — never model self-report (FR-012).
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GroundedVerdict {
-    /// Majority verdict across passes; ties resolve to refuted.
-    pub verdict: VerdictKind,
+    /// Majority verdict across passes; ties resolve to refuted; or
+    /// `inconclusive` when a majority of passes set `needs_computation`.
+    pub verdict: GroundedVerdictKind,
     /// Deduplicated findings from the majority-side passes.
     pub findings: Vec<String>,
     /// Agreement ratio (majority count / passes completed).
@@ -123,10 +165,13 @@ pub struct GroundedVerdict {
     /// Number of verification passes that completed.
     pub passes: u32,
     /// Union of the passes' `missing_evidence` — empty when nothing material
-    /// was omitted.
+    /// was omitted. Advisory only; never forces `inconclusive`.
     pub missing_evidence: Vec<String>,
     /// The audit manifest of exactly what was read.
     pub manifest: Vec<ManifestEntry>,
+    /// Why the verdict is `inconclusive` (route-to-`check`); absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// One grounded-verify run: the verdict plus summed usage for the record.
@@ -229,15 +274,26 @@ async fn one_pass(
     Ok((pass, completion.input_tokens, completion.output_tokens))
 }
 
-/// Aggregate: union the completeness signals, then share verify's verdict math.
+/// Aggregate: union the completeness signals, count the abstain self-reports,
+/// then share verify's verdict math. `needs_computation` (a majority of
+/// completed passes) is the **only** abstain trigger — it overrides the
+/// supported/refuted verdict with `inconclusive` (route to `check`); a non-empty
+/// `missing_evidence` is carried through as advisory and never abstains (010).
 fn aggregate(
     passes: Vec<Result<(GroundedPass, u64, u64), AppError>>,
     k: u8,
     manifest: Vec<ManifestEntry>,
 ) -> Result<GroundedRun, AppError> {
-    // Completeness is the union/dedup of every completed pass's missing list.
+    // Completeness is the union/dedup of every completed pass's missing list;
+    // tally the abstain self-reports over the same completed passes.
     let mut missing_evidence: Vec<String> = Vec::new();
+    let mut completed = 0_usize;
+    let mut needs_computation = 0_usize;
     for (pass, _, _) in passes.iter().filter_map(|p| p.as_ref().ok()) {
+        completed += 1;
+        if pass.needs_computation {
+            needs_computation += 1;
+        }
         for item in &pass.missing_evidence {
             if !item.trim().is_empty() && !missing_evidence.contains(item) {
                 missing_evidence.push(item.clone());
@@ -249,16 +305,31 @@ fn aggregate(
         .into_iter()
         .map(|pass| pass.map(|(p, inp, out)| (p.verdict, p.findings, inp, out)))
         .collect();
+    // `aggregate_core` enforces quorum; `completed` here equals the passes it
+    // counts (both tally the same Ok set).
     let run = aggregate_core(core, k)?;
+
+    // A strict majority of completed passes self-reporting `needs_computation`
+    // routes the claim to `check` rather than judging a property no pass could
+    // compute (FR-005/FR-006). Advisory `missing_evidence` does not trigger this.
+    let (verdict, reason) = if needs_computation * 2 > completed {
+        (
+            GroundedVerdictKind::Inconclusive,
+            Some("computable property — route to `check`".to_string()),
+        )
+    } else {
+        (GroundedVerdictKind::from(run.verdict.verdict), None)
+    };
 
     Ok(GroundedRun {
         verdict: GroundedVerdict {
-            verdict: run.verdict.verdict,
+            verdict,
             findings: run.verdict.findings,
             confidence: run.verdict.confidence,
             passes: run.verdict.passes,
             missing_evidence,
             manifest,
+            reason,
         },
         input_tokens: run.input_tokens,
         output_tokens: run.output_tokens,
@@ -327,8 +398,19 @@ mod tests {
         mock
     }
 
+    /// A canned pass body with the abstain flag explicit.
+    #[allow(clippy::needless_pass_by_value)]
+    fn gpass(verdict: &str, findings: Value, missing: Value, needs_computation: bool) -> Value {
+        json!({
+            "verdict": verdict,
+            "findings": findings,
+            "missing_evidence": missing,
+            "needs_computation": needs_computation,
+        })
+    }
+
     #[test]
-    fn pass_schema_registers_flat_and_closed_with_missing_evidence() {
+    fn pass_schema_registers_flat_and_closed_with_missing_evidence_and_needs_computation() {
         let mode = test_mode(3);
         assert_eq!(mode.sanitized_schema["additionalProperties"], json!(false));
         assert_eq!(
@@ -336,6 +418,12 @@ mod tests {
             json!(["supported", "refuted"])
         );
         assert!(mode.sanitized_schema["properties"]["missing_evidence"].is_object());
+        // The new abstain flag is a flat boolean and stays in the closed schema.
+        assert_eq!(
+            mode.sanitized_schema["properties"]["needs_computation"]["type"],
+            json!("boolean")
+        );
+        assert_eq!(mode.sanitized_schema["additionalProperties"], json!(false));
     }
 
     #[test]
@@ -393,9 +481,19 @@ mod tests {
         let mode = test_mode(3);
         let reader = ok_reader();
         let client = scripted_client(vec![
-            json!({ "verdict": "supported", "findings": [], "missing_evidence": ["the caller's config"] }),
-            json!({ "verdict": "supported", "findings": [], "missing_evidence": [] }),
-            json!({ "verdict": "supported", "findings": [], "missing_evidence": ["the caller's config"] }),
+            gpass(
+                "supported",
+                json!([]),
+                json!(["the caller's config"]),
+                false,
+            ),
+            gpass("supported", json!([]), json!([]), false),
+            gpass(
+                "supported",
+                json!([]),
+                json!(["the caller's config"]),
+                false,
+            ),
         ]);
 
         let out = run(
@@ -408,8 +506,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(out.verdict.verdict, VerdictKind::Supported);
+        assert_eq!(out.verdict.verdict, GroundedVerdictKind::Supported);
         assert!((out.verdict.confidence - 1.0).abs() < f64::EPSILON);
+        assert!(out.verdict.reason.is_none());
         // Manifest mirrors the two locators.
         assert_eq!(out.verdict.manifest.len(), 2);
         assert_eq!(out.verdict.manifest[0].path, "a.rs");
@@ -419,5 +518,111 @@ mod tests {
             vec!["the caller's config".to_string()]
         );
         assert_eq!(out.input_tokens, 300);
+    }
+
+    // ---- T008 (010): the abstain trigger and no-over-abstention ------------
+
+    #[tokio::test]
+    async fn majority_needs_computation_returns_inconclusive_routed_to_check() {
+        let mode = test_mode(3);
+        let reader = ok_reader();
+        // 2 of 3 passes self-report the decisive fact is a computation.
+        let client = scripted_client(vec![
+            gpass("refuted", json!(["estimated ~850 lines"]), json!([]), true),
+            gpass("refuted", json!(["estimated ~850 lines"]), json!([]), true),
+            gpass("supported", json!([]), json!([]), false),
+        ]);
+
+        let out = run(
+            &client,
+            &reader,
+            &mode,
+            &params("c", &["a.rs"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
+        let reason = out.reason.expect("inconclusive carries a reason");
+        assert!(reason.contains("check"), "reason routes to check: {reason}");
+    }
+
+    #[tokio::test]
+    async fn advisory_missing_evidence_alone_does_not_force_inconclusive() {
+        // No over-abstention: a confident verdict that merely lists non-decisive
+        // missing evidence (no pass set needs_computation) stays supported.
+        let mode = test_mode(3);
+        let reader = ok_reader();
+        let client = scripted_client(vec![
+            gpass(
+                "supported",
+                json!([]),
+                json!(["the caller's config"]),
+                false,
+            ),
+            gpass(
+                "supported",
+                json!([]),
+                json!(["a downstream helper"]),
+                false,
+            ),
+            gpass("supported", json!([]), json!([]), false),
+        ]);
+
+        let out = run(
+            &client,
+            &reader,
+            &mode,
+            &params("c", &["a.rs"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert!(out.reason.is_none());
+        // The advisory signal is still surfaced, just not as abstention.
+        assert!(!out.missing_evidence.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_single_needs_computation_among_three_is_not_a_majority() {
+        // 1 of 3 is below the strict majority — the verdict stands.
+        let mode = test_mode(3);
+        let reader = ok_reader();
+        let client = scripted_client(vec![
+            gpass("refuted", json!(["the named error"]), json!([]), true),
+            gpass("refuted", json!(["the named error"]), json!([]), false),
+            gpass("refuted", json!(["the named error"]), json!([]), false),
+        ]);
+
+        let out = run(
+            &client,
+            &reader,
+            &mode,
+            &params("c", &["a.rs"]),
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict;
+        assert_eq!(out.verdict, GroundedVerdictKind::Refuted);
+        assert!(out.reason.is_none());
+    }
+
+    #[test]
+    fn grounded_verdict_kind_maps_from_pass_verdict() {
+        assert_eq!(
+            GroundedVerdictKind::from(VerdictKind::Supported),
+            GroundedVerdictKind::Supported
+        );
+        assert_eq!(
+            GroundedVerdictKind::from(VerdictKind::Refuted),
+            GroundedVerdictKind::Refuted
+        );
     }
 }

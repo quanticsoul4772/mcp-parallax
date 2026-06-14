@@ -1,8 +1,9 @@
-//! Acceptance for 008-grounded-verify (SC-001..006).
+//! Acceptance for 008-grounded-verify (SC-001..006) and 010 SC-003.
 //!
 //! Drives the real server (Anthropic mocked by wiremock) against a real
 //! temp-dir source root: gating, verbatim-grounded verdict + manifest,
-//! all-or-nothing named errors, root confinement, and the completeness signal.
+//! all-or-nothing named errors, root confinement, the completeness signal, and
+//! the 010 compute-or-abstain reproduction (a computable claim ⇒ inconclusive).
 //!
 //! Run: `cargo run --example acceptance_grounded_verify`
 
@@ -122,7 +123,8 @@ async fn main() {
             .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
                 "verdict": "supported",
                 "findings": [],
-                "missing_evidence": ["the definition of telemetry()"]
+                "missing_evidence": ["the definition of telemetry()"],
+                "needs_computation": false
             }))))
             .mount(&mock)
             .await;
@@ -197,7 +199,7 @@ async fn main() {
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
             .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
-                "verdict": "supported", "findings": [], "missing_evidence": []
+                "verdict": "supported", "findings": [], "missing_evidence": [], "needs_computation": false
             }))))
             .mount(&mock)
             .await;
@@ -226,6 +228,41 @@ async fn main() {
         assert!(err.to_string().contains("matched no files"));
         client2.cancel().await.unwrap();
         println!("SC-004 zero-match glob error: PASS");
+    }
+
+    // 010 SC-003 — the dogfooded reproduction: a computable claim (a line count)
+    // whose passes self-report `needs_computation` returns the server-assembled
+    // `inconclusive` verdict routed to `check`, NEVER a confident refutation.
+    {
+        let cdir = tempfile::tempdir().unwrap();
+        std::fs::write(cdir.path().join("server.rs"), "line\n".repeat(1224)).unwrap();
+        let croot = cdir.path().to_str().unwrap().to_string();
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+                "verdict": "refuted",
+                "findings": ["estimated about 850 lines, fewer than 1000"],
+                "missing_evidence": ["an exact line count, e.g. wc -l"],
+                "needs_computation": true
+            }))))
+            .mount(&mock)
+            .await;
+        let (client, _s, _srv) = serve(&mock, Some(croot)).await;
+        let result = client
+            .call_tool(gv(
+                "src/server.rs is over 1000 lines",
+                json!([{ "path": "server.rs" }]),
+            ))
+            .await
+            .unwrap();
+        let s = result.structured_content.as_ref().unwrap();
+        assert_eq!(s["verdict"], "inconclusive");
+        assert_ne!(s["verdict"], "refuted");
+        assert!(s["reason"].as_str().unwrap().contains("check"));
+        client.cancel().await.unwrap();
+        println!("010 SC-003 computable claim ⇒ inconclusive (route to check): PASS");
     }
 
     println!("\nacceptance_grounded_verify: ALL CHECKS PASS");

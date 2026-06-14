@@ -2075,7 +2075,14 @@ fn grounded_call(claim: &str, locators: Value) -> CallToolRequestParams {
 }
 
 fn grounded_pass(verdict: &str, findings: Value, missing: Value) -> Value {
-    json!({ "verdict": verdict, "findings": findings, "missing_evidence": missing })
+    // Ordinary judgment pass: the abstain flag is off (010).
+    json!({ "verdict": verdict, "findings": findings, "missing_evidence": missing, "needs_computation": false })
+}
+
+/// A pass that self-reports the decisive fact is a computation it cannot perform
+/// by reading (the abstain trigger — 010 FR-005/FR-006).
+fn grounded_pass_computes(verdict: &str, findings: Value, missing: Value) -> Value {
+    json!({ "verdict": verdict, "findings": findings, "missing_evidence": missing, "needs_computation": true })
 }
 
 async fn tool_names(
@@ -2352,5 +2359,101 @@ async fn grounded_verify_glob_with_a_line_range_is_rejected() {
             .contains("a line range is not allowed with a glob"),
         "{err}"
     );
+    client.cancel().await.unwrap();
+}
+
+// 010 US2 + FR-008 / SC-003: the dogfooded reproduction — a computable claim
+// (a line count) whose passes self-report `needs_computation` returns the
+// server-assembled `inconclusive` verdict routed to `check`, NEVER a confident
+// refutation it did not compute.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_computable_claim_is_inconclusive_not_confidently_refuted() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("server.rs"), "line\n".repeat(1224)).unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        // The passes estimate (~850) and self-report that an exact count is the
+        // decisive fact they cannot compute by reading.
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_pass_computes(
+                "refuted",
+                json!(["estimated about 850 lines, fewer than 1000"]),
+                json!(["an exact line count, e.g. wc -l"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let result = client
+        .call_tool(grounded_call(
+            "src/server.rs is over 1000 lines",
+            json!([{ "path": "server.rs" }]),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    // Abstains and routes — never the confident refutation the bug produced.
+    assert_eq!(s["verdict"], "inconclusive");
+    assert_ne!(s["verdict"], "refuted");
+    assert!(s["reason"].as_str().unwrap().contains("check"));
+
+    // Still exactly one invocation record, recorded as success.
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "grounded_verify");
+    assert_eq!(records[0].outcome, Outcome::Success);
+
+    client.cancel().await.unwrap();
+}
+
+// 010 US2 + FR-007: the judgment path is unchanged — a pass that does NOT set
+// `needs_computation` returns its confident verdict even while listing advisory
+// missing evidence (no over-abstention).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_judgment_claim_keeps_its_confident_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("pub.rs"),
+        "pub fn publish(&self) { self.emit(); }\n",
+    )
+    .unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_pass(
+                "supported",
+                json!([]),
+                json!(["the definition of emit()"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+
+    let result = client
+        .call_tool(grounded_call(
+            "publish calls emit",
+            json!([{ "path": "pub.rs" }]),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    // Confident verdict stands; advisory missing_evidence is surfaced, not abstained.
+    assert_eq!(s["verdict"], "supported");
+    assert!(s.get("reason").is_none() || s["reason"].is_null());
+    assert_eq!(s["missing_evidence"], json!(["the definition of emit()"]));
+
     client.cancel().await.unwrap();
 }
