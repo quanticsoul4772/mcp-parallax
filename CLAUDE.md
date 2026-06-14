@@ -47,7 +47,10 @@ the same exit points so the surfaces cannot disagree
 surface). Build
 note: `z3` (bundled) needs cmake — first clean build ~5 min; on Windows set
 `CMAKE` to the VS Build Tools cmake path. Feature artifacts:
-`specs/001-core-layer/` through `specs/006-checkpoint-layer/`.
+`specs/001-core-layer/` through `specs/012-diverge-perspectives/` (core +
+memory + research + deterministic + checkpoint + observability, then
+grounded-verify 008 / glob-locators 009 / verification-reliability 010 /
+grounded-compute-settle 011 / diverge 012).
 
 ## The design is the source of truth
 
@@ -204,9 +207,11 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `012-diverge-perspectives` — [spec](specs/012-diverge-perspectives/spec.md) ·
-[plan](specs/012-diverge-perspectives/plan.md) · [research](specs/012-diverge-perspectives/research.md) ·
-[data model](specs/012-diverge-perspectives/data-model.md) · [contracts](specs/012-diverge-perspectives/contracts/)
+No active feature. Last merged: `012-diverge-perspectives` —
+[spec](specs/012-diverge-perspectives/spec.md) · [plan](specs/012-diverge-perspectives/plan.md) ·
+[research](specs/012-diverge-perspectives/research.md) ·
+[data model](specs/012-diverge-perspectives/data-model.md) · [contracts](specs/012-diverge-perspectives/contracts/).
+Its one open item is the live dogfood (T013: SC-001/SC-003/SC-004), which needs the rebuilt binary.
 <!-- SPECKIT END -->
 
 ## Working style
