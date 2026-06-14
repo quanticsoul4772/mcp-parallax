@@ -54,8 +54,9 @@ One returned framing — a `DivergePass` labeled with the lens that produced it.
 
 Over the completed passes' perspectives, in pass order:
 
-1. **Normalize** each `framing`: lowercase, strip punctuation, collapse whitespace → a
-   token set.
+1. **Normalize** each `framing` (dedup keys on `framing` only — the perspective's
+   identity; a near-identical framing is a duplicate regardless of its `implication`):
+   lowercase, strip punctuation, collapse whitespace → a token set.
 2. A later perspective is a **near-duplicate** of an earlier kept one when their token-set
    **Jaccard similarity ≥ `DEDUP_THRESHOLD`** (a named constant, `0.8` in v1).
 3. Keep the earlier (lower pass index) perspective; drop the later. The kept set is

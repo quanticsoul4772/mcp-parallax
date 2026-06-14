@@ -56,7 +56,9 @@ passes*, not multiple framings per pass.
 **Decision**: the server deduplicates the completed passes' perspectives with a
 **deterministic token-similarity** rule over the normalized `framing` text:
 
-1. Normalize: lowercase, strip punctuation, collapse whitespace, to a token set.
+1. Normalize the **`framing`** (dedup keys on the framing only — it is the perspective's
+   identity; a near-identical framing is a duplicate regardless of its `implication`):
+   lowercase, strip punctuation, collapse whitespace, to a token set.
 2. Two perspectives are near-identical when their token-set **Jaccard similarity ≥ 0.8**
    (a tunable constant); the **lower-index** (earlier-lens) perspective is kept, the
    later dropped.
@@ -79,9 +81,10 @@ and is non-deterministic — violates the clarification and Principle V); a mode
 **Decision**: Diverge does **not** reuse `verify::aggregate_core` — there is no verdict,
 no majority, no confidence. Its aggregation: collect every completed pass's perspective,
 label each with its lens, run the D4 dedup, and return the set. If **zero** passes
-complete, return the dominant failure class (reusing `verify::dominant_failure`-style
-logic); otherwise return whatever completed, deduplicated. **No quorum** — a scatter tool
-has no minority/majority to protect.
+complete, return the dominant failure class (reusing `verify::dominant_failure` — which
+must be promoted from private to `pub(crate)`, or duplicated as a small local helper).
+Otherwise return whatever completed, deduplicated. **No quorum** — a scatter tool has no
+minority/majority to protect.
 
 **Rationale**: `verify` converges (majority verdict + agreement confidence); Diverge
 scatters (a set of distinct framings). Forcing the verdict math onto it would be wrong.
