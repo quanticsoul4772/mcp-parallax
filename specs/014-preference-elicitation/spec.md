@@ -24,6 +24,21 @@ memory recall seam. Distinct from verify/unstick/diverge/decide: it names the ob
 itself and the preferences that should drive it. No signal means it says so — it does not
 invent preferences."
 
+## Clarifications
+
+### Session 2026-06-14
+
+- Q: Is the tool always in the catalog (memory optional), or gated on memory? → A:
+  **Always-on; memory enriches.** The tool is always in the catalog; with memory
+  configured it also consults stored verified preferences, and without it runs on the
+  stated request + context alone and says so. (Resolves the FR-009-vs-assumptions
+  tension in favor of always-on.)
+- Q: When memory is configured, how does the tool get the relevant stored preferences? →
+  A: **Server recalls them.** The server uses the existing memory recall seam (embed the
+  task, retrieve relevant verified preferences) and feeds them into the inference pass —
+  the caller does not pre-fetch. A runtime embedder dependency applies only when memory
+  is present.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Parallax catches the ways the calling model reliably goes wrong from inside its own
@@ -146,10 +161,11 @@ points.
 - **FR-002**: The tool MUST return the **governing preferences/constraints** that bear on
   the work, each **traced to the signal** it was inferred from (stated request, context, or
   a stored verified preference).
-- **FR-003**: When memory is configured, the tool MUST consult **stored verified
-  preferences** relevant to the task and weight them as the **stronger (revealed/verified)**
-  signal over merely stated ones; when memory is absent, it MUST run on stated request +
-  context alone and say so.
+- **FR-003**: When memory is configured, the **server** MUST recall **stored verified
+  preferences** relevant to the task (via the existing memory recall seam — embed the
+  task, retrieve relevant verified preferences) and feed them into the inference, weighting
+  them as the **stronger (revealed/verified)** signal over merely stated ones; when memory
+  is absent, the tool MUST run on stated request + context alone and say so (clarification).
 - **FR-004**: The tool MUST return **divergence points** — the specific assumptions in the
   surface objective that the available signals call into question — framed as questions
   worth resolving, each citing the conflicting signal.
@@ -212,11 +228,11 @@ points.
   action time).
 - It reuses the constrained-output contract (the model emits the structured inference; the
   server assembles the surfaced output) and, **when memory is configured**, the existing
-  memory recall seam for stored verified preferences. Whether memory presence *gates* the
-  tool or merely enriches it is a **`/speckit-plan` decision** (the description leans toward
-  always-on with memory as optional enrichment).
-- The structured inference fields, how revealed/stated strength is represented, and the
-  recall/relevance mechanism for stored preferences are **`/speckit-plan` decisions**
-  (mirroring how prior correctives deferred mechanism to planning).
+  memory recall seam: the tool is **always in the catalog** and memory only **enriches**
+  it (clarification) — its absence is reported, not an error.
+- The structured inference fields and how revealed/stated strength is represented are
+  **`/speckit-plan` decisions**. The stored-preference source is settled (clarification):
+  the **server recalls** relevant verified preferences via the recall seam; the relevance
+  top-k / recall parameters are the remaining plan detail.
 - The output is advisory for the caller to act on before committing — the tool does not
   execute the task, choose an option (that is `decide`), or enforce anything.
