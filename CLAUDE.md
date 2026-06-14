@@ -200,9 +200,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `009-glob-locators` — [spec](specs/009-glob-locators/spec.md) ·
-[plan](specs/009-glob-locators/plan.md) · [research](specs/009-glob-locators/research.md) ·
-[data model](specs/009-glob-locators/data-model.md) · [contracts](specs/009-glob-locators/contracts/)
+Current feature: `010-verification-reliability` — [spec](specs/010-verification-reliability/spec.md) ·
+[plan](specs/010-verification-reliability/plan.md) · [research](specs/010-verification-reliability/research.md) ·
+[data model](specs/010-verification-reliability/data-model.md) · [contracts](specs/010-verification-reliability/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
