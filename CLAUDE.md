@@ -207,11 +207,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-No active feature. Last merged: `012-diverge-perspectives` —
-[spec](specs/012-diverge-perspectives/spec.md) · [plan](specs/012-diverge-perspectives/plan.md) ·
-[research](specs/012-diverge-perspectives/research.md) ·
-[data model](specs/012-diverge-perspectives/data-model.md) · [contracts](specs/012-diverge-perspectives/contracts/).
-Its one open item is the live dogfood (T013: SC-001/SC-003/SC-004), which needs the rebuilt binary.
+Current feature: `013-decide-methodology` — [spec](specs/013-decide-methodology/spec.md) ·
+[plan](specs/013-decide-methodology/plan.md) · [research](specs/013-decide-methodology/research.md) ·
+[data model](specs/013-decide-methodology/data-model.md) · [contracts](specs/013-decide-methodology/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
