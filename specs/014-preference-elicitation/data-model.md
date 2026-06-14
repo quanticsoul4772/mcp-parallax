@@ -65,12 +65,17 @@ The server zips the parallel arrays:
 
 When `memory: Option<&MemoryDeps>` is `Some`:
 
-1. `recall(deps, &RecallParams { query: params.task, kind: None, limit: RECALL_LIMIT })`
-   (a small constant, default 5).
-2. Keep the **trusted** recalled memories (the verified/revealed signal).
+1. `recall(deps, &RecallParams { query: params.task, kind: None, limit: <wide> })`.
+2. **Filter to trusted** recalled memories first, **then** cap at `RECALL_LIMIT` (default
+   5) — filter-before-cap so a relevant trusted preference is not crowded out of the top-k
+   by untrusted noise (analyze L1).
 3. Format them into the `<<preferences>>` prompt slot as *"stored verified preferences
    (revealed signal — outrank merely stated ones)"*. The model weights them above stated
    ones and raises a divergence point on any stated-vs-revealed conflict.
+
+The **consultation** (recall → trusted prefs reach the prompt + `memory_consulted = true`)
+is the structural SC-004 guarantee; whether the model surfaces them in the output marked
+`revealed` is a live-quality property (analyze M1), not server-enforced.
 
 When `memory` is `None`: the `<<preferences>>` slot reads *"(no stored preferences — memory
 not configured)"*; `memory_consulted = false`.

@@ -25,12 +25,20 @@ capability is introduced).
 ## D2 — Server recalls stored preferences, injects them into the prompt
 
 **Decision**: when `memory` is present, the server calls the existing
-`memory::tools::recall(deps, &RecallParams { query: <the task>, kind: None, limit:
-RECALL_LIMIT })` (a small constant, e.g. 5), keeps the **trusted** memories (the
-verified/revealed signal), and formats them into the prompt as *"stored verified
-preferences (revealed signal — these outrank merely stated ones)"*. The model sees them
-and can (a) treat them as the stronger signal and (b) raise a **divergence point** when a
-stated request contradicts a stored preference.
+`memory::tools::recall(deps, &RecallParams { query: <the task>, kind: None, limit: <wide>
+})`, **filters to trusted** memories first, **then** caps at `RECALL_LIMIT` (a small
+constant, e.g. 5) — filter-before-cap so a relevant trusted preference is not crowded out
+of the top-k by untrusted noise (analyze L1). It formats them into the prompt as *"stored
+verified preferences (revealed signal — these outrank merely stated ones)"*. The model
+sees them and can (a) treat them as the stronger signal and (b) raise a **divergence
+point** when a stated request contradicts a stored preference.
+
+**What is guaranteed vs live (analyze M1)**: the *consultation* is structural and
+offline-provable — the trusted preference is recalled and **reaches the inference prompt**,
+and `memory_consulted` is set. Whether the model then **surfaces** it in the output marked
+`revealed` is a model-judgment (live) property, since FR-007 has the model produce the
+inference; the server injects and trusts, it does not post-append. SC-004's 100% claim is
+therefore the consultation, not the output appearance.
 
 **Rationale**: FR-003 says the *server* consults stored preferences; reusing `recall`
 (embed the task → cosine-rank → top-k) is the established machinery (no re-implementation,

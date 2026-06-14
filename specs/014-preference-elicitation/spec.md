@@ -208,10 +208,14 @@ points.
   seeded conflicts surfaced on a fixed battery.
 - **SC-003**: On a task with no preference signal, the tool fabricates **0** preferences and
   **0** divergence points and reports the low/absent signal — inference stays bounded.
-- **SC-004**: When memory is configured, a relevant stored verified preference appears among
-  the governing preferences marked as the stronger signal on **100%** of tasks where one
-  exists; when memory is absent, the tool runs and reports the missing signal rather than
-  erroring.
+- **SC-004**: When memory is configured, the server **consults** stored verified
+  preferences — a relevant trusted preference is **recalled and reaches the inference**
+  (present in the inference prompt) and `memory_consulted` is true on **100%** of tasks
+  where such a preference exists; when memory is absent, the tool runs and reports the
+  missing signal rather than erroring. (That the model then surfaces a recalled preference
+  in the output marked `revealed` is a **live-quality** property confirmed in the dogfood,
+  not a structural guarantee — the design injects the preferences and trusts the model to
+  weight them.)
 - **SC-005**: The tool **never** blocks, holds, or modifies an action — **0** enforcement
   actions in its output; it is purely advisory (enforcement remains `checkpoint_action`).
 
