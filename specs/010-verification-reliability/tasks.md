@@ -42,7 +42,7 @@ No setup tasks; proceed to the user stories.
 - [X] T010 [P] Docs: note the `inconclusive` verdict in the `grounded_verify` README Tools row and `CLAUDE.md`; note that `verify` runs diverse lenses.
 - [X] T011 [P] Extend `examples/acceptance_grounded_verify.rs` with the `inconclusive` reproduction (server.rs line-count → inconclusive), and add the verify regression assertions.
 - [X] T012 Full gate: `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test`; record results in `quickstart.md` and check off this file.
-- [ ] T013 **Live SC-001 dogfood** (after merge + rebuild + restart, the one step needing the running binary): re-run the borderline `verify` battery that previously returned 0/8 graduated and confirm a confidence spread; confirm the `grounded_verify` reproduction returns `inconclusive`. Record the result. (Not a `cargo test` — a live model property.)
+- [X] T013 **Live SC-001 dogfood** (after merge + rebuild + restart, the one step needing the running binary): re-run the borderline `verify` battery that previously returned 0/8 graduated and confirm a confidence spread; confirm the `grounded_verify` reproduction returns `inconclusive`. Record the result. (Not a `cargo test` — a live model property.) **Done 2026-06-14:** SC-003 PASS (inconclusive, route to `check`); SC-001 PASS (2/6 calibrated battery in (0,1); 3/12 overall at 0.67 vs 0/8 pre-fix). Results in `quickstart.md`.
 
 ## Dependencies & Execution Order
 

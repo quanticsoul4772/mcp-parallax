@@ -64,7 +64,26 @@ compile. New offline coverage:
   line-count reproduction returns `inconclusive` (never `refuted` at 1.0), and the
   judgment path is unchanged.
 
-**Pending live (T013, post-rebuild):** SC-001 confidence spread on the borderline
-`verify` battery (the one offline-impossible check — a mock can't disagree with
-itself). The `acceptance` example now reports a `010 SC-001 graduated conf` metric;
-`acceptance_grounded_verify` includes the inconclusive reproduction.
+## Live dogfood results (T013, 2026-06-14, rebuilt binary)
+
+Run against the running server (the one offline-impossible check — a mock can't
+disagree with itself).
+
+- **SC-003 (grounded_verify abstain) — PASS.** `grounded_verify` on
+  `src/server.rs is over 1000 lines` (locator `src/server.rs`, the 1224-line file)
+  returned `verdict: inconclusive`, `reason: "computable property — route to
+  \`check\`"`. Pre-fix this returned`refuted` at confidence 1.0 — the exact bug, gone.
+- **SC-001 (verify graduated confidence) — PASS (calibrated battery).** A calibrated
+  6-claim battery returned confidence strictly in (0,1) on **2** of them
+  (`Water boils at 100°C` → 0.67; `The first day of the week is Sunday` → 0.67),
+  meeting the ≥2/6 target. Across two batteries (12 claims) **3** landed at 0.67 (2:1
+  lens splits) versus the pre-fix **0/8**. The splits fall exactly where a
+  scope/framing lens legitimately disagrees (sea-level-only boiling; US vs ISO week
+  start; culinary vs botanical tomato).
+- **Calibration note:** a first, *poorly chosen* battery of "X is better than Y"
+  opinion claims hit only **1/6** — every lens refutes those identically ("'better' is
+  undefined; the absolute claim fails"), so they don't split. The graduated signal is
+  real but is elicited by claims contestable *in framing*, not *in opinion*. Pick
+  SC-001 batteries accordingly.
+
+**010 is complete:** all offline tasks merged (PR #19), live SC-001/SC-003 confirmed.
