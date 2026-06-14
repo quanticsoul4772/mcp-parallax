@@ -7,7 +7,7 @@ An LLM-augmentation MCP server: a catalog of correctives for the calling model's
 
 When Claude calls a reasoning tool, Claude is calling Claude — so the value is not reasoning *harder*. The value is an external, **independent** pass that catches the ways the model reliably goes wrong and cannot see from inside its own context: anchoring, sycophancy, drift, overconfident wrong answers. The name is the thesis — a second vantage point reveals what one frame can't.
 
-Parallax speaks MCP over stdio and exposes thirteen tools across four layers: cognitive correctives the model asks for (`verify`, `unstick`, `diverge`, `decide`), a deterministic engine that settles checkable claims by execution rather than judgment (`check`), a source-grounded verifier that checks a claim against verbatim files you name — settling computable properties on the engine, abstaining otherwise (`grounded_verify`), durable cross-session memory with verified-before-stored trust (`save` / `recall` / `forget`), an adversarially-verified research offload (`research`), and harness-triggered trajectory checkpoints for the failures a model can't self-diagnose to call (`checkpoint_action` / `checkpoint_batch` / `checkpoint_turn`).
+Parallax speaks MCP over stdio and exposes fourteen tools across four layers: cognitive correctives the model asks for (`verify`, `unstick`, `diverge`, `decide`, `elicit`), a deterministic engine that settles checkable claims by execution rather than judgment (`check`), a source-grounded verifier that checks a claim against verbatim files you name — settling computable properties on the engine, abstaining otherwise (`grounded_verify`), durable cross-session memory with verified-before-stored trust (`save` / `recall` / `forget`), an adversarially-verified research offload (`research`), and harness-triggered trajectory checkpoints for the failures a model can't self-diagnose to call (`checkpoint_action` / `checkpoint_batch` / `checkpoint_turn`).
 
 Status: experimental, v0.1.0, all corpus layers built. Every capability that does network egress or code execution is gated and **off by default** — with only `ANTHROPIC_API_KEY` set, you get the always-on correctives and nothing leaves the process but Anthropic API calls. Not published to a registry; build from source.
 
@@ -58,7 +58,7 @@ Verify the binary independently of any client:
 
 ## Tools
 
-Transport is **stdio**. The catalog is gated by configuration: the five always-on correctives are present whenever the server runs; `grounded_verify`, memory, research, and the checkpoint sensor plane appear only when their root/key/integration is configured (see [Configuration](#configuration)).
+Transport is **stdio**. The catalog is gated by configuration: the six always-on correctives are present whenever the server runs; `grounded_verify`, memory, research, and the checkpoint sensor plane appear only when their root/key/integration is configured (see [Configuration](#configuration)).
 
 | Tool | Purpose | Availability |
 |---|---|---|
@@ -66,6 +66,7 @@ Transport is **stdio**. The catalog is gated by configuration: the five always-o
 | `unstick` | Break a stuck loop by committing to exactly one concrete next step (rationale included) — never a menu, never a plan. | always |
 | `diverge` | Break out of a single framing: parallel stance-blind passes each attack the problem from a distinct angle (invert the goal, change the actor, shift the horizon, deny the load-bearing assumption, reframe the problem class) and the server returns a deterministically deduplicated set of genuinely different framings, each labeled with its angle. For anchoring / tunnel vision — the opening-up counterpart to `verify`. | always |
 | `decide` | Choose among two or more options under tradeoffs, with the work shown: a single pass applies a fitting methodology (weigh / causal / probabilistic) and scores every option; the server picks the top, names the runner-up and why it lost, surfaces the deciding factors and methodology, and reports a confidence calibrated to the score margin. The choice is computed from the scores, never a hidden gut pick or an unresolved menu. For indecision / miscalibration on a choice. | always |
+| `elicit` | Surface the objective you're about to pursue and the preferences that should govern it, before you commit — the corrective for solving the *assumed* problem instead of the user's real one. Returns the assumed objective, the governing preferences (each traced to its signal; revealed/stored ones outrank merely stated ones), and the divergence points worth resolving first. Inference, not interrogation — with little signal it says so. When a Voyage key is set it also consults your stored verified preferences. Surfaces only; never blocks or modifies (that's the checkpoint layer). | always |
 | `check` | Settle a checkable claim by execution: the model translates to a small formal target (arithmetic or an SMT/constraint system), a deterministic engine decides, and the executed form + raw result are returned for audit. Unformalizable claims return `not_checkable`. | always |
 | `save` | Store a skill, lesson, or fact for future sessions with provenance; external memories are untrusted unless verification is requested. | `VOYAGE_API_KEY` |
 | `recall` | Retrieve memories relevant to the current work, ranked by semantic relevance and labeled with trust standing. Call before re-deriving prior work. | `VOYAGE_API_KEY` |
@@ -112,7 +113,7 @@ Every invocation is recorded in SQLite (tool, model, tokens, cost, latency, outc
 
 Four layers, split by whether the model can ask for the help:
 
-1. **Cognitive correctives** — the *what*; invoked when the model can self-diagnose (`verify`, `unstick`, `diverge`, `decide`).
+1. **Cognitive correctives** — the *what*; invoked when the model can self-diagnose (`verify`, `unstick`, `diverge`, `decide`, `elicit`).
 2. **Watchdog** — the *when*; fires correctives the model can't self-diagnose to call. Re-grounded for MCP as the **checkpoint layer**, with harness hooks as the sensor plane (see the 2026-06-12 amendment in [`docs/design/WATCHDOG_LAYER.md`](docs/design/WATCHDOG_LAYER.md)).
 3. **Memory / experience** — verified-before-stored skills, lessons, world-state, recalled by semantic relevance.
 4. **Deterministic / symbolic** — anything checkable is settled by a solver, not a probabilistic judge.
