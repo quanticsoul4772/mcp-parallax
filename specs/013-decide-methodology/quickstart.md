@@ -55,3 +55,27 @@ near-tie reads ~0.5.
 - **Live** (dogfood): SC-004 — that the model picks the methodology that *fits* the
   decision's shape — is confirmed against the running model (a mock cannot judge fit). The
   calibration itself needs no live check.
+
+## Validation results (full gate, 2026-06-14)
+
+`cargo fmt --all -- --check` clean · `cargo clippy --all-features --all-targets -- -D
+warnings` clean · `cargo test` **343 lib + 58 integration, 0 failed** ·
+`cargo run --example acceptance_decide` ALL CHECKS PASS.
+
+New coverage (all offline — the pick and confidence are server math over the scores):
+
+- **Calibration:** dominant `[85,40]` → recommended top, confidence **0.725**; near-tie
+  `[60,55]` → **0.525**; exact tie `[70,70]` → input-order winner at **0.5**; margin→
+  confidence map at 0/50/100 → 0.5/0.75/1.0.
+- **Validation (loud):** arity mismatch (scores vs options) → failed pass; an out-of-range
+  score (`105`) → failed pass, **not clamped** (analyze M1); empty `deciding_factors` →
+  failed pass; `< 2` options or empty decision → `invalid_input` before any model call.
+- **Surface:** the methodology echoes the model's choice (`weigh`/`causal`/`probabilistic`);
+  the schema registers flat + closed (scalar enum + integer/string arrays). Integration:
+  full output (recommended/runner_up/reason/factors/methodology/assessments), no
+  `verdict`/`next_step`, one record, single-pass token usage.
+
+**Pending live (T010, post-rebuild):** SC-004 — the model picks the *fitting* methodology
+for the decision's shape, and the rationale reads in that methodology's terms — the one
+offline-impossible check (a mock can't judge fit). The `acceptance_decide` example is the
+offline calibration scaffold.

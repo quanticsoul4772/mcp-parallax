@@ -19,6 +19,7 @@ use crate::memory::tools::{
     self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
     SaveParams, SaveResult,
 };
+use crate::modes::decide::{self, DecideParams, DecideResult, DECIDE_ID};
 use crate::modes::diverge::{self, DivergeParams, DivergeResult, DIVERGE_ID};
 use crate::modes::grounded_verify::{
     self, GroundedDeps, GroundedVerdict, GroundedVerifyParams, GROUNDED_VERIFY_ID,
@@ -144,6 +145,7 @@ impl Parallax {
         verify::register(&mut registry, config.verify_ensemble_k)?;
         unstick::register(&mut registry)?;
         diverge::register(&mut registry, config.verify_ensemble_k)?;
+        decide::register(&mut registry)?;
         // Research-internal modes register unconditionally — their flat+closed
         // assertion belongs at boot whether or not the capability is on.
         pipeline::register(&mut registry)?;
@@ -317,6 +319,27 @@ impl Parallax {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<DivergeResult>, ErrorData> {
         self.diverge_with_ct(params, context.ct).await
+    }
+
+    /// The `decide` tool: a single scored pass; the server picks the top option
+    /// and calibrates confidence from the score margin.
+    #[tool(
+        name = "decide",
+        description = "Choose among two or more options under tradeoffs, with the reasoning shown. \
+        Applies an explicit decision methodology (weigh named criteria, trace what each option \
+        causes, or reason under uncertainty), scores every option, and returns the recommended \
+        option, the runner-up and why it lost, the deciding factors, the methodology used, and a \
+        confidence calibrated to how close the call is. The choice is computed from the scores, \
+        not asserted - never a menu handed back, never a hidden gut pick. To judge whether a \
+        claim is true use verify; for one next step when you are looping use unstick; for a \
+        computable comparison use check."
+    )]
+    pub async fn decide(
+        &self,
+        Parameters(params): Parameters<DecideParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<DecideResult>, ErrorData> {
+        self.decide_with_ct(params, context.ct).await
     }
 
     /// The `save` tool: store one memory with derived trust.
@@ -527,6 +550,22 @@ impl Parallax {
             unstick::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
                 .await
                 .map(|run| (run.step, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
+    async fn decide_with_ct(
+        &self,
+        params: DecideParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<DecideResult>, ErrorData> {
+        let mode = self.registry.get(DECIDE_ID).ok_or_else(|| {
+            ErrorData::internal_error("decide mode not registered".to_string(), None)
+        })?;
+        self.run_recorded(DECIDE_ID, self.model.clone(), ct, async {
+            decide::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
+                .await
+                .map(|run| (run.result, run.input_tokens, run.output_tokens))
         })
         .await
     }
@@ -832,6 +871,7 @@ mod tests {
                 "checkpoint_action",
                 "checkpoint_batch",
                 "checkpoint_turn",
+                "decide",
                 "diverge",
                 "unstick",
                 "verify"
@@ -866,6 +906,7 @@ mod tests {
                 "checkpoint_action",
                 "checkpoint_batch",
                 "checkpoint_turn",
+                "decide",
                 "diverge",
                 "research",
                 "unstick",
@@ -942,6 +983,7 @@ mod tests {
                 "checkpoint_action",
                 "checkpoint_batch",
                 "checkpoint_turn",
+                "decide",
                 "diverge",
                 "forget",
                 "recall",
