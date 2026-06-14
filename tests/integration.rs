@@ -407,6 +407,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
             "checkpoint_turn",
             "decide",
             "diverge",
+            "elicit",
             "unstick",
             "verify"
         ]
@@ -641,6 +642,7 @@ async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {
             "checkpoint_turn",
             "decide",
             "diverge",
+            "elicit",
             "unstick",
             "verify"
         ]
@@ -666,6 +668,7 @@ async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
             "checkpoint_turn",
             "decide",
             "diverge",
+            "elicit",
             "forget",
             "recall",
             "save",
@@ -1103,6 +1106,7 @@ async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
             "checkpoint_turn",
             "decide",
             "diverge",
+            "elicit",
             "research",
             "unstick",
             "verify"
@@ -2027,7 +2031,7 @@ fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
     stdout.read_line(&mut line).unwrap();
     let tools: Value = serde_json::from_str(&line).expect("tools/list reply is JSON-RPC");
     // Behavior identical to a telemetry-disabled run: full default catalog.
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 9);
 
     // Close stdin -> transport EOF -> graceful shutdown path runs the
     // telemetry flush against the dead collector. The process must exit
@@ -2840,5 +2844,125 @@ async fn decide_rejects_fewer_than_two_options() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("at least two options"), "{err}");
+    client.cancel().await.unwrap();
+}
+
+// ---- 014-elicit -----------------------------------------------------------
+
+fn elicit_call(task: &str) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new("elicit");
+    params.arguments = json!({ "task": task }).as_object().cloned();
+    params
+}
+
+fn elicit_inference(objective: &str, prefs: Value, signals: Value, strengths: Value) -> Value {
+    json!({
+        "assumed_objective": objective,
+        "preference_texts": prefs,
+        "preference_signals": signals,
+        "preference_strengths": strengths,
+        "divergence_questions": [],
+        "divergence_signals": [],
+        "signal_level": "medium",
+    })
+}
+
+// 014 US1 + FR-006/007/SC-005: without memory, elicit surfaces the objective and
+// traced preferences, reports memory_consulted=false, carries no enforcement
+// field, and writes exactly one record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn elicit_surfaces_objective_without_memory_and_one_record() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&elicit_inference(
+                "Add a cache to speed up the report endpoint",
+                json!(["p99 latency, not average, is the target"]),
+                json!(["the request mentions tail latency"]),
+                json!(["stated"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(elicit_call("Speed up the report endpoint"))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+
+    assert!(tool_names(&client).await.contains(&"elicit".to_string()));
+    assert_eq!(
+        s["assumed_objective"],
+        "Add a cache to speed up the report endpoint"
+    );
+    assert_eq!(s["governing_preferences"][0]["strength"], "stated");
+    assert_eq!(s["memory_consulted"], false);
+    assert!(s.get("verdict").is_none());
+    assert!(s.get("hold").is_none() && s.get("action").is_none()); // surface only
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].tool, "elicit");
+    assert_eq!(records[0].outcome, Outcome::Success);
+    client.cancel().await.unwrap();
+}
+
+// 014 US1 + FR-003/SC-004 (mechanism): with memory configured, the server recalls
+// a seeded TRUSTED preference and it reaches the inference prompt — the /v1/messages
+// matcher only fires when the recalled content is in the request body. memory_consulted
+// is true. This is the structural consultation guarantee (output-marking is the live T012).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn elicit_recalls_a_trusted_preference_into_the_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("m.db");
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await; // "alpha" docs/query rank together
+                                   // The elicit inference response is served ONLY if the recalled memory content
+                                   // ("avoids adding new services") reached the prompt — proving the recall landed.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("avoids adding new services"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&elicit_inference(
+                "Add a caching service",
+                json!(["minimal new infrastructure"]),
+                json!(["stored memory"]),
+                json!(["revealed"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) = serve_with_memory(&mock, db.to_str().unwrap()).await;
+
+    // Seed a trusted (first-hand) preference memory; "alpha" routes the embedding.
+    client
+        .call_tool(tool_call(
+            "save",
+            &json!({
+                "content": "alpha: the user avoids adding new services",
+                "kind": "lesson",
+                "origin": "observed in past work",
+                "external": false
+            }),
+        ))
+        .await
+        .unwrap();
+
+    let result = client
+        .call_tool(elicit_call("add a caching service to speed up reports"))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert_eq!(s["memory_consulted"], true);
+    assert_eq!(s["assumed_objective"], "Add a caching service");
     client.cancel().await.unwrap();
 }

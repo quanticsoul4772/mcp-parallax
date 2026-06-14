@@ -8,6 +8,7 @@
 
 pub mod decide;
 pub mod diverge;
+pub mod elicit;
 pub mod grounded_compute;
 pub mod grounded_verify;
 pub mod unstick;

@@ -21,6 +21,7 @@ use crate::memory::tools::{
 };
 use crate::modes::decide::{self, DecideParams, DecideResult, DECIDE_ID};
 use crate::modes::diverge::{self, DivergeParams, DivergeResult, DIVERGE_ID};
+use crate::modes::elicit::{self, ElicitParams, ElicitResult, ELICIT_ID};
 use crate::modes::grounded_verify::{
     self, GroundedDeps, GroundedVerdict, GroundedVerifyParams, GROUNDED_VERIFY_ID,
 };
@@ -146,6 +147,7 @@ impl Parallax {
         unstick::register(&mut registry)?;
         diverge::register(&mut registry, config.verify_ensemble_k)?;
         decide::register(&mut registry)?;
+        elicit::register(&mut registry)?;
         // Research-internal modes register unconditionally — their flat+closed
         // assertion belongs at boot whether or not the capability is on.
         pipeline::register(&mut registry)?;
@@ -340,6 +342,28 @@ impl Parallax {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<DecideResult>, ErrorData> {
         self.decide_with_ct(params, context.ct).await
+    }
+
+    /// The `elicit` tool: surface the assumed objective and governing
+    /// preferences before committing — the wrong-objective corrective.
+    #[tool(
+        name = "elicit",
+        description = "Surface the objective you're about to pursue and the preferences that \
+        should govern it, before you commit - the corrective for solving the assumed problem \
+        instead of the user's real one. Returns the objective a surface reading would assume, the \
+        governing preferences/constraints (each traced to its signal; revealed/stored ones \
+        outrank merely stated ones), and the divergence points where the assumed objective likely \
+        departs from the user's actual one - the questions worth resolving first. Inference, not \
+        interrogation: with little signal it says so rather than inventing preferences. When \
+        memory is configured it also consults your stored verified preferences. It surfaces only \
+        - it does not block or modify anything (that is the checkpoint layer)."
+    )]
+    pub async fn elicit(
+        &self,
+        Parameters(params): Parameters<ElicitParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<ElicitResult>, ErrorData> {
+        self.elicit_with_ct(params, context.ct).await
     }
 
     /// The `save` tool: store one memory with derived trust.
@@ -566,6 +590,30 @@ impl Parallax {
             decide::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
                 .await
                 .map(|run| (run.result, run.input_tokens, run.output_tokens))
+        })
+        .await
+    }
+
+    async fn elicit_with_ct(
+        &self,
+        params: ElicitParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<ElicitResult>, ErrorData> {
+        let mode = self.registry.get(ELICIT_ID).ok_or_else(|| {
+            ErrorData::internal_error("elicit mode not registered".to_string(), None)
+        })?;
+        // Memory only enriches: pass it when configured, run without it otherwise.
+        let memory = self.memory.as_deref();
+        self.run_recorded(ELICIT_ID, self.model.clone(), ct, async {
+            elicit::run(
+                self.client.as_ref(),
+                mode,
+                memory,
+                &params,
+                self.max_claim_chars,
+            )
+            .await
+            .map(|run| (run.result, run.input_tokens, run.output_tokens))
         })
         .await
     }
@@ -873,6 +921,7 @@ mod tests {
                 "checkpoint_turn",
                 "decide",
                 "diverge",
+                "elicit",
                 "unstick",
                 "verify"
             ]
@@ -908,6 +957,7 @@ mod tests {
                 "checkpoint_turn",
                 "decide",
                 "diverge",
+                "elicit",
                 "research",
                 "unstick",
                 "verify"
@@ -985,6 +1035,7 @@ mod tests {
                 "checkpoint_turn",
                 "decide",
                 "diverge",
+                "elicit",
                 "forget",
                 "recall",
                 "save",

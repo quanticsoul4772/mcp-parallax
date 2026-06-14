@@ -24,7 +24,12 @@ divergence counterpart to verify, always on — 012), **`decide`** (single
 scored pass over ≥2 options — the model picks a methodology
 (weigh/causal/probabilistic) and scores each option, the server argmax-picks the
 top and calibrates confidence from the score margin; choose-among-options, always
-on — 013), **`check`** (always on, no gate — pure in-process
+on — 013), **`elicit`** (the wrong-objective corrective: a single stance-blind
+pass surfaces the assumed objective, the governing preferences traced to their
+signals (revealed>stated), and the divergence points worth resolving before
+committing; when memory is configured the server recalls trusted stored
+preferences via the recall seam and injects them; surfaces only, no enforcement;
+always on — 014), **`check`** (always on, no gate — pure in-process
 engines: the model classifies checkability and translates to a small typed
 formal target, evalexpr or Z3 executes, and verdict + explanation are
 server-assembled; one violation-fed retry on real engine signals only), the
@@ -170,7 +175,7 @@ src/
 ├── config.rs         # Config::from_env()
 ├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
-├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / decide (scored single pass → argmax + margin confidence, 013) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
+├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / decide (scored single pass → argmax + margin confidence, 013) / elicit (wrong-objective: surface objective + preferences, optional memory recall, 014) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding

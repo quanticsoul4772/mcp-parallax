@@ -56,3 +56,28 @@ With little signal the tool reports `signal_level: low` and returns nothing fabr
 - **Live** (dogfood): SC-001 (surfaces the *right* objective), SC-002 (catches a seeded
   stated-vs-revealed conflict as a divergence point), and that the model marks stored
   preferences `revealed` — model-judgment properties a mock cannot produce.
+
+## Validation results (full gate, 2026-06-14)
+
+`cargo fmt --all -- --check` clean · `cargo clippy --all-features --all-targets -- -D
+warnings` clean · `cargo test` **352 lib + 60 integration, 0 failed** ·
+`cargo run --example acceptance_elicit` ALL CHECKS PASS.
+
+New coverage:
+
+- **Schema / assembly (offline):** the per-pass schema registers flat + closed (string +
+  `signal_level` scalar enum + arrays of scalars); `assemble` zips the parallel arrays into
+  `governing_preferences`/`divergence_points` traced to their signals; a preference or
+  divergence **arity mismatch** and a bad `preference_strengths` value are each a **loud
+  failed pass** (not normalized); divergence empty-when-consistent; low signal → nothing
+  fabricated; the output carries no enforcement field; empty `task` rejected pre-call.
+- **Recall integration (offline, the structural SC-004 guarantee):** with memory configured
+  and a seeded **trusted** preference, the recall **reaches the inference prompt** — the
+  mocked model's `/v1/messages` matcher fires only because the recalled content is in the
+  request body — and `memory_consulted` is true; without memory the call runs and
+  `memory_consulted` is false. The trust filter precedes the cap (L1).
+
+**Pending live (T012, post-rebuild):** SC-001 (right objective), SC-002 (catches a seeded
+stated-vs-revealed conflict, stored pref marked `revealed`), SC-003 (real no-signal task →
+no fabrication) — model-judgment properties a mock can't produce. The recall + assembly are
+already proven offline.
