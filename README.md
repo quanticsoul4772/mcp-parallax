@@ -1,15 +1,21 @@
 # Parallax
 
-An LLM-augmentation MCP server: a catalog of correctives for the calling model's predictable failure modes — metacognition the model can't run on itself.
+A stdio MCP server that runs corrective passes over a language model's output, each pass seeing only the claim or task under review — not the surrounding conversation, the caller's stance, or the original framing.
 
 [![CI](https://github.com/quanticsoul4772/mcp-parallax/actions/workflows/ci.yml/badge.svg)](https://github.com/quanticsoul4772/mcp-parallax/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
-When Claude calls a reasoning tool, Claude is calling Claude — so the value is not reasoning *harder*. The value is an external, **independent** pass that catches the ways the model reliably goes wrong and cannot see from inside its own context: anchoring, sycophancy, drift, overconfident wrong answers. The name is the thesis — a second vantage point reveals what one frame can't.
+The server exposes fourteen tools in four groups:
 
-Parallax speaks MCP over stdio and exposes fourteen tools across four layers: cognitive correctives the model asks for (`verify`, `unstick`, `diverge`, `decide`, `elicit`), a deterministic engine that settles checkable claims by execution rather than judgment (`check`), a source-grounded verifier that checks a claim against verbatim files you name — settling computable properties on the engine, abstaining otherwise (`grounded_verify`), durable cross-session memory with verified-before-stored trust (`save` / `recall` / `forget`), an adversarially-verified research offload (`research`), and harness-triggered trajectory checkpoints for the failures a model can't self-diagnose to call (`checkpoint_action` / `checkpoint_batch` / `checkpoint_turn`).
+- **Cognitive correctives**, called by the model: `verify` judges whether a claim holds, `unstick` returns one next step when looping, `diverge` returns alternative framings of a problem, `decide` selects among supplied options and reports the scoring, `elicit` surfaces the objective and governing preferences a request implies before the model commits.
+- **Deterministic checks**: `check` settles arithmetic, logic, and constraint claims by executing a formal translation rather than judging it; `grounded_verify` checks a claim against verbatim files the caller names, settling computable properties (e.g. a line count) on the engine and abstaining otherwise.
+- **Memory**: `save`, `recall`, and `forget` — cross-session storage, verified before it is trusted.
+- **Research**: `research` runs a web query on a separate budget and returns a cited, per-claim-verified answer.
+- **Trajectory checkpoints**: `checkpoint_action`, `checkpoint_batch`, and `checkpoint_turn`, called by the harness's hooks for failures the model does not self-diagnose.
 
-Status: experimental, v0.1.0, all corpus layers built. Every capability that does network egress or code execution is gated and **off by default** — with only `ANTHROPIC_API_KEY` set, you get the always-on correctives and nothing leaves the process but Anthropic API calls. Not published to a registry; build from source.
+See [Tools](#tools) for per-tool detail.
+
+Status: experimental, v0.1.0. Network egress and code execution are gated and off by default; with only `ANTHROPIC_API_KEY` set, the always-on correctives are available and the only outbound traffic is to the Anthropic API. Built from source; not published to a registry.
 
 ## Requirements
 
