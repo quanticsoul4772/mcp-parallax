@@ -201,9 +201,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Current feature: `011-grounded-compute-settle` — [spec](specs/011-grounded-compute-settle/spec.md) ·
-[plan](specs/011-grounded-compute-settle/plan.md) · [research](specs/011-grounded-compute-settle/research.md) ·
-[data model](specs/011-grounded-compute-settle/data-model.md) · [contracts](specs/011-grounded-compute-settle/contracts/)
+Current feature: `012-diverge-perspectives` — [spec](specs/012-diverge-perspectives/spec.md) ·
+[plan](specs/012-diverge-perspectives/plan.md) · [research](specs/012-diverge-perspectives/research.md) ·
+[data model](specs/012-diverge-perspectives/data-model.md) · [contracts](specs/012-diverge-perspectives/contracts/)
 <!-- SPECKIT END -->
 
 ## Working style
