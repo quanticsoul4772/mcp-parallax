@@ -57,7 +57,7 @@ const PROMPT_TEMPLATE: &str = "You are an external decision aid. Someone must ch
     \n\
     Options (score in this order):\n<<options>>\n\
     \n\
-    Context provided with the decision (may be empty):\n<<context>>\n";
+    Context provided with the decision (may be empty):\n<<context>>\n<<violation_clause>>";
 
 /// The decision methodology applied — a scalar enum (flat-legal, grammar-enforced;
 /// the 011 H1 caveat is only about `Option<enum>`, not this required field).
@@ -148,6 +148,12 @@ pub struct DecideRun {
 /// The score scale; the margin→confidence map uses it as the full range.
 const SCALE: f64 = 100.0;
 
+/// Initial pass + one violation-fed retry on a malformed assessment, mirroring
+/// the deterministic layer's single retry (`TRANSLATION_ATTEMPTS_MAX`). The
+/// grammar cannot constrain array length, so a transient arity slip is recovered
+/// by feeding the exact rejection back once; a second malformed pass errors loud.
+const DECIDE_ATTEMPTS_MAX: u32 = 2;
+
 /// Register the decide mode (boot-time; enforces flat+closed). Single pass —
 /// `ensemble_k = 1`.
 ///
@@ -161,8 +167,11 @@ pub fn register(registry: &mut ModeRegistry) -> Result<(), AppError> {
 }
 
 /// Build the prompt. Decision, the ordered options, and context are the only
-/// dynamic content; there is no slot for a preferred option or stance.
-fn build_prompt(template: &str, params: &DecideParams) -> String {
+/// subject content; there is no slot for a preferred option or stance. The
+/// `violation` slot is empty on the first attempt and carries the prior pass's
+/// rejection reason verbatim on the single retry (server-composed message, no
+/// raw model text).
+fn build_prompt(template: &str, params: &DecideParams, violation: Option<&str>) -> String {
     let options_text = params
         .options
         .iter()
@@ -170,10 +179,18 @@ fn build_prompt(template: &str, params: &DecideParams) -> String {
         .map(|(i, opt)| format!("{}. {opt}", i + 1))
         .collect::<Vec<_>>()
         .join("\n");
+    let violation_clause = violation.map_or(String::new(), |v| {
+        format!(
+            "\nYOUR PREVIOUS ASSESSMENT WAS REJECTED for this exact reason: {v}. Produce a \
+             corrected assessment — exactly one score and one rationale per option, every score \
+             an integer 0-100, and non-empty deciding_factors."
+        )
+    });
     template
         .replace("<<decision>>", &params.decision)
         .replace("<<options>>", &options_text)
         .replace("<<context>>", params.context.as_deref().unwrap_or(""))
+        .replace("<<violation_clause>>", &violation_clause)
 }
 
 /// Validate input before any model call (FR-008): non-empty/non-oversize
@@ -216,9 +233,10 @@ fn check_input(params: &DecideParams, max_chars: usize) -> Result<(), AppError> 
 ///
 /// # Errors
 ///
-/// `InvalidInput` before any model call; `ValidationFailure` for a malformed
-/// assessment (arity mismatch, empty `deciding_factors`, or a score outside
-/// 0–100 — a failed pass, never normalized); provider classes from the pass.
+/// `InvalidInput` before any model call; `ValidationFailure` if the assessment
+/// is still malformed after the single violation-fed retry (arity mismatch,
+/// empty `deciding_factors`, or a score outside 0–100 — a failed pass, never
+/// normalized); provider classes from the pass.
 pub async fn run(
     client: &dyn ModelClient,
     mode: &CorrectiveMode,
@@ -226,19 +244,40 @@ pub async fn run(
     max_chars: usize,
 ) -> Result<DecideRun, AppError> {
     check_input(params, max_chars)?;
-    let prompt = build_prompt(mode.prompt_template, params);
 
-    let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
-    validate(&mode.output_schema, &completion.value)?;
-    let pass: DecidePass = serde_json::from_value(completion.value)
-        .map_err(|e| AppError::ValidationFailure(format!("decide assessment shape: {e}")))?;
+    let (mut input_tokens, mut output_tokens) = (0_u64, 0_u64);
+    let mut violation: Option<String> = None;
 
-    let result = assemble(params, pass)?;
-    Ok(DecideRun {
-        result,
-        input_tokens: completion.input_tokens,
-        output_tokens: completion.output_tokens,
-    })
+    for _ in 1..=DECIDE_ATTEMPTS_MAX {
+        let prompt = build_prompt(mode.prompt_template, params, violation.as_deref());
+        let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
+        input_tokens += completion.input_tokens;
+        output_tokens += completion.output_tokens;
+
+        // The constrained-output contract itself (schema/shape) is a hard error,
+        // not retried — only a well-formed-but-malformed assessment (the arity /
+        // factors / score checks the grammar can't express) feeds the retry.
+        validate(&mode.output_schema, &completion.value)?;
+        let pass: DecidePass = serde_json::from_value(completion.value)
+            .map_err(|e| AppError::ValidationFailure(format!("decide assessment shape: {e}")))?;
+
+        match assemble(params, pass) {
+            Ok(result) => {
+                return Ok(DecideRun {
+                    result,
+                    input_tokens,
+                    output_tokens,
+                });
+            }
+            Err(AppError::ValidationFailure(v)) => violation = Some(v),
+            Err(other) => return Err(other),
+        }
+    }
+
+    Err(AppError::ValidationFailure(format!(
+        "decide produced a malformed assessment after the retry; last violation: {}",
+        violation.unwrap_or_else(|| "(none recorded)".to_string())
+    )))
 }
 
 /// Validate well-formedness, then zip + rank + calibrate (research D2/D3).
@@ -353,6 +392,20 @@ mod tests {
         mock
     }
 
+    /// A mock that returns the same (malformed) body on both attempts — the
+    /// initial pass and the single retry — to exercise the post-retry failure.
+    fn client_returning_twice(value: Value) -> MockModelClient {
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(2).returning(move |_, _| {
+            Ok(Completion {
+                value: value.clone(),
+                input_tokens: 90,
+                output_tokens: 30,
+            })
+        });
+        mock
+    }
+
     // ---- T005: schema, prompt, calibration (pure) --------------------------
 
     #[test]
@@ -371,16 +424,21 @@ mod tests {
     }
 
     #[test]
-    fn prompt_has_only_decision_options_context_slots() {
+    fn prompt_has_only_subject_and_violation_slots_no_stance() {
         let p = params("pick one", &["A", "B"]);
-        let prompt = build_prompt(PROMPT_TEMPLATE, &p);
+        let prompt = build_prompt(PROMPT_TEMPLATE, &p, None);
         assert!(prompt.contains("1. A") && prompt.contains("2. B"));
-        assert_eq!(PROMPT_TEMPLATE.matches("<<").count(), 3);
+        // The four slots: decision / options / context (subject) + the retry
+        // violation feedback. No slot for a preferred option or stance.
+        assert_eq!(PROMPT_TEMPLATE.matches("<<").count(), 4);
         assert!(
             PROMPT_TEMPLATE.contains("<<decision>>")
                 && PROMPT_TEMPLATE.contains("<<options>>")
                 && PROMPT_TEMPLATE.contains("<<context>>")
+                && PROMPT_TEMPLATE.contains("<<violation_clause>>")
         );
+        // First attempt carries no violation text.
+        assert!(!prompt.contains("WAS REJECTED"));
     }
 
     #[tokio::test]
@@ -472,37 +530,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn arity_mismatch_is_a_failed_pass() {
+    async fn arity_mismatch_after_retry_is_a_failed_pass() {
         let mode = test_mode();
-        // 2 options but 3 scores.
-        let mock = client_returning(assessment("weigh", &[80, 50, 30], &["a", "b", "c"], &["f"]));
+        // 2 options but 3 scores — malformed on both the pass and the retry.
+        let mock =
+            client_returning_twice(assessment("weigh", &[80, 50, 30], &["a", "b", "c"], &["f"]));
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
         assert!(err.to_string().contains("arity"));
+        assert!(err.to_string().contains("after the retry"));
     }
 
     #[tokio::test]
-    async fn out_of_range_score_is_a_failed_pass_not_clamped() {
+    async fn out_of_range_score_after_retry_is_a_failed_pass_not_clamped() {
         let mode = test_mode();
-        let mock = client_returning(assessment("weigh", &[105, 40], &["a", "b"], &["f"]));
+        let mock = client_returning_twice(assessment("weigh", &[105, 40], &["a", "b"], &["f"]));
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
         assert!(err.to_string().contains("0-100"));
+        assert!(err.to_string().contains("after the retry"));
     }
 
     #[tokio::test]
-    async fn empty_deciding_factors_is_a_failed_pass() {
+    async fn empty_deciding_factors_after_retry_is_a_failed_pass() {
         let mode = test_mode();
-        let mock = client_returning(assessment("weigh", &[80, 40], &["a", "b"], &[]));
+        let mock = client_returning_twice(assessment("weigh", &[80, 40], &["a", "b"], &[]));
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
         assert!(err.to_string().contains("deciding_factors"));
+        assert!(err.to_string().contains("after the retry"));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_assessment_triggers_one_retry_then_succeeds() {
+        let mode = test_mode();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(2).returning(move |_, _| {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let value = if n == 0 {
+                // First pass: 2 options but 3 scores → rejected.
+                assessment("weigh", &[80, 50, 30], &["a", "b", "c"], &["f"])
+            } else {
+                // Retry: well-formed.
+                assessment("weigh", &[80, 40], &["a", "b"], &["f"])
+            };
+            Ok(Completion {
+                value,
+                input_tokens: 10,
+                output_tokens: 5,
+            })
+        });
+        let out = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
+            .await
+            .unwrap();
+        assert_eq!(out.result.recommended, "x");
+        // Both attempts are metered.
+        assert_eq!(out.input_tokens, 20);
+        assert_eq!(out.output_tokens, 10);
+    }
+
+    #[tokio::test]
+    async fn the_retry_prompt_carries_the_violation_verbatim() {
+        let mode = test_mode();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(2).returning(move |prompt, _| {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let value = if n == 0 {
+                assert!(
+                    !prompt.contains("WAS REJECTED"),
+                    "first prompt is clean: {prompt}"
+                );
+                assessment("weigh", &[80, 50, 30], &["a", "b", "c"], &["f"])
+            } else {
+                assert!(
+                    prompt.contains("WAS REJECTED") && prompt.contains("arity"),
+                    "retry must carry the violation: {prompt}"
+                );
+                assessment("weigh", &[80, 40], &["a", "b"], &["f"])
+            };
+            Ok(Completion {
+                value,
+                input_tokens: 1,
+                output_tokens: 1,
+            })
+        });
+        run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
+            .await
+            .unwrap();
     }
 
     #[test]
