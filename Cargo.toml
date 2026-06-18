@@ -59,7 +59,7 @@ evalexpr = "13"
 # regex matched over a non-symlink-following `walkdir` of the root. extglob
 # negation `!(...)` needs lookahead, which the RE2-style `regex` crate lacks —
 # hence `fancy-regex` (backtracking, supports lookahead).
-fancy-regex = "0.14"
+fancy-regex = "0.18"
 walkdir = "2"
 
 # Observability: OTLP export (007) — the 0.32 release train, pinned together
