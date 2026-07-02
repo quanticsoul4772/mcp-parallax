@@ -41,7 +41,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # 1.7.0 validated by examples/spike_roundtrip.rs: Json<T> emits outputSchema +
 # structured_content (T005/T006). Re-run the spike before any major bump.
-rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "schemars"] }
+rmcp = { version = "2.0.0", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.1"
 jsonschema = "0.46.5"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
@@ -82,8 +82,8 @@ opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_ex
 
 [dev-dependencies]
 # Trait mocking — the whole server tests without network or disk
-mockall = "0.14"
-rmcp = { version = "1.7.0", features = ["client"] }
+mockall = "0.15"
+rmcp = { version = "2.0.0", features = ["client"] }
 wiremock = "0.6.5"
 # Transcript fixtures for FsTrajectoryReader tests (checkpoint layer)
 tempfile = "3"
