@@ -79,10 +79,32 @@ pub struct DecideParams {
     /// The question to settle, stated neutrally.
     pub decision: String,
     /// The candidate options — at least two. Order is the index basis for the
-    /// per-option score arrays.
+    /// per-option score arrays. May be omitted when `options_text` is supplied.
+    #[serde(default)]
     pub options: Vec<String>,
+    /// Options as a single newline-delimited string (one per line) — an alternative to the `options`
+    /// array for clients that cannot reliably serialize a multi-element array argument. Used when
+    /// `options` is empty.
+    #[serde(default)]
+    pub options_text: Option<String>,
     /// Optional neutral context/criteria — the only extra subject input.
     pub context: Option<String>,
+}
+
+impl DecideParams {
+    /// Populate `options` from `options_text` (split on newlines, trimmed, blanks dropped) when `options`
+    /// is empty. A no-op when `options` is already supplied.
+    fn normalize(&mut self) {
+        if self.options.is_empty() {
+            if let Some(text) = self.options_text.take() {
+                self.options = text
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect();
+            }
+        }
+    }
 }
 
 /// What the single pass is grammar-constrained to produce (data-model.md).
@@ -243,6 +265,9 @@ pub async fn run(
     params: &DecideParams,
     max_chars: usize,
 ) -> Result<DecideRun, AppError> {
+    let mut owned = params.clone();
+    owned.normalize(); // options_text -> options when the array argument was omitted
+    let params = &owned;
     check_input(params, max_chars)?;
 
     let (mut input_tokens, mut output_tokens) = (0_u64, 0_u64);
@@ -361,6 +386,7 @@ mod tests {
         DecideParams {
             decision: decision.to_string(),
             options: options.iter().map(|s| (*s).to_string()).collect(),
+            options_text: None,
             context: None,
         }
     }
