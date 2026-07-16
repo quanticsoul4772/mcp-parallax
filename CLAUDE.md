@@ -222,7 +222,10 @@ No active feature — the design corpus's corrective catalog is fully built (las
 [plan](specs/014-preference-elicitation/plan.md) · [research](specs/014-preference-elicitation/research.md) ·
 [data model](specs/014-preference-elicitation/data-model.md) · [contracts](specs/014-preference-elicitation/contracts/)).
 Open follow-ups are the three live dogfoods needing the rebuilt binary: 012 T013 (diverge),
-013 T010 (decide), 014 T012 (elicit).
+013 T010 (decide), 014 T012 (elicit). 2026-07-15: elicit gained decide's violation-fed single
+retry (`ELICIT_ATTEMPTS_MAX`) after a live parallel-array arity slip (3 divergence questions /
+4 signals) surfaced as a hard -32603 to a caller; fix mirrors decide commit `63521e6`, elicit.rs
+only — needs the rebuilt binary to reach live sessions (local + the Hetzner box's own build).
 <!-- SPECKIT END -->
 
 ## Working style

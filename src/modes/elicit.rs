@@ -63,7 +63,7 @@ const PROMPT_TEMPLATE: &str = "You are an external objective check. Before a wor
     \n\
     Context provided with the task (may be empty):\n<<context>>\n\
     \n\
-    Stored preferences (server-supplied):\n<<preferences>>\n";
+    Stored preferences (server-supplied):\n<<preferences>>\n<<violation_clause>>";
 
 /// How much preference signal the model had — a scalar enum (flat-legal,
 /// grammar-enforced; the 011 H1 caveat is only about `Option<enum>`).
@@ -163,6 +163,14 @@ const RECALL_WIDE: u32 = 20;
 /// How many trusted stored preferences to inject after filtering.
 const RECALL_LIMIT: usize = 5;
 
+/// Initial pass + one violation-fed retry on a malformed inference, mirroring
+/// `decide`'s recovery of the same class (and the deterministic layer's
+/// `TRANSLATION_ATTEMPTS_MAX`). The grammar cannot constrain cross-array
+/// length, so a transient arity slip (live 2026-07-15: 3 divergence questions
+/// against 4 signals became a caller-facing hard error) is recovered by
+/// feeding the exact rejection back once; a second malformed pass errors loud.
+const ELICIT_ATTEMPTS_MAX: u32 = 2;
+
 /// Register the elicit mode (boot-time; enforces flat+closed). Single pass —
 /// `ensemble_k = 1`.
 ///
@@ -176,12 +184,29 @@ pub fn register(registry: &mut ModeRegistry) -> Result<(), AppError> {
 }
 
 /// Build the prompt. Task and context are the only caller-prose inputs; the
-/// preferences block is server-fetched (recall), not caller-asserted.
-fn build_prompt(template: &str, params: &ElicitParams, preferences: &str) -> String {
+/// preferences block is server-fetched (recall), not caller-asserted. The
+/// `violation` slot is empty on the first attempt and carries the prior pass's
+/// rejection reason verbatim on the single retry (server-composed message, no
+/// raw model text).
+fn build_prompt(
+    template: &str,
+    params: &ElicitParams,
+    preferences: &str,
+    violation: Option<&str>,
+) -> String {
+    let violation_clause = violation.map_or(String::new(), |v| {
+        format!(
+            "\nYOUR PREVIOUS SURFACING WAS REJECTED for this exact reason: {v}. Produce a \
+             corrected surfacing — the preference arrays exactly parallel (one signal and one \
+             strength per preference text), the divergence arrays exactly parallel (one signal \
+             per question), and every preference strength either \"revealed\" or \"stated\"."
+        )
+    });
     template
         .replace("<<task>>", &params.task)
         .replace("<<context>>", params.context.as_deref().unwrap_or(""))
         .replace("<<preferences>>", preferences)
+        .replace("<<violation_clause>>", &violation_clause)
 }
 
 /// Validate input before any model call (FR-008).
@@ -239,14 +264,18 @@ async fn recalled_preferences(
     Ok((block, inp, out))
 }
 
-/// Run one Elicit invocation: optional recall, a single stance-blind pass, then
+/// Run one Elicit invocation.
+///
+/// Optional recall, a stance-blind pass (with one violation-fed retry on a
+/// malformed inference — [`ELICIT_ATTEMPTS_MAX`], mirroring `decide`), then
 /// deterministic validation + zip + assembly.
 ///
 /// # Errors
 ///
 /// `InvalidInput` before any model call; `ValidationFailure` for a malformed
 /// inference (arity mismatch or a bad `preference_strengths` value — a loud failed
-/// pass, never normalized); provider classes from the recall or the pass.
+/// pass, never normalized) that persists through the retry; provider classes from
+/// the recall or the pass.
 pub async fn run(
     client: &dyn ModelClient,
     mode: &CorrectiveMode,
@@ -269,18 +298,44 @@ pub async fn run(
         ),
     };
 
-    let prompt = build_prompt(mode.prompt_template, params, &preferences);
-    let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
-    validate(&mode.output_schema, &completion.value)?;
-    let pass: ElicitPass = serde_json::from_value(completion.value)
-        .map_err(|e| AppError::ValidationFailure(format!("elicit inference shape: {e}")))?;
+    let (mut input_tokens, mut output_tokens) = (recall_in, recall_out);
+    let mut violation: Option<String> = None;
 
-    let result = assemble(pass, memory_consulted)?;
-    Ok(ElicitRun {
-        result,
-        input_tokens: recall_in + completion.input_tokens,
-        output_tokens: recall_out + completion.output_tokens,
-    })
+    for _ in 1..=ELICIT_ATTEMPTS_MAX {
+        let prompt = build_prompt(
+            mode.prompt_template,
+            params,
+            &preferences,
+            violation.as_deref(),
+        );
+        let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
+        input_tokens += completion.input_tokens;
+        output_tokens += completion.output_tokens;
+
+        // The constrained-output contract itself (schema/shape) is a hard error,
+        // not retried — only a well-formed-but-malformed inference (the arity /
+        // strength checks the grammar can't express) feeds the retry.
+        validate(&mode.output_schema, &completion.value)?;
+        let pass: ElicitPass = serde_json::from_value(completion.value)
+            .map_err(|e| AppError::ValidationFailure(format!("elicit inference shape: {e}")))?;
+
+        match assemble(pass, memory_consulted) {
+            Ok(result) => {
+                return Ok(ElicitRun {
+                    result,
+                    input_tokens,
+                    output_tokens,
+                });
+            }
+            Err(AppError::ValidationFailure(v)) => violation = Some(v),
+            Err(other) => return Err(other),
+        }
+    }
+
+    Err(AppError::ValidationFailure(format!(
+        "elicit produced a malformed inference after the retry; last violation: {}",
+        violation.unwrap_or_else(|| "(none recorded)".to_string())
+    )))
 }
 
 /// Validate well-formedness, then zip the parallel arrays into the output
@@ -391,6 +446,20 @@ mod tests {
         mock
     }
 
+    /// A malformed pass is retried once — a persistently-malformed mock is
+    /// called exactly twice (mirror decide's helper).
+    fn client_returning_twice(value: Value) -> MockModelClient {
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(2).returning(move |_, _| {
+            Ok(Completion {
+                value: value.clone(),
+                input_tokens: 120,
+                output_tokens: 40,
+            })
+        });
+        mock
+    }
+
     // ---- T005: schema, prompt, assembly ------------------------------------
 
     #[test]
@@ -409,13 +478,18 @@ mod tests {
     }
 
     #[test]
-    fn prompt_has_only_task_context_preferences_slots() {
-        assert_eq!(PROMPT_TEMPLATE.matches("<<").count(), 3);
+    fn prompt_has_only_task_context_preferences_violation_slots() {
+        assert_eq!(PROMPT_TEMPLATE.matches("<<").count(), 4);
         assert!(
             PROMPT_TEMPLATE.contains("<<task>>")
                 && PROMPT_TEMPLATE.contains("<<context>>")
                 && PROMPT_TEMPLATE.contains("<<preferences>>")
+                && PROMPT_TEMPLATE.contains("<<violation_clause>>")
         );
+        // first attempt: the clause is empty — no rejection text in a clean prompt
+        let clean = build_prompt(PROMPT_TEMPLATE, &params("t", None), "(none)", None);
+        assert!(!clean.contains("WAS REJECTED"));
+        assert!(!clean.contains("<<violation_clause>>"));
     }
 
     #[tokio::test]
@@ -503,10 +577,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn misaligned_pass_is_retried_with_the_violation_and_recovers() {
+        // The live 2026-07-15 failure shape: divergence arrays disagree (3 questions, 4 signals
+        // there; 2/1 here). The retry prompt must carry the exact rejection; the clean second
+        // pass succeeds; both attempts are metered (mirror decide's proven closure technique).
+        let mode = test_mode();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(2).returning(move |prompt, _| {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let value = if n == 0 {
+                assert!(
+                    !prompt.contains("WAS REJECTED"),
+                    "first prompt is clean: {prompt}"
+                );
+                json!({
+                    "assumed_objective": "o",
+                    "preference_texts": [],
+                    "preference_signals": [],
+                    "preference_strengths": [],
+                    "divergence_questions": ["q1", "q2"],
+                    "divergence_signals": ["s1"],
+                    "signal_level": "medium",
+                })
+            } else {
+                assert!(
+                    prompt.contains("WAS REJECTED") && prompt.contains("divergence arrays"),
+                    "retry must carry the violation: {prompt}"
+                );
+                inference("o", &[], &[("q1", "s1")], "medium")
+            };
+            Ok(Completion {
+                value,
+                input_tokens: 10,
+                output_tokens: 5,
+            })
+        });
+        let out = run(&mock, &mode, None, &params("t", None), 50_000)
+            .await
+            .unwrap();
+        assert_eq!(out.result.divergence_points.len(), 1);
+        // Both attempts are metered (no recall: counters start at 0).
+        assert_eq!(out.input_tokens, 20);
+        assert_eq!(out.output_tokens, 10);
+    }
+
+    #[tokio::test]
     async fn preference_arity_mismatch_is_a_failed_pass() {
         let mode = test_mode();
         // 2 texts but 1 signal.
-        let mock = client_returning(json!({
+        let mock = client_returning_twice(json!({
             "assumed_objective": "o",
             "preference_texts": ["a", "b"],
             "preference_signals": ["s"],
@@ -520,23 +640,25 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
         assert!(err.to_string().contains("preference arrays"));
+        assert!(err.to_string().contains("after the retry"), "{err}");
     }
 
     #[tokio::test]
     async fn bad_strength_value_is_a_failed_pass() {
         let mode = test_mode();
-        let mock = client_returning(inference("o", &[("p", "s", "guessed")], &[], "medium"));
+        let mock = client_returning_twice(inference("o", &[("p", "s", "guessed")], &[], "medium"));
         let err = run(&mock, &mode, None, &params("t", None), 50_000)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
         assert!(err.to_string().contains("revealed"));
+        assert!(err.to_string().contains("after the retry"), "{err}");
     }
 
     #[tokio::test]
     async fn divergence_arity_mismatch_is_a_failed_pass() {
         let mode = test_mode();
-        let mock = client_returning(json!({
+        let mock = client_returning_twice(json!({
             "assumed_objective": "o",
             "preference_texts": [],
             "preference_signals": [],
@@ -550,5 +672,6 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
         assert!(err.to_string().contains("divergence arrays"));
+        assert!(err.to_string().contains("after the retry"), "{err}");
     }
 }
