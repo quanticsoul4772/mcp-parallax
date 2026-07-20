@@ -6,7 +6,10 @@
 //! Verifies the research-flagged uncertainties:
 //!   (a) requests arrive at /v1/traces and /v1/metrics when the endpoint
 //!       env is set; ZERO requests when absent;
-//!   (b) the `GEN_AI` semconv constants compile (`semconv_experimental`);
+//!   (b) the canonical GenAI semconv attribute names compile and attach
+//!       to a span (the upstream `opentelemetry_semantic_conventions` crate
+//!       deprecated its `GEN_AI_*` constants in 0.32, so we inline the
+//!       strings here);
 //!   (c) retroactive timestamps (start in the past, `end_with_timestamp`)
 //!       are accepted end to end.
 //!
@@ -24,10 +27,6 @@ use opentelemetry::{Context, KeyValue};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
-use opentelemetry_semantic_conventions::attribute::{
-    GEN_AI_OPERATION_NAME, GEN_AI_REQUEST_MODEL, GEN_AI_USAGE_INPUT_TOKENS,
-    GEN_AI_USAGE_OUTPUT_TOKENS,
-};
 use std::time::{Duration, SystemTime};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -109,10 +108,10 @@ async fn main() {
         .with_kind(SpanKind::Client)
         .with_start_time(start)
         .with_attributes([
-            KeyValue::new(GEN_AI_OPERATION_NAME, "execute_tool"),
-            KeyValue::new(GEN_AI_REQUEST_MODEL, "claude-opus-4-8"),
-            KeyValue::new(GEN_AI_USAGE_INPUT_TOKENS, 300_i64),
-            KeyValue::new(GEN_AI_USAGE_OUTPUT_TOKENS, 30_i64),
+            KeyValue::new("gen_ai.operation.name", "execute_tool"),
+            KeyValue::new("gen_ai.request.model", "claude-opus-4-8"),
+            KeyValue::new("gen_ai.usage.input_tokens", 300_i64),
+            KeyValue::new("gen_ai.usage.output_tokens", 30_i64),
             KeyValue::new("gen_ai.provider.name", "anthropic"),
             KeyValue::new("parallax.tool", "verify"),
             KeyValue::new("parallax.outcome", "success"),
