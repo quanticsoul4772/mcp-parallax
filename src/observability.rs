@@ -18,10 +18,6 @@ use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, SpanExporter};
 use opentelemetry_sdk::Resource;
-use opentelemetry_semantic_conventions::attribute::{
-    GEN_AI_OPERATION_NAME, GEN_AI_REQUEST_MODEL, GEN_AI_TOKEN_TYPE, GEN_AI_USAGE_INPUT_TOKENS,
-    GEN_AI_USAGE_OUTPUT_TOKENS,
-};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
@@ -35,6 +31,17 @@ pub const SERVICE_NAME: &str = "mcp-parallax";
 /// The conventions' renamed provider key — the semconv crate (1.36) predates
 /// the `gen_ai.system` → `gen_ai.provider.name` rename (research.md D5).
 const GEN_AI_PROVIDER_NAME: &str = "gen_ai.provider.name";
+
+/// GenAI semconv attribute keys — declared locally because the upstream
+/// `opentelemetry_semantic_conventions` crate deprecated these in the 0.32
+/// train (CI `-D warnings` makes the deprecation a hard error). The literals
+/// below are the canonical identifiers OTel collectors receive; the test
+/// assertions in this module verify against the same strings.
+const GEN_AI_OPERATION_NAME: &str = "gen_ai.operation.name";
+const GEN_AI_REQUEST_MODEL: &str = "gen_ai.request.model";
+const GEN_AI_TOKEN_TYPE: &str = "gen_ai.token.type";
+const GEN_AI_USAGE_INPUT_TOKENS: &str = "gen_ai.usage.input_tokens";
+const GEN_AI_USAGE_OUTPUT_TOKENS: &str = "gen_ai.usage.output_tokens";
 
 /// GenAI-standard token-usage histogram buckets (research.md D4).
 const TOKEN_BUCKETS: [f64; 14] = [
