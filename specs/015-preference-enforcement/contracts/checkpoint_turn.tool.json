@@ -1,0 +1,133 @@
+{
+  "name": "checkpoint_turn",
+  "description": "End-of-turn checkpoint: deterministically mine the turn's final message and recent trajectory for candidate contradictions (against earlier committed statements and verified stored decisions) and, when memory is configured, candidate preference violations (the turn vs recalled trusted stored preferences); only when candidates exist, one independent blind review pass classifies them - a single hop judges both. A confirmed contradiction returns a flag citing both conflicting statements; a confirmed preference violation returns a flag quoting the stored preference verbatim with its provenance (memory id + trust standing) so the model can revise or explicitly contest it; both together return one combined flag. Delivered as forced continuation - the turn does not end until the model addresses it (at most once per turn). Otherwise silence. Preference enforcement never holds and never rewrites; with memory unconfigured, behavior is identical to the contradiction-only tool. Verdict and wording are server-assembled; the review pass never decides or phrases the verdict. Fails open. Intended to be invoked by the harness's stop hook; calling it directly behaves identically.",
+  "params": {
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "description": "The harness session identifier; must match the transcript."
+      },
+      "transcript_path": {
+        "type": "string",
+        "description": "Path to the session's transcript (.jsonl). Validated and read as a bounded tail window."
+      },
+      "final_message": {
+        "type": "string",
+        "description": "The model's final message for the turn (as provided by the harness)."
+      },
+      "continuation": {
+        "type": [
+          "boolean",
+          "string"
+        ],
+        "description": "True when this turn end follows a forced continuation; limits this evaluation to screening so continuation can never loop. Accepts a boolean or its string form (\"true\"/\"false\") - the harness's hook substitution stringifies booleans."
+      }
+    },
+    "required": [
+      "session_id",
+      "transcript_path",
+      "final_message",
+      "continuation"
+    ],
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": [
+          "silence",
+          "flag"
+        ]
+      },
+      "message": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Assembled flag: the two conflicting statements (contradiction), the quoted stored preference with memory id + trust provenance (violation), or both concatenated (contradiction first); null when silence."
+      },
+      "signals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "self_contradiction",
+                "preference_violation"
+              ]
+            },
+            "evidence": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "evidence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "suppressed": {
+        "type": "boolean"
+      },
+      "fail_open": {
+        "type": "boolean"
+      },
+      "latency_ms": {
+        "type": "integer"
+      },
+      "decision": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Harness hook mapping (S1): \"block\" on flag verdicts - the harness feeds `reason` back to the model. Absent otherwise."
+      },
+      "reason": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Harness hook mapping: the flag message, in the field the hook contract reads. Absent unless `decision` is present."
+      },
+      "hookSpecificOutput": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "Harness hook mapping for holds: { hookEventName: \"PreToolUse\", permissionDecision: \"ask\", permissionDecisionReason } (FR-011 escalate-only). Never produced by preference enforcement (flag-only authority). Absent otherwise.",
+        "properties": {
+          "hookEventName": {
+            "type": "string"
+          },
+          "permissionDecision": {
+            "type": "string"
+          },
+          "permissionDecisionReason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hookEventName",
+          "permissionDecision",
+          "permissionDecisionReason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "verdict",
+      "message",
+      "signals",
+      "suppressed",
+      "fail_open",
+      "latency_ms"
+    ],
+    "additionalProperties": false
+  }
+}
