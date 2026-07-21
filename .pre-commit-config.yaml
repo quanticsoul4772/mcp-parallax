@@ -30,7 +30,7 @@ repos:
   #   hooks:
   #     - id: gitleaks
   #       name: gitleaks
-  #       description: Scan for secrets and credentials
+  #       description: Scan secrets and credentials
   #       entry: gitleaks protect --verbose --redact --staged
   #       language: system
 
@@ -60,4 +60,4 @@ repos:
     hooks:
       - id: markdownlint
         name: markdownlint
-        args: ['--config', '.markdownlint.json', '--fix']
+        args: ['--config', '.markdownlint.json']
