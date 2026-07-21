@@ -6,10 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Rolls up the post-#38-merged work on `main` (#38–#42). This section persists
-verbatim until the project's next SemVer cut, at which point the entries
-move into a dated `## [X.Y.Z] - YYYY-MM-DD` block and the `[Unreleased]`
-header starts the next arc. The agent doesn't carry `ANTHROPIC_API_KEY`,
+Per Keep a Changelog 1.1.0, this is
+the next-up change block; it persists verbatim until the project's next SemVer
+cut, at which point the entries move into a dated `## [X.Y.Z] - YYYY-MM-DD`
+block and the `[Unreleased]` header starts the next arc. Rolls up the
+post-#38-merged work on `main` (#38–#42). The agent doesn't carry `ANTHROPIC_API_KEY`,
 so live-dogfood freshness is not re-fired in this arc; the #42 stamps
 therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 *Docs* entry below for the rationale).

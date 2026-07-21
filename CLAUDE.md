@@ -166,9 +166,8 @@ loud-malformed convention).
 - Off by default / gated: every new capability (network egress, code execution) is
   env-gated and off by default.
 - **CHANGELOG maintenance** (`CHANGELOG.md`): PRs that ship user-visible behavior,
-  new docs artifacts, or new conventions also append an entry under
-  `## [Unreleased]` in [Keep-a-Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/)
-  format. The next SemVer cut moves the `[Unreleased]` block into a dated
+  new docs artifacts, or new conventionsalso append to `## [Unreleased]` in Keep a Changelog 1.1.0 format. The next
+  SemVer cut moves the `[Unreleased]` block into a dated
   `## [X.Y.Z] - YYYY-MM-DD` section.
 
 ## Repo layout
