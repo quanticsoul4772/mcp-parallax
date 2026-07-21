@@ -221,17 +221,20 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active feature: `015-preference-enforcement` — preference enforcement at the end-of-turn
-checkpoint (the enforce half of `PREFERENCE_ELICITATION.md`'s capture→store→recall→enforce
-loop; composes 014 capture + 003 store + 006 checkpoint). The single review hop gains a
-second judgment (violation of recalled trusted stored preferences, flag-only authority,
-fail-open, memory-off unchanged). Artifacts:
+No active feature — last merged: `015-preference-enforcement` (#44, 2026-07-21) —
+preference enforcement at the end-of-turn checkpoint (the enforce half of
+`PREFERENCE_ELICITATION.md`'s capture→store→recall→enforce loop; composes 014 capture +
+003 store + 006 checkpoint). The single review hop gained a second judgment (violation of
+recalled trusted stored preferences, flag-only authority, fail-open, memory-off
+unchanged; new `preference_violation` signal kind, cooldown by memory id). T016 live
+dogfood PASS 2026-07-21 on the rebuilt binary (flag with verbatim quote + memory id +
+provenance; compliant-turn decline; one audit row per evaluation) with one named
+finding — wording-ban preferences reach the hop only when the final message is
+*topically* near the preference (cosine recall floor); lexical candidate mining is the
+follow-up if live precision data shows the class mattering. Artifacts:
 [spec](specs/015-preference-enforcement/spec.md) ·
 [plan](specs/015-preference-enforcement/plan.md) ·
-[research](specs/015-preference-enforcement/research.md) ·
-[data model](specs/015-preference-enforcement/data-model.md) ·
-[contracts](specs/015-preference-enforcement/contracts/) ·
-[quickstart](specs/015-preference-enforcement/quickstart.md). Next: `/speckit-tasks`.
+[tasks incl. T016 result](specs/015-preference-enforcement/tasks.md).
 2026-07-15 (shipped in 014's follow-up): elicit gained decide's violation-fed single
 retry (`ELICIT_ATTEMPTS_MAX`) after a live parallel-array arity slip surfaced as a hard
 -32603 to a caller; fix mirrors decide commit `63521e6`, elicit.rs only.
