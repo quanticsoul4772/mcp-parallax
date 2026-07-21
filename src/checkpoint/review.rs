@@ -7,6 +7,7 @@
 //! (FR-012) plus a between-statements evidence summary so the hop can apply
 //! FR-004(d): an evidence-justified reversal is NOT a contradiction.
 
+use crate::checkpoint::preference::{self, PreferenceCandidate};
 use crate::checkpoint::trajectory::{TrajectoryEntry, TrajectoryWindow};
 use crate::checkpoint::{Signal, SignalKind, REVIEW_CANDIDATES_MAX, REVIEW_RECALL_FLOOR};
 use crate::error::AppError;
@@ -44,25 +45,37 @@ const POLARITY_CUES: &[&str] = &[
 ];
 
 const REVIEW_PROMPT_TEMPLATE: &str = "\
-You are an independent end-of-turn reviewer. You see only candidate statement \
-pairs from one working session — no author identity, no justification, no \
-stakes. Decide whether ANY pair is a real self-contradiction.\n\
+You are an independent end-of-turn reviewer making two separate judgments \
+about one working session. You see only the material below — no author \
+identity, no justification, no stakes. On BOTH judgments, when uncertain \
+answer false; a false alarm is worse than a miss.\n\
 \n\
-A real contradiction is EXPLICIT and MATERIAL: the two statements cannot both \
-be true as written. Refinements, added detail, tone shifts, and narrowed scope \
-are NOT contradictions. HARD RULE: a reversal justified by evidence that \
-appeared between the two statements (see each pair's 'observed between') is \
-NOT a contradiction — it is an update, which is correct behavior. When \
-uncertain, answer contradicts=false; a false alarm is worse than a miss.\n\
+JUDGMENT 1 — self-contradiction. Decide whether ANY candidate statement pair \
+is a real self-contradiction. A real contradiction is EXPLICIT and MATERIAL: \
+the two statements cannot both be true as written. Refinements, added detail, \
+tone shifts, and narrowed scope are NOT contradictions. HARD RULE: a reversal \
+justified by evidence that appeared between the two statements (see each \
+pair's 'observed between') is NOT a contradiction — it is an update, which is \
+correct behavior. If exactly one pair contradicts, return contradicts=true \
+with statement_a (the earlier statement, verbatim), statement_b (the final \
+statement, verbatim), and basis (one sentence: why both cannot hold). If \
+several contradict, return the most material one. Otherwise (or when no \
+pairs are listed) contradicts=false with empty strings and basis stating the \
+strongest reason the candidates are consistent.\n\
 \n\
-If exactly one pair contradicts, return contradicts=true with statement_a \
-(the earlier statement, verbatim), statement_b (the final statement, \
-verbatim), and basis (one sentence: why both cannot hold). If several \
-contradict, return the most material one. Otherwise contradicts=false with \
-empty strings and basis stating the strongest reason the candidates are \
-consistent.\n\
+JUDGMENT 2 — stored-preference violation. Decide whether this turn violates \
+ANY numbered stored preference — in its final message wording, or in the \
+observable turn activity. A preference too vague to check concretely is NOT \
+violated; a preference that does not bear on what this turn did is NOT \
+violated. If exactly one is violated, return violates=true with \
+violated_preference (that preference, verbatim from the list) and \
+violation_basis (one sentence: what in the turn violates it). If several are \
+violated, return the most material one. Otherwise (or when no preferences \
+are listed) violates=false with empty strings.\n\
 \n\
-Candidate pairs:\n<<candidates>>";
+Candidate pairs:\n<<candidates>>\n\
+\n\
+Stored preferences and turn evidence:\n<<preferences>>";
 
 /// The hop's constrained output (flat + closed — Principle II).
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -75,6 +88,16 @@ pub struct ReviewOut {
     pub statement_b: String,
     /// One sentence of grounds.
     pub basis: String,
+    /// The turn violates a listed stored preference (uncertain ⇒ false —
+    /// decline bias, 015 FR-004).
+    pub violates: bool,
+    /// Verbatim echo of the violated preference — used ONLY for server-side
+    /// map-back to the mined candidate (015 research D5); never quoted in
+    /// the flag. Empty when violates is false.
+    pub violated_preference: String,
+    /// One sentence: what in the turn violates it (empty when violates is
+    /// false).
+    pub violation_basis: String,
 }
 
 /// One candidate pair for the hop.
@@ -177,7 +200,22 @@ pub fn rank_recall(query: &[f32], memories: &[Memory]) -> Vec<(f32, Memory)> {
     scored
 }
 
-/// Run the single review hop over mined candidates.
+/// Max final-message chars included as violation evidence (015 research
+/// D3) — keeps the hop prompt bounded.
+const FINAL_MESSAGE_EXCERPT_CHARS: usize = 2000;
+
+/// Deterministic activity summary of the turn's bounded window — the
+/// violation judgment's process evidence (015 research D3).
+#[must_use]
+pub fn turn_activity(window: &TrajectoryWindow) -> String {
+    window_summary(&window.entries)
+}
+
+/// Run the single review hop — one pass, two judgments (015 FR-010).
+///
+/// Judges the mined contradiction candidates and preference candidates in
+/// a single constrained pass and returns the confirmed flags in delivery
+/// order: contradiction first, then violation (015 research D6).
 ///
 /// # Errors
 ///
@@ -187,9 +225,15 @@ pub async fn review_once(
     client: &dyn ModelClient,
     mode: &CorrectiveMode,
     candidates: &[Candidate],
-) -> Result<(Option<(Signal, String)>, u64, u64), AppError> {
+    preferences: &[PreferenceCandidate],
+    final_message: &str,
+    activity: &str,
+) -> Result<(Vec<(Signal, String)>, u64, u64), AppError> {
     use std::fmt::Write as _;
     let mut listing = String::new();
+    if candidates.is_empty() {
+        listing.push_str("(none)\n");
+    }
     for (i, candidate) in candidates.iter().enumerate() {
         let _ = writeln!(
             listing,
@@ -200,21 +244,43 @@ pub async fn review_once(
             candidate.between
         );
     }
+    let mut preference_block = String::new();
+    if preferences.is_empty() {
+        preference_block.push_str("(none)\n");
+    } else {
+        for (i, preference) in preferences.iter().enumerate() {
+            let _ = writeln!(preference_block, "{}. \"{}\"", i + 1, preference.content);
+        }
+        let _ = writeln!(
+            preference_block,
+            "Turn final message (excerpt): \"{}\"",
+            truncate(final_message, FINAL_MESSAGE_EXCERPT_CHARS)
+        );
+        let _ = writeln!(preference_block, "Turn activity: {activity}");
+    }
     // One-pass substitution on the pristine template only (the 005
-    // template-injection rule): candidate text is never re-scanned.
-    let Some((before, after)) = mode.prompt_template.split_once("<<candidates>>") else {
+    // template-injection rule): both placeholders are located on the
+    // pristine template before any caller text is inserted, so listed
+    // content is never re-scanned for placeholders.
+    let Some((head, rest)) = mode.prompt_template.split_once("<<candidates>>") else {
         return Err(AppError::ValidationFailure(
             "review template lost its candidates placeholder".to_string(),
         ));
     };
-    let prompt = format!("{before}{listing}{after}");
+    let Some((mid, tail)) = rest.split_once("<<preferences>>") else {
+        return Err(AppError::ValidationFailure(
+            "review template lost its preferences placeholder".to_string(),
+        ));
+    };
+    let prompt = format!("{head}{listing}{mid}{preference_block}{tail}");
 
     let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
     validate(&mode.output_schema, &completion.value)?;
     let out: ReviewOut = serde_json::from_value(completion.value)
         .map_err(|e| AppError::ValidationFailure(format!("review shape: {e}")))?;
 
-    let flagged = if out.contradicts {
+    let mut flagged: Vec<(Signal, String)> = Vec::new();
+    if out.contradicts && !candidates.is_empty() {
         // Cooldown identity from the MINED pair, not the model's echo —
         // wording drift between turns must not defeat FR-010 suppression
         // (review finding 7). Best-overlap match back to a candidate;
@@ -237,10 +303,21 @@ pub async fn review_once(
             ),
             &identity,
         );
-        Some((signal, assemble_flag(&out)))
-    } else {
-        None
-    };
+        flagged.push((signal, assemble_flag(&out)));
+    }
+    if out.violates && !preferences.is_empty() {
+        // Map the echo back to the mined candidate (015 research D5): the
+        // flag's quoted content, memory id, and trust come from the
+        // server-held candidate, never from the echo — a hallucinated echo
+        // cannot mis-attribute, it can only pick the wrong (still real,
+        // still recalled) candidate.
+        if let Some(matched) = preferences
+            .iter()
+            .max_by_key(|p| overlap(&p.content, &out.violated_preference))
+        {
+            flagged.push(preference::violation_signal(matched, &out.violation_basis));
+        }
+    }
     Ok((flagged, completion.input_tokens, completion.output_tokens))
 }
 
@@ -445,10 +522,20 @@ mod tests {
         let mode = registry.get(REVIEW_MODE_ID).unwrap();
         assert_eq!(mode.ensemble_k, 1);
         assert!(mode.prompt_template.contains("<<candidates>>"));
+        assert!(mode.prompt_template.contains("<<preferences>>"));
         // Decline bias and the FR-004(d) rule are pinned in the template.
         assert!(mode.prompt_template.contains("contradicts=false"));
         assert!(mode.prompt_template.contains("evidence"));
         assert!(mode.prompt_template.contains("NOT a contradiction"));
+        // 015: the violation judgment's decline bias is pinned too.
+        assert!(mode.prompt_template.contains("violates=false"));
+        assert!(mode.prompt_template.contains("NOT violated"));
+        // 015: the extended schema registers (the registry's boot invariant
+        // enforces flat+closed) and carries the new violation fields.
+        let properties = mode.output_schema["properties"].as_object().unwrap();
+        for field in ["violates", "violated_preference", "violation_basis"] {
+            assert!(properties.contains_key(field), "{field} missing");
+        }
     }
 
     fn test_mode() -> CorrectiveMode {
@@ -465,28 +552,50 @@ mod tests {
         }
     }
 
+    fn preference_candidate(id: &str, content: &str) -> PreferenceCandidate {
+        PreferenceCandidate {
+            memory_id: id.into(),
+            content: content.into(),
+            trust: Trust::FirstHand,
+            score: 0.8,
+        }
+    }
+
     #[tokio::test]
     async fn a_confirmed_contradiction_yields_a_flag_citing_both_statements() {
         let mut client = MockModelClient::new();
         client.expect_complete().times(1).returning(|prompt, _| {
-            // The hop sees the bare candidates, numbered.
+            // The hop sees the bare candidates, numbered; with no
+            // preferences mined, the preference section is "(none)".
             assert!(prompt.contains("1. earlier:"), "{prompt}");
+            assert!(prompt.contains("(none)"), "{prompt}");
             Ok(Completion {
                 value: json!({
                     "contradicts": true,
                     "statement_a": "The migration is reversible.",
                     "statement_b": "The migration is not reversible.",
-                    "basis": "Both cannot hold as written."
+                    "basis": "Both cannot hold as written.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": ""
                 }),
                 input_tokens: 50,
                 output_tokens: 20,
             })
         });
-        let (flagged, inp, out) = review_once(&client, &test_mode(), &[candidate()])
-            .await
-            .unwrap();
+        let (flagged, inp, out) = review_once(
+            &client,
+            &test_mode(),
+            &[candidate()],
+            &[],
+            "The migration is not reversible.",
+            "no tool activity in this turn's window",
+        )
+        .await
+        .unwrap();
         assert_eq!((inp, out), (50, 20));
-        let (signal, message) = flagged.unwrap();
+        assert_eq!(flagged.len(), 1);
+        let (signal, message) = &flagged[0];
         assert_eq!(signal.kind, SignalKind::SelfContradiction);
         assert!(message.contains("The migration is reversible."));
         assert!(message.contains("The migration is not reversible."));
@@ -502,15 +611,156 @@ mod tests {
                     "contradicts": false,
                     "statement_a": "",
                     "statement_b": "",
-                    "basis": "The final statement is a refinement, not a reversal."
+                    "basis": "The final statement is a refinement, not a reversal.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": ""
                 }),
                 input_tokens: 40,
                 output_tokens: 15,
             })
         });
-        let (flagged, _, _) = review_once(&client, &test_mode(), &[candidate()])
-            .await
-            .unwrap();
-        assert!(flagged.is_none());
+        let (flagged, _, _) = review_once(
+            &client,
+            &test_mode(),
+            &[candidate()],
+            &[],
+            "The migration is not reversible in practice.",
+            "no tool activity in this turn's window",
+        )
+        .await
+        .unwrap();
+        assert!(flagged.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_violation_maps_back_to_the_matched_candidate() {
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|prompt, _| {
+            // The hop sees numbered preferences + the turn evidence.
+            assert!(
+                prompt.contains("1. \"never deploy on fridays\""),
+                "{prompt}"
+            );
+            assert!(
+                prompt.contains("2. \"always run the test gate before claiming done\""),
+                "{prompt}"
+            );
+            assert!(prompt.contains("Turn final message (excerpt):"), "{prompt}");
+            assert!(prompt.contains("Turn activity:"), "{prompt}");
+            Ok(Completion {
+                value: json!({
+                    "contradicts": false,
+                    "statement_a": "",
+                    "statement_b": "",
+                    "basis": "No contradiction among the pairs.",
+                    "violates": true,
+                    // Slightly reworded echo — map-back must still pick
+                    // the test-gate candidate, and the flag must quote the
+                    // SERVER-held content, not this echo.
+                    "violated_preference": "always run the test gate before you claim done",
+                    "violation_basis": "The turn claims completion with no test activity."
+                }),
+                input_tokens: 60,
+                output_tokens: 25,
+            })
+        });
+        let preferences = [
+            preference_candidate("mem-friday", "never deploy on fridays"),
+            preference_candidate("mem-gate", "always run the test gate before claiming done"),
+        ];
+        let (flagged, _, _) = review_once(
+            &client,
+            &test_mode(),
+            &[],
+            &preferences,
+            "All done — everything works.",
+            "no tool activity in this turn's window",
+        )
+        .await
+        .unwrap();
+        assert_eq!(flagged.len(), 1);
+        let (signal, message) = &flagged[0];
+        assert_eq!(signal.kind, SignalKind::PreferenceViolation);
+        let (expected, _) = preference::violation_signal(
+            &preferences[1],
+            "The turn claims completion with no test activity.",
+        );
+        assert_eq!(signal.signal_key, expected.signal_key);
+        assert!(
+            message.contains("always run the test gate before claiming done"),
+            "{message}"
+        );
+        assert!(message.contains("mem-gate"), "{message}");
+        assert!(message.contains("first_hand"), "{message}");
+        assert!(!message.contains("before you claim done"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn both_judgments_firing_yield_two_flags_contradiction_first() {
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|_, _| {
+            Ok(Completion {
+                value: json!({
+                    "contradicts": true,
+                    "statement_a": "The migration is reversible.",
+                    "statement_b": "The migration is not reversible.",
+                    "basis": "Both cannot hold as written.",
+                    "violates": true,
+                    "violated_preference": "never deploy on fridays",
+                    "violation_basis": "The turn deployed on a friday."
+                }),
+                input_tokens: 70,
+                output_tokens: 30,
+            })
+        });
+        let preferences = [preference_candidate(
+            "mem-friday",
+            "never deploy on fridays",
+        )];
+        let (flagged, _, _) = review_once(
+            &client,
+            &test_mode(),
+            &[candidate()],
+            &preferences,
+            "Deployed; the migration is not reversible.",
+            "1 tool call(s) in this turn's window (0 failed; tools: bash)",
+        )
+        .await
+        .unwrap();
+        assert_eq!(flagged.len(), 2);
+        assert_eq!(flagged[0].0.kind, SignalKind::SelfContradiction);
+        assert_eq!(flagged[1].0.kind, SignalKind::PreferenceViolation);
+    }
+
+    #[tokio::test]
+    async fn a_violates_claim_with_no_listed_preferences_is_ignored() {
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|_, _| {
+            Ok(Completion {
+                value: json!({
+                    "contradicts": false,
+                    "statement_a": "",
+                    "statement_b": "",
+                    "basis": "Consistent.",
+                    "violates": true,
+                    "violated_preference": "a preference that was never listed",
+                    "violation_basis": "hallucinated"
+                }),
+                input_tokens: 30,
+                output_tokens: 10,
+            })
+        });
+        let (flagged, _, _) = review_once(
+            &client,
+            &test_mode(),
+            &[candidate()],
+            &[],
+            "Nothing notable.",
+            "no tool activity in this turn's window",
+        )
+        .await
+        .unwrap();
+        assert!(flagged.is_empty());
     }
 }

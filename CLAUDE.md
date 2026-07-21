@@ -221,14 +221,20 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-No active feature — the design corpus's corrective catalog is fully built (last merged:
-`014-preference-elicitation` — [spec](specs/014-preference-elicitation/spec.md) ·
-[plan](specs/014-preference-elicitation/plan.md) · [research](specs/014-preference-elicitation/research.md) ·
-[data model](specs/014-preference-elicitation/data-model.md) · [contracts](specs/014-preference-elicitation/contracts/)).
-2026-07-15: elicit gained decide's violation-fed single
-retry (`ELICIT_ATTEMPTS_MAX`) after a live parallel-array arity slip (3 divergence questions /
-4 signals) surfaced as a hard -32603 to a caller; fix mirrors decide commit `63521e6`, elicit.rs
-only.
+Active feature: `015-preference-enforcement` — preference enforcement at the end-of-turn
+checkpoint (the enforce half of `PREFERENCE_ELICITATION.md`'s capture→store→recall→enforce
+loop; composes 014 capture + 003 store + 006 checkpoint). The single review hop gains a
+second judgment (violation of recalled trusted stored preferences, flag-only authority,
+fail-open, memory-off unchanged). Artifacts:
+[spec](specs/015-preference-enforcement/spec.md) ·
+[plan](specs/015-preference-enforcement/plan.md) ·
+[research](specs/015-preference-enforcement/research.md) ·
+[data model](specs/015-preference-enforcement/data-model.md) ·
+[contracts](specs/015-preference-enforcement/contracts/) ·
+[quickstart](specs/015-preference-enforcement/quickstart.md). Next: `/speckit-tasks`.
+2026-07-15 (shipped in 014's follow-up): elicit gained decide's violation-fed single
+retry (`ELICIT_ATTEMPTS_MAX`) after a live parallel-array arity slip surfaced as a hard
+-32603 to a caller; fix mirrors decide commit `63521e6`, elicit.rs only.
 <!-- SPECKIT END -->
 
 ## Working style

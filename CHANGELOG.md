@@ -15,6 +15,23 @@ so live-dogfood freshness is not re-fired in this arc; the #42 stamps
 therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 *Docs* entry below for the rationale).
 
+### Added
+
+* **Preference enforcement at the end-of-turn checkpoint (015).** The
+  `checkpoint_turn` review hop now judges the turn — final message wording
+  plus observable in-turn activity — against recalled **trusted** stored
+  preferences (the same trusted lesson/fact population the action gate
+  treats as constraints) and flags a violation quoting the stored
+  preference verbatim with its provenance (memory id, trust standing), so
+  the model can revise or explicitly contest it. One hop still (the two
+  judgments share the layer's single model pass), flag-only authority
+  (never hold, never rewrite), fail-open, cooled down by memory id, and
+  byte-identical behavior when memory is unconfigured. New
+  `preference_violation` signal kind on checkpoint records; no new tools,
+  config, or storage schema. Closes the capture → store → recall →
+  **enforce** loop from `PREFERENCE_ELICITATION.md` (amended in-change);
+  spec/plan/contracts under `specs/015-preference-enforcement/`.
+
 ### Security / Dependencies
 
 Three transitive advisories cleared via three lockfile-only commits (#38).
@@ -73,8 +90,8 @@ single advisory to its dep bump.
   `specs/014-preference-elicitation/tasks.md` (T012) — adds a
   "Mechanism re-verified 2026-07-20" sub-bullet below each existing
   inline 2026-06-14 live result. The mode source is unchanged across
-  #38–#41, so the 2026-06-14 live SC-* results stay structurally held
-  (model + FR-* contract unchanged); the offline integration suite
+  #38–#41, so the 2026-06-14 live `SC-*` results stay structurally held
+  (model + `FR-*` contract unchanged); the offline integration suite
   (`cargo test --test integration`, 60/60) re-proves the mechanism.
   Live re-verification against the rebuilt binary is open follow-up
   work for the maintainer.

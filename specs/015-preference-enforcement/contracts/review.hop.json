@@ -1,0 +1,56 @@
+{
+  "$comment": "The end-of-turn review hop's constrained output (the checkpoint layer's ONLY model pass), extended for 015. Flat + closed (Constitution II). The hop CLASSIFIES; verdict mapping, provenance, cooldown identity, and all flag wording are server-assembled pure functions. violated_preference is a verbatim echo used only to map back to the mined candidate (best lexical overlap) - the flag's quoted content, memory id, and trust standing come from the server-held candidate, never from this echo. Decline bias on both judgments: uncertain => false.",
+  "name": "checkpoint_review",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "contradicts": {
+        "type": "boolean",
+        "description": "A real, explicit, material contradiction exists among the candidate pairs. Uncertain => false."
+      },
+      "statement_a": {
+        "type": "string",
+        "description": "The earlier statement, verbatim. Empty when contradicts is false."
+      },
+      "statement_b": {
+        "type": "string",
+        "description": "The final statement, verbatim. Empty when contradicts is false."
+      },
+      "basis": {
+        "type": "string",
+        "description": "One sentence: why both cannot hold (or the strongest reason the candidates are consistent)."
+      },
+      "violates": {
+        "type": "boolean",
+        "description": "The turn (final message and/or its observed activity) violates one of the listed stored preferences. Uncertain => false; a preference too vague to check concretely => false."
+      },
+      "violated_preference": {
+        "type": "string",
+        "description": "Verbatim echo of the single most material violated preference from the numbered list. Empty when violates is false. Server-side map-back only."
+      },
+      "violation_basis": {
+        "type": "string",
+        "description": "One sentence: what in the turn violates it. Empty when violates is false."
+      }
+    },
+    "required": [
+      "contradicts",
+      "statement_a",
+      "statement_b",
+      "basis",
+      "violates",
+      "violated_preference",
+      "violation_basis"
+    ],
+    "additionalProperties": false
+  },
+  "fixed_flag_templates": {
+    "self_contradiction": "End-of-turn review: your conclusion contradicts an earlier committed statement. Earlier: \"<statement_a>\" - Final: \"<statement_b>\". Basis: <basis> Reconcile the two explicitly before finishing.",
+    "preference_violation": "End-of-turn review: this turn appears to violate a stored preference: \"<candidate.content>\" (memory <candidate.memory_id>, <trust> provenance). Basis: <violation_basis> Revise the response to honor it, or state explicitly why it does not apply here.",
+    "both": "<self_contradiction template> <preference_violation template> (concatenated, contradiction first; one flag, two signals, independent cooldown keys)"
+  },
+  "signal_identity": {
+    "self_contradiction": "self_contradiction:fnv1a64(mined earlier|final pair)",
+    "preference_violation": "preference_violation:fnv1a64(memory.id)"
+  }
+}

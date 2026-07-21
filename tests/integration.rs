@@ -1752,6 +1752,116 @@ async fn checkpoint_action_passes_non_risk_and_continuation_turns_are_silent() {
     client.cancel().await.unwrap();
 }
 
+// ---- 015-preference-enforcement -------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_turn_flags_a_stored_preference_violation_end_to_end() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    // The single review hop confirms the violation (and no contradiction).
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "contradicts": false,
+            "statement_a": "",
+            "statement_b": "",
+            "basis": "No contradiction among the pairs.",
+            "violates": true,
+            "violated_preference": "alpha rule: final messages must never contain the word delve",
+            "violation_basis": "The final message contains the word delve."
+        }))))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    // Seed the preference first-hand (kind fact, external=false ⇒ trusted).
+    let saved = client
+        .call_tool(tool_call(
+            "save",
+            &json!({ "content": "alpha rule: final messages must never contain the word delve",
+                    "kind": "fact", "origin": "user", "external": false }),
+        ))
+        .await
+        .unwrap();
+    let memory_id = saved.structured_content.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_transcript(dir.path(), "cs-pref", &[("cargo build", false)]);
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_turn",
+            &json!({
+                "session_id": "cs-pref",
+                "transcript_path": path,
+                "final_message": "Let me delve into the details of this fix.",
+                "continuation": false
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    // FR-003: flag, never hold — and the flag names preference + provenance.
+    assert_eq!(structured["verdict"], "flag");
+    let message = structured["message"].as_str().unwrap();
+    assert!(
+        message.contains("must never contain the word delve"),
+        "{message}"
+    );
+    assert!(message.contains(&memory_id), "{message}");
+    assert!(message.contains("first_hand provenance"), "{message}");
+    assert_eq!(structured["signals"][0]["kind"], "preference_violation");
+
+    // Exactly one audit row; enforcement evaluated and fired (SC-005).
+    let checkpoints = storage.list_checkpoints().await.unwrap();
+    assert_eq!(checkpoints.len(), 1);
+    assert!(checkpoints[0]
+        .signals_evaluated
+        .contains(&mcp_parallax::checkpoint::SignalKind::PreferenceViolation));
+    assert!(checkpoints[0].signals_fired[0]
+        .evidence
+        .contains(&memory_id));
+    assert!(checkpoints[0].review_ran);
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_turn_without_memory_still_lists_only_contradiction() {
+    // SC-003: with memory unconfigured, the audit surface is unchanged —
+    // the enforcement signal is never listed as evaluated.
+    let mock = MockServer::start().await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_transcript(dir.path(), "cs-nomem", &[("cargo build", false)]);
+
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_turn",
+            &json!({
+                "session_id": "cs-nomem",
+                "transcript_path": path,
+                "final_message": "Everything completed without surprises today.",
+                "continuation": false
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["verdict"], "silence");
+
+    let checkpoints = storage.list_checkpoints().await.unwrap();
+    assert_eq!(checkpoints.len(), 1);
+    assert_eq!(
+        checkpoints[0].signals_evaluated,
+        vec![mcp_parallax::checkpoint::SignalKind::SelfContradiction]
+    );
+
+    client.cancel().await.unwrap();
+}
+
 // ---- 007-observability-layer ---------------------------------------------
 
 /// T005 + T007: spans and metrics derived from the records, end to end
