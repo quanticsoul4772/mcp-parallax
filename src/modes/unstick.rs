@@ -48,13 +48,47 @@ const PROMPT_TEMPLATE: &str = "You are an external unsticker. A worker is stuck 
 /// Tool input (data-model.md §2).
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct UnstickParams {
-    /// What you are ultimately trying to accomplish.
+    /// What you are ultimately trying to accomplish. Arg-drop fallback: if your client cannot reliably
+    /// serialize `blocked` (it arrives missing), append it here as `||BLOCKED|| <the blocker>` — the
+    /// server recovers it and strips the block.
     pub goal: String,
     /// Where you are stuck right now - the immediate blocker, error, or dead end.
+    ///
+    /// `#[serde(default)]` so a client that drops this field still deserializes (which necessarily
+    /// advertises it as optional); `normalize` then recovers it from a `||BLOCKED||` block in `goal`, and
+    /// `check_input` rejects a genuinely-empty blocker after the recovery attempt.
+    #[serde(default)]
     pub blocked: String,
     /// Approaches already attempted. The returned step will not restate any of
     /// these.
     pub tried: Option<Vec<String>>,
+}
+
+impl UnstickParams {
+    /// Client arg-drop fallback: some MCP clients intermittently omit `blocked` from the emitted
+    /// tool-call while the first field (`goal`) survives. Recover `blocked` from a `||BLOCKED||`-delimited
+    /// block in `goal`, and ALWAYS strip that block from `goal` (so a dual-encoded call never leaks the
+    /// marker into the prompt, even when `blocked` did arrive).
+    fn normalize(&mut self) {
+        if let Some(idx) = self.goal.find("||BLOCKED||") {
+            let (head, tail) = self.goal.split_at(idx);
+            // Take only the first post-marker segment: if a client retry-encoded with extra
+            // markers (e.g. `goal ||BLOCKED|| A ||BLOCKED|| B`), later markers become plain
+            // text inside the recovered `blocked`; we explicitly stop at the first segment so
+            // the recovered blocker is well-defined and the marker literal cannot leak back
+            // into the prompt.
+            let recovered = tail["||BLOCKED||".len()..]
+                .split("||BLOCKED||")
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            self.goal = head.trim().to_string();
+            if self.blocked.trim().is_empty() {
+                self.blocked = recovered;
+            }
+        }
+    }
 }
 
 /// Tool output — also the model-hop schema (single pass; data-model.md §3).
@@ -172,6 +206,9 @@ pub async fn run(
     params: &UnstickParams,
     max_chars: usize,
 ) -> Result<UnstickRun, AppError> {
+    let mut owned = params.clone();
+    owned.normalize(); // recover `blocked` from a ||BLOCKED|| block in `goal` when the field was dropped
+    let params = &owned;
     check_input(params, max_chars)?;
     let prompt = build_prompt(mode.prompt_template, params);
 
@@ -261,10 +298,13 @@ mod tests {
 
         let input = serde_json::to_value(schemars::schema_for!(UnstickParams)).unwrap();
         assert_eq!(props(&input), props(&contract["inputSchema"]));
-        assert_eq!(
-            contract["inputSchema"]["required"],
-            json!(["goal", "blocked"])
-        );
+        assert_eq!(contract["inputSchema"]["required"], json!(["goal"]));
+        // `blocked` carries #[serde(default)] for arg-drop tolerance, so it is advertised OPTIONAL
+        // (not in `required`); `normalize()` recovers it from `goal` and `check_input` still rejects a
+        // genuinely-empty blocker at runtime.
+        let derived_required = input["required"].as_array().unwrap();
+        assert!(derived_required.iter().any(|v| v == "goal"));
+        assert!(!derived_required.iter().any(|v| v == "blocked"));
 
         let output = serde_json::to_value(schemars::schema_for!(NextStep)).unwrap();
         assert_eq!(props(&output), props(&contract["outputSchema"]));
@@ -282,6 +322,57 @@ mod tests {
         let mode = test_mode();
         assert_eq!(mode.ensemble_k, 1);
         assert_eq!(mode.sanitized_schema["additionalProperties"], json!(false));
+    }
+
+    // ---- arg-drop fallback: recover a dropped `blocked` from a ||BLOCKED|| block in `goal` ----
+
+    #[test]
+    fn dropped_blocked_is_recovered_from_a_marker_in_goal() {
+        let mut p = params(
+            "figure out the deploy ||BLOCKED|| the CI step times out",
+            "",
+            None,
+        );
+        p.normalize();
+        assert_eq!(p.goal, "figure out the deploy");
+        assert_eq!(p.blocked, "the CI step times out");
+    }
+
+    #[test]
+    fn marker_in_goal_is_stripped_even_when_blocked_arrived() {
+        // unconditional strip: a dual-encoded call must never leak the marker into the prompt, and a
+        // present `blocked` is not overwritten by the recovered text.
+        let mut p = params(
+            "do the thing ||BLOCKED|| stray text",
+            "the real blocker",
+            None,
+        );
+        p.normalize();
+        assert_eq!(p.goal, "do the thing");
+        assert_eq!(p.blocked, "the real blocker");
+    }
+
+    #[test]
+    fn goal_without_a_marker_is_left_untouched() {
+        let mut p = params("a plain goal with no marker", "a blocker", None);
+        p.normalize();
+        assert_eq!(p.goal, "a plain goal with no marker");
+        assert_eq!(p.blocked, "a blocker");
+    }
+
+    #[test]
+    fn multi_marker_recovers_only_first_segment() {
+        // If a client retry-encoded with extra markers (||BLOCKED|| A ||BLOCKED|| B), only the
+        // first post-marker segment becomes `blocked`; the marker literal must not leak into
+        // the recovered text (otherwise it would re-enter the model prompt as plain text).
+        let mut p = params(
+            "fix the deploy ||BLOCKED|| deadline tomorrow ||BLOCKED|| also DNS broken",
+            "",
+            None,
+        );
+        p.normalize();
+        assert_eq!(p.goal, "fix the deploy");
+        assert_eq!(p.blocked, "deadline tomorrow");
     }
 
     // ---- structural blindness (as verify's T019) ----------------------------
