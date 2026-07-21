@@ -7,12 +7,12 @@
     "properties": {
       "goal": {
         "type": "string",
-        "description": "What you are ultimately trying to accomplish.",
+        "description": "What you are ultimately trying to accomplish. Arg-drop fallback: if your client cannot reliably serialize `blocked` (it arrives missing), append it here as `||BLOCKED|| <the blocker>` — the server recovers it and strips the block.",
         "minLength": 1
       },
       "blocked": {
         "type": "string",
-        "description": "Where you are stuck right now - the immediate blocker, error, or dead end.",
+        "description": "Where you are stuck right now - the immediate blocker, error, or dead end. Advertised optional (arg-drop tolerance): the server recovers it from a `||BLOCKED||` block in `goal` when omitted, and still rejects a genuinely-empty blocker.",
         "minLength": 1
       },
       "tried": {
@@ -21,7 +21,7 @@
         "description": "Approaches already attempted. The returned step will not restate any of these."
       }
     },
-    "required": ["goal", "blocked"],
+    "required": ["goal"],
     "additionalProperties": false
   },
   "outputSchema": {
