@@ -151,6 +151,12 @@ whose recorded outcome matches the returned verdict.
   layer's existing bounded reads; enforcement introduces no unbounded input.
 - **Recall returns nothing relevant.** Silence, and the audit row still shows
   the signal was evaluated.
+- **Empty final message.** A turn ending with no final text is not
+  enforcement-evaluated — the end-of-turn review's existing empty-message
+  early exit is kept, so a process violation in such a turn is not judged.
+  Named narrowing (the harness's stop hook supplies the final text in
+  practice); changing the exit would alter memory-off behavior against
+  FR-006.
 
 ## Requirements *(mandatory)*
 
@@ -202,9 +208,9 @@ whose recorded outcome matches the returned verdict.
   population is the same trusted durable-knowledge/lesson population the
   checkpoint gate already treats as constraints, now also judged against the
   completed turn (final message + observable in-turn behavior).
-- **Enforcement signal**: the new checkpoint signal kind — carries the quoted
-  preference, the stored memory's identity, and the violation basis; resolves
-  only to silence or flag.
+- **Enforcement signal** (concretely: the `preference_violation` signal
+  kind): carries the quoted preference, the stored memory's identity, and the
+  violation basis; resolves only to silence or flag.
 - **Audit record**: the existing one-row-per-evaluation checkpoint record,
   extended to show whether enforcement was evaluated and what fired.
 

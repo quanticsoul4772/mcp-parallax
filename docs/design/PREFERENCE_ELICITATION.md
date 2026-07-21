@@ -9,6 +9,21 @@ requirement-clarification. **One line:** *the model optimizes for an assumed
 objective; this captures the user's real one — and, more important, makes the server
 enforce it.*
 
+> **2026-07-21 amendment (015, `preference-enforcement`).** The **enforce** half
+> of the capture → store → recall → enforce loop now exists: the end-of-turn
+> checkpoint (`checkpoint_turn`, the watchdog layer's 006 re-grounding) recalls
+> trusted stored memories relevant to the turn and its single review hop also
+> judges the turn — final message wording and observable in-turn activity —
+> against them, flagging a violation with the stored preference quoted verbatim
+> plus its provenance (memory id, trust standing). The open question below
+> ("does the Watchdog *block* … or *flag and let the model revise*?") is
+> resolved to **flag-and-revise** for this iteration; the hold tier for hard
+> bans is a named deferral until the checkpoint audit rows (one per
+> evaluation) show flags being ignored. Passive capture of revealed
+> preferences remains unbuilt — preferences enter the store via `save` or
+> seeded from `elicit`-surfaced findings. Trace:
+> [`specs/015-preference-enforcement/`](../../specs/015-preference-enforcement/).
+
 ## The failure it corrects
 
 Two failures, and the second is the one that actually hurts:

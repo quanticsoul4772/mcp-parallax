@@ -10,8 +10,8 @@ use crate::checkpoint::contract::{
     CheckpointActionParams, CheckpointBatchParams, CheckpointResult, CheckpointTurnParams,
 };
 use crate::checkpoint::{
-    gate, review, screen, Boundary, CheckpointRecord, Signal, SignalKind, COOLDOWN_WINDOW_MS,
-    GATE_BUDGET_MS,
+    gate, preference, review, screen, Boundary, CheckpointRecord, Signal, SignalKind,
+    COOLDOWN_WINDOW_MS, GATE_BUDGET_MS,
 };
 use crate::error::AppError;
 use crate::modes::CorrectiveMode;
@@ -247,7 +247,17 @@ pub async fn run_turn(
         return Ok((evaluation.result, 0, 0));
     }
 
-    let evaluated_kinds = vec![SignalKind::SelfContradiction];
+    // 015 research D7: the enforcement signal is listed as evaluated only
+    // when the capability that feeds it is configured — with memory off,
+    // records stay byte-identical to the contradiction-only layer (FR-006).
+    let evaluated_kinds = if deps.embedder.is_some() {
+        vec![
+            SignalKind::SelfContradiction,
+            SignalKind::PreferenceViolation,
+        ]
+    } else {
+        vec![SignalKind::SelfContradiction]
+    };
     let evaluation = async {
         if params.final_message.trim().is_empty() {
             return Ok(Evaluated::pure(
@@ -262,8 +272,9 @@ pub async fn run_turn(
             .await?;
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
-        if candidates.is_empty() {
-            // US3-AS2: no candidates → no model pass.
+        let preferences = preference::mine_preference_candidates(&recall);
+        if candidates.is_empty() && preferences.is_empty() {
+            // US3-AS2: no candidates of either class → no model pass.
             let mut evaluation = Evaluated::pure(
                 evaluated_kinds.clone(),
                 vec![],
@@ -273,25 +284,43 @@ pub async fn run_turn(
             return Ok(evaluation);
         }
 
-        let (flagged, inp, out) =
-            review::review_once(deps.model_client.as_ref(), &deps.review_mode, &candidates).await?;
+        // One hop, two judgments (015 FR-010).
+        let (flagged, inp, out) = review::review_once(
+            deps.model_client.as_ref(),
+            &deps.review_mode,
+            &candidates,
+            &preferences,
+            &params.final_message,
+            &review::turn_activity(&window),
+        )
+        .await?;
         input_tokens += inp;
         let cost_usd = telemetry::cost_usd(&deps.model, inp, out);
 
         let mut delivered_keys: Vec<String> = vec![];
-        let (fired, result) = match flagged {
-            None => (vec![], CheckpointResult::silence(elapsed_ms(started))),
-            Some((signal, message)) => {
-                let fired = vec![signal];
-                let remaining = unsuppressed(deps, &params.session_id, &fired).await?;
-                let result = if remaining.is_empty() {
-                    CheckpointResult::suppressed(&fired, elapsed_ms(started))
-                } else {
-                    delivered_keys = remaining.iter().map(|s| s.signal_key.clone()).collect();
-                    CheckpointResult::flag(message, &remaining, elapsed_ms(started))
-                };
-                (fired, result)
-            }
+        let (fired, result) = if flagged.is_empty() {
+            (vec![], CheckpointResult::silence(elapsed_ms(started)))
+        } else {
+            let fired: Vec<Signal> = flagged.iter().map(|(signal, _)| signal.clone()).collect();
+            let remaining = unsuppressed(deps, &params.session_id, &fired).await?;
+            let result = if remaining.is_empty() {
+                CheckpointResult::suppressed(&fired, elapsed_ms(started))
+            } else {
+                // One message, delivery order contradiction-first (015
+                // research D6); a suppressed signal's message part is
+                // dropped, not redelivered.
+                let remaining_keys: std::collections::HashSet<&str> =
+                    remaining.iter().map(|s| s.signal_key.as_str()).collect();
+                let message = flagged
+                    .iter()
+                    .filter(|(signal, _)| remaining_keys.contains(signal.signal_key.as_str()))
+                    .map(|(_, message)| message.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(" ");
+                delivered_keys = remaining.iter().map(|s| s.signal_key.clone()).collect();
+                CheckpointResult::flag(message, &remaining, elapsed_ms(started))
+            };
+            (fired, result)
         };
         Ok::<Evaluated, AppError>(Evaluated {
             signal_kinds: evaluated_kinds.clone(),
@@ -734,7 +763,10 @@ mod tests {
                     "contradicts": true,
                     "statement_a": "The database migration is fully reversible and safe to run",
                     "statement_b": "the database migration is not reversible",
-                    "basis": "Both cannot hold."
+                    "basis": "Both cannot hold.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": ""
                 }),
                 input_tokens: 80,
                 output_tokens: 30,
@@ -807,7 +839,10 @@ mod tests {
                     "contradicts": false,
                     "statement_a": "",
                     "statement_b": "",
-                    "basis": "The final statement is an evidence-justified update."
+                    "basis": "The final statement is an evidence-justified update.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": ""
                 }),
                 input_tokens: 60,
                 output_tokens: 20,
@@ -829,6 +864,357 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    fn preference_memory(
+        id: &str,
+        content: &str,
+        trust: crate::memory::Trust,
+    ) -> crate::memory::Memory {
+        crate::memory::Memory {
+            id: id.into(),
+            content: content.into(),
+            kind: crate::memory::Kind::Fact,
+            origin: "test".into(),
+            external: matches!(trust, crate::memory::Trust::Untrusted),
+            trust,
+            tags: vec![],
+            embedding: vec![1.0, 0.0],
+            embedding_model: "voyage-4".into(),
+            created_at: fixed_now(),
+        }
+    }
+
+    fn matching_embedder() -> MockEmbedder {
+        let mut embedder = MockEmbedder::new();
+        embedder.expect_embed_query().returning(|_| {
+            Ok(Embedding {
+                vector: vec![1.0, 0.0],
+                input_tokens: 6,
+            })
+        });
+        embedder
+    }
+
+    fn violation_completion() -> Completion {
+        Completion {
+            value: json!({
+                "contradicts": false,
+                "statement_a": "",
+                "statement_b": "",
+                "basis": "No contradiction among the pairs.",
+                "violates": true,
+                "violated_preference": "final messages must never contain the word delve",
+                "violation_basis": "The final message contains the word delve."
+            }),
+            input_tokens: 90,
+            output_tokens: 35,
+        }
+    }
+
+    fn empty_window() -> TrajectoryWindow {
+        TrajectoryWindow {
+            session_id: "s1".into(),
+            entries: vec![],
+        }
+    }
+
+    /// The expected cooldown key for a violation of `memory_id`.
+    fn violation_key(memory_id: &str) -> String {
+        let candidate = crate::checkpoint::preference::PreferenceCandidate {
+            memory_id: memory_id.into(),
+            content: "x".into(),
+            trust: crate::memory::Trust::FirstHand,
+            score: 1.0,
+        };
+        crate::checkpoint::preference::violation_signal(&candidate, "y")
+            .0
+            .signal_key
+    }
+
+    // ---- 015 US1: violation flagged at end of turn -------------------------
+
+    #[tokio::test]
+    async fn turn_flags_a_preference_violation_quoting_memory_and_provenance() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.embedder = Some(Arc::new(matching_embedder()));
+        b.storage.expect_load_memories().returning(|| {
+            Ok(vec![preference_memory(
+                "mem-delve",
+                "final messages must never contain the word delve",
+                crate::memory::Trust::FirstHand,
+            )])
+        });
+        // FR-010: one hop, both judgments — times(1) is the contract.
+        b.client
+            .expect_complete()
+            .times(1)
+            .returning(|_, _| Ok(violation_completion()));
+        b.storage
+            .expect_delivered_signal_keys_since()
+            .returning(|_, _| Ok(vec![]));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| {
+                r.boundary == Boundary::Turn
+                    && r.verdict == Verdict::Flag
+                    && r.review_ran
+                    && r.cost_usd > 0.0
+                    && r.signals_evaluated
+                        == vec![
+                            SignalKind::SelfContradiction,
+                            SignalKind::PreferenceViolation,
+                        ]
+                    && r.signals_fired.len() == 1
+                    && r.signals_fired[0].kind == SignalKind::PreferenceViolation
+                    && r.signals_fired[0].evidence.contains("mem-delve")
+                    && r.delivered_keys.len() == 1
+            })
+            .returning(|_| Ok(()));
+
+        let (result, inp, out) = run_turn(
+            &b.build(),
+            &turn_params("Let me delve into the details of this fix.", false),
+        )
+        .await
+        .unwrap();
+        // FR-003: flag is the maximum authority — never hold.
+        assert_eq!(result.verdict, Verdict::Flag);
+        let message = result.message.unwrap();
+        assert!(
+            message.contains("final messages must never contain the word delve"),
+            "{message}"
+        );
+        assert!(message.contains("mem-delve"), "{message}");
+        assert!(message.contains("first_hand provenance"), "{message}");
+        assert!(message.contains("why it does not apply"), "{message}");
+        assert_eq!((inp, out), (96, 35)); // 6 embed + 90 hop input
+    }
+
+    #[tokio::test]
+    async fn turn_delivers_both_flags_as_one_message_contradiction_first() {
+        let mut b = DepsBuilder::new();
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok(reversal_window()));
+        b.embedder = Some(Arc::new(matching_embedder()));
+        b.storage.expect_load_memories().returning(|| {
+            Ok(vec![preference_memory(
+                "mem-delve",
+                "final messages must never contain the word delve",
+                crate::memory::Trust::FirstHand,
+            )])
+        });
+        b.client.expect_complete().times(1).returning(|_, _| {
+            Ok(Completion {
+                value: json!({
+                    "contradicts": true,
+                    "statement_a": "The database migration is fully reversible and safe to run.",
+                    "statement_b": "the database migration is not reversible",
+                    "basis": "Both cannot hold.",
+                    "violates": true,
+                    "violated_preference": "final messages must never contain the word delve",
+                    "violation_basis": "The final message contains the word delve."
+                }),
+                input_tokens: 90,
+                output_tokens: 35,
+            })
+        });
+        b.storage
+            .expect_delivered_signal_keys_since()
+            .returning(|_, _| Ok(vec![]));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| {
+                r.verdict == Verdict::Flag
+                    && r.signals_fired.len() == 2
+                    && r.signals_fired[0].kind == SignalKind::SelfContradiction
+                    && r.signals_fired[1].kind == SignalKind::PreferenceViolation
+                    && r.delivered_keys.len() == 2
+            })
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params(
+                "I must delve deeper: the database migration is not reversible after all.",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.verdict, Verdict::Flag);
+        let message = result.message.unwrap();
+        let contradiction_at = message
+            .find("contradicts an earlier committed statement")
+            .unwrap();
+        let violation_at = message.find("violate a stored preference").unwrap();
+        assert!(contradiction_at < violation_at, "{message}");
+    }
+
+    // ---- 015 US2: enforcement never degrades a session ---------------------
+
+    #[tokio::test]
+    async fn turn_without_memory_lists_only_the_contradiction_signal() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.client.expect_complete().times(0);
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| {
+                r.verdict == Verdict::Silence
+                    && !r.fail_open
+                    && r.signals_evaluated == vec![SignalKind::SelfContradiction]
+            })
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params("Everything completed without surprises today.", false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    #[tokio::test]
+    async fn turn_fails_open_when_recall_errors_and_still_records() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        let mut embedder = MockEmbedder::new();
+        embedder
+            .expect_embed_query()
+            .returning(|_| Err(AppError::ValidationFailure("embedding backend down".into())));
+        b.embedder = Some(Arc::new(embedder));
+        b.client.expect_complete().times(0);
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| r.fail_open && r.verdict == Verdict::Silence)
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params("A perfectly ordinary final message for the turn.", false),
+        )
+        .await
+        .unwrap();
+        assert!(result.fail_open);
+        assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    #[tokio::test]
+    async fn turn_with_only_untrusted_memories_never_reaches_the_hop() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.embedder = Some(Arc::new(matching_embedder()));
+        b.storage.expect_load_memories().returning(|| {
+            Ok(vec![preference_memory(
+                "mem-untrusted",
+                "final messages must never contain the word delve",
+                crate::memory::Trust::Untrusted,
+            )])
+        });
+        // FR-005: untrusted is structurally excluded — no candidates of
+        // either class, so the hop never runs.
+        b.client.expect_complete().times(0);
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| r.verdict == Verdict::Silence && !r.review_ran && !r.fail_open)
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params("Let me delve into the details of this fix.", false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    // ---- 015 US3: audit + cooldown by memory id ----------------------------
+
+    #[tokio::test]
+    async fn turn_suppresses_a_recently_delivered_violation_by_memory_id() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.embedder = Some(Arc::new(matching_embedder()));
+        b.storage.expect_load_memories().returning(|| {
+            Ok(vec![preference_memory(
+                "mem-delve",
+                "final messages must never contain the word delve",
+                crate::memory::Trust::FirstHand,
+            )])
+        });
+        b.client
+            .expect_complete()
+            .times(1)
+            .returning(|_, _| Ok(violation_completion()));
+        // The same memory's violation was delivered within the window.
+        let delivered = violation_key("mem-delve");
+        b.storage
+            .expect_delivered_signal_keys_since()
+            .returning(move |_, _| Ok(vec![delivered.clone()]));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| {
+                r.verdict == Verdict::Silence
+                    && r.suppressed
+                    && r.delivered_keys.is_empty()
+                    && r.signals_fired.len() == 1
+            })
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params("Let me delve into the details of this fix.", false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.verdict, Verdict::Silence);
+        assert!(result.suppressed);
+    }
+
+    #[tokio::test]
+    async fn turn_cooldown_is_per_key_a_different_memory_still_delivers() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.embedder = Some(Arc::new(matching_embedder()));
+        b.storage.expect_load_memories().returning(|| {
+            Ok(vec![preference_memory(
+                "mem-delve",
+                "final messages must never contain the word delve",
+                crate::memory::Trust::FirstHand,
+            )])
+        });
+        b.client
+            .expect_complete()
+            .times(1)
+            .returning(|_, _| Ok(violation_completion()));
+        // A DIFFERENT memory's violation is in cooldown — this one delivers.
+        let delivered = violation_key("mem-other");
+        b.storage
+            .expect_delivered_signal_keys_since()
+            .returning(move |_, _| Ok(vec![delivered.clone()]));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| r.verdict == Verdict::Flag && !r.suppressed && r.delivered_keys.len() == 1)
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params("Let me delve into the details of this fix.", false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.verdict, Verdict::Flag);
     }
 
     #[tokio::test]

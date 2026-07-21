@@ -9,6 +9,7 @@
 
 pub mod contract;
 pub mod gate;
+pub mod preference;
 pub mod review;
 pub mod run;
 pub mod screen;
@@ -146,6 +147,9 @@ pub enum SignalKind {
     /// The turn's conclusion conflicting with an earlier committed statement
     /// (US3).
     SelfContradiction,
+    /// The turn violating a trusted stored preference (015 — the enforce
+    /// half of capture→store→recall→enforce; flag-only authority).
+    PreferenceViolation,
 }
 
 impl SignalKind {
@@ -157,6 +161,7 @@ impl SignalKind {
             Self::RepeatedFailure => "repeated_failure",
             Self::MemoryConflict => "memory_conflict",
             Self::SelfContradiction => "self_contradiction",
+            Self::PreferenceViolation => "preference_violation",
         }
     }
 }
@@ -252,6 +257,14 @@ mod tests {
         assert_eq!(
             serde_json::to_value(SignalKind::SelfContradiction).unwrap(),
             serde_json::json!("self_contradiction")
+        );
+        assert_eq!(
+            serde_json::to_value(SignalKind::PreferenceViolation).unwrap(),
+            serde_json::json!("preference_violation")
+        );
+        assert_eq!(
+            SignalKind::PreferenceViolation.as_str(),
+            "preference_violation"
         );
     }
 

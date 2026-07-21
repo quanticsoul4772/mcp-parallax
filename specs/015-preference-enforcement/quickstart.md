@@ -1,5 +1,13 @@
 # Quickstart: Preference Enforcement at the Checkpoint
 
+> **Gate result (2026-07-21, T015):** `cargo fmt --all -- --check` clean;
+> `cargo clippy --all-features -- -D warnings` clean; `cargo test` — 373
+> lib + 62 integration tests, 0 failed. Module sizes: new
+> `preference.rs` 182 lines; `review.rs` 766 / `run.rs` 1239 — both
+> pre-existing modules whose growth is test mass (their non-test halves
+> stay in the shipped shape; the 015 pure logic went to `preference.rs`
+> per plan D8).
+
 ## Build & gate
 
 ```bash
