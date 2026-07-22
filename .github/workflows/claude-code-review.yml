@@ -12,7 +12,11 @@ on:
 
 jobs:
   claude-review:
-    if: github.event.pull_request.user.type != 'Bot'
+    # Public-repo gate: same-repo PRs only - fork PRs have no access to the
+    # OAuth secret and would fail noisily; skip them cleanly instead.
+    if: |
+      github.event.pull_request.user.type != 'Bot' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
