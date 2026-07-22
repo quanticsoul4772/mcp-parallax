@@ -19,7 +19,9 @@ EXE = (
     ROOT.parents[2] / "target" / "release" / "mcp-parallax.exe"
 )  # claudedocs/experiments/decide-order-bias -> repo root
 SCRATCH = pathlib.Path(os.environ["EXP_SCRATCH"])  # required: scratch dir for DBs
-RESULTS = ROOT / "results.jsonl"
+# Optional argv: fixtures file, results file (defaults = the original run).
+FIXTURES_FILE = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "fixtures.json"
+RESULTS = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "results.jsonl"
 WORKERS = 4
 
 write_lock = threading.Lock()
@@ -159,7 +161,7 @@ def worker(worker_id: int, jobs: "queue.Queue", env: dict, out) -> None:
 
 
 def main() -> None:
-    fixtures = json.load(open(ROOT / "fixtures.json", encoding="utf-8"))
+    fixtures = json.load(open(FIXTURES_FILE, encoding="utf-8"))
     env = load_env()
     jobs: "queue.Queue" = queue.Queue()
     total = 0
