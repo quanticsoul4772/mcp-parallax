@@ -17,6 +17,15 @@ therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 
 ### Added
 
+* **decide order-bias experiment** (`claudedocs/experiments/decide-order-bias/`):
+  pre-registered test of the design corpus's "permute order" judge-bias clause
+  against the shipped single-pass `decide` — 130 live calls over 40 fixture
+  decisions with an identical-order retest arm as the noise floor. Result: at
+  2 options, order flips equal sampling noise (5%/5%, no positional bias —
+  measured null, corpus §4 amended in-change); at 4 options, 30% permuted-pair
+  flips vs 10% retest (effect bar met, underpowered); all instability of
+  either kind occurred at score margin ≤ 16. Named follow-up: margin-gated
+  permutation, not blanket re-running.
 * **Preference enforcement at the end-of-turn checkpoint (015).** The
   `checkpoint_turn` review hop now judges the turn — final message wording
   plus observable in-turn activity — against recalled **trusted** stored

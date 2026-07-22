@@ -187,6 +187,24 @@ This is a hard contract, not a nice-to-have. Multi-agent debate and cross-examin
 beat a single-pass critic for factuality (arithmetic 67→82%, GSM8K 77→85%), with role
 diversity critical ([multiagent debate](https://www.emergentmind.com/papers/2305.14325)).
 
+> **2026-07-21 amendment (order-permutation, measured on `decide`).** The
+> "permute order" clause was tested against the shipped single-pass `decide`
+> (013) — 40 fixture decisions × retest/reversal/rotation arms, 130 calls,
+> `claude-opus-4-8` (`claudedocs/experiments/decide-order-bias/`). Measured:
+> at **k = 2 options**, order flips the winner at exactly the identical-order
+> retest rate (5% vs 5%, n = 20) with no positional score bias — permutation
+> is **not empirically required** for two-option decide on this model, and
+> the corpus's blanket prescription is relaxed to a per-shape question rather
+> than a hard contract there. At **k = 4**, permuted-pair flips ran 30% vs a
+> 10% retest floor (n = 10 — meets the pre-registered effect bar,
+> underpowered for significance). The strongest measured result: **every**
+> instability of either kind occurred at score margin ≤ 16; margin ≥ 18 was
+> perfectly stable across 40 paired comparisons, so the margin already
+> encodes order-fragility. The follow-up, if live data warrants it, is
+> **margin-gated permutation** (≥ 3 options AND margin below ~15 → one
+> permuted second pass; a flip resolves to an explicit too-close-to-call),
+> not blanket re-running.
+
 ---
 
 ## 5. What's validated — the Verify spike
