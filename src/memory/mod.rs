@@ -7,6 +7,7 @@
 //! taxonomy, and the recorded execution path.
 
 pub mod contract;
+pub mod push;
 pub mod ranking;
 pub mod tools;
 

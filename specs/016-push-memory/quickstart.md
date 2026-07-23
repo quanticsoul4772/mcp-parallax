@@ -1,5 +1,11 @@
 # Quickstart: Push Memory
 
+> **Gate result (2026-07-23, T014):** `cargo fmt --all -- --check` clean;
+> `cargo clippy --all-features -- -D warnings` clean; `cargo test` — 387
+> lib + 65 integration tests, 0 failed. New module `src/memory/push.rs`
+> ≈ 560 lines including its full test mass (non-test half well under the
+> 500-line target).
+
 ## Build & gate
 
 ```bash

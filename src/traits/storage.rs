@@ -2,6 +2,7 @@
 
 use crate::checkpoint::CheckpointRecord;
 use crate::error::AppError;
+use crate::memory::push::PushRecord;
 use crate::memory::Memory;
 use crate::telemetry::InvocationRecord;
 use chrono::{DateTime, Utc};
@@ -74,6 +75,23 @@ pub trait Storage: Send + Sync {
         session_id: &str,
         since: DateTime<Utc>,
     ) -> Result<Vec<String>, AppError>;
+
+    /// Persist one push evaluation record (016 FR-008 — exactly one per
+    /// evaluation; the audit trail is also the suppression source).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn record_push(&self, record: &PushRecord) -> Result<(), AppError>;
+
+    /// Memory ids already surfaced in this session — the 016 FR-005
+    /// once-per-session suppression lookup (union of the session's
+    /// `push_records.surfaced_ids`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    async fn pushed_memory_ids(&self, session_id: &str) -> Result<Vec<String>, AppError>;
 }
 
 #[cfg(test)]

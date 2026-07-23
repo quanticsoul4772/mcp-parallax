@@ -17,6 +17,19 @@ therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 
 ### Added
 
+* **Push memory (016)** — the push half of `MEMORY_LAYER.md`'s "effortless,
+  not manual" contract: a new harness-triggered, memory-gated `surface`
+  tool (invoked by an installable `UserPromptSubmit` hook) surfaces the few
+  most relevant trusted stored memories into the assistant's context at
+  each turn start as clearly-labeled advisory context (verbatim content +
+  memory id + trust + a `forget(<id>)` contestability pointer).
+  Deterministic end-to-end — no model pass; relevance floor 0.55 / cap 3;
+  once-per-session suppression derived from the feature's own audit rows;
+  hard 500 ms fail-open budget; new `push_records` audit table mirrored to
+  OTLP. Memory-off behavior unchanged; nothing fires until the hooks
+  integration is installed. All three spec clarifications were decided via
+  `decide` under the order-bias experiment's margin protocol. Spec/plan/
+  contracts under `specs/016-push-memory/`.
 * **decide order-bias experiment** (`claudedocs/experiments/decide-order-bias/`):
   pre-registered test of the design corpus's "permute order" judge-bias clause
   against the shipped single-pass `decide` — 250 live calls over 70 fixture

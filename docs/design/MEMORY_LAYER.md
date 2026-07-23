@@ -98,6 +98,19 @@ Two drift traps to design against:
 
 ## The contract / API — effortless, not manual
 
+> **2026-07-23 amendment (016, `push-memory`).** The **push** half of this
+> contract now exists: the harness-triggered `surface` tool (invoked by an
+> installable `UserPromptSubmit` hook, the 006 sensor-plane posture)
+> surfaces the few most relevant **trusted** stored memories into the
+> assistant's context at each turn start — deterministic ranking (no model
+> pass), relevance floor 0.55 / cap 3, once-per-session suppression derived
+> from the feature's own audit rows, hard 500 ms fail-open budget, one
+> `push_records` row per evaluation. Auto-capture remains open and is
+> deliberately coupled to the consolidation levers below (storing everything
+> is as bad as storing nothing) — the 016 clarify record resolved that scope
+> question via the decide protocol. Trace:
+> [`specs/016-push-memory/`](../../specs/016-push-memory/).
+
 The current server's `relate` is **dead (0 uses)** precisely because recall is
 *manual* — the model has to remember to ask. The design fix is to make it the
 *default*, two-way:
