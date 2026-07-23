@@ -1,0 +1,54 @@
+{
+  "name": "surface",
+  "description": "Prompt-time memory push: deterministically rank the stored memories against the turn's starting prompt and surface the few relevant trusted ones (verbatim content + memory id + trust standing) as clearly-labeled advisory context - the model applies or ignores them; nothing is an instruction. Trusted memories only; at most a small capped number above a conservative relevance floor; a memory is surfaced at most once per session. No model passes - selection is pure ranking over stored data under a hard 500ms budget; on timeout or any failure the turn proceeds with nothing surfaced (fail-open). In the catalog only when the memory capability is configured. Intended to be invoked by the harness's UserPromptSubmit hook (integrations/claude-code); calling it directly behaves identically.",
+  "params": {
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "description": "The harness session identifier; scopes once-per-session suppression."
+      },
+      "prompt": {
+        "type": "string",
+        "description": "The turn-starting user prompt; relevance is assessed against a bounded excerpt."
+      }
+    },
+    "required": ["session_id", "prompt"],
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "properties": {
+      "surfaced": {
+        "type": "array",
+        "description": "Most-relevant-first, capped; empty when nothing cleared the floor (silence).",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "kind": { "type": "string", "enum": ["skill", "lesson", "fact"] },
+            "trust": { "type": "string", "enum": ["first_hand", "verified"] },
+            "score": { "type": "number", "description": "Raw cosine vs the prompt excerpt (the floor's basis)." },
+            "content": { "type": "string", "description": "Verbatim stored content." }
+          },
+          "required": ["id", "kind", "trust", "score", "content"],
+          "additionalProperties": false
+        }
+      },
+      "fail_open": { "type": "boolean" },
+      "latency_ms": { "type": "integer" },
+      "hookSpecificOutput": {
+        "type": ["object", "null"],
+        "description": "Harness hook mapping: present ONLY when surfaced is non-empty. additionalContext carries the fixed advisory template (labeled stored memories + forget(<id>) contestability pointer). Exact field shape confirmed by the S2 spike before the integration entry is final.",
+        "properties": {
+          "hookEventName": { "type": "string" },
+          "additionalContext": { "type": "string" }
+        },
+        "required": ["hookEventName", "additionalContext"],
+        "additionalProperties": false
+      }
+    },
+    "required": ["surfaced", "fail_open", "latency_ms"],
+    "additionalProperties": false
+  }
+}

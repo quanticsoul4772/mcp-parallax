@@ -221,23 +221,21 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-No active feature — last merged: `015-preference-enforcement` (#44, 2026-07-21) —
-preference enforcement at the end-of-turn checkpoint (the enforce half of
-`PREFERENCE_ELICITATION.md`'s capture→store→recall→enforce loop; composes 014 capture +
-003 store + 006 checkpoint). The single review hop gained a second judgment (violation of
-recalled trusted stored preferences, flag-only authority, fail-open, memory-off
-unchanged; new `preference_violation` signal kind, cooldown by memory id). T016 live
-dogfood PASS 2026-07-21 on the rebuilt binary (flag with verbatim quote + memory id +
-provenance; compliant-turn decline; one audit row per evaluation) with one named
-finding — wording-ban preferences reach the hop only when the final message is
-*topically* near the preference (cosine recall floor); lexical candidate mining is the
-follow-up if live precision data shows the class mattering. Artifacts:
-[spec](specs/015-preference-enforcement/spec.md) ·
-[plan](specs/015-preference-enforcement/plan.md) ·
-[tasks incl. T016 result](specs/015-preference-enforcement/tasks.md).
-2026-07-15 (shipped in 014's follow-up): elicit gained decide's violation-fed single
-retry (`ELICIT_ATTEMPTS_MAX`) after a live parallel-array arity slip surfaced as a hard
--32603 to a caller; fix mirrors decide commit `63521e6`, elicit.rs only.
+Active feature: `016-push-memory` — the push half of the memory layer
+(`MEMORY_LAYER.md`'s "effortless, not manual" contract): a new harness-triggered,
+memory-gated `surface` tool invoked by a `UserPromptSubmit` hook at each turn start —
+deterministic ranking (no model pass), trusted-only, floor 0.55 / cap 3, once-per-session
+suppression derived from its own audit rows, hard 500 ms budget, fail-open. All three
+clarifications were decided via `decide` under the order-bias experiment's margin
+protocol (one measured coin flip resolved by YAGNI, two stable winners). Precondition:
+S2 spike live-verifies the UserPromptSubmit `additionalContext` mapping (S1 never
+covered it). Artifacts:
+[spec](specs/016-push-memory/spec.md) ·
+[plan](specs/016-push-memory/plan.md) ·
+[research](specs/016-push-memory/research.md) ·
+[data model](specs/016-push-memory/data-model.md) ·
+[contracts](specs/016-push-memory/contracts/) ·
+[quickstart](specs/016-push-memory/quickstart.md). Next: `/speckit-tasks`.
 <!-- SPECKIT END -->
 
 ## Working style
