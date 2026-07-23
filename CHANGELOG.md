@@ -19,13 +19,17 @@ therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 
 * **decide order-bias experiment** (`claudedocs/experiments/decide-order-bias/`):
   pre-registered test of the design corpus's "permute order" judge-bias clause
-  against the shipped single-pass `decide` — 130 live calls over 40 fixture
-  decisions with an identical-order retest arm as the noise floor. Result: at
-  2 options, order flips equal sampling noise (5%/5%, no positional bias —
-  measured null, corpus §4 amended in-change); at 4 options, 30% permuted-pair
-  flips vs 10% retest (effect bar met, underpowered); all instability of
-  either kind occurred at score margin ≤ 16. Named follow-up: margin-gated
-  permutation, not blanket re-running.
+  against the shipped single-pass `decide` — 250 live calls over 70 fixture
+  decisions with an identical-order retest arm as the noise floor, including
+  a power extension the `decide` tool itself selected (dogfooded, with a
+  permuted confirmation pass). Final result: **no order bias at any tested
+  k** — 2 options 5%/5% (measured null), 4 options pooled n=40 18.8%/17.5%
+  (p=0.51; the interim 30%-vs-10% directional effect was refuted with
+  power). Durable findings: sampling instability dominates four-option
+  near-ties (17.5% identical-order flips), and the score margin encodes all
+  instability — every flip of any kind sat at margin ≤ 16, margin ≥ 17 was
+  perfectly stable across the whole experiment. Corpus §4 amended
+  in-change; margin-gated permutation is rejected as a feature.
 * **Preference enforcement at the end-of-turn checkpoint (015).** The
   `checkpoint_turn` review hop now judges the turn — final message wording
   plus observable in-turn activity — against recalled **trusted** stored

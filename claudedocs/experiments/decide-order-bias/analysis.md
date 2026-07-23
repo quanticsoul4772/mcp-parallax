@@ -70,3 +70,56 @@ p = 0.57; dominated +0.5 pts, p = 0.27).
 Single model (`claude-opus-4-8`); authored fixtures (near-tie symmetry is
 constructed); near4 powered only for large effects; one permutation pair per
 2-option problem (reversal), two for 4-option (reversal + rotation).
+
+---
+
+## Power extension (2026-07-22)
+
+The `decide` tool itself chose this step (dogfooded, with a permuted
+confirmation pass after the first call landed in its own fragile margin
+band): 30 additional four-option near-ties (`fixtures-ext.json`), same arms,
+120 calls, $1.69, 0 errors (`results-ext.jsonl`, `analysis_ext.py`).
+
+### Pooled four-option result (n = 40 problems, 80 permuted pairs)
+
+| Metric | Value |
+|---|---|
+| r0 (identical-order retest flips) | 7/40 = **17.5%** |
+| r1 (permuted-pair flips) | 15/80 = **18.8%** |
+| Effect r1 − r0 | **+1.3%** |
+| Discordant problems (order-only vs retest-only) | 6 vs 3 |
+| Exact sign test | p = 0.51 |
+
+**The directional k=4 effect is refuted.** The original 30%-vs-10% split was
+small-sample noise; with power, permuted-order flips equal identical-order
+flips. Order is not the cause of four-option instability — **sampling is**:
+a 17.5% retest flip rate on near-ties is the pre-registered third branch
+("r0 itself high → sampling instability dominates; the follow-up is
+multi-sample aggregation, not permutation").
+
+The margin band sharpened with the added data:
+
+| orig1 margin | n | order flips | retest flips |
+|---|---|---|---|
+| 0–8 | 18 | 9 | 7 |
+| 9–16 | 10 | 1 | 0 |
+| ≥17 | 12 | 0 | 0 |
+
+Max margin with any order flip: **11**. Margin ≥ 17 has never produced an
+instability of any kind across the whole experiment (both runs, all groups).
+
+### Final verdict (supersedes item 2–3 above)
+
+1. **No order-bias mitigation is warranted at any k** — k=2 measured null,
+   k=4 refuted with power. Margin-gated *permutation* is dead: re-running
+   the same order flips just as often as re-running permuted.
+2. **The durable finding is a calibration rule**: below margin ~12–16 a
+   `decide` winner on many-option near-ties is a coin flip among the top
+   scorers — regardless of order — and the reported confidence understates
+   this. If anything ever ships from this experiment, it is low-margin
+   *multi-sample* aggregation or an explicit too-close-to-call surface, not
+   permutation.
+3. Corpus §4 amendment updated to the pooled result in the same change
+   (Constitution I).
+
+Total experiment spend: $3.37 across 250 calls, 0 errors.

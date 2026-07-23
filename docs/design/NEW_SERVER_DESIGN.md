@@ -187,23 +187,28 @@ This is a hard contract, not a nice-to-have. Multi-agent debate and cross-examin
 beat a single-pass critic for factuality (arithmetic 67→82%, GSM8K 77→85%), with role
 diversity critical ([multiagent debate](https://www.emergentmind.com/papers/2305.14325)).
 
-> **2026-07-21 amendment (order-permutation, measured on `decide`).** The
+> **2026-07-21/22 amendment (order-permutation, measured on `decide`).** The
 > "permute order" clause was tested against the shipped single-pass `decide`
-> (013) — 40 fixture decisions × retest/reversal/rotation arms, 130 calls,
-> `claude-opus-4-8` (`claudedocs/experiments/decide-order-bias/`). Measured:
-> at **k = 2 options**, order flips the winner at exactly the identical-order
-> retest rate (5% vs 5%, n = 20) with no positional score bias — permutation
-> is **not empirically required** for two-option decide on this model, and
-> the corpus's blanket prescription is relaxed to a per-shape question rather
-> than a hard contract there. At **k = 4**, permuted-pair flips ran 30% vs a
-> 10% retest floor (n = 10 — meets the pre-registered effect bar,
-> underpowered for significance). The strongest measured result: **every**
-> instability of either kind occurred at score margin ≤ 16; margin ≥ 18 was
-> perfectly stable across 40 paired comparisons, so the margin already
-> encodes order-fragility. The follow-up, if live data warrants it, is
-> **margin-gated permutation** (≥ 3 options AND margin below ~15 → one
-> permuted second pass; a flip resolves to an explicit too-close-to-call),
-> not blanket re-running.
+> (013) — 70 fixture decisions × retest/reversal/rotation arms, 250 calls
+> total, `claude-opus-4-8` (`claudedocs/experiments/decide-order-bias/`,
+> including the 2026-07-22 power extension). Measured: at **k = 2 options**,
+> order flips the winner at exactly the identical-order retest rate (5% vs
+> 5%, n = 20) with no positional score bias. At **k = 4** (pooled n = 40, 80
+> permuted pairs), permuted-order flips equal identical-order retest flips
+> (18.8% vs 17.5%, p = 0.51) — an interim directional effect at n = 10 was
+> refuted with power. **Order permutation is not empirically required for
+> `decide` at any tested k on this model**; the prescription is retained for
+> multi-option *judgment* surfaces generally but is no longer a hard
+> contract on decide. The durable findings are instead: (a) **sampling
+> instability dominates** — identical-order reruns flip 17.5% of four-option
+> near-ties, so any mitigation is multi-sample aggregation, never
+> permutation; and (b) **the score margin encodes all of it** — every
+> instability of any kind across 250 calls occurred at margin ≤ 16 (max
+> order-flip margin 11), while margin ≥ 17 was perfectly stable. Below
+> margin ~12–16 a many-option winner is a coin flip among the top scorers
+> and the margin-derived confidence understates this; an explicit
+> too-close-to-call surface is the named candidate if live usage shows
+> low-margin multi-option calls mattering.
 
 ---
 
