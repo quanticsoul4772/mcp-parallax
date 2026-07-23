@@ -221,21 +221,20 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active feature: `016-push-memory` — the push half of the memory layer
-(`MEMORY_LAYER.md`'s "effortless, not manual" contract): a new harness-triggered,
-memory-gated `surface` tool invoked by a `UserPromptSubmit` hook at each turn start —
-deterministic ranking (no model pass), trusted-only, floor 0.55 / cap 3, once-per-session
-suppression derived from its own audit rows, hard 500 ms budget, fail-open. All three
-clarifications were decided via `decide` under the order-bias experiment's margin
-protocol (one measured coin flip resolved by YAGNI, two stable winners). Precondition:
-S2 spike live-verifies the UserPromptSubmit `additionalContext` mapping (S1 never
-covered it). Artifacts:
+No active feature — last merged: `016-push-memory` (#50, 2026-07-23) — the push half of
+the memory layer (`MEMORY_LAYER.md`'s "effortless, not manual" contract): the
+harness-triggered, memory-gated `surface` tool, invoked by the installable
+`UserPromptSubmit` hook at each turn start — deterministic ranking (no model pass),
+trusted-only, floor 0.55 / cap 3, once-per-session suppression derived from its own
+`push_records` audit rows, hard 500 ms fail-open budget. S2 spike + T015 dogfood both
+PASS live (payload mapping, additionalContext round-trip, surfacing, suppression, zero
+false surfacings). Named finding: the 0.55 floor missed a related-but-not-paraphrase
+prompt at cosine 0.406 — the first measured datum for tuning `PUSH_RELEVANCE_TAU` from
+accumulated audit rows (it moves only with measurement). Auto-capture remains open,
+coupled to the consolidation levers. Artifacts:
 [spec](specs/016-push-memory/spec.md) ·
 [plan](specs/016-push-memory/plan.md) ·
-[research](specs/016-push-memory/research.md) ·
-[data model](specs/016-push-memory/data-model.md) ·
-[contracts](specs/016-push-memory/contracts/) ·
-[quickstart](specs/016-push-memory/quickstart.md). Next: `/speckit-tasks`.
+[tasks incl. S2 + T015 stamps](specs/016-push-memory/tasks.md).
 <!-- SPECKIT END -->
 
 ## Working style
