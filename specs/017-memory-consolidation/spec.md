@@ -8,6 +8,40 @@
 
 **Input**: User description: "Memory consolidation plus auto-capture — the write-path half of the memory layer, completing the loop 016 deliberately deferred (its clarify record coupled capture to the consolidation levers). Today the store only grows, and only by manual save: no merge of near-duplicates, no decay, no supersession handling, no eviction, and no capture of session outcomes. `MEMORY_LAYER.md` names the write path capture → reflect → consolidate with four levers — importance, merge, decay, eviction — and two traps: summarization drift and memory blindness. Constraints: retrieval precision is the product; the poisoning surface must not widen (candidates never auto-trusted); consolidation must not silently rewrite what the user stored; deterministic-over-probabilistic wherever checkable."
 
+## Clarifications
+
+### Session 2026-07-23
+
+- Q: What is the auto-capture channel? → A: **Harness-triggered at end of
+  turn** — the installed sensor plane proposes candidates from the bounded
+  trajectory; quarantine unchanged. Decided via `decide` with the permuted
+  confirmation pass (first pass margin 11 — fragile band — triggered the
+  check; the winner held from the opposite position, margin 4). Prompted-only
+  capture was rejected decisively in both passes (34/28 — it re-creates the
+  manual-dependence failure the corpus documents); the dual-channel option
+  lost both orders, and its delta over the winner is label wording, not
+  machinery.
+- Q: When does consolidation run? → A: **On admission only** — each new
+  memory (manual save or admitted candidate) is evaluated pairwise against
+  the active store as it enters; pre-existing pairs consolidate as they next
+  participate in an admission. Decided via `decide` with the permuted
+  confirmation pass (margin 6 → winner held at margin 8 from the opposite
+  position). The periodic sweep was rejected in both passes (28/34 — it
+  would introduce the architecture's first background scheduler); the
+  on-contradiction extension lost both orders on new-trigger cost for an
+  only-adjacent signal, and remains open as a future addition if duplicate
+  accumulation shows up in the audit rows.
+- Q: Where does decay end — ranking only, or eventual eviction? → A:
+  **Ranking-only** — decay reduces prominence indefinitely; explicit
+  `forget` remains the only removal. Decided via `decide` at margin 30
+  (stable band, no confirmation pass needed; confidence 0.65, the highest
+  of the session). Decay-to-eviction was rejected (34 — automatic deletion
+  contradicts the no-silent-loss guarantee and repurposes eviction, which
+  the corpus reserves for compliance); decay-to-archive lost on the
+  memory-blindness trap (unreachable-but-stored). A heavily down-ranked
+  memory already falls below push's floor while staying reachable by strong
+  explicit recall — the middle state exists for free.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Stale information stops competing (Priority: P1)
@@ -289,17 +323,18 @@ happened via the explicit deletion path.
 Defaults chosen for planning; the three flagged questions below are
 deliberately left for the clarify phase, per the feature request.
 
-- **Capture channel (to be confirmed in clarify)**: default is
-  harness-triggered at end of turn via the existing installed sensor plane —
-  the same opt-in integration the checkpoint and push layers use; no new
-  consent surface.
-- **Consolidation trigger timing (to be confirmed in clarify)**: default is
-  on-admission — supersession and merge are evaluated when a new memory
-  enters the store (manual save or admitted candidate); no background or
-  periodic sweeps.
-- **Decay endpoint (to be confirmed in clarify)**: default is ranking-only —
-  decay never leads to automatic eviction; explicit user deletion remains
-  the only removal.
+- **Capture channel (decided, clarify Q1)**: harness-triggered at end of
+  turn via the existing installed sensor plane — the same opt-in integration
+  the checkpoint and push layers use; no new consent surface. Prompted-only
+  capture is rejected (manual-dependence).
+- **Consolidation trigger timing (decided, clarify Q2)**: on-admission —
+  supersession and merge are evaluated when a new memory enters the store
+  (manual save or admitted candidate); no background or periodic sweeps, no
+  on-contradiction trigger (revisit only if audit rows show duplicate
+  accumulation).
+- **Decay endpoint (decided, clarify Q3)**: ranking-only — decay never
+  leads to automatic eviction or archival; explicit user deletion remains
+  the only removal, making US4's no-silent-loss guarantee absolute.
 - **Judgment placement**: update-vs-context and same-assertion decisions are
   semantic judgments; where they cannot be settled mechanically, any model
   involvement is a named, budgeted, decline-biased pass — never a silent
