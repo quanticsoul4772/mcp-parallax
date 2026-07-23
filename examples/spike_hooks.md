@@ -180,3 +180,32 @@ review hop), 0 fail-open rows.
       `stop_hook_active`).
 - [ ] Live protocol: induced loop → visible flag; seeded constraint →
       hold prompt; SC-004 kill-test; SC-006 inertness after uninstall.
+
+---
+
+## S2 spike: UserPromptSubmit → surface plumbing (016, T011)
+
+**Status: COMPLETE (2026-07-23, two rounds, live).** Verdict: the
+`mcp_tool` `UserPromptSubmit` design stands — no adapter needed, no STOP
+branch taken.
+
+### Verified live
+
+1. **Payload shape**: `${session_id}` and `${prompt}` substitute exactly as
+   documented — `surface` deserialized both on the first firing (a mismatch
+   would have been a loud `-32602`; the S1 round-2 stringification issue
+   does not recur here since both fields are strings).
+2. **Silence path**: an unrelated prompt produced one `push_records` row
+   (`surfaced_ids: []`, 227 ms, `fail_open: 0`, 2 embed tokens) and a clean
+   `success` invocation attributed to `voyage-4` — and injected nothing.
+3. **`additionalContext` round-trip**: a seeded first-hand marker fact +
+   a topically-related prompt surfaced end-to-end — the model received the
+   full advisory template verbatim (label, `[fact, first_hand, memory
+   <id>]`, content) in its context and quoted it back. Audit row:
+   `surfaced_ids: ["<seed id>"]`, 176 ms.
+4. Both evaluations sat comfortably inside the 500 ms budget; the seed was
+   `forget`-cleaned afterward.
+
+The `integrations/claude-code/hooks.json` `UserPromptSubmit` entry is
+finalized from the verified shape; the same entry dogfoods in this repo's
+`.claude/settings.json`.

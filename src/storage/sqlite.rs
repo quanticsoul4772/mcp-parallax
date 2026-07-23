@@ -7,6 +7,7 @@
 
 use crate::checkpoint::{Boundary, CheckpointRecord, Signal, SignalKind, Verdict};
 use crate::error::{AppError, Outcome};
+use crate::memory::push::PushRecord;
 use crate::memory::{Kind, Memory, Trust};
 use crate::telemetry::InvocationRecord;
 use crate::traits::storage::Storage;
@@ -59,6 +60,15 @@ CREATE TABLE IF NOT EXISTS checkpoint_records (
     latency_ms        INTEGER NOT NULL,
     cost_usd          REAL NOT NULL,
     created_at        TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_records (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    surfaced_ids TEXT NOT NULL,
+    latency_ms   INTEGER NOT NULL,
+    fail_open    INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    created_at   TEXT NOT NULL
 );
 ";
 
@@ -161,6 +171,52 @@ impl SqliteStorage {
 }
 
 impl SqliteStorage {
+    /// Every push evaluation record, newest first (test/audit surface).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    pub async fn list_pushes(&self) -> Result<Vec<PushRecord>, AppError> {
+        let rows = sqlx::query(
+            "SELECT id, session_id, surfaced_ids, latency_ms, fail_open,
+                    input_tokens, created_at
+             FROM push_records ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("push read failed: {e}")))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let surfaced_text: String = row.get("surfaced_ids");
+                let surfaced_ids: Vec<String> = serde_json::from_str(&surfaced_text)
+                    .map_err(|e| AppError::Storage(format!("surfaced_ids corrupt: {e}")))?;
+                let created_text: String = row.get("created_at");
+                let created_at = DateTime::parse_from_rfc3339(&created_text)
+                    .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
+                    .with_timezone(&Utc);
+                let latency: i64 = row.get("latency_ms");
+                let latency_ms = u64::try_from(latency).map_err(|_| {
+                    AppError::Storage(format!("negative latency_ms in store: {latency}"))
+                })?;
+                let tokens: i64 = row.get("input_tokens");
+                let input_tokens = u64::try_from(tokens).map_err(|_| {
+                    AppError::Storage(format!("negative input_tokens in store: {tokens}"))
+                })?;
+                let fail_open: i64 = row.get("fail_open");
+                Ok(PushRecord {
+                    id: row.get("id"),
+                    session_id: row.get("session_id"),
+                    surfaced_ids,
+                    latency_ms,
+                    fail_open: fail_open != 0,
+                    input_tokens,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
     /// Read back all checkpoint records, newest first. Implementation-level
     /// inspection surface (tests, operators, the acceptance harness — SC-005
     /// rates are plain SQL over this table).
@@ -425,6 +481,46 @@ impl Storage for SqliteStorage {
             keys.extend(delivered);
         }
         Ok(keys)
+    }
+
+    async fn record_push(&self, record: &PushRecord) -> Result<(), AppError> {
+        let surfaced = serde_json::to_string(&record.surfaced_ids)
+            .map_err(|e| AppError::Storage(format!("surfaced_ids serialization: {e}")))?;
+        #[allow(clippy::cast_possible_wrap)] // latency/token counts far below i64::MAX
+        sqlx::query(
+            "INSERT INTO push_records
+                (id, session_id, surfaced_ids, latency_ms, fail_open,
+                 input_tokens, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&record.id)
+        .bind(&record.session_id)
+        .bind(surfaced)
+        .bind(record.latency_ms as i64)
+        .bind(i64::from(record.fail_open))
+        .bind(record.input_tokens as i64)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("push record write failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn pushed_memory_ids(&self, session_id: &str) -> Result<Vec<String>, AppError> {
+        let rows = sqlx::query("SELECT surfaced_ids FROM push_records WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("push suppression read failed: {e}")))?;
+
+        let mut ids = Vec::new();
+        for row in rows {
+            let surfaced_text: String = row.get("surfaced_ids");
+            let surfaced: Vec<String> = serde_json::from_str(&surfaced_text)
+                .map_err(|e| AppError::Storage(format!("surfaced_ids corrupt: {e}")))?;
+            ids.extend(surfaced);
+        }
+        Ok(ids)
     }
 
     async fn record_invocation(&self, record: &InvocationRecord) -> Result<(), AppError> {
@@ -816,5 +912,61 @@ mod tests {
             storage.load_session("s1").await.unwrap(),
             Some(json!({ "k": 2 }))
         );
+    }
+
+    fn push_record(id: &str, session: &str, surfaced: &[&str], fail_open: bool) -> PushRecord {
+        PushRecord {
+            id: id.into(),
+            session_id: session.into(),
+            surfaced_ids: surfaced.iter().map(|s| (*s).to_string()).collect(),
+            latency_ms: 42,
+            fail_open,
+            input_tokens: 7,
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-07-23T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        }
+    }
+
+    #[tokio::test]
+    async fn push_records_round_trip_and_suppression_unions_per_session() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        storage
+            .record_push(&push_record("p1", "s-a", &["m1", "m2"], false))
+            .await
+            .unwrap();
+        storage
+            .record_push(&push_record("p2", "s-a", &["m3"], false))
+            .await
+            .unwrap();
+        // A silence row and a fail-open row round-trip too.
+        storage
+            .record_push(&push_record("p3", "s-a", &[], false))
+            .await
+            .unwrap();
+        storage
+            .record_push(&push_record("p4", "s-b", &["m9"], true))
+            .await
+            .unwrap();
+
+        // Suppression is the per-session union (016 FR-005/research D4).
+        let mut ids = storage.pushed_memory_ids("s-a").await.unwrap();
+        ids.sort();
+        assert_eq!(ids, ["m1", "m2", "m3"]);
+        assert_eq!(storage.pushed_memory_ids("s-b").await.unwrap(), ["m9"]);
+        assert!(storage
+            .pushed_memory_ids("s-none")
+            .await
+            .unwrap()
+            .is_empty());
+
+        // Full-fidelity read-back (FR-008/SC-005).
+        let pushes = storage.list_pushes().await.unwrap();
+        assert_eq!(pushes.len(), 4);
+        let p4 = pushes.iter().find(|p| p.id == "p4").unwrap();
+        assert!(p4.fail_open);
+        assert_eq!(p4.input_tokens, 7);
+        let p3 = pushes.iter().find(|p| p.id == "p3").unwrap();
+        assert!(p3.surfaced_ids.is_empty());
     }
 }

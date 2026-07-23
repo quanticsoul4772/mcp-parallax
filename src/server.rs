@@ -15,6 +15,7 @@ use crate::deterministic::check::{self as check_tool, CheckDeps};
 use crate::deterministic::contract::{CheckParams, CheckResult};
 use crate::deterministic::translate as deterministic_translate;
 use crate::error::{AppError, Outcome};
+use crate::memory::push::{self as memory_push, SurfaceParams, SurfaceResult};
 use crate::memory::tools::{
     self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
     SaveParams, SaveResult,
@@ -236,7 +237,7 @@ impl Parallax {
         // catalog, not present-but-erroring.
         let mut tool_router = Self::tool_router();
         if memory.is_none() {
-            for name in ["save", "recall", "forget"] {
+            for name in ["save", "recall", "forget", "surface"] {
                 tool_router.remove_route(name);
             }
         }
@@ -412,6 +413,33 @@ impl Parallax {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<Json<ForgetResult>, ErrorData> {
         self.forget_with_ct(params, context.ct).await
+    }
+
+    /// The `surface` tool: prompt-time memory push (016).
+    #[tool(
+        name = "surface",
+        description = "Prompt-time memory push: deterministically rank the stored memories against the turn's starting prompt and surface the few relevant trusted ones (verbatim content + memory id + trust standing) as clearly-labeled advisory context - the model applies or ignores them; nothing is an instruction. Trusted memories only; at most a small capped number above a conservative relevance floor; a memory is surfaced at most once per session. No model passes - selection is pure ranking over stored data under a hard 500ms budget; on timeout or any failure the turn proceeds with nothing surfaced (fail-open). In the catalog only when the memory capability is configured. Intended to be invoked by the harness's UserPromptSubmit hook (integrations/claude-code); calling it directly behaves identically."
+    )]
+    pub async fn surface(
+        &self,
+        Parameters(params): Parameters<SurfaceParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<Json<SurfaceResult>, ErrorData> {
+        self.surface_with_ct(params, context.ct).await
+    }
+
+    async fn surface_with_ct(
+        &self,
+        params: SurfaceParams,
+        ct: tokio_util::sync::CancellationToken,
+    ) -> Result<Json<SurfaceResult>, ErrorData> {
+        let deps = Arc::clone(self.memory_deps()?);
+        // Attribution: the embed lookup is the only metered call on this path.
+        let model = deps.embedder.model_id().to_string();
+        self.run_recorded("surface", model, ct, async {
+            memory_push::run(&deps, &params).await
+        })
+        .await
     }
 
     /// The `research` tool: offloaded, cited, adversarially-verified answers.
@@ -1039,6 +1067,7 @@ mod tests {
                 "forget",
                 "recall",
                 "save",
+                "surface",
                 "unstick",
                 "verify"
             ]

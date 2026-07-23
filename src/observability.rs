@@ -79,6 +79,7 @@ struct Handles {
     token_usage: Histogram<u64>,
     checkpoint_evaluations: Counter<u64>,
     checkpoint_duration: Histogram<f64>,
+    push_evaluations: Counter<u64>,
 }
 
 /// Owns the providers; dropped/shut down by `main` on exit.
@@ -274,6 +275,11 @@ where
             .with_unit("s")
             .with_description("Checkpoint evaluation latency")
             .build(),
+        push_evaluations: meter
+            .u64_counter("parallax.push.evaluations")
+            .with_unit("{evaluation}")
+            .with_description("Push evaluations by outcome (surfaced/silent/fail-open)")
+            .build(),
     };
     // First init wins; a second init (tests) keeps the existing handles —
     // emission still flows to the first exporters, which is what the
@@ -456,6 +462,55 @@ pub fn emit_checkpoint(record: &CheckpointRecord) {
             KeyValue::new("parallax.checkpoint.verdict", verdict),
         ],
     );
+}
+
+/// Mirror one push evaluation record (016) as a span + counter.
+///
+/// Emitted at the same exit point as the store write (007 FR-009 — the
+/// surfaces cannot disagree). Attributes carry counts and outcomes only —
+/// never memory content or ids (the checkpoint no-evidence rule).
+pub fn emit_push(record: &crate::memory::push::PushRecord) {
+    if !ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+    let Some(handles) = HANDLES.get() else {
+        return;
+    };
+
+    let (start, end) = record_window(record.created_at, record.latency_ms);
+    let surfaced_count = record.surfaced_ids.len();
+    let attributes = vec![
+        KeyValue::new(
+            "parallax.push.surfaced_count",
+            i64::try_from(surfaced_count).unwrap_or(i64::MAX),
+        ),
+        KeyValue::new("parallax.push.fail_open", record.fail_open),
+        #[allow(clippy::cast_possible_wrap)] // token counts far below i64::MAX
+        KeyValue::new("gen_ai.usage.input_tokens", record.input_tokens as i64),
+        KeyValue::new("parallax.session_id", record.session_id.clone()),
+    ];
+
+    let mut span = handles
+        .tracer
+        .span_builder("parallax.push")
+        .with_kind(SpanKind::Internal)
+        .with_start_time(start)
+        .with_attributes(attributes)
+        .start_with_context(&handles.tracer, &Context::new());
+    // Fail-open is data, not an error: the evaluation completed.
+    span.set_status(Status::Ok);
+    span.end_with_timestamp(end);
+
+    let outcome = if record.fail_open {
+        "fail_open"
+    } else if surfaced_count > 0 {
+        "surfaced"
+    } else {
+        "silent"
+    };
+    handles
+        .push_evaluations
+        .add(1, &[KeyValue::new("parallax.push.outcome", outcome)]);
 }
 
 #[cfg(test)]
@@ -734,6 +789,62 @@ mod tests {
             assert!(
                 !kv.value.to_string().contains("cargo test"),
                 "evidence leaked into {}",
+                kv.key
+            );
+        }
+    }
+
+    #[test]
+    fn push_span_carries_counts_and_never_memory_content() {
+        let (spans, _, guard) = test_handles();
+        let record = crate::memory::push::PushRecord {
+            id: "p-otel-1".into(),
+            session_id: "otel-push-session".into(),
+            surfaced_ids: vec!["mem-secret-content-id".into(), "mem-2".into()],
+            latency_ms: 33,
+            fail_open: false,
+            input_tokens: 9,
+            created_at: DateTime::parse_from_rfc3339("2026-07-23T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+        emit_push(&record);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| {
+                s.name == "parallax.push"
+                    && attr(&s.attributes, "parallax.session_id")
+                        .is_some_and(|v| v.as_str() == "otel-push-session")
+            })
+            .expect("push span exported");
+        assert_eq!(span.span_kind, SpanKind::Internal);
+        assert_eq!(span.status, Status::Ok);
+        let attrs = &span.attributes;
+        assert_eq!(
+            attr(attrs, "parallax.push.surfaced_count")
+                .unwrap()
+                .to_string(),
+            "2"
+        );
+        assert_eq!(
+            attr(attrs, "parallax.push.fail_open").unwrap().to_string(),
+            "false"
+        );
+        assert_eq!(
+            attr(attrs, "gen_ai.usage.input_tokens")
+                .unwrap()
+                .to_string(),
+            "9"
+        );
+        // Counts and outcomes only — never memory ids or content (the
+        // checkpoint no-evidence rule applied to push).
+        for kv in attrs {
+            assert!(
+                !kv.value.to_string().contains("mem-secret-content-id"),
+                "memory id leaked into {}",
                 kv.key
             );
         }

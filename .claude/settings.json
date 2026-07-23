@@ -34,6 +34,23 @@
     ]
   },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "parallax",
+            "tool": "surface",
+            "input": {
+              "session_id": "${session_id}",
+              "prompt": "${prompt}"
+            },
+            "timeout": 5,
+            "statusMessage": "memory: prompt-time push (S2 spike, provisional)"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|Write|Edit",

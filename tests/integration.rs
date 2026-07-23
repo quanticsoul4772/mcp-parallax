@@ -672,6 +672,7 @@ async fn with_a_voyage_key_the_catalog_matches_the_memory_contracts() {
             "forget",
             "recall",
             "save",
+            "surface",
             "unstick",
             "verify"
         ]
@@ -1858,6 +1859,166 @@ async fn checkpoint_turn_without_memory_still_lists_only_contradiction() {
         checkpoints[0].signals_evaluated,
         vec![mcp_parallax::checkpoint::SignalKind::SelfContradiction]
     );
+
+    client.cancel().await.unwrap();
+}
+
+// ---- 016-push-memory -------------------------------------------------------
+
+const SURFACE_CONTRACT: &str = include_str!("../specs/016-push-memory/contracts/surface.tool.json");
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn surface_matches_its_contract() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let tool = tools.iter().find(|t| t.name == "surface").expect("surface");
+    let contract: Value = serde_json::from_str(SURFACE_CONTRACT).unwrap();
+    assert_eq!(
+        tool.description.as_deref().unwrap(),
+        contract["description"],
+        "surface: description diverges from the contract"
+    );
+    let props = |schema: &Value| -> Vec<String> {
+        let mut names: Vec<String> = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        names.sort();
+        names
+    };
+    let input = serde_json::to_value(tool.input_schema.as_ref()).unwrap();
+    assert_eq!(props(&input), props(&contract["params"]));
+    let output = serde_json::to_value(tool.output_schema.as_ref().expect("outputSchema")).unwrap();
+    assert_eq!(props(&output), props(&contract["result"]));
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn surface_pushes_once_per_session_and_leaves_the_pull_surface_unchanged() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    // Seed one first-hand fact ("alpha" → [1,0]; surface queries embed [0.9,0.1]).
+    let saved = client
+        .call_tool(tool_call(
+            "save",
+            &json!({ "content": "alpha rule: clear the cache before staging deploys",
+                    "kind": "fact", "origin": "test", "external": false }),
+        ))
+        .await
+        .unwrap();
+    let memory_id = saved.structured_content.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Turn 1: related prompt ⇒ surfaced with the full advisory label.
+    let result = client
+        .call_tool(tool_call(
+            "surface",
+            &json!({ "session_id": "ps-int", "prompt": "the staging deploy is failing again" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["surfaced"][0]["id"], memory_id.as_str());
+    assert_eq!(structured["fail_open"], false);
+    let hook = &structured["hookSpecificOutput"];
+    assert_eq!(hook["hookEventName"], "UserPromptSubmit");
+    let context = hook["additionalContext"].as_str().unwrap();
+    assert!(context.contains("advisory context"), "{context}");
+    assert!(context.contains(&memory_id), "{context}");
+    assert!(context.contains("first_hand"), "{context}");
+    assert!(
+        context.contains("alpha rule: clear the cache before staging deploys"),
+        "{context}"
+    );
+
+    // Turn 2, same session ⇒ suppressed: silence, and no hook key at all.
+    let result = client
+        .call_tool(tool_call(
+            "surface",
+            &json!({ "session_id": "ps-int", "prompt": "still about the staging deploy" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["surfaced"], json!([]));
+    assert!(structured.get("hookSpecificOutput").is_none());
+
+    // New session ⇒ suppression reset, surfaced again (FR-005).
+    let result = client
+        .call_tool(tool_call(
+            "surface",
+            &json!({ "session_id": "ps-int-2", "prompt": "staging deploy question" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        result.structured_content.unwrap()["surfaced"][0]["id"],
+        memory_id.as_str()
+    );
+
+    // FR-009: a recall interleaved with surface calls returns the memory
+    // unchanged — push reads never perturb the pull surface.
+    let recalled = client
+        .call_tool(tool_call("recall", &json!({ "query": "alpha rule" })))
+        .await
+        .unwrap();
+    let memories = recalled.structured_content.unwrap()["memories"].clone();
+    assert_eq!(memories[0]["id"], memory_id.as_str());
+    assert_eq!(
+        memories[0]["content"],
+        "alpha rule: clear the cache before staging deploys"
+    );
+
+    // SC-005: one audit row per evaluation — surfaced, silent, surfaced.
+    let pushes = storage.list_pushes().await.unwrap();
+    assert_eq!(pushes.len(), 3);
+    let surfacing: usize = pushes.iter().filter(|p| !p.surfaced_ids.is_empty()).count();
+    assert_eq!(surfacing, 2);
+    assert!(pushes.iter().all(|p| !p.fail_open));
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn surface_stays_silent_when_nothing_is_relevant() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    // "beta" content embeds [0,1]; the query embeds [0.9,0.1] → cosine ≈ 0.11.
+    client
+        .call_tool(tool_call(
+            "save",
+            &json!({ "content": "beta note: the marketing site uses a static generator",
+                    "kind": "fact", "origin": "test", "external": false }),
+        ))
+        .await
+        .unwrap();
+
+    let result = client
+        .call_tool(tool_call(
+            "surface",
+            &json!({ "session_id": "ps-quiet", "prompt": "an entirely unrelated question" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+    assert_eq!(structured["surfaced"], json!([]));
+    assert!(structured.get("hookSpecificOutput").is_none());
+    assert_eq!(structured["fail_open"], false);
+
+    let pushes = storage.list_pushes().await.unwrap();
+    assert_eq!(pushes.len(), 1);
+    assert!(pushes[0].surfaced_ids.is_empty());
 
     client.cancel().await.unwrap();
 }

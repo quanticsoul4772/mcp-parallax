@@ -1,5 +1,5 @@
 {
-  "_comment": "Parallax checkpoint layer - sensor plane (006), live-verified by the S1 spike (examples/spike_hooks.md, 2026-06-12): all three hooks fire; flag results block with the message fed to the model; hold results raise a permission prompt quoting the conflicting memory; silence is a no-op. Merge the 'hooks' object into your .claude/settings.json (server name must match your MCP registration, here 'parallax'). Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session.",
+  "_comment": "Parallax checkpoint layer - sensor plane (006), live-verified by the S1 spike (examples/spike_hooks.md, 2026-06-12): all three hooks fire; flag results block with the message fed to the model; hold results raise a permission prompt quoting the conflicting memory; silence is a no-op. Merge the 'hooks' object into your .claude/settings.json (server name must match your MCP registration, here 'parallax'). Off by default: nothing invokes the checkpoint tools until you install this. Uninstall = remove these entries; nothing else changes. All hooks fail open - a dead server never blocks your session. 016 adds the UserPromptSubmit -> surface entry (prompt-time memory push), live-verified by the S2 spike (2026-07-23): payload substitution, silence path, and the additionalContext round-trip all confirmed. surface is memory-gated - without VOYAGE_API_KEY the hook is a fail-open no-op.",
   "hooks": {
     "PreToolUse": [
       {
@@ -53,6 +53,23 @@
             },
             "timeout": 60,
             "statusMessage": "checkpoint: end-of-turn review"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "parallax",
+            "tool": "surface",
+            "input": {
+              "session_id": "${session_id}",
+              "prompt": "${prompt}"
+            },
+            "timeout": 5,
+            "statusMessage": "memory: prompt-time push"
           }
         ]
       }
