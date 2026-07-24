@@ -93,6 +93,18 @@ Three transitive advisories cleared via three lockfile-only commits (#38).
 Zero `Cargo.toml` changes; three sequential commits, each pinning a
 single advisory to its dep bump.
 
+### Fixed
+
+* **Batch-screen false positive on distinct-target batches (006/D5).**
+  `normalize_input` no longer drops an input-level `id` as volatile: it
+  names the action's semantic target (for `forget` it is the entire
+  payload), so dropping it made a finite batch of six distinct deletions
+  normalize identically and fire a false repetition flag (017 T019 live
+  dogfood finding). Retry loops on the *same* target still match and
+  still fire — recall is unchanged; the harness's genuinely volatile ids
+  (`tool_use_id`, `session_id`, `request_id`) stay dropped. Ground-truth
+  table extended with both directions; `006` data-model amended in-change.
+
 ### Changed
 
 * **OTel GenAI semconv deprecations cleared (#39, `eeb1608`).** The
