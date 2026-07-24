@@ -7,6 +7,7 @@
 //! the answer prose (research.md 004 D7).
 
 pub mod contract;
+pub mod evidence;
 pub mod extract;
 pub mod fetch;
 pub mod grounding;
@@ -155,6 +156,9 @@ pub(crate) struct SourceRecord {
     pub(crate) fetched_at: String,
     pub(crate) credibility: f32,
     pub(crate) claims: Vec<String>,
+    /// Readable text retained for the verification hop's evidence context
+    /// (004 D3 amendment). Internal only — never on the wire (FR-012).
+    pub(crate) text: String,
 }
 
 /// A claim after verification.

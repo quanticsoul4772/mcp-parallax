@@ -95,6 +95,21 @@ single advisory to its dep bump.
 
 ### Fixed
 
+* **Research verification judged from priors, not evidence (004/D3+D4).**
+  The per-claim refute-biased verifier received only source titles/hosts as
+  context — the fetched page text was dropped after extraction — so
+  "default to refuted when support cannot be established" made verdicts a
+  function of the judging model's training cutoff: a live run refuted
+  "Rust 1.97.0 was released 2026-07-09" while the official announcement sat
+  fetched in its own source list (found by the tool-catalog validation
+  sweep). `SourceRecord` now retains the capped readable text internally,
+  new `research/evidence.rs` deterministically selects a claim-relevant
+  excerpt (word-overlap anchored, ≤3 sources × ≤4 000 chars), the verify
+  context carries the excerpts, and the template directs the judge to test
+  the claim against them rather than its memory. Nothing new reaches the
+  wire (FR-012 re-asserted in tests). The scope prompt also gains a
+  same-named-referent disambiguation rule (the sweep's second finding: an
+  angle drifted to the RUST video game). 004 D3/D4 amended in-change.
 * **Batch-screen false positive on distinct-target batches (006/D5).**
   `normalize_input` no longer drops an input-level `id` as volatile: it
   names the action's semantic target (for `forget` it is the entire
