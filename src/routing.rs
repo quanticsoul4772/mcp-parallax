@@ -101,6 +101,29 @@ impl CallSite {
         Self::CheckpointReview,
     ];
 
+    /// Position in [`Self::ALL`].
+    ///
+    /// Lets a caller key a fixed-size array by call site, so lookup is total —
+    /// no `Option`, no unreachable fallback branch. Kept in lockstep with
+    /// `ALL` by `index_matches_all_order`.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Verify => 0,
+            Self::Unstick => 1,
+            Self::Diverge => 2,
+            Self::Decide => 3,
+            Self::Elicit => 4,
+            Self::GroundedVerify => 5,
+            Self::CheckTranslate => 6,
+            Self::ResearchScope => 7,
+            Self::ResearchExtract => 8,
+            Self::ResearchVerify => 9,
+            Self::ResearchSynthesize => 10,
+            Self::CheckpointReview => 11,
+        }
+    }
+
     /// Stable lowercase id, used in the startup routing table and in tests.
     #[must_use]
     pub const fn id(self) -> &'static str {
@@ -490,6 +513,15 @@ mod tests {
         }
         for tier in Tier::ALL {
             assert_eq!(tier.suffix(), tier.id().to_uppercase());
+        }
+    }
+
+    // `index` keys a fixed-size array in the client pool; if it drifts from
+    // ALL, a call site silently gets another site's client.
+    #[test]
+    fn index_matches_all_order() {
+        for (position, site) in CallSite::ALL.iter().enumerate() {
+            assert_eq!(site.index(), position, "{}", site.id());
         }
     }
 

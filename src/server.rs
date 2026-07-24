@@ -9,6 +9,7 @@ use crate::checkpoint::contract::{
 };
 use crate::checkpoint::review as checkpoint_review;
 use crate::checkpoint::run::{self as checkpoint_run, CheckpointDeps};
+use crate::client::pool::ClientPool;
 use crate::client::{BraveClient, VoyageClient};
 use crate::config::Config;
 use crate::deterministic::check::{self as check_tool, CheckDeps};
@@ -33,6 +34,7 @@ use crate::modes::ModeRegistry;
 use crate::research::contract::{ResearchParams, ResearchResult};
 use crate::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use crate::research::pipeline::{self, ResearchDeps};
+use crate::routing::{CallSite, RoutingTable};
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
 use crate::traits::embedder::Embedder;
@@ -53,7 +55,9 @@ use record::{to_error_data, RecordGuard};
 #[derive(Clone)]
 pub struct Parallax {
     tool_router: ToolRouter<Self>,
-    client: Arc<dyn ModelClient>,
+    /// One client per distinct routed model (018). Replaces the single
+    /// shared client; unrouted it holds exactly one entry.
+    pool: Arc<ClientPool>,
     storage: Arc<dyn Storage>,
     clock: Arc<dyn TimeProvider>,
     registry: Arc<ModeRegistry>,
@@ -110,6 +114,31 @@ impl Parallax {
             None => None,
         };
         Self::with_capabilities(client, storage, clock, config, embedder, search)
+    }
+
+    /// Report the resolved routing table once, before serving (018 FR-005).
+    ///
+    /// Emitted to the diagnostic stream (stderr) — never stdout, which is the
+    /// MCP JSON-RPC channel. Every call site is listed, including the ones that
+    /// fell through to the default, because an operator confirming "did my
+    /// route take effect" is exactly the person who needs the whole table.
+    /// Adds no tool-catalog entry: the audience is the operator, not the
+    /// calling model (FR-005a).
+    fn log_routing_table(routing: &RoutingTable, distinct: usize) {
+        for route in routing.routes() {
+            tracing::info!(
+                call_site = route.site.id(),
+                tier = route.site.tier().id(),
+                model = %route.model,
+                source = %route.source.variable(route.site),
+                "routing resolved"
+            );
+        }
+        tracing::info!(
+            call_sites = routing.routes().len(),
+            distinct_models = distinct,
+            "routing table complete"
+        );
     }
 
     /// [`Parallax::new`] with the embedder injected and research off (003-era
@@ -177,13 +206,37 @@ impl Parallax {
                 .ok_or_else(|| AppError::Client(format!("mode {id} not registered at boot")))
         };
 
+        // 018: one client per distinct routed model; each call site gets the
+        // one it resolved to (FR-001, FR-004).
+        //
+        // The injected `client` is this constructor's seam — it serves the
+        // **default** model, so with nothing routed every call site receives
+        // exactly the `Arc` the server used before this feature, and every
+        // existing test keeps talking to its mock (FR-002). Only a model an
+        // operator actually routed to gets a client built here.
+        let pool = Arc::new(ClientPool::from_factory(&config.routing, move |model| {
+            if model == config.anthropic_model {
+                Arc::clone(&client)
+            } else {
+                Arc::new(crate::client::AnthropicClient::for_model(config, model))
+                    as Arc<dyn ModelClient>
+            }
+        }));
+        Self::log_routing_table(&config.routing, pool.distinct());
+
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
             storage: Arc::clone(&storage),
             clock: Arc::clone(&clock),
-            model_client: Arc::clone(&client),
+            model_client: pool.for_site(CallSite::CheckpointReview),
             review_mode: mode(checkpoint_review::REVIEW_MODE_ID)?,
-            model: config.anthropic_model.clone(),
+            // The checkpoint layer keeps its own cost record, priced from this
+            // field — it must name the routed review model, not the global
+            // default, or a routed review is silently mispriced (T046).
+            model: config
+                .routing
+                .model_for(CallSite::CheckpointReview)
+                .to_string(),
             embedder: embedder.clone(),
             gate_extra_patterns: config.checkpoint_gate_patterns.clone(),
         });
@@ -193,7 +246,7 @@ impl Parallax {
                 embedder,
                 storage: Arc::clone(&storage),
                 clock: Arc::clone(&clock),
-                model_client: Arc::clone(&client),
+                model_client: pool.for_site(CallSite::Verify),
                 verify_mode: verify_mode.clone(),
                 consolidation_mode: consolidation_mode.clone(),
                 input_max_chars: config.input_max_chars,
@@ -203,7 +256,10 @@ impl Parallax {
 
         let research = match search {
             Some(search) => Some(Arc::new(ResearchDeps {
-                model_client: Arc::clone(&client),
+                scope_client: pool.for_site(CallSite::ResearchScope),
+                extract_client: pool.for_site(CallSite::ResearchExtract),
+                verify_client: pool.for_site(CallSite::ResearchVerify),
+                synth_client: pool.for_site(CallSite::ResearchSynthesize),
                 search,
                 clock: Arc::clone(&clock),
                 scope_mode: mode(pipeline::SCOPE_MODE_ID)?,
@@ -221,7 +277,7 @@ impl Parallax {
         // loud startup error (008 FR-001/FR-004).
         let grounded = match &config.grounded_verify_root {
             Some(root) => Some(Arc::new(GroundedDeps {
-                model_client: Arc::clone(&client),
+                model_client: pool.for_site(CallSite::GroundedVerify),
                 reader: Arc::new(crate::grounded::reader::SystemSourceReader::new(
                     root,
                     config.grounded_verify_max_bytes,
@@ -237,7 +293,7 @@ impl Parallax {
         };
 
         let deterministic = Arc::new(CheckDeps {
-            model_client: Arc::clone(&client),
+            model_client: pool.for_site(CallSite::CheckTranslate),
             translate_mode: mode(deterministic_translate::TRANSLATE_MODE_ID)?,
             input_max_chars: config.input_max_chars,
         });
@@ -259,7 +315,7 @@ impl Parallax {
 
         Ok(Self {
             tool_router,
-            client,
+            pool,
             storage,
             clock,
             registry: Arc::new(registry),
@@ -592,9 +648,14 @@ impl Parallax {
             ErrorData::internal_error("verify mode not registered".to_string(), None)
         })?;
         self.run_recorded(VERIFY_ID, self.model.clone(), ct, async {
-            verify::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
-                .await
-                .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
+            verify::run(
+                self.pool.for_site(CallSite::Verify).as_ref(),
+                mode,
+                &params,
+                self.max_claim_chars,
+            )
+            .await
+            .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
         })
         .await
     }
@@ -608,9 +669,14 @@ impl Parallax {
             ErrorData::internal_error("unstick mode not registered".to_string(), None)
         })?;
         self.run_recorded(UNSTICK_ID, self.model.clone(), ct, async {
-            unstick::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
-                .await
-                .map(|run| (run.step, run.input_tokens, run.output_tokens))
+            unstick::run(
+                self.pool.for_site(CallSite::Unstick).as_ref(),
+                mode,
+                &params,
+                self.max_claim_chars,
+            )
+            .await
+            .map(|run| (run.step, run.input_tokens, run.output_tokens))
         })
         .await
     }
@@ -624,9 +690,14 @@ impl Parallax {
             ErrorData::internal_error("decide mode not registered".to_string(), None)
         })?;
         self.run_recorded(DECIDE_ID, self.model.clone(), ct, async {
-            decide::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
-                .await
-                .map(|run| (run.result, run.input_tokens, run.output_tokens))
+            decide::run(
+                self.pool.for_site(CallSite::Decide).as_ref(),
+                mode,
+                &params,
+                self.max_claim_chars,
+            )
+            .await
+            .map(|run| (run.result, run.input_tokens, run.output_tokens))
         })
         .await
     }
@@ -643,7 +714,7 @@ impl Parallax {
         let memory = self.memory.as_deref();
         self.run_recorded(ELICIT_ID, self.model.clone(), ct, async {
             elicit::run(
-                self.client.as_ref(),
+                self.pool.for_site(CallSite::Elicit).as_ref(),
                 mode,
                 memory,
                 &params,
@@ -664,9 +735,14 @@ impl Parallax {
             ErrorData::internal_error("diverge mode not registered".to_string(), None)
         })?;
         self.run_recorded(DIVERGE_ID, self.model.clone(), ct, async {
-            diverge::run(self.client.as_ref(), mode, &params, self.max_claim_chars)
-                .await
-                .map(|run| (run.result, run.input_tokens, run.output_tokens))
+            diverge::run(
+                self.pool.for_site(CallSite::Diverge).as_ref(),
+                mode,
+                &params,
+                self.max_claim_chars,
+            )
+            .await
+            .map(|run| (run.result, run.input_tokens, run.output_tokens))
         })
         .await
     }

@@ -73,20 +73,20 @@ sites routed alike share one client.
 
 > Write these first and confirm they fail before implementing.
 
-- [ ] T009 [P] [US1] Test in `src/server.rs` that the client pool holds one entry per **distinct** resolved model, so two call sites routed alike share one client (FR-004)
-- [ ] T010 [P] [US1] Test in `src/server.rs` that each call site's dependency struct receives the client for its own resolved model (FR-001)
-- [ ] T011 [P] [US1] Test in `src/server.rs` that with no `PARALLAX_MODEL_*` set, every call site resolves to `ANTHROPIC_MODEL` and exactly one client is built (FR-002)
+- [X] T009 [P] [US1] Test in `src/server.rs` that the client pool holds one entry per **distinct** resolved model, so two call sites routed alike share one client (FR-004)
+- [X] T010 [P] [US1] Test in `src/server.rs` that each call site's dependency struct receives the client for its own resolved model (FR-001)
+- [X] T011 [P] [US1] Test in `src/server.rs` that with no `PARALLAX_MODEL_*` set, every call site resolves to `ANTHROPIC_MODEL` and exactly one client is built (FR-002)
 - [ ] T012 [P] [US1] Test in `tests/integration.rs` that the startup routing table names all twelve call sites with resolved model and supplying setting, and is emitted before serving (FR-005, SC-007)
 - [ ] T013 [P] [US1] Test in `tests/integration.rs` that no tool's input schema mentions a model and the catalog gains no entry (FR-003, FR-005a, FR-016)
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Create `src/client/pool.rs` (D10) with a function from the resolved model ids plus `&Config` to a `BTreeMap<String, Arc<dyn ModelClient>>` — one `AnthropicClient` per distinct id — and call it from `Parallax::new` in `src/server.rs` (FR-004). The pool goes here rather than in `routing.rs`, which stays free of any client dependency, or in `server.rs`, already at 1397 lines
-- [ ] T015 [US1] Replace the single shared `Arc<dyn ModelClient>` with the per-call-site `Arc` in each dependency struct in `src/server.rs` (`CheckpointDeps`, `MemoryDeps`, `GroundedDeps`, `CheckDeps`)
-- [ ] T016 [US1] Split `ResearchDeps.model_client` in `src/research/pipeline.rs` into four per-call-site fields (scope, extract, verify, synthesize) and update their use sites in `src/research/pipeline.rs`
-- [ ] T017 [US1] Emit the startup routing table in `src/server.rs` as one `tracing::info!` event after config resolution and before serving — stderr only, never stdout (FR-005, Principle III)
-- [ ] T018 [US1] Update `src/research/pipeline_tests.rs` construction of `ResearchDeps` for the new fields, keeping every existing assertion's expected value unchanged
-- [ ] T046 [US1] Set `CheckpointDeps.model` in `src/server.rs` from the resolved `checkpoint_review` route rather than `config.anthropic_model` — the field feeds checkpoint-record cost attribution (`src/checkpoint/mod.rs:40`), so leaving it global silently misprices a routed review
+- [X] T014 [US1] Create `src/client/pool.rs` (D10) with a function from the resolved model ids plus `&Config` to a `BTreeMap<String, Arc<dyn ModelClient>>` — one `AnthropicClient` per distinct id — and call it from `Parallax::new` in `src/server.rs` (FR-004). The pool goes here rather than in `routing.rs`, which stays free of any client dependency, or in `server.rs`, already at 1397 lines
+- [X] T015 [US1] Replace the single shared `Arc<dyn ModelClient>` with the per-call-site `Arc` in each dependency struct in `src/server.rs` (`CheckpointDeps`, `MemoryDeps`, `GroundedDeps`, `CheckDeps`)
+- [X] T016 [US1] Split `ResearchDeps.model_client` in `src/research/pipeline.rs` into four per-call-site fields (scope, extract, verify, synthesize) and update their use sites in `src/research/pipeline.rs`
+- [X] T017 [US1] Emit the startup routing table in `src/server.rs` as one `tracing::info!` event after config resolution and before serving — stderr only, never stdout (FR-005, Principle III)
+- [X] T018 [US1] Update `src/research/pipeline_tests.rs` construction of `ResearchDeps` for the new fields, keeping every existing assertion's expected value unchanged
+- [X] T046 [US1] Set `CheckpointDeps.model` in `src/server.rs` from the resolved `checkpoint_review` route rather than `config.anthropic_model` — the field feeds checkpoint-record cost attribution (`src/checkpoint/mod.rs:40`), so leaving it global silently misprices a routed review
 
 **Checkpoint**: routing takes effect end to end and is observable. Shippable alone —
 savings are real from here, only the accounting is still single-model.

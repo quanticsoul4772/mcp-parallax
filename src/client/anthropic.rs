@@ -42,6 +42,17 @@ impl AnthropicClient {
         Self::with_base_url(config, ANTHROPIC_API_BASE)
     }
 
+    /// Build a client for an explicitly named model, overriding
+    /// `ANTHROPIC_MODEL` (018 — the client pool builds one of these per
+    /// distinct routed model).
+    #[must_use]
+    pub fn for_model(config: &Config, model: &str) -> Self {
+        Self {
+            model: model.to_string(),
+            ..Self::new(config)
+        }
+    }
+
     /// Build a client against a custom endpoint (tests point this at a local
     /// wiremock server; nothing else should override it).
     #[must_use]

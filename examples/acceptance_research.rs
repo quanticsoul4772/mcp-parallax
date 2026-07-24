@@ -59,7 +59,12 @@ fn deps(config: &Config) -> ResearchDeps {
     pipeline::register(&mut registry).expect("register research modes");
     let verify_mode = registry.get(VERIFY_ID).expect("verify mode").clone();
     ResearchDeps {
-        model_client: Arc::new(AnthropicClient::new(config)),
+        // 018: routable per call site; this acceptance harness runs them all
+        // on the configured default.
+        scope_client: Arc::new(AnthropicClient::new(config)),
+        extract_client: Arc::new(AnthropicClient::new(config)),
+        verify_client: Arc::new(AnthropicClient::new(config)),
+        synth_client: Arc::new(AnthropicClient::new(config)),
         search: Arc::new(BraveClient::new(config).expect("brave key present")),
         clock: Arc::new(SystemClock),
         scope_mode: registry.get(pipeline::SCOPE_MODE_ID).unwrap().clone(),

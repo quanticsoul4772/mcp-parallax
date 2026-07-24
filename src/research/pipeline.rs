@@ -42,8 +42,16 @@ pub use crate::research::prompts::{
 
 /// Everything one research run needs, composed from the server's seams.
 pub struct ResearchDeps {
-    /// For scope/extract/verify/synthesis calls.
-    pub model_client: Arc<dyn ModelClient>,
+    /// Client for the scope call (018: `research_scope`).
+    pub scope_client: Arc<dyn ModelClient>,
+    /// Client for the per-source extraction call (018: `research_extract` —
+    /// the sole `bulk`-tier call site, and the one whose volume scales with
+    /// the number of fetched sources).
+    pub extract_client: Arc<dyn ModelClient>,
+    /// Client for the per-claim verification calls (018: `research_verify`).
+    pub verify_client: Arc<dyn ModelClient>,
+    /// Client for the synthesis call (018: `research_synthesize`).
+    pub synth_client: Arc<dyn ModelClient>,
     /// The search backend.
     pub search: Arc<dyn SearchProvider>,
     /// The shared clock (deadline checks + stats).
@@ -302,7 +310,7 @@ pub async fn run(
         (answer, plan.sub_questions.clone(), Vec::new())
     } else {
         synthesize_grounded(
-            deps.model_client.as_ref(),
+            deps.synth_client.as_ref(),
             &deps.synth_mode,
             params,
             &plan,
@@ -376,7 +384,7 @@ async fn scope(
         .replace("<<question>>", params.question.trim());
 
     let completion = deps
-        .model_client
+        .scope_client
         .complete(&prompt, &deps.scope_mode.sanitized_schema)
         .await?;
     meter.add(completion.input_tokens, completion.output_tokens);
@@ -443,7 +451,7 @@ async fn fetch_and_extract(
         return None;
     };
     let (claims, input, output) =
-        match extract::extract_claims(deps.model_client.as_ref(), &deps.extract_mode, &readable)
+        match extract::extract_claims(deps.extract_client.as_ref(), &deps.extract_mode, &readable)
             .await
         {
             Ok(ok) => ok,
@@ -521,7 +529,7 @@ async fn verify_claim(
     };
 
     let run = match verify::run(
-        deps.model_client.as_ref(),
+        deps.verify_client.as_ref(),
         mode,
         &verify_params,
         deps.input_max_chars,

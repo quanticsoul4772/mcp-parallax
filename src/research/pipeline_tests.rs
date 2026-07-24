@@ -109,7 +109,14 @@ fn deps_with(
     register(&mut registry).unwrap();
     let verify_mode = research_verify_mode(registry.get(crate::modes::verify::VERIFY_ID).unwrap());
     ResearchDeps {
-        model_client: client,
+        // 018: the four research call sites are routable independently. These
+        // fixtures share one scripted client, so every existing assertion's
+        // expected value is unchanged — the split is structural here, and the
+        // per-site routing behavior is asserted in `client::pool`.
+        scope_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        extract_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        verify_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        synth_client: client,
         search: Arc::new(search),
         clock,
         scope_mode: registry.get(SCOPE_MODE_ID).unwrap().clone(),
