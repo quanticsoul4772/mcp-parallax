@@ -86,7 +86,10 @@ pub struct Parallax {
     fetch_allow_private: bool,
     /// Per-process session UUID (one stdio connection per process).
     session_id: String,
-    model: String,
+    /// The resolved routing table. Record attribution reads from here: a call
+    /// site's record must name the model that actually served it, not the
+    /// server-wide default (018 FR-007/FR-009).
+    routing: RoutingTable,
     max_claim_chars: usize,
 }
 
@@ -140,6 +143,12 @@ impl Parallax {
             distinct_models = distinct,
             "routing table complete"
         );
+    }
+
+    /// The model a call site resolved to — the value its invocation record must
+    /// carry, so cost is priced at the rate of the model that actually ran.
+    fn attributed(&self, site: CallSite) -> String {
+        self.routing.model_for(site).to_string()
     }
 
     /// [`Parallax::new`] with the embedder injected and research off (003-era
@@ -329,7 +338,7 @@ impl Parallax {
             fetch_timeout_ms: config.fetch_timeout_ms,
             fetch_allow_private: config.fetch_allow_private,
             session_id: uuid::Uuid::new_v4().to_string(),
-            model: config.anthropic_model.clone(),
+            routing: config.routing.clone(),
             max_claim_chars: config.input_max_chars,
         })
     }
@@ -607,10 +616,10 @@ impl Parallax {
     ) -> Result<Json<CheckpointResult>, ErrorData> {
         let deps = Arc::clone(&self.checkpoint);
         // Attribution: the embed lookup is the only metered call on this path.
-        let model = deps
-            .embedder
-            .as_ref()
-            .map_or_else(|| self.model.clone(), |e| e.model_id().to_string());
+        let model = deps.embedder.as_ref().map_or_else(
+            || self.attributed(CallSite::CheckpointReview),
+            |e| e.model_id().to_string(),
+        );
         self.run_recorded("checkpoint_action", model, ct, async {
             checkpoint_run::run_action(&deps, &params).await
         })
@@ -623,9 +632,12 @@ impl Parallax {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<CheckpointResult>, ErrorData> {
         let deps = Arc::clone(&self.checkpoint);
-        self.run_recorded("checkpoint_batch", self.model.clone(), ct, async {
-            checkpoint_run::run_batch(&deps, &params).await
-        })
+        self.run_recorded(
+            "checkpoint_batch",
+            self.attributed(CallSite::CheckpointReview),
+            ct,
+            async { checkpoint_run::run_batch(&deps, &params).await },
+        )
         .await
     }
 
@@ -635,9 +647,12 @@ impl Parallax {
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<CheckpointResult>, ErrorData> {
         let deps = Arc::clone(&self.checkpoint);
-        self.run_recorded("checkpoint_turn", self.model.clone(), ct, async {
-            checkpoint_run::run_turn(&deps, &params).await
-        })
+        self.run_recorded(
+            "checkpoint_turn",
+            self.attributed(CallSite::CheckpointReview),
+            ct,
+            async { checkpoint_run::run_turn(&deps, &params).await },
+        )
         .await
     }
 
@@ -649,7 +664,7 @@ impl Parallax {
         let mode = self.registry.get(VERIFY_ID).ok_or_else(|| {
             ErrorData::internal_error("verify mode not registered".to_string(), None)
         })?;
-        self.run_recorded(VERIFY_ID, self.model.clone(), ct, async {
+        self.run_recorded(VERIFY_ID, self.attributed(CallSite::Verify), ct, async {
             verify::run(
                 self.pool.for_site(CallSite::Verify).as_ref(),
                 mode,
@@ -670,7 +685,7 @@ impl Parallax {
         let mode = self.registry.get(UNSTICK_ID).ok_or_else(|| {
             ErrorData::internal_error("unstick mode not registered".to_string(), None)
         })?;
-        self.run_recorded(UNSTICK_ID, self.model.clone(), ct, async {
+        self.run_recorded(UNSTICK_ID, self.attributed(CallSite::Unstick), ct, async {
             unstick::run(
                 self.pool.for_site(CallSite::Unstick).as_ref(),
                 mode,
@@ -691,7 +706,7 @@ impl Parallax {
         let mode = self.registry.get(DECIDE_ID).ok_or_else(|| {
             ErrorData::internal_error("decide mode not registered".to_string(), None)
         })?;
-        self.run_recorded(DECIDE_ID, self.model.clone(), ct, async {
+        self.run_recorded(DECIDE_ID, self.attributed(CallSite::Decide), ct, async {
             decide::run(
                 self.pool.for_site(CallSite::Decide).as_ref(),
                 mode,
@@ -714,7 +729,7 @@ impl Parallax {
         })?;
         // Memory only enriches: pass it when configured, run without it otherwise.
         let memory = self.memory.as_deref();
-        self.run_recorded(ELICIT_ID, self.model.clone(), ct, async {
+        self.run_recorded(ELICIT_ID, self.attributed(CallSite::Elicit), ct, async {
             elicit::run(
                 self.pool.for_site(CallSite::Elicit).as_ref(),
                 mode,
@@ -736,7 +751,7 @@ impl Parallax {
         let mode = self.registry.get(DIVERGE_ID).ok_or_else(|| {
             ErrorData::internal_error("diverge mode not registered".to_string(), None)
         })?;
-        self.run_recorded(DIVERGE_ID, self.model.clone(), ct, async {
+        self.run_recorded(DIVERGE_ID, self.attributed(CallSite::Diverge), ct, async {
             diverge::run(
                 self.pool.for_site(CallSite::Diverge).as_ref(),
                 mode,
@@ -777,7 +792,7 @@ impl Parallax {
         // Model attribution is known up front: a verifying save is dominated
         // by the verify ensemble's model; otherwise only the embedder runs.
         let model = if memory_tools::save_runs_verification(&params) {
-            self.model.clone()
+            self.attributed(CallSite::Verify)
         } else {
             deps.embedder.model_id().to_string()
         };
@@ -807,9 +822,12 @@ impl Parallax {
     ) -> Result<Json<CheckResult>, ErrorData> {
         let deps = Arc::clone(&self.deterministic);
         // Translation is the only metered call — anthropic-model attribution.
-        self.run_recorded("check", self.model.clone(), ct, async {
-            check_tool::run(&deps, &params).await
-        })
+        self.run_recorded(
+            "check",
+            self.attributed(CallSite::CheckTranslate),
+            ct,
+            async { check_tool::run(&deps, &params).await },
+        )
         .await
     }
 
@@ -838,10 +856,15 @@ impl Parallax {
         // per-token — attribute the record to the anthropic model (plan.md).
         // Research is the one tool whose call sites can differ, so it records
         // per-model usage rather than a single token pair (018 FR-007).
-        self.run_recorded_usage("research", self.model.clone(), ct, async {
-            let fetcher = HygieneFetcher::new(policy)?;
-            pipeline::run(&deps, &fetcher, &params).await
-        })
+        self.run_recorded_usage(
+            "research",
+            self.attributed(CallSite::ResearchScope),
+            ct,
+            async {
+                let fetcher = HygieneFetcher::new(policy)?;
+                pipeline::run(&deps, &fetcher, &params).await
+            },
+        )
         .await
     }
 
@@ -858,11 +881,16 @@ impl Parallax {
             )
         })?);
         // The stance-blind passes dominate cost — attribute to the anthropic model.
-        self.run_recorded(GROUNDED_VERIFY_ID, self.model.clone(), ct, async {
-            deps.evaluate(&params)
-                .await
-                .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
-        })
+        self.run_recorded(
+            GROUNDED_VERIFY_ID,
+            self.attributed(CallSite::GroundedVerify),
+            ct,
+            async {
+                deps.evaluate(&params)
+                    .await
+                    .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
+            },
+        )
         .await
     }
 
@@ -1110,6 +1138,80 @@ mod tests {
         );
         let info = server.get_info();
         assert!(info.instructions.unwrap().contains("research"));
+    }
+
+    /// 018 regression: a routed call site's record must name the model that
+    /// actually served it.
+    ///
+    /// This is the assertion the feature shipped without. `client::pool` proved
+    /// the pool hands out the right *client*, and `telemetry` proved cost sums
+    /// correctly *given* a `ModelUsage` — nothing connected the two, so every
+    /// single-model tool recorded `config.anthropic_model` while the call went
+    /// to the routed client. Cost was therefore computed at the wrong model's
+    /// rate. Before the fix this test fails with
+    /// `claude-opus-4-8 != claude-sonnet-5`.
+    #[tokio::test]
+    async fn a_routed_call_site_records_the_model_that_served_it() {
+        let mut client = MockModelClient::new();
+        client
+            .expect_complete()
+            .returning(|_, _| Err(AppError::Refusal("declined".into())));
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+
+        // Route `verify` away from the default; leave everything else alone.
+        let mut config = test_config();
+        config.routing = crate::routing::RoutingTable::resolve(
+            vec![(
+                "PARALLAX_MODEL_VERIFY".to_string(),
+                "claude-sonnet-5".to_string(),
+            )],
+            &config.anthropic_model,
+        )
+        .unwrap();
+
+        let server = Parallax::with_capabilities(
+            Arc::new(client),
+            storage.clone(),
+            Arc::new(SystemClock),
+            &config,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let _ = server
+            .verify_with_ct(
+                VerifyParams {
+                    claim: "a claim".into(),
+                    context: None,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+
+        let records = storage.list_invocations().await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].tool, "verify");
+        assert_eq!(
+            records[0].model, "claude-sonnet-5",
+            "the record must name the routed model, not the server-wide default"
+        );
+
+        // An unrouted call site in the same server still reports the default,
+        // so the fix is per-site and not a blanket rewrite.
+        let _ = server
+            .unstick_with_ct(
+                UnstickParams {
+                    goal: "ship it".into(),
+                    blocked: "stuck".into(),
+                    tried: None,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+        let records = storage.list_invocations().await.unwrap();
+        let unstick = records.iter().find(|r| r.tool == "unstick").unwrap();
+        assert_eq!(unstick.model, "claude-opus-4-8");
     }
 
     #[tokio::test]
