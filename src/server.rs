@@ -34,6 +34,7 @@ use crate::modes::ModeRegistry;
 use crate::research::contract::{ResearchParams, ResearchResult};
 use crate::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use crate::research::pipeline::{self, ResearchDeps};
+use crate::research::Depth;
 use crate::routing::{CallSite, RoutingTable};
 use crate::telemetry::ModelUsage;
 use crate::traits::client::ModelClient;
@@ -856,9 +857,14 @@ impl Parallax {
         // per-token — attribute the record to the anthropic model (plan.md).
         // Research is the one tool whose call sites can differ, so it records
         // per-model usage rather than a single token pair (018 FR-007).
+        // 019: stamp the rigor tier so the run's budget ceiling is recoverable
+        // from the record. The default must match `settings`' — a request that
+        // omits `depth` still ran under a tier.
+        let depth = params.depth.unwrap_or(Depth::Standard);
         self.run_recorded_usage(
             "research",
             self.attributed(CallSite::ResearchScope),
+            Some(depth),
             ct,
             async {
                 let fetcher = HygieneFetcher::new(policy)?;
@@ -925,7 +931,7 @@ impl Parallax {
         Fut: std::future::Future<Output = Result<(T, u64, u64), AppError>>,
     {
         let attributed = model.clone();
-        self.run_recorded_usage(tool_id, model, ct, async move {
+        self.run_recorded_usage(tool_id, model, None, ct, async move {
             work.await.map(|(value, input_tokens, output_tokens)| {
                 (
                     value,
@@ -943,6 +949,7 @@ impl Parallax {
         &self,
         tool_id: &'static str,
         attributed: String,
+        depth: Option<Depth>,
         ct: tokio_util::sync::CancellationToken,
         work: Fut,
     ) -> Result<Json<T>, ErrorData>
@@ -955,6 +962,7 @@ impl Parallax {
             self.session_id.clone(),
             tool_id.to_string(),
             attributed,
+            depth.map(|d| d.as_str().to_string()),
         );
 
         tokio::select! {
@@ -969,8 +977,15 @@ impl Parallax {
                         Ok(Json(value))
                     }
                     Err(error) => {
-                        // Token usage on failed invocations is not attributable
-                        // (failed passes carry no usage) — recorded as empty.
+                        // Recorded as empty. This is correct for a timeout
+                        // or a transport failure, and WRONG for truncation and
+                        // refusal: both are HTTP 200 responses carrying real
+                        // billed usage that the client reads (to build the
+                        // truncation message) and then discards. Spend is
+                        // under-reported for those two classes. Fixing it means
+                        // carrying usage on those error variants — a change to
+                        // the outcome taxonomy, tracked in CHANGELOG
+                        // "Known issues" rather than papered over here.
                         guard.finish(&ModelUsage::default(), error.outcome()).await;
                         Err(to_error_data(&error))
                     }

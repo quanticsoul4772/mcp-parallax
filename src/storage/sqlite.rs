@@ -139,7 +139,7 @@ impl SqliteStorage {
         let rows = sqlx::query(
             "SELECT id, session_id, tool, model, input_tokens, output_tokens,
                     cost_usd, latency_ms, outcome, created_at,
-                    models, usage_by_model
+                    models, usage_by_model, depth
              FROM invocation_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -191,6 +191,9 @@ impl SqliteStorage {
                     models,
                     usage_by_model,
                     cost_estimated,
+                    // NULL for every non-research tool and for every research
+                    // row written before the 019 migration (D-019a).
+                    depth: row.get::<Option<String>, _>("depth"),
                     latency_ms,
                     outcome,
                     created_at,
@@ -246,17 +249,20 @@ impl SqliteStorage {
         Ok(())
     }
 
-    /// 018 D4: additive columns for multi-model invocations, same
-    /// pragma-guarded shape as the 017 migration. Both are nullable — a row
-    /// written before this feature has no per-model detail to backfill, and
-    /// reads back as a single-model record from the `model` column.
+    /// 018 D4 / 019: additive columns on `invocation_records`, same
+    /// pragma-guarded shape as the 017 migration. All are nullable — a row
+    /// written before a given feature has nothing to backfill. The 018 pair
+    /// reads back as a single-model record from the `model` column; the 019
+    /// `depth` stays NULL, which is the truthful answer for a run whose tier
+    /// was never recorded (and is why the standard/deep budgets are not being
+    /// re-tuned from the existing history).
     async fn migrate_invocation_columns(pool: &SqlitePool) -> Result<(), AppError> {
         let rows = sqlx::query("PRAGMA table_info(invocation_records)")
             .fetch_all(pool)
             .await
             .map_err(|e| AppError::Storage(format!("pragma table_info failed: {e}")))?;
         let existing: Vec<String> = rows.iter().map(|r| r.get::<String, _>("name")).collect();
-        let additions: [(&str, &str); 2] = [
+        let additions: [(&str, &str); 3] = [
             (
                 "models",
                 "ALTER TABLE invocation_records ADD COLUMN models TEXT",
@@ -264,6 +270,10 @@ impl SqliteStorage {
             (
                 "usage_by_model",
                 "ALTER TABLE invocation_records ADD COLUMN usage_by_model TEXT",
+            ),
+            (
+                "depth",
+                "ALTER TABLE invocation_records ADD COLUMN depth TEXT",
             ),
         ];
         for (column, ddl) in additions {
@@ -754,8 +764,8 @@ impl Storage for SqliteStorage {
             "INSERT INTO invocation_records
                 (id, session_id, tool, model, input_tokens, output_tokens,
                  cost_usd, latency_ms, outcome, created_at,
-                 models, usage_by_model)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 models, usage_by_model, depth)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -769,6 +779,7 @@ impl Storage for SqliteStorage {
         .bind(record.created_at.to_rfc3339())
         .bind(encode_models(&record.models))
         .bind(encode_usage_by_model(&record.usage_by_model))
+        .bind(record.depth.clone())
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
@@ -866,6 +877,7 @@ mod tests {
             models: vec!["claude-opus-4-8".into()],
             usage_by_model: ModelUsage::single("claude-opus-4-8", 300, 30),
             cost_estimated: false,
+            depth: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
@@ -887,6 +899,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    // 019: the tier written is the tier read. Paired with the NULL case above,
+    // this is the whole contract of the column — present when the tool has a
+    // tier, absent when it does not, never inferred either way.
+    #[tokio::test]
+    async fn invocation_depth_round_trips_and_is_absent_for_untiered_tools() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let tiered = InvocationRecord {
+            id: "r-deep".to_string(),
+            tool: "research".to_string(),
+            depth: Some("deep".to_string()),
+            ..sample(Outcome::Success)
+        };
+        let untiered = InvocationRecord {
+            id: "r-verify".to_string(),
+            ..sample(Outcome::Success)
+        };
+        storage.record_invocation(&tiered).await.unwrap();
+        storage.record_invocation(&untiered).await.unwrap();
+
+        let records = storage.list_invocations().await.unwrap();
+        let by_id = |id: &str| {
+            records
+                .iter()
+                .find(|r| r.id == id)
+                .map(|r| r.depth.clone())
+                .unwrap()
+        };
+        assert_eq!(by_id("r-deep"), Some("deep".to_string()));
+        assert_eq!(by_id("r-verify"), None);
     }
 
     // T023 / 018 D4: the additive columns survive re-running the migration,
@@ -920,6 +963,10 @@ mod tests {
         assert_eq!(old.usage_by_model.totals(), (300, 30));
         assert_eq!(old.usage_by_model.dominant(), Some("claude-opus-4-8"));
         assert!(!old.cost_estimated);
+        // 019: a row written before the depth column has no tier, and reads
+        // back as None rather than a guessed default — an invented "standard"
+        // here would be exactly the bad data that makes a budget re-tune wrong.
+        assert_eq!(old.depth, None);
 
         // And a new multi-model row round-trips its per-model detail.
         let mut usage = ModelUsage::default();

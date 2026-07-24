@@ -216,7 +216,7 @@ set. The tool never emits an ungrounded claim.
 
 | | angles | max_sources | verifier votes K | completeness loops | typical budget |
 |---|---|---|---|---|---|
-| **quick** | 3 | 8 | 1 | 0 | ~150k tok |
+| **quick** | 3 | 8 | 1 | 0 | ~250k tok |
 | **standard** | 5 | 25 | 2 | 0 | ~450k tok |
 | **deep** | 8 | 60 | 3 (diverse lenses) | 1 | ~1M tok |
 | **exhaustive** | 12 | 120 | 3–5 (diverse) | 2 | ~2.5M tok |
@@ -224,6 +224,19 @@ set. The tool never emits an ungrounded claim.
 *(Budgets amended 2026-06-12 from v1 live measurement: the original
 40k/120k/350k/800k estimates starved real runs mid-verification — claim
 extraction alone costs ~4k input tokens per source.)*
+
+*(Quick amended again 2026-07-24, 150k → 250k. The 004 evidence-grounding fix
+gave each per-claim verification hop a real source excerpt instead of a title,
+which is what made verification worth running — and moved an identical quick
+question from 104,783 tokens to 174,952 against a ceiling that never moved.
+Every run then tripped it and dropped ~40% of its claims. 250k preserves the
+tier's original 1.43 headroom ratio against the new measured cost.*
+
+*Standard and deep are deliberately unchanged. `invocation_records` did not
+store the rigor tier until 2026-07-24, so no recorded run can be attributed to
+a tier and their real consumption is unmeasured. The column now exists; the
+re-tune waits for data rather than inferring from quick, because the tiers
+differ in verify K and source count, not by a scalar.)*
 
 `budget_tokens`/`deadline_ms` always override the tier: hitting either triggers a
 **graceful early synthesize** over whatever is verified so far, with `stopped_early`

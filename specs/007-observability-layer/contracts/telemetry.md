@@ -51,6 +51,7 @@ OK on success; ERROR with the outcome class otherwise.
 | `parallax.session_id` | string | per-process session UUID |
 | `parallax.models` | string[] | **added 018** — every model that actually ran, sorted. One entry when nothing is routed |
 | `parallax.cost_estimated` | bool | **added 018** — true when a participating model had no price row and was costed at the conservative fallback; the figure is an over-estimate, not a measurement |
+| `parallax.depth` | string | **added 019** — the research rigor tier (`quick`/`standard`/`deep`) the invocation ran under. Emitted **only** when the tool has a tier, so tiered runs stay separable from untiered ones; every non-`research` span omits it |
 
 > **Amendment (2026-07-24, feature 018 — per-call-site model routing).** Call
 > sites can now run on different models, so one invocation may span several.

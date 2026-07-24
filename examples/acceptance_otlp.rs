@@ -126,6 +126,7 @@ async fn main() {
         models: vec!["claude-opus-4-8".into()],
         usage_by_model: mcp_parallax::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
         cost_estimated: false,
+        depth: None,
         latency_ms: 1,
         outcome: mcp_parallax::error::Outcome::Success,
         created_at: chrono::Utc::now(),

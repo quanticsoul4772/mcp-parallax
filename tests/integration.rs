@@ -1182,6 +1182,10 @@ async fn research_round_trip_returns_grounded_citations_and_one_record() {
     assert_eq!(records[0].model, "claude-opus-4-8");
     assert_eq!(records[0].outcome, Outcome::Success);
     assert!(records[0].input_tokens > 0);
+    // 019: the rigor tier is on the record, so the budget the run was held to
+    // is recoverable. Without this, no historical run can be attributed to a
+    // tier and the tier ceilings cannot be sized from measurement.
+    assert_eq!(records[0].depth.as_deref(), Some("quick"));
 
     client.cancel().await.unwrap();
 }

@@ -28,6 +28,11 @@ pub(super) struct RecordGuard {
     session_id: String,
     tool: String,
     model: String,
+    /// The research rigor tier, when the invocation has one (019). Captured at
+    /// construction from the request, so it is stamped on every exit — a run
+    /// that fails or is cancelled still records which ceiling it ran under,
+    /// which is precisely the case worth knowing about when sizing budgets.
+    depth: Option<String>,
     started_at: DateTime<Utc>,
     done: bool,
 }
@@ -39,6 +44,7 @@ impl RecordGuard {
         session_id: String,
         tool: String,
         model: String,
+        depth: Option<String>,
     ) -> Self {
         let started_at = clock.now();
         Self {
@@ -47,6 +53,7 @@ impl RecordGuard {
             session_id,
             tool,
             model,
+            depth,
             started_at,
             done: false,
         }
@@ -64,7 +71,8 @@ impl RecordGuard {
             usage,
             outcome,
             self.started_at,
-        );
+        )
+        .with_depth(self.depth.as_deref());
         // One measurement, two sinks (007 FR-009): tracing + telemetry, both
         // derived from this record value via the single publish() door.
         record.publish();
@@ -91,7 +99,8 @@ impl Drop for RecordGuard {
             &ModelUsage::default(),
             Outcome::Cancelled,
             self.started_at,
-        );
+        )
+        .with_depth(self.depth.as_deref());
         record.publish();
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {

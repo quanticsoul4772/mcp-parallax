@@ -17,6 +17,19 @@ therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 
 ### Added
 
+* **Rigor tier on the invocation record (019)** — `invocation_records` gains a
+  nullable `depth` column, stamped `quick`/`standard`/`deep` for `research` and
+  left NULL for every other tool. Additive, pragma-guarded `ALTER TABLE`, the
+  same shape as the 017 and 018 migrations; rows written before it read back as
+  `None` rather than a guessed default. The gap this closes is concrete: 59
+  recorded research runs exist and not one of them can be attributed to the
+  ceiling it ran under, which is why the standard and deep budgets are *not*
+  being re-tuned in this change. The tier is captured at request time, so a run
+  that fails or is cancelled still records which ceiling it was held to — the
+  case most worth knowing about when sizing a budget. Mirrored to OTLP as
+  `parallax.depth`, emitted only when the tool has a tier so tiered runs stay
+  separable (`specs/007-observability-layer/contracts/telemetry.md`).
+
 * **Per-call-site model routing (018)** — each of the server's twelve model
   call sites can run on a model chosen for the work it does, instead of all
   twelve sharing one `ANTHROPIC_MODEL`. Two work-kind tiers (`bulk`, holding
@@ -189,7 +202,44 @@ single advisory to its dep bump.
   (`tool_use_id`, `session_id`, `request_id`) stay dropped. Ground-truth
   table extended with both directions; `006` data-model amended in-change.
 
+### Known issues
+
+* **A truncated or refused model call records zero tokens.** Both are HTTP 200
+  responses carrying real, billed usage — `AnthropicClient::interpret` even
+  reads `usage.output_tokens` to build the truncation message, then discards
+  it, and `run_recorded_usage` writes an empty `ModelUsage` for every error
+  class. The comment there ("failed passes carry no usage") is true for a
+  timeout or a transport failure and false for these two. Two consequences:
+  spend is under-reported, and the per-call output ceiling cannot be sized from
+  data, because the runs that would tell you how much headroom is needed are
+  exactly the ones recording nothing. Fixing it means carrying usage on the
+  `Truncation` and `Refusal` error variants, which is a change to the outcome
+  taxonomy and its own piece of work.
+
 ### Changed
+
+* **Quick research budget raised 150 000 → 250 000 tokens (019).** Derived from
+  the tier's own history, not picked: the 004 evidence-grounding fix gave each
+  per-claim verification hop a real source excerpt instead of a title — the
+  change that made verification worth running — and moved an identical quick
+  question from 104,783 tokens to 174,952 against a ceiling that never moved.
+  Every quick run then tripped its budget and dropped roughly 40% of its
+  claims. 150 000 / 104 783 is the tier's original 1.43 headroom ratio;
+  preserving it against the measured 174 952 gives 250 000. Standard and deep
+  are unchanged, deliberately — see the `depth` column above for why they are
+  currently unmeasurable. Corpus amended in the same change
+  (`RESEARCH_PRIMITIVE.md` §5, `specs/004-research-layer/research.md` D8).
+
+* **Per-call output ceiling raised 16 000 → 32 000 tokens (019)**, after a real
+  truncation. The 018 family sweep declared 16 000 validated, but it exercised
+  only trivial inputs; a genuine four-option `decide` with a long context on
+  `claude-sonnet-5` exhausted it. The mode schemas bound the *answer*, and on a
+  model that reasons before answering the reasoning term is the larger one and
+  is bounded by no schema. This number is **not** measured — the largest
+  successful thinking-inclusive output on record is 3 135 tokens, and how far
+  past 16 000 the failing call went is unknown, because a truncated invocation
+  currently records zero usage (see *Known issues*). It should be re-derived
+  once that is fixed.
 
 * **OTel GenAI semconv deprecations cleared (#39, `eeb1608`).** The
   upstream `opentelemetry_semantic_conventions` crate deprecated its
