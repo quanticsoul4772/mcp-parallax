@@ -140,16 +140,16 @@ at startup naming the setting at fault.
 
 ### Tests for User Story 3 (REQUIRED) ⚠️
 
-- [ ] T034 [P] [US3] Test in `src/client/anthropic.rs` that the request body sends no `thinking` field, so the one shape is accepted by families that reject `thinking: disabled` (FR-014, D7)
-- [ ] T035 [P] [US3] Test in `src/client/anthropic.rs` that a response consuming the raised budget still yields a parsed verdict, and that a genuine overrun still classifies as `AppError::Truncation` (FR-013)
+- [X] T034 [P] [US3] Test in `src/client/anthropic.rs` that the request body sends no `thinking` field, so the one shape is accepted by families that reject `thinking: disabled` (FR-014, D7)
+- [X] T035 [P] [US3] Test in `src/client/anthropic.rs` that a response consuming the raised budget still yields a parsed verdict, and that a genuine overrun still classifies as `AppError::Truncation` (FR-013)
 - [ ] T036 [P] [US3] Test in `tests/integration.rs` that an invocation on a model with no price row completes, is costed conservatively, and is marked estimated end to end (FR-012, US3 scenario 2 — depends on T028)
-- [ ] T048 [P] [US3] Test in `tests/integration.rs` that a call site whose client always errors surfaces the outcome class and **never invokes a second client** — no cross-model retry, and the record's `models` names only the model that ran (FR-015a, FR-015b)
-- [ ] T049 [P] [US3] Test in `tests/integration.rs` that `checkpoint_turn` with an unreachable routed review model returns silence with `fail_open` set and records the failure, leaving the turn unblocked (FR-015, US3 scenario 4)
+- [X] T048 [P] [US3] Test in `tests/integration.rs` that a call site whose client always errors surfaces the outcome class and **never invokes a second client** — no cross-model retry, and the record's `models` names only the model that ran (FR-015a, FR-015b)
+- [X] T049 [P] [US3] Test in `tests/integration.rs` that `checkpoint_turn` with an unreachable routed review model returns silence with `fail_open` set and records the failure, leaving the turn unblocked (FR-015, US3 scenario 4)
 
 ### Implementation for User Story 3
 
-- [ ] T037 [US3] Raise `MAX_TOKENS` in `src/client/anthropic.rs` to **at least 4×** the schema-derived answer floor (research D7 step 1: research synthesis bounds its own output at 8 000 answer chars + 10×500 gap chars ≈ ~3.5k tokens; every other mode schema is smaller). Compute the floor from the schemas — no network needed — and record the arithmetic in the commit message
-- [ ] T038 [US3] Raise the `REQUEST_TIMEOUT_MS` default in `src/config.rs` to **at least 3×** the slowest single call observed while setting T037's budget, since a larger ceiling on a thinking-by-default family can outrun 30 s (D7 step 3)
+- [X] T037 [US3] Raise `MAX_TOKENS` in `src/client/anthropic.rs` to **at least 4×** the schema-derived answer floor (research D7 step 1: research synthesis bounds its own output at 8 000 answer chars + 10×500 gap chars ≈ ~3.5k tokens; every other mode schema is smaller). Compute the floor from the schemas — no network needed — and record the arithmetic in the commit message
+- [X] T038 [US3] Raise the `REQUEST_TIMEOUT_MS` default in `src/config.rs` to **at least 3×** the slowest single call observed while setting T037's budget, since a larger ceiling on a thinking-by-default family can outrun 30 s (D7 step 3)
 - [ ] T039 [US3] Document in `specs/018-model-routing/quickstart.md` the measured values chosen in T037/T038, replacing the placeholder guidance
 - [ ] T050 [US3] Family sweep: route one call site to a model from each **completion** family in the shipped price list in turn and run its tool, recording in this file that each returned a complete result and a correct cost (SC-006; embedding models are excluded — they answer no call site). This sweep is also the **acceptance test for T037/T038** (D7 step 4): zero `AppError::Truncation` and zero `AppError::Timeout` outcomes. If either appears, raise the offending value and re-run the sweep
 

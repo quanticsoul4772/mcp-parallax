@@ -154,7 +154,11 @@ impl Config {
         let database_path =
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/parallax.db".to_string());
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
-        let request_timeout_ms = parse_env("REQUEST_TIMEOUT_MS", 30_000)?;
+        // 018 D7 step 3: raised with the output budget. A ceiling four times
+        // larger on a family that reasons before answering can outrun 30 s,
+        // which would convert a truncation into a timeout rather than fixing
+        // it. Provisional until the T050 family sweep confirms zero timeouts.
+        let request_timeout_ms = parse_env("REQUEST_TIMEOUT_MS", 120_000)?;
         let max_retries = parse_env("MAX_RETRIES", 3)?;
 
         Ok(Self {

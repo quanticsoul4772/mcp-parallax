@@ -20,9 +20,21 @@ use std::time::Duration;
 
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// Output budget per verification pass — far above any flat verdict payload,
-/// far below runaway generation.
-const MAX_TOKENS: u32 = 4096;
+/// Output budget per model call.
+///
+/// **Derived, not guessed** (018 D7 measurement procedure). The largest mode
+/// schema bounds its own output: research synthesis allows
+/// `MAX_ANSWER_CHARS` (8 000) answer characters plus `MAX_GAPS` × `MAX_GAP_CHARS`
+/// (10 × 500) of gaps — ~13 000 characters, or roughly **3 500 tokens** of
+/// answer before any reasoning. Every other mode schema is smaller. The budget
+/// is set to ≥ 4× that floor, leaving the remainder for models that reason
+/// before answering.
+///
+/// That headroom is why 4096 no longer suffices: on Claude 5 families,
+/// omitting `thinking` runs adaptive reasoning which is charged against this
+/// same ceiling, so a verdict could be truncated before its JSON was emitted.
+/// Acceptance is the family sweep (T050): zero truncation, zero timeout.
+const MAX_TOKENS: u32 = 16_000;
 
 /// Thin `reqwest` client implementing [`ModelClient`] via structured outputs.
 pub struct AnthropicClient {
@@ -307,6 +319,73 @@ mod tests {
             .mount(&mock)
             .await;
 
+        client_for(&mock)
+            .complete("p", &json!({ "type": "object" }))
+            .await
+            .unwrap();
+    }
+
+    // T034 / 018 FR-014, D7: one request shape every family accepts.
+    //
+    // The families disagree about `thinking` in a way that admits exactly one
+    // universally-accepted shape. Opus 5 and Sonnet 5 would accept
+    // `thinking: {"type": "disabled"}`; Fable 5 rejects it with a 400 at any
+    // effort. Omitting the field works everywhere — so the server must not
+    // start sending one as an "optimization".
+    #[tokio::test]
+    async fn request_sends_no_thinking_field_so_every_family_accepts_it() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = req.body_json().unwrap();
+                assert!(
+                    body.get("thinking").is_none(),
+                    "no `thinking` field: Fable 5 rejects an explicit disable, \
+                     so omission is the only shape every family accepts"
+                );
+                // Sampling parameters are removed on the Claude 5 families too.
+                for removed in ["temperature", "top_p", "top_k"] {
+                    assert!(body.get(removed).is_none(), "{removed} must not be sent");
+                }
+                ResponseTemplate::new(200).set_body_json(end_turn_body("{}"))
+            })
+            .mount(&mock)
+            .await;
+
+        client_for(&mock)
+            .complete("p", &json!({ "type": "object" }))
+            .await
+            .unwrap();
+    }
+
+    // T035 / 018 FR-013, D7 step 1: the output budget clears the schema-derived
+    // answer floor with room for reasoning that shares the same ceiling.
+    #[tokio::test]
+    async fn output_budget_clears_the_schema_floor_with_headroom() {
+        // The largest mode schema bounds its own output — computed from the
+        // schemas, not observed, so this check needs no network.
+        let floor_chars = crate::research::MAX_ANSWER_CHARS
+            + crate::research::MAX_GAPS * crate::research::MAX_GAP_CHARS;
+        // A conservative chars-per-token figure; the real ratio is higher, so
+        // this over-estimates the floor and under-estimates the headroom.
+        let floor_tokens = floor_chars / 4;
+        assert!(
+            u64::from(MAX_TOKENS) >= 4 * floor_tokens as u64,
+            "budget {MAX_TOKENS} must be >= 4x the {floor_tokens}-token answer floor"
+        );
+
+        // And the budget actually reaches the wire.
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = req.body_json().unwrap();
+                assert_eq!(body["max_tokens"], serde_json::json!(MAX_TOKENS));
+                ResponseTemplate::new(200).set_body_json(end_turn_body("{}"))
+            })
+            .mount(&mock)
+            .await;
         client_for(&mock)
             .complete("p", &json!({ "type": "object" }))
             .await

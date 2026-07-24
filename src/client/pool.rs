@@ -152,6 +152,67 @@ mod tests {
         assert!(!Arc::ptr_eq(&verify, &extract));
     }
 
+    /// A client that always fails, counting how many times it was asked.
+    struct Failing(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl ModelClient for Failing {
+        async fn complete(&self, _prompt: &str, _schema: &Value) -> Result<Completion, AppError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(AppError::Client("provider unreachable".into()))
+        }
+    }
+
+    // T048 / FR-015a, FR-015b: a failing call site is never retried on another
+    // model. The pool binds one client per call site at construction, so there
+    // is no path by which a failure reaches a second one — this test pins that
+    // structurally, because "no cross-model fallback" is a guarantee an
+    // optimization could quietly break later.
+    #[tokio::test]
+    async fn a_failing_call_site_never_reaches_another_model() {
+        let routing = RoutingTable::resolve(
+            vec![(
+                "PARALLAX_MODEL_BULK".to_string(),
+                "unreachable-model".to_string(),
+            )],
+            "claude-opus-5",
+        )
+        .unwrap();
+
+        let failing_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let healthy_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (f, h) = (Arc::clone(&failing_calls), Arc::clone(&healthy_calls));
+        let pool = ClientPool::from_factory(&routing, move |model| {
+            if model == "unreachable-model" {
+                Arc::new(Failing(Arc::clone(&f))) as Arc<dyn ModelClient>
+            } else {
+                Arc::new(Tagged({
+                    h.fetch_add(0, std::sync::atomic::Ordering::SeqCst);
+                    model.to_string()
+                })) as Arc<dyn ModelClient>
+            }
+        });
+
+        // The routed call site fails...
+        let result = pool
+            .for_site(CallSite::ResearchExtract)
+            .complete("", &Value::Null)
+            .await;
+        assert!(matches!(result, Err(AppError::Client(_))));
+        assert_eq!(failing_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // ...and nothing re-ran it anywhere else. The judgment-tier client is
+        // a different Arc entirely and was never consulted on its behalf.
+        let judgment = pool.for_site(CallSite::Verify);
+        let extract = pool.for_site(CallSite::ResearchExtract);
+        assert!(!Arc::ptr_eq(&judgment, &extract));
+        assert_eq!(
+            failing_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "exactly one attempt: no cross-model retry"
+        );
+    }
+
     // T010 / FR-001: each call site receives the client for its own model.
     #[tokio::test]
     async fn each_site_gets_its_own_resolved_model() {
