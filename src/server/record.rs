@@ -2,7 +2,7 @@
 //! around one invocation and the failure-class → MCP error mapping.
 
 use crate::error::{AppError, Outcome};
-use crate::telemetry::InvocationRecord;
+use crate::telemetry::{InvocationRecord, ModelUsage};
 use crate::traits::clock::TimeProvider;
 use crate::traits::storage::Storage;
 use chrono::{DateTime, Utc};
@@ -52,15 +52,16 @@ impl RecordGuard {
         }
     }
 
-    pub(super) async fn finish(mut self, input_tokens: u64, output_tokens: u64, outcome: Outcome) {
+    pub(super) async fn finish(mut self, usage: &ModelUsage, outcome: Outcome) {
         self.done = true;
         let record = InvocationRecord::create(
             self.clock.as_ref(),
             &self.session_id,
             &self.tool,
+            // The fallback attribution: a failed or cancelled invocation
+            // records no tokens, so there is no dominant model to derive.
             &self.model,
-            input_tokens,
-            output_tokens,
+            usage,
             outcome,
             self.started_at,
         );
@@ -87,8 +88,7 @@ impl Drop for RecordGuard {
             &self.session_id,
             &self.tool,
             &self.model,
-            0,
-            0,
+            &ModelUsage::default(),
             Outcome::Cancelled,
             self.started_at,
         );

@@ -35,6 +35,7 @@ use crate::research::contract::{ResearchParams, ResearchResult};
 use crate::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use crate::research::pipeline::{self, ResearchDeps};
 use crate::routing::{CallSite, RoutingTable};
+use crate::telemetry::ModelUsage;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
 use crate::traits::embedder::Embedder;
@@ -880,6 +881,8 @@ impl Parallax {
     /// The shared per-invocation wrapper: single exit point where every path —
     /// success, each failure class, cancellation (ct select arm), abandonment
     /// (guard Drop backstop) — leaves exactly one record (FR-010).
+    /// Record an invocation whose call sites all run on one model — eleven of
+    /// the twelve, and every invocation when nothing is routed.
     async fn run_recorded<T, Fut>(
         &self,
         tool_id: &'static str,
@@ -890,29 +893,54 @@ impl Parallax {
     where
         Fut: std::future::Future<Output = Result<(T, u64, u64), AppError>>,
     {
+        let attributed = model.clone();
+        self.run_recorded_usage(tool_id, model, ct, async move {
+            work.await.map(|(value, input_tokens, output_tokens)| {
+                (
+                    value,
+                    ModelUsage::single(&attributed, input_tokens, output_tokens),
+                )
+            })
+        })
+        .await
+    }
+
+    /// Record an invocation that may span models (018 FR-007). `attributed` is
+    /// the fallback model name for exits that carry no usage at all — a
+    /// cancellation or a failure before any pass completed.
+    async fn run_recorded_usage<T, Fut>(
+        &self,
+        tool_id: &'static str,
+        attributed: String,
+        ct: tokio_util::sync::CancellationToken,
+        work: Fut,
+    ) -> Result<Json<T>, ErrorData>
+    where
+        Fut: std::future::Future<Output = Result<(T, ModelUsage), AppError>>,
+    {
         let guard = RecordGuard::new(
             Arc::clone(&self.storage),
             Arc::clone(&self.clock),
             self.session_id.clone(),
             tool_id.to_string(),
-            model,
+            attributed,
         );
 
         tokio::select! {
             () = ct.cancelled() => {
-                guard.finish(0, 0, Outcome::Cancelled).await;
+                guard.finish(&ModelUsage::default(), Outcome::Cancelled).await;
                 Err(to_error_data(&AppError::Cancelled))
             }
             result = work => {
                 match result {
-                    Ok((value, input_tokens, output_tokens)) => {
-                        guard.finish(input_tokens, output_tokens, Outcome::Success).await;
+                    Ok((value, usage)) => {
+                        guard.finish(&usage, Outcome::Success).await;
                         Ok(Json(value))
                     }
                     Err(error) => {
                         // Token usage on failed invocations is not attributable
-                        // (failed passes carry no usage) — recorded as zero.
-                        guard.finish(0, 0, error.outcome()).await;
+                        // (failed passes carry no usage) — recorded as empty.
+                        guard.finish(&ModelUsage::default(), error.outcome()).await;
                         Err(to_error_data(&error))
                     }
                 }

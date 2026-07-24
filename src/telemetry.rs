@@ -45,6 +45,111 @@ pub fn cost_usd(model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
     }
 }
 
+/// Tokens one model consumed within a single invocation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// Input tokens billed.
+    pub input_tokens: u64,
+    /// Output tokens billed.
+    pub output_tokens: u64,
+}
+
+/// Per-model token usage accumulated across one invocation (018 D3).
+///
+/// Once call sites can run on different models, an invocation's cost is only
+/// computable per model — summing tokens first and dividing later is not
+/// recoverable. Ordered so serialization is deterministic.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelUsage {
+    by_model: std::collections::BTreeMap<String, Usage>,
+}
+
+impl ModelUsage {
+    /// Usage for an invocation that ran entirely on one model — the shape of
+    /// eleven of the twelve call sites, and of every invocation when nothing
+    /// is routed.
+    #[must_use]
+    pub fn single(model: &str, input_tokens: u64, output_tokens: u64) -> Self {
+        let mut usage = Self::default();
+        usage.add(model, input_tokens, output_tokens);
+        usage
+    }
+
+    /// Accumulate one model call's usage.
+    pub fn add(&mut self, model: &str, input_tokens: u64, output_tokens: u64) {
+        let entry = self.by_model.entry(model.to_string()).or_default();
+        entry.input_tokens = entry.input_tokens.saturating_add(input_tokens);
+        entry.output_tokens = entry.output_tokens.saturating_add(output_tokens);
+    }
+
+    /// Merge another accumulator into this one.
+    pub fn merge(&mut self, other: &Self) {
+        for (model, usage) in &other.by_model {
+            self.add(model, usage.input_tokens, usage.output_tokens);
+        }
+    }
+
+    /// Summed (input, output) across every model — the values the record's
+    /// existing token columns carry.
+    #[must_use]
+    pub fn totals(&self) -> (u64, u64) {
+        self.by_model.values().fold((0, 0), |(input, output), u| {
+            (
+                input.saturating_add(u.input_tokens),
+                output.saturating_add(u.output_tokens),
+            )
+        })
+    }
+
+    /// The model that consumed the most tokens — the attributed model (018 D5).
+    ///
+    /// Dominance is computed from **measured** tokens rather than estimated
+    /// cost: [`cost_usd`] may fall back to Opus-tier rates for a model with no
+    /// price row, so a cost-dominant rule could hand attribution to a model
+    /// that merely lacks a price. Ties break lexicographically so the choice is
+    /// deterministic. In the single-model case this is trivially the only
+    /// model, which is what keeps unrouted records byte-identical.
+    #[must_use]
+    pub fn dominant(&self) -> Option<&str> {
+        self.by_model
+            .iter()
+            .max_by(|(a_model, a), (b_model, b)| {
+                let a_total = a.input_tokens.saturating_add(a.output_tokens);
+                let b_total = b.input_tokens.saturating_add(b.output_tokens);
+                // Reverse the id comparison so the *earliest* id wins a tie
+                // (max_by keeps the last maximum).
+                a_total.cmp(&b_total).then(b_model.cmp(a_model))
+            })
+            .map(|(model, _)| model.as_str())
+    }
+
+    /// Participating models, sorted. Only models that actually ran (FR-015b).
+    #[must_use]
+    pub fn models(&self) -> Vec<String> {
+        self.by_model.keys().cloned().collect()
+    }
+
+    /// Per-model usage, in model-id order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Usage)> {
+        self.by_model.iter().map(|(model, u)| (model.as_str(), *u))
+    }
+
+    /// Whether any model consumed anything.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_model.is_empty()
+    }
+
+    /// Cost summed over models, each priced at its own rate (018 FR-008).
+    #[must_use]
+    pub fn cost_usd(&self) -> f64 {
+        self.by_model
+            .iter()
+            .map(|(model, u)| cost_usd(model, u.input_tokens, u.output_tokens))
+            .sum()
+    }
+}
+
 /// The observability record of one tool call (data-model.md §5; contract:
 /// `specs/001-core-layer/contracts/invocation-record.schema.json`).
 #[derive(Debug, Clone)]
@@ -73,29 +178,36 @@ pub struct InvocationRecord {
 
 impl InvocationRecord {
     /// Build the record at the single exit point of an invocation.
+    /// `attributed` names the model when `usage` is empty — a cancelled or
+    /// failed invocation records no tokens, so there is nothing to be dominant.
     #[must_use]
     #[allow(clippy::too_many_arguments)] // the record IS this tuple; a builder adds nothing
     pub fn create(
         clock: &dyn TimeProvider,
         session_id: &str,
         tool: &str,
-        model: &str,
-        input_tokens: u64,
-        output_tokens: u64,
+        attributed: &str,
+        usage: &ModelUsage,
         outcome: Outcome,
         started_at: DateTime<Utc>,
     ) -> Self {
         let created_at = clock.now();
         let latency_ms =
             u64::try_from((created_at - started_at).num_milliseconds().max(0)).unwrap_or(u64::MAX);
+        let (input_tokens, output_tokens) = usage.totals();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),
             tool: tool.to_string(),
-            model: model.to_string(),
+            // 018 D5: the dominant model by measured tokens; with one model
+            // that is trivially the only one, so unrouted records are
+            // byte-identical to pre-018 (FR-009a).
+            model: usage.dominant().unwrap_or(attributed).to_string(),
             input_tokens,
             output_tokens,
-            cost_usd: cost_usd(model, input_tokens, output_tokens),
+            // 018 FR-008: each model priced at its own rate, then summed. For
+            // one model this is the same arithmetic as before.
+            cost_usd: usage.cost_usd(),
             latency_ms,
             outcome,
             created_at,
@@ -178,8 +290,7 @@ mod tests {
             "session-1",
             "verify",
             "claude-opus-4-8",
-            300,
-            30,
+            &ModelUsage::single("claude-opus-4-8", 300, 30),
             Outcome::Success,
             started,
         );
@@ -192,6 +303,107 @@ mod tests {
         assert_eq!(record.created_at, fixed("2026-06-11T00:00:02.500Z"));
     }
 
+    // ---- 018 US2: per-model usage and cost --------------------------------
+
+    // T019 / D5.
+    #[test]
+    fn model_usage_totals_dominance_and_tie_break() {
+        let mut usage = ModelUsage::default();
+        usage.add("claude-opus-5", 100, 20);
+        usage.add("claude-haiku-4-5", 900, 80);
+        usage.add("claude-opus-5", 50, 5); // accumulates, not replaces
+
+        assert_eq!(usage.totals(), (1_050, 105));
+        assert_eq!(usage.models(), vec!["claude-haiku-4-5", "claude-opus-5"]);
+        // Haiku moved 980 tokens vs Opus's 175 — dominance is by measured
+        // tokens, even though Opus costs far more per token.
+        assert_eq!(usage.dominant(), Some("claude-haiku-4-5"));
+
+        // Ties break lexicographically, so attribution is deterministic.
+        let mut tied = ModelUsage::default();
+        tied.add("bbb", 10, 10);
+        tied.add("aaa", 10, 10);
+        assert_eq!(tied.dominant(), Some("aaa"));
+
+        // Nothing ran: no dominant model, no models, no cost.
+        let empty = ModelUsage::default();
+        assert_eq!(empty.dominant(), None);
+        assert!(empty.models().is_empty());
+        assert!(empty.is_empty());
+        assert!((empty.cost_usd() - 0.0).abs() < f64::EPSILON);
+    }
+
+    // T020 / FR-008 / SC-003: cost is the sum over models at each model's own
+    // rate — not one model's rate applied to every token.
+    #[test]
+    fn multi_model_cost_sums_each_model_at_its_own_rate() {
+        let mut usage = ModelUsage::default();
+        usage.add("claude-opus-4-8", 1_000_000, 1_000_000); // $5 + $25
+        usage.add("claude-haiku-4-5", 1_000_000, 1_000_000); // $1 + $5
+
+        // Hand computation: 30.00 + 6.00.
+        assert!((usage.cost_usd() - 36.0).abs() < 1e-9);
+
+        // The wrong answers this replaces: one model's rate over all tokens.
+        let all_at_opus = cost_usd("claude-opus-4-8", 2_000_000, 2_000_000);
+        let all_at_haiku = cost_usd("claude-haiku-4-5", 2_000_000, 2_000_000);
+        assert!((all_at_opus - 60.0).abs() < 1e-9);
+        assert!((all_at_haiku - 12.0).abs() < 1e-9);
+        assert!(usage.cost_usd() < all_at_opus && usage.cost_usd() > all_at_haiku);
+    }
+
+    // T021 / FR-009a / SC-004: a single-model record is byte-identical to what
+    // the pre-018 server wrote. If this needs editing, FR-002 broke.
+    #[test]
+    fn single_model_record_matches_the_pre_feature_values() {
+        let started = fixed("2026-06-11T00:00:00Z");
+        let mut clock = MockTimeProvider::new();
+        clock
+            .expect_now()
+            .return_const(fixed("2026-06-11T00:00:02.500Z"));
+
+        let record = InvocationRecord::create(
+            &clock,
+            "session-1",
+            "verify",
+            "claude-opus-4-8",
+            &ModelUsage::single("claude-opus-4-8", 300, 30),
+            Outcome::Success,
+            started,
+        );
+
+        // Exactly the pre-018 arithmetic and attribution.
+        assert_eq!(record.model, "claude-opus-4-8");
+        assert_eq!(record.input_tokens, 300);
+        assert_eq!(record.output_tokens, 30);
+        assert!((record.cost_usd - cost_usd("claude-opus-4-8", 300, 30)).abs() < f64::EPSILON);
+    }
+
+    // FR-015b: a model that failed or never ran contributes nothing. An empty
+    // accumulator falls back to the attributed model without inventing usage.
+    #[test]
+    fn an_exit_with_no_usage_attributes_without_inventing_tokens() {
+        let started = fixed("2026-06-11T00:00:00Z");
+        let mut clock = MockTimeProvider::new();
+        clock
+            .expect_now()
+            .return_const(fixed("2026-06-11T00:00:01Z"));
+
+        let record = InvocationRecord::create(
+            &clock,
+            "s",
+            "research",
+            "claude-opus-4-8",
+            &ModelUsage::default(),
+            Outcome::RetriesExhausted,
+            started,
+        );
+
+        assert_eq!(record.model, "claude-opus-4-8");
+        assert_eq!((record.input_tokens, record.output_tokens), (0, 0));
+        assert!((record.cost_usd - 0.0).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn clock_skew_never_panics_or_goes_negative() {
         let started = fixed("2026-06-11T00:00:10Z");
@@ -201,8 +413,15 @@ mod tests {
             .expect_now()
             .return_const(fixed("2026-06-11T00:00:05Z"));
 
-        let record =
-            InvocationRecord::create(&clock, "s", "verify", "m", 0, 0, Outcome::Timeout, started);
+        let record = InvocationRecord::create(
+            &clock,
+            "s",
+            "verify",
+            "m",
+            &ModelUsage::default(),
+            Outcome::Timeout,
+            started,
+        );
         assert_eq!(record.latency_ms, 0);
     }
 }
