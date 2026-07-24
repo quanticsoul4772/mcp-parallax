@@ -49,6 +49,7 @@ pub mod memory;
 pub mod modes;
 pub mod observability;
 pub mod research;
+pub mod routing;
 pub mod schema;
 pub mod server;
 pub mod storage;

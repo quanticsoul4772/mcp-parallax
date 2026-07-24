@@ -42,8 +42,16 @@ pub use crate::research::prompts::{
 
 /// Everything one research run needs, composed from the server's seams.
 pub struct ResearchDeps {
-    /// For scope/extract/verify/synthesis calls.
-    pub model_client: Arc<dyn ModelClient>,
+    /// Client for the scope call (018: `research_scope`).
+    pub scope_client: Arc<dyn ModelClient>,
+    /// Client for the per-source extraction call (018: `research_extract` —
+    /// the sole `bulk`-tier call site, and the one whose volume scales with
+    /// the number of fetched sources).
+    pub extract_client: Arc<dyn ModelClient>,
+    /// Client for the per-claim verification calls (018: `research_verify`).
+    pub verify_client: Arc<dyn ModelClient>,
+    /// Client for the synthesis call (018: `research_synthesize`).
+    pub synth_client: Arc<dyn ModelClient>,
     /// The search backend.
     pub search: Arc<dyn SearchProvider>,
     /// The shared clock (deadline checks + stats).
@@ -61,6 +69,10 @@ pub struct ResearchDeps {
     pub input_max_chars: usize,
     /// Concurrent fetch/extract/verify cap (`RESEARCH_CONCURRENCY`).
     pub concurrency: usize,
+    /// 018: which model each research call site resolved to, so per-model
+    /// token usage can be attributed without asking a client what it is
+    /// (the `ModelClient` trait deliberately does not say — research D2).
+    pub routing: crate::routing::RoutingTable,
 }
 
 /// The run's enforced ceilings: the budget meter and the wall clock, with a
@@ -121,7 +133,7 @@ pub async fn run(
     deps: &ResearchDeps,
     fetcher: &dyn Fetcher,
     params: &ResearchParams,
-) -> Result<(ResearchResult, u64, u64), AppError> {
+) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let meter = RunMeter::default();
     let ceiling = Ceiling {
@@ -302,7 +314,9 @@ pub async fn run(
         (answer, plan.sub_questions.clone(), Vec::new())
     } else {
         synthesize_grounded(
-            deps.model_client.as_ref(),
+            deps.synth_client.as_ref(),
+            deps.routing
+                .model_for(crate::routing::CallSite::ResearchSynthesize),
             &deps.synth_mode,
             params,
             &plan,
@@ -351,8 +365,7 @@ pub async fn run(
             sources: source_refs,
             stats,
         },
-        meter.input_tokens(),
-        meter.output_tokens(),
+        meter.usage(),
     ))
 }
 
@@ -376,10 +389,15 @@ async fn scope(
         .replace("<<question>>", params.question.trim());
 
     let completion = deps
-        .model_client
+        .scope_client
         .complete(&prompt, &deps.scope_mode.sanitized_schema)
         .await?;
-    meter.add(completion.input_tokens, completion.output_tokens);
+    meter.add(
+        deps.routing
+            .model_for(crate::routing::CallSite::ResearchScope),
+        completion.input_tokens,
+        completion.output_tokens,
+    );
     validate(&deps.scope_mode.output_schema, &completion.value)?;
     let out: ScopeOut = serde_json::from_value(completion.value)
         .map_err(|e| AppError::ValidationFailure(format!("scope shape: {e}")))?;
@@ -443,7 +461,7 @@ async fn fetch_and_extract(
         return None;
     };
     let (claims, input, output) =
-        match extract::extract_claims(deps.model_client.as_ref(), &deps.extract_mode, &readable)
+        match extract::extract_claims(deps.extract_client.as_ref(), &deps.extract_mode, &readable)
             .await
         {
             Ok(ok) => ok,
@@ -452,7 +470,12 @@ async fn fetch_and_extract(
                 return None;
             }
         };
-    meter.add(input, output);
+    meter.add(
+        deps.routing
+            .model_for(crate::routing::CallSite::ResearchExtract),
+        input,
+        output,
+    );
 
     let host = reqwest::Url::parse(&page.url)
         .ok()
@@ -521,7 +544,7 @@ async fn verify_claim(
     };
 
     let run = match verify::run(
-        deps.model_client.as_ref(),
+        deps.verify_client.as_ref(),
         mode,
         &verify_params,
         deps.input_max_chars,
@@ -534,7 +557,12 @@ async fn verify_claim(
             return None;
         }
     };
-    meter.add(run.input_tokens, run.output_tokens);
+    meter.add(
+        deps.routing
+            .model_for(crate::routing::CallSite::ResearchVerify),
+        run.input_tokens,
+        run.output_tokens,
+    );
 
     let mean_credibility = {
         let credibilities: Vec<f32> = claim

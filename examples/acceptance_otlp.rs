@@ -48,6 +48,7 @@ fn config() -> Config {
     Config {
         anthropic_api_key: "dummy-acceptance-key".into(),
         anthropic_model: "claude-opus-4-8".into(),
+        routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
         verify_ensemble_k: 3,
         input_max_chars: 50_000,
         voyage_api_key: None,
@@ -122,6 +123,9 @@ async fn main() {
         input_tokens: 1,
         output_tokens: 1,
         cost_usd: 0.0,
+        models: vec!["claude-opus-4-8".into()],
+        usage_by_model: mcp_parallax::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
+        cost_estimated: false,
         latency_ms: 1,
         outcome: mcp_parallax::error::Outcome::Success,
         created_at: chrono::Utc::now(),

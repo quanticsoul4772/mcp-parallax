@@ -2,6 +2,7 @@
 
 pub mod anthropic;
 pub mod brave;
+pub mod pool;
 pub mod voyage;
 
 pub use anthropic::AnthropicClient;

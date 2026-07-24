@@ -692,6 +692,74 @@ mod tests {
         assert_eq!(result.verdict, Verdict::Silence);
     }
 
+    // T049 / 018 FR-015, US3 scenario 4: a routed review model that cannot be
+    // reached must not block the turn. The checkpoint layer's fail-open
+    // guarantee has to survive routing — the review hop is a routable call
+    // site, so an operator pointing it at an unreachable model is now a
+    // reachable state.
+    #[tokio::test]
+    async fn turn_fails_open_when_the_routed_review_model_is_unreachable() {
+        let mut b = DepsBuilder::new();
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok(reversal_window()));
+        // The routed review client is unreachable.
+        b.client.expect_complete().returning(|_, _| {
+            Err(AppError::RetriesExhausted {
+                attempts: 4,
+                last: "provider unreachable".into(),
+            })
+        });
+        b.storage
+            .expect_delivered_signal_keys_since()
+            .returning(|_, _| Ok(vec![]));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| r.fail_open && r.verdict == Verdict::Silence)
+            .returning(|_| Ok(()));
+
+        let mut deps = b.build();
+        // The model the operator routed this call site to.
+        deps.model = "unreachable-model".into();
+
+        let (result, _, _) = run_turn(
+            &deps,
+            &turn_params(
+                "On reflection the database migration is not reversible in practice.",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+
+        // Silence, recorded, turn unblocked — never an error the caller sees.
+        assert!(result.fail_open);
+        assert_eq!(result.verdict, Verdict::Silence);
+        assert!(result.message.is_none());
+    }
+
+    // T047 / 018 C3: the checkpoint layer keeps its own cost record, priced
+    // from `CheckpointDeps.model`. That field now carries the ROUTED review
+    // model, so a routed review is priced at the routed model's rate.
+    #[test]
+    fn checkpoint_cost_prices_at_the_routed_model_rate() {
+        // Haiku and Opus differ by 5x on input; the field must decide which.
+        let haiku = telemetry::cost_usd("claude-haiku-4-5", 1_000_000, 0);
+        let opus = telemetry::cost_usd("claude-opus-4-8", 1_000_000, 0);
+        assert!(
+            (haiku - 1.0).abs() < 1e-9 && (opus - 5.0).abs() < 1e-9,
+            "rates differ, so the attributed model is load-bearing"
+        );
+        // An unpriced routed model still over-estimates rather than
+        // under-reports, and says so.
+        assert!(!telemetry::pricing_known("unreachable-model"));
+        assert!(
+            (telemetry::cost_usd("unreachable-model", 1_000_000, 0) - opus).abs() < 1e-9,
+            "unknown routed models fall back to Opus-tier, never cheaper"
+        );
+    }
+
     fn action_params(tool: &str, input: &str) -> CheckpointActionParams {
         CheckpointActionParams {
             session_id: "s1".into(),

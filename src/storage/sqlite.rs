@@ -10,7 +10,7 @@ use crate::error::{AppError, Outcome};
 use crate::memory::consolidate::{ConsolidationAction, ConsolidationRecord};
 use crate::memory::push::PushRecord;
 use crate::memory::{Kind, Memory, Status, Trust};
-use crate::telemetry::InvocationRecord;
+use crate::telemetry::{InvocationRecord, ModelUsage};
 use crate::traits::storage::Storage;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -122,6 +122,7 @@ impl SqliteStorage {
             .await
             .map_err(|e| AppError::Storage(format!("migration failed: {e}")))?;
         Self::migrate_memory_columns(&pool).await?;
+        Self::migrate_invocation_columns(&pool).await?;
 
         Ok(Self { pool })
     }
@@ -137,7 +138,8 @@ impl SqliteStorage {
     pub async fn list_invocations(&self) -> Result<Vec<InvocationRecord>, AppError> {
         let rows = sqlx::query(
             "SELECT id, session_id, tool, model, input_tokens, output_tokens,
-                    cost_usd, latency_ms, outcome, created_at
+                    cost_usd, latency_ms, outcome, created_at,
+                    models, usage_by_model
              FROM invocation_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -164,14 +166,31 @@ impl SqliteStorage {
                 let input_tokens = unsigned("input_tokens", row.get("input_tokens"))?;
                 let output_tokens = unsigned("output_tokens", row.get("output_tokens"))?;
                 let latency_ms = unsigned("latency_ms", row.get("latency_ms"))?;
+                let model: String = row.get("model");
+                // A row written before the 018 migration has NULL here and
+                // reads back as the single-model record it was (D4).
+                let usage_by_model = decode_usage_by_model(
+                    row.get::<Option<String>, _>("usage_by_model").as_deref(),
+                    &model,
+                    input_tokens,
+                    output_tokens,
+                );
+                let models = row
+                    .get::<Option<String>, _>("models")
+                    .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+                    .unwrap_or_else(|| usage_by_model.models());
+                let cost_estimated = usage_by_model.cost_estimated();
                 Ok(InvocationRecord {
                     id: row.get("id"),
                     session_id: row.get("session_id"),
                     tool: row.get("tool"),
-                    model: row.get("model"),
+                    model,
                     input_tokens,
                     output_tokens,
                     cost_usd: row.get("cost_usd"),
+                    models,
+                    usage_by_model,
+                    cost_estimated,
                     latency_ms,
                     outcome,
                     created_at,
@@ -223,6 +242,37 @@ impl SqliteStorage {
             .execute(pool)
             .await
             .map_err(|e| AppError::Storage(format!("migration backfill failed: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// 018 D4: additive columns for multi-model invocations, same
+    /// pragma-guarded shape as the 017 migration. Both are nullable — a row
+    /// written before this feature has no per-model detail to backfill, and
+    /// reads back as a single-model record from the `model` column.
+    async fn migrate_invocation_columns(pool: &SqlitePool) -> Result<(), AppError> {
+        let rows = sqlx::query("PRAGMA table_info(invocation_records)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("pragma table_info failed: {e}")))?;
+        let existing: Vec<String> = rows.iter().map(|r| r.get::<String, _>("name")).collect();
+        let additions: [(&str, &str); 2] = [
+            (
+                "models",
+                "ALTER TABLE invocation_records ADD COLUMN models TEXT",
+            ),
+            (
+                "usage_by_model",
+                "ALTER TABLE invocation_records ADD COLUMN usage_by_model TEXT",
+            ),
+        ];
+        for (column, ddl) in additions {
+            if !existing.iter().any(|c| c == column) {
+                sqlx::query(ddl)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| AppError::Storage(format!("migration ({column}) failed: {e}")))?;
+            }
         }
         Ok(())
     }
@@ -703,8 +753,9 @@ impl Storage for SqliteStorage {
         sqlx::query(
             "INSERT INTO invocation_records
                 (id, session_id, tool, model, input_tokens, output_tokens,
-                 cost_usd, latency_ms, outcome, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 cost_usd, latency_ms, outcome, created_at,
+                 models, usage_by_model)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -716,6 +767,8 @@ impl Storage for SqliteStorage {
         .bind(record.latency_ms as i64)
         .bind(record.outcome.as_str())
         .bind(record.created_at.to_rfc3339())
+        .bind(encode_models(&record.models))
+        .bind(encode_usage_by_model(&record.usage_by_model))
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
@@ -736,6 +789,65 @@ fn embedding_from_blob(blob: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// 018 D4: `models` as a JSON array of ids.
+fn encode_models(models: &[String]) -> Option<String> {
+    serde_json::to_string(models).ok()
+}
+
+/// 018 D4: `usage_by_model` as a JSON array of per-model rows. `pricing_known`
+/// is stored alongside each entry so an operator reading history can tell a
+/// looked-up price from the conservative fallback without re-deriving it from
+/// a price table that may since have changed.
+fn encode_usage_by_model(usage: &ModelUsage) -> Option<String> {
+    let rows: Vec<serde_json::Value> = usage
+        .iter()
+        .map(|(model, u)| {
+            serde_json::json!({
+                "model": model,
+                "input_tokens": u.input_tokens,
+                "output_tokens": u.output_tokens,
+                "pricing_known": crate::telemetry::pricing_known(model),
+            })
+        })
+        .collect();
+    serde_json::to_string(&rows).ok()
+}
+
+/// Rebuild per-model usage from storage. A pre-018 row (NULL) reads back as
+/// the single-model record it was, from the `model` column and the summed
+/// token counts — no backfill, no invented history.
+fn decode_usage_by_model(
+    json: Option<&str>,
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> ModelUsage {
+    let Some(json) = json else {
+        return ModelUsage::single(model, input_tokens, output_tokens);
+    };
+    let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
+        return ModelUsage::single(model, input_tokens, output_tokens);
+    };
+    let mut usage = ModelUsage::default();
+    for row in rows {
+        if let Some(id) = row.get("model").and_then(serde_json::Value::as_str) {
+            usage.add(
+                id,
+                row.get("input_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                row.get("output_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            );
+        }
+    }
+    if usage.is_empty() {
+        return ModelUsage::single(model, input_tokens, output_tokens);
+    }
+    usage
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -751,6 +863,9 @@ mod tests {
             input_tokens: 300,
             output_tokens: 30,
             cost_usd: 0.00225,
+            models: vec!["claude-opus-4-8".into()],
+            usage_by_model: ModelUsage::single("claude-opus-4-8", 300, 30),
+            cost_estimated: false,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
@@ -772,6 +887,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    // T023 / 018 D4: the additive columns survive re-running the migration,
+    // and a row written before them reads back as the single-model record it
+    // was — no backfill, no invented history.
+    #[tokio::test]
+    async fn invocation_columns_migrate_idempotently_and_old_rows_still_read() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+
+        // Simulate a pre-018 row: the columns exist (the migration ran at
+        // connect) but carry NULL, exactly as a row written before it would.
+        sqlx::query(
+            "INSERT INTO invocation_records
+                (id, session_id, tool, model, input_tokens, output_tokens,
+                 cost_usd, latency_ms, outcome, created_at, models, usage_by_model)
+             VALUES ('old', 's', 'verify', 'claude-opus-4-8', 300, 30,
+                     0.00225, 1200, 'success', '2026-06-11T12:00:00+00:00', NULL, NULL)",
+        )
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+
+        // Re-running the migration must not fail or disturb the row.
+        SqliteStorage::migrate_invocation_columns(&storage.pool)
+            .await
+            .unwrap();
+
+        let records = storage.list_invocations().await.unwrap();
+        let old = records.iter().find(|r| r.id == "old").unwrap();
+        assert_eq!(old.models, vec!["claude-opus-4-8".to_string()]);
+        assert_eq!(old.usage_by_model.totals(), (300, 30));
+        assert_eq!(old.usage_by_model.dominant(), Some("claude-opus-4-8"));
+        assert!(!old.cost_estimated);
+
+        // And a new multi-model row round-trips its per-model detail.
+        let mut usage = ModelUsage::default();
+        usage.add("claude-opus-5", 100, 20);
+        usage.add("claude-haiku-4-5", 900, 80);
+        let mut record = sample(Outcome::Success);
+        record.id = "new".into();
+        record.models = usage.models();
+        record.cost_usd = usage.cost_usd();
+        record.cost_estimated = usage.cost_estimated();
+        record.usage_by_model = usage.clone();
+        storage.record_invocation(&record).await.unwrap();
+
+        let records = storage.list_invocations().await.unwrap();
+        let new = records.iter().find(|r| r.id == "new").unwrap();
+        assert_eq!(new.usage_by_model, usage);
+        assert_eq!(
+            new.models,
+            vec!["claude-haiku-4-5".to_string(), "claude-opus-5".to_string()]
+        );
     }
 
     #[tokio::test]

@@ -130,12 +130,20 @@ pub struct Claim {
 pub(crate) struct RunMeter {
     input_tokens: AtomicU64,
     output_tokens: AtomicU64,
+    /// 018 T032: the same tokens, kept per model so the invocation record can
+    /// price each at its own rate. The atomics above remain the budget's hot
+    /// path — ceilings are denominated in tokens, not currency, so budget and
+    /// deadline behavior is unchanged by routing.
+    by_model: std::sync::Mutex<crate::telemetry::ModelUsage>,
 }
 
 impl RunMeter {
-    pub(crate) fn add(&self, input: u64, output: u64) {
+    pub(crate) fn add(&self, model: &str, input: u64, output: u64) {
         self.input_tokens.fetch_add(input, Ordering::Relaxed);
         self.output_tokens.fetch_add(output, Ordering::Relaxed);
+        if let Ok(mut usage) = self.by_model.lock() {
+            usage.add(model, input, output);
+        }
     }
     pub(crate) fn total(&self) -> u64 {
         self.input_tokens() + self.output_tokens()
@@ -145,6 +153,13 @@ impl RunMeter {
     }
     pub(crate) fn output_tokens(&self) -> u64 {
         self.output_tokens.load(Ordering::Relaxed)
+    }
+    /// Per-model usage accumulated so far.
+    pub(crate) fn usage(&self) -> crate::telemetry::ModelUsage {
+        self.by_model
+            .lock()
+            .map(|usage| usage.clone())
+            .unwrap_or_default()
     }
 }
 

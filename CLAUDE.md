@@ -221,14 +221,26 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-No active feature. Last merged: `017-memory-consolidation` (PR #52, `d79d8f8`) —
-the write-path half of the memory layer: admission-time consolidation levers
-(supersede/merge/context-specific via a cosine screen gating one decline-biased
-judgment), quarantined end-of-turn auto-capture as the turn hop's third judgment,
-ranking-only decay, and memory status (active/superseded/merged) via the project's
-first ALTER TABLE migration. T019 live dogfood PASS — all four sequences (result
-recorded in [tasks.md](specs/017-memory-consolidation/tasks.md)). Start the next
-feature with `/speckit-specify`.
+Active: `018-model-routing` — plan complete, tasks not yet generated. Plan:
+[specs/018-model-routing/plan.md](specs/018-model-routing/plan.md) (spec, research,
+data-model, contracts/config.md, and quickstart alongside it).
+
+Per-call-site model routing: each of the twelve model call sites can run on a model
+chosen for the work it does, instead of all twelve sharing `ANTHROPIC_MODEL`. Two
+tiers (`bulk` = research extraction alone, `judgment` = the other eleven) over a
+reserved `PARALLAX_MODEL_*` namespace, with per-call-site overrides resolved
+most-specific-first; an unknown suffix in that namespace is a startup error, which is
+what makes a misspelled route visible. `ModelClient` keeps its signature — routing is
+construction-time, one client per distinct model. Cost accounting becomes per-model
+(`ModelUsage`) so one invocation spanning two models is priced at each model's own
+rate; the record stays one row per invocation, gaining `models` and `usage_by_model`,
+with the attributed model chosen by measured tokens rather than estimated cost. Off
+by default: unset means byte-identical behavior, costs included.
+
+Motivation is measured, not assumed — after the 004 evidence-grounding fix a
+quick-tier research question went 104k → 175.9k tokens and tripped its 150k budget,
+dropping 43 of 89 claims. Named deferral (research D7): per-family `thinking`
+suppression, to be decided on measured cost. Next: `/speckit-tasks`.
 <!-- SPECKIT END -->
 
 ## Working style

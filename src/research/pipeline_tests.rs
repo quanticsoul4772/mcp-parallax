@@ -109,7 +109,14 @@ fn deps_with(
     register(&mut registry).unwrap();
     let verify_mode = research_verify_mode(registry.get(crate::modes::verify::VERIFY_ID).unwrap());
     ResearchDeps {
-        model_client: client,
+        // 018: the four research call sites are routable independently. These
+        // fixtures share one scripted client, so every existing assertion's
+        // expected value is unchanged — the split is structural here, and the
+        // per-site routing behavior is asserted in `client::pool`.
+        scope_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        extract_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        verify_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        synth_client: client,
         search: Arc::new(search),
         clock,
         scope_mode: registry.get(SCOPE_MODE_ID).unwrap().clone(),
@@ -118,6 +125,9 @@ fn deps_with(
         verify_mode,
         input_max_chars: 50_000,
         concurrency: 4,
+        // These fixtures share one scripted client, so every call site reports
+        // the same model and existing token assertions are unchanged.
+        routing: crate::routing::RoutingTable::single("claude-opus-4-8"),
     }
 }
 
@@ -191,7 +201,7 @@ async fn happy_path_citations_resolve_and_stats_account() {
     let search = search_returning(&["https://example.com/a", "https://example.com/b"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, input_tokens, output_tokens) = run(
+    let (result, usage) = run(
         &deps,
         &fetcher_ok(),
         &params("does it hold?", Some(Depth::Quick)),
@@ -239,7 +249,11 @@ async fn happy_path_citations_resolve_and_stats_account() {
 
     // Token usage summed across every call: scope + 2 extract + 2 verify (K=1)
     // + 1 synthesis = 6 calls at (10, 5).
-    assert_eq!((input_tokens, output_tokens), (60, 30));
+    // Same expected totals as before 018 — only the accessor changed. The
+    // fixtures run every call site on one model, so this is also the
+    // single-model identity FR-009a promises.
+    assert_eq!(usage.totals(), (60, 30));
+    assert_eq!(usage.models(), vec!["claude-opus-4-8".to_string()]);
     assert_eq!(result.stats.tokens, 90);
     assert!(result.confidence > 0.0);
 }
@@ -266,7 +280,7 @@ async fn verify_prompt_carries_source_excerpts_not_titles_alone() {
     let search = search_returning(&["https://example.com/a"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, _, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
 
@@ -322,7 +336,7 @@ async fn single_fetch_failure_degrades_and_counts_never_fails_the_run() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _, _) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
+    let (result, _usage) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
     assert_eq!(result.stats.sources_found, 2);
@@ -355,7 +369,7 @@ async fn refuted_claims_are_dropped_and_contested_claims_surface() {
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Standard)))
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Standard)))
         .await
         .unwrap();
 
@@ -398,7 +412,7 @@ async fn grounding_violation_retries_once_with_the_violation_named() {
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, _, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
     assert_eq!(result.answer, "Grounded [s1].");
@@ -425,7 +439,7 @@ async fn second_grounding_failure_demotes_instead_of_emitting_ungrounded_content
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, _, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
     assert!(!result.answer.contains("[s99]"), "{}", result.answer);
@@ -449,7 +463,7 @@ async fn no_verified_findings_yields_a_deterministic_honest_gap_answer() {
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let fetcher = MockFetcher::new();
 
-    let (result, _, _) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
+    let (result, _usage) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
     assert!(result.answer.contains("No verifiable findings"));
@@ -584,7 +598,7 @@ async fn depth_scales_the_scope_and_constraints_override_the_tier() {
         }),
         ..params("q?", Some(Depth::Deep))
     };
-    let (result, _, _) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _usage) = run(&deps, &fetcher, &p).await.unwrap();
     assert_eq!(result.stats.sources_fetched, 1);
 }
 
@@ -654,7 +668,7 @@ async fn budget_ceiling_stops_new_work_and_synthesizes_early() {
         }),
         ..params("q?", Some(Depth::Quick))
     };
-    let (result, _, _) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _usage) = run(&deps, &fetcher, &p).await.unwrap();
     assert!(result.stats.stopped_early);
     assert_eq!(result.stats.stop_reason, Some(StopReason::Budget));
     assert!(!result.answer.is_empty(), "well-formed, not an error");
@@ -695,7 +709,7 @@ async fn deadline_ceiling_stops_new_work_with_the_reason_named() {
         }),
         ..params("q?", Some(Depth::Quick))
     };
-    let (result, _, _) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _usage) = run(&deps, &fetcher, &p).await.unwrap();
     assert!(result.stats.stopped_early);
     assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
     assert!(!result.answer.is_empty());
@@ -750,7 +764,7 @@ async fn partial_angle_failure_degrades_and_counts() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
     assert_eq!(result.stats.angles, 2);

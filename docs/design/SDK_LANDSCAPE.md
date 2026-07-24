@@ -261,6 +261,26 @@ traits are already the seams these slot behind):
 1. **Now (core, unblocks the first primitive):** `rmcp` wiring; the thin Anthropic
    client using **native structured outputs** (`output_config.format`); `schemars` +
    validator. This makes `ModelClient::complete(prompt, schema)` real.
+   **Amended 2026-07-24 (feature 018 — per-call-site model routing):** the server no
+   longer runs every model call on one configured model. Each of the twelve call
+   sites resolves its own model over a reserved `PARALLAX_MODEL_*` namespace (two
+   work-kind tiers, per-site overrides, most-specific-first, falling through to
+   `ANTHROPIC_MODEL`), and the process holds **one client per distinct resolved
+   model** rather than one client. `ModelClient::complete(prompt, schema)` is
+   unchanged and gains no model parameter — the model stays a property of the client
+   instance, so routing is construction-time and every seam and mock is untouched.
+   Nothing is routed by default: unset means the pre-018 single-client behavior,
+   costs included. Cost accounting became per-model as a consequence — one
+   invocation may now span models, so a single rate applied to summed tokens would
+   be wrong under either. Artifacts: `specs/018-model-routing/`.
+   **Named deferral (018 research D7):** per-family suppression of adaptive thinking
+   is deferred. The families disagree about the `thinking` parameter — Opus 5 and
+   Sonnet 5 accept an explicit disable, Fable 5 rejects it with a 400 at any effort —
+   so the server sends the one shape all of them accept (omit the field) and budgets
+   output for reasoning it cannot switch off. Suppressing it per family would be
+   cheaper on the judgment tier; that is to be decided on measured cost, not
+   predicted, and is recorded here so the narrowing is visible outside the feature's
+   spec directory.
 2. **Memory (next):** Voyage 4 client; spike **sqlite-vec under sqlx** (resolve the
    loading caveat) before building recall.
 3. **Research primitive:** Brave provider behind the trait + rs-trafilatura extract.
