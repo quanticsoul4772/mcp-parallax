@@ -80,6 +80,7 @@ struct Handles {
     checkpoint_evaluations: Counter<u64>,
     checkpoint_duration: Histogram<f64>,
     push_evaluations: Counter<u64>,
+    consolidation_actions: Counter<u64>,
 }
 
 /// Owns the providers; dropped/shut down by `main` on exit.
@@ -280,6 +281,11 @@ where
             .with_unit("{evaluation}")
             .with_description("Push evaluations by outcome (surfaced/silent/fail-open)")
             .build(),
+        consolidation_actions: meter
+            .u64_counter("parallax.consolidation.actions")
+            .with_unit("{action}")
+            .with_description("Consolidation actions by kind (supersede/merge/capture)")
+            .build(),
     };
     // First init wins; a second init (tests) keeps the existing handles —
     // emission still flows to the first exporters, which is what the
@@ -462,6 +468,44 @@ pub fn emit_checkpoint(record: &CheckpointRecord) {
             KeyValue::new("parallax.checkpoint.verdict", verdict),
         ],
     );
+}
+
+/// Mirror one consolidation audit record (017) as a span + counter at the
+/// same exit point as the store write (007 FR-009). Attributes carry ids,
+/// action, and session only — never memory content.
+pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationRecord) {
+    if !ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+    let Some(handles) = HANDLES.get() else {
+        return;
+    };
+    let action = record.action.as_str();
+    let attributes = vec![
+        KeyValue::new("parallax.consolidation.action", action),
+        KeyValue::new("parallax.consolidation.source_id", record.source_id.clone()),
+        KeyValue::new(
+            "parallax.consolidation.target_id",
+            record.target_id.clone().unwrap_or_default(),
+        ),
+        KeyValue::new(
+            "parallax.session_id",
+            record.session_id.clone().unwrap_or_default(),
+        ),
+    ];
+    let (start, end) = record_window(record.created_at, 0);
+    let mut span = handles
+        .tracer
+        .span_builder("parallax.consolidation")
+        .with_kind(SpanKind::Internal)
+        .with_start_time(start)
+        .with_attributes(attributes)
+        .start_with_context(&handles.tracer, &Context::new());
+    span.set_status(Status::Ok);
+    span.end_with_timestamp(end);
+    handles
+        .consolidation_actions
+        .add(1, &[KeyValue::new("parallax.consolidation.action", action)]);
 }
 
 /// Mirror one push evaluation record (016) as a span + counter.

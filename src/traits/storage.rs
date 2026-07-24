@@ -2,8 +2,9 @@
 
 use crate::checkpoint::CheckpointRecord;
 use crate::error::AppError;
+use crate::memory::consolidate::ConsolidationRecord;
 use crate::memory::push::PushRecord;
-use crate::memory::Memory;
+use crate::memory::{Memory, Status};
 use crate::telemetry::InvocationRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -92,6 +93,44 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns [`AppError`] on read failure or a contract-violating row.
     async fn pushed_memory_ids(&self, session_id: &str) -> Result<Vec<String>, AppError>;
+
+    /// Persist one consolidation audit record (017 FR-009 — exactly one per
+    /// applied action / capture proposal / cap drop).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn record_consolidation(&self, record: &ConsolidationRecord) -> Result<(), AppError>;
+
+    /// Count of capture proposals already recorded for this session — the
+    /// 017 `CAPTURE_SESSION_CAP` lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure.
+    async fn captures_in_session(&self, session_id: &str) -> Result<u32, AppError>;
+
+    /// Update ONLY a memory's status columns (017 FR-010 — content columns
+    /// are never written after admission).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn update_memory_status(
+        &self,
+        id: &str,
+        status: Status,
+        replaced_by: Option<String>,
+    ) -> Result<(), AppError>;
+
+    /// Refresh `last_reinforced_at` for the given memories (017 research
+    /// D5 — retrieval reinforcement; fire-and-forget at call sites).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn touch_reinforcement(&self, ids: &[String], now: DateTime<Utc>)
+        -> Result<(), AppError>;
 }
 
 #[cfg(test)]

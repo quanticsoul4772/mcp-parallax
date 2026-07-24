@@ -6,6 +6,7 @@
 //! apply to them (research.md 003 D6). They share the seams, the error
 //! taxonomy, and the recorded execution path.
 
+pub mod consolidate;
 pub mod contract;
 pub mod push;
 pub mod ranking;
@@ -46,6 +47,49 @@ impl Kind {
             "fact" => Some(Self::Fact),
             _ => None,
         }
+    }
+}
+
+/// Consolidation status (017 data-model §1): only `Active` records
+/// participate in retrieval; all records remain inspectable. Content is
+/// never modified by a status change (FR-010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    /// Participates in retrieval.
+    Active,
+    /// Replaced as current truth by a newer admission (`replaced_by`).
+    Superseded,
+    /// Unified into a canonical record (`replaced_by`).
+    Merged,
+}
+
+impl Status {
+    /// Stable string form (the `status` column).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Superseded => "superseded",
+            Self::Merged => "merged",
+        }
+    }
+
+    /// Parse the stable string form (storage read path).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "active" => Some(Self::Active),
+            "superseded" => Some(Self::Superseded),
+            "merged" => Some(Self::Merged),
+            _ => None,
+        }
+    }
+
+    /// Whether this record participates in retrieval (FR-011).
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Active)
     }
 }
 
@@ -113,6 +157,13 @@ pub struct Memory {
     pub embedding_model: String,
     /// RFC 3339 via `TimeProvider`.
     pub created_at: DateTime<Utc>,
+    /// Consolidation status (017) — only `Active` participates in retrieval.
+    pub status: Status,
+    /// The superseding / canonical record's id, when status is not active.
+    pub replaced_by: Option<String>,
+    /// Decay clock (017 research D5): refreshed when returned by recall or
+    /// surfaced by push; backfilled to `created_at` at migration.
+    pub last_reinforced_at: DateTime<Utc>,
 }
 
 #[cfg(test)]

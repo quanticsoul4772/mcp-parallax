@@ -1,6 +1,9 @@
 //! Recall ranking — pure, deterministic functions (research.md 003 D4).
 //!
-//! `effective = cosine + RECENCY_WEIGHT × 2^(−age_days/30) + (ε if trusted)`.
+//! `effective = cosine + RECENCY_WEIGHT × 2^(−age_days/30) + (ε if trusted)`,
+//! where age counts from `last_reinforced_at` (017 research D5: retrieval
+//! refreshes the decay clock; ranking-only — the raw-cosine floors never
+//! read this term, so decay reorders and cannot hide).
 //! Adding ε to *trusted* memories implements the FR-004 band as a clean total
 //! order: an untrusted memory outranks a trusted one only when its relevance
 //! advantage exceeds ε **adjusted by the recency delta** — since recency
@@ -70,7 +73,7 @@ pub fn rank(memories: Vec<Memory>, query: &[f32], now: DateTime<Utc>) -> Vec<Ran
         .map(|memory| {
             let relevance = cosine(query, &memory.embedding);
             let mut effective =
-                RECENCY_WEIGHT.mul_add(recency_decay(memory.created_at, now), relevance);
+                RECENCY_WEIGHT.mul_add(recency_decay(memory.last_reinforced_at, now), relevance);
             if memory.trust.is_trusted() {
                 effective += TRUST_EPSILON;
             }
@@ -104,6 +107,9 @@ mod tests {
             embedding,
             embedding_model: "voyage-4".into(),
             created_at: Utc::now() - chrono::Duration::days(age_days),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: Utc::now() - chrono::Duration::days(age_days),
         }
     }
 
@@ -190,6 +196,18 @@ mod tests {
             Utc::now(),
         );
         assert_eq!(ranked[0].memory.id, "old-trusted");
+    }
+
+    // 017 research D5: reinforcement refreshes the decay clock — an old
+    // memory recently reinforced ranks like a fresh one.
+    #[test]
+    fn reinforcement_refreshes_the_recency_term() {
+        let query = [1.0, 0.0];
+        let mut old_reinforced = memory("old-reinforced", vec![1.0, 0.0], Trust::FirstHand, 300);
+        old_reinforced.last_reinforced_at = Utc::now();
+        let old_stale = memory("old-stale", vec![1.0, 0.0], Trust::FirstHand, 300);
+        let ranked = rank(vec![old_stale, old_reinforced], &query, Utc::now());
+        assert_eq!(ranked[0].memory.id, "old-reinforced");
     }
 
     #[test]

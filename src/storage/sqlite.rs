@@ -7,8 +7,9 @@
 
 use crate::checkpoint::{Boundary, CheckpointRecord, Signal, SignalKind, Verdict};
 use crate::error::{AppError, Outcome};
+use crate::memory::consolidate::{ConsolidationAction, ConsolidationRecord};
 use crate::memory::push::PushRecord;
-use crate::memory::{Kind, Memory, Trust};
+use crate::memory::{Kind, Memory, Status, Trust};
 use crate::telemetry::InvocationRecord;
 use crate::traits::storage::Storage;
 use chrono::{DateTime, Utc};
@@ -61,6 +62,15 @@ CREATE TABLE IF NOT EXISTS checkpoint_records (
     cost_usd          REAL NOT NULL,
     created_at        TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS consolidation_records (
+    id         TEXT PRIMARY KEY,
+    session_id TEXT,
+    action     TEXT NOT NULL,
+    source_id  TEXT NOT NULL,
+    target_id  TEXT,
+    basis      TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS push_records (
     id           TEXT PRIMARY KEY,
     session_id   TEXT NOT NULL,
@@ -111,6 +121,7 @@ impl SqliteStorage {
             .execute(&pool)
             .await
             .map_err(|e| AppError::Storage(format!("migration failed: {e}")))?;
+        Self::migrate_memory_columns(&pool).await?;
 
         Ok(Self { pool })
     }
@@ -171,6 +182,88 @@ impl SqliteStorage {
 }
 
 impl SqliteStorage {
+    /// 017 research D2: the project's first column migration — additive
+    /// `ALTER TABLE` guarded by `PRAGMA table_info`, loud on failure.
+    /// `last_reinforced_at` backfills to `created_at`.
+    async fn migrate_memory_columns(pool: &SqlitePool) -> Result<(), AppError> {
+        let rows = sqlx::query("PRAGMA table_info(memories)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("pragma table_info failed: {e}")))?;
+        let existing: Vec<String> = rows.iter().map(|r| r.get::<String, _>("name")).collect();
+        let additions: [(&str, &str); 3] = [
+            (
+                "status",
+                "ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+            ),
+            (
+                "replaced_by",
+                "ALTER TABLE memories ADD COLUMN replaced_by TEXT",
+            ),
+            (
+                "last_reinforced_at",
+                "ALTER TABLE memories ADD COLUMN last_reinforced_at TEXT NOT NULL DEFAULT ''",
+            ),
+        ];
+        let mut added_reinforced = false;
+        for (column, ddl) in additions {
+            if !existing.iter().any(|c| c == column) {
+                sqlx::query(ddl)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| AppError::Storage(format!("migration ({column}) failed: {e}")))?;
+                added_reinforced |= column == "last_reinforced_at";
+            }
+        }
+        if added_reinforced {
+            sqlx::query(
+                "UPDATE memories SET last_reinforced_at = created_at
+                 WHERE last_reinforced_at = ''",
+            )
+            .execute(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("migration backfill failed: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Every consolidation record, newest first (test/audit surface).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    pub async fn list_consolidations(&self) -> Result<Vec<ConsolidationRecord>, AppError> {
+        let rows = sqlx::query(
+            "SELECT id, session_id, action, source_id, target_id, basis, created_at
+             FROM consolidation_records ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("consolidation read failed: {e}")))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let action_text: String = row.get("action");
+                let action = ConsolidationAction::parse(&action_text).ok_or_else(|| {
+                    AppError::Storage(format!("unknown consolidation action: {action_text}"))
+                })?;
+                let created_text: String = row.get("created_at");
+                let created_at = DateTime::parse_from_rfc3339(&created_text)
+                    .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
+                    .with_timezone(&Utc);
+                Ok(ConsolidationRecord {
+                    id: row.get("id"),
+                    session_id: row.get("session_id"),
+                    action,
+                    source_id: row.get("source_id"),
+                    target_id: row.get("target_id"),
+                    basis: row.get("basis"),
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
     /// Every push evaluation record, newest first (test/audit surface).
     ///
     /// # Errors
@@ -336,8 +429,9 @@ impl Storage for SqliteStorage {
         sqlx::query(
             "INSERT INTO memories
                 (id, content, kind, origin, external, trust, tags,
-                 embedding, embedding_model, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 embedding, embedding_model, created_at, status,
+                 replaced_by, last_reinforced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&memory.id)
         .bind(&memory.content)
@@ -349,6 +443,9 @@ impl Storage for SqliteStorage {
         .bind(embedding_to_blob(&memory.embedding))
         .bind(&memory.embedding_model)
         .bind(memory.created_at.to_rfc3339())
+        .bind(memory.status.as_str())
+        .bind(&memory.replaced_by)
+        .bind(memory.last_reinforced_at.to_rfc3339())
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("memory write failed: {e}")))?;
@@ -358,7 +455,8 @@ impl Storage for SqliteStorage {
     async fn load_memories(&self) -> Result<Vec<Memory>, AppError> {
         let rows = sqlx::query(
             "SELECT id, content, kind, origin, external, trust, tags,
-                    embedding, embedding_model, created_at
+                    embedding, embedding_model, created_at, status,
+                    replaced_by, last_reinforced_at
              FROM memories",
         )
         .fetch_all(&self.pool)
@@ -393,6 +491,14 @@ impl Storage for SqliteStorage {
                     .map_err(|e| AppError::Storage(format!("bad created_at: {e}")))?
                     .with_timezone(&Utc);
                 let external: i64 = row.get("external");
+                let status_text: String = row.get("status");
+                let status = Status::parse(&status_text).ok_or_else(|| {
+                    AppError::Storage(format!("unknown status in store: {status_text}"))
+                })?;
+                let reinforced_text: String = row.get("last_reinforced_at");
+                let last_reinforced_at = DateTime::parse_from_rfc3339(&reinforced_text)
+                    .map_err(|e| AppError::Storage(format!("bad last_reinforced_at: {e}")))?
+                    .with_timezone(&Utc);
                 Ok(Memory {
                     id,
                     content: row.get("content"),
@@ -404,6 +510,9 @@ impl Storage for SqliteStorage {
                     embedding: embedding_from_blob(blob),
                     embedding_model: row.get("embedding_model"),
                     created_at,
+                    status,
+                    replaced_by: row.get("replaced_by"),
+                    last_reinforced_at,
                 })
             })
             .collect()
@@ -521,6 +630,72 @@ impl Storage for SqliteStorage {
             ids.extend(surfaced);
         }
         Ok(ids)
+    }
+
+    async fn record_consolidation(&self, record: &ConsolidationRecord) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO consolidation_records
+                (id, session_id, action, source_id, target_id, basis, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&record.id)
+        .bind(&record.session_id)
+        .bind(record.action.as_str())
+        .bind(&record.source_id)
+        .bind(&record.target_id)
+        .bind(&record.basis)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("consolidation record write failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn captures_in_session(&self, session_id: &str) -> Result<u32, AppError> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS n FROM consolidation_records
+             WHERE session_id = ? AND action = 'capture_proposed'",
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("capture count read failed: {e}")))?;
+        let n: i64 = row.get("n");
+        u32::try_from(n).map_err(|_| AppError::Storage(format!("negative capture count: {n}")))
+    }
+
+    async fn update_memory_status(
+        &self,
+        id: &str,
+        status: Status,
+        replaced_by: Option<String>,
+    ) -> Result<(), AppError> {
+        // Status columns ONLY — content columns are never written after
+        // admission (017 FR-010).
+        sqlx::query("UPDATE memories SET status = ?, replaced_by = ? WHERE id = ?")
+            .bind(status.as_str())
+            .bind(replaced_by)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("memory status update failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn touch_reinforcement(
+        &self,
+        ids: &[String],
+        now: DateTime<Utc>,
+    ) -> Result<(), AppError> {
+        for id in ids {
+            sqlx::query("UPDATE memories SET last_reinforced_at = ? WHERE id = ?")
+                .bind(now.to_rfc3339())
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Storage(format!("reinforcement update failed: {e}")))?;
+        }
+        Ok(())
     }
 
     async fn record_invocation(&self, record: &InvocationRecord) -> Result<(), AppError> {
@@ -654,6 +829,11 @@ mod tests {
             embedding: vec![0.25, -1.5, 3.0e-7, 42.0],
             embedding_model: "voyage-4".into(),
             created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
         }
@@ -912,6 +1092,160 @@ mod tests {
             storage.load_session("s1").await.unwrap(),
             Some(json!({ "k": 2 }))
         );
+    }
+
+    // 017 research D2: the first column migration, proven against a
+    // pre-017 database file.
+    #[tokio::test]
+    async fn pre_017_database_migrates_with_rows_intact_and_idempotently() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre017.db").to_string_lossy().to_string();
+
+        // Create the OLD schema by hand and insert one memory row.
+        {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{path}"))
+                        .unwrap()
+                        .create_if_missing(true),
+                )
+                .await
+                .unwrap();
+            sqlx::raw_sql(
+                "CREATE TABLE memories (
+                    id TEXT PRIMARY KEY, content TEXT NOT NULL, kind TEXT NOT NULL,
+                    origin TEXT NOT NULL, external INTEGER NOT NULL, trust TEXT NOT NULL,
+                    tags TEXT NOT NULL, embedding BLOB NOT NULL,
+                    embedding_model TEXT NOT NULL, created_at TEXT NOT NULL
+                );",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query("INSERT INTO memories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind("pre017-1")
+                .bind("a fact stored before the migration")
+                .bind("fact")
+                .bind("test")
+                .bind(0_i64)
+                .bind("first_hand")
+                .bind("[]")
+                .bind(embedding_to_blob(&[1.0, 0.0]))
+                .bind("voyage-4")
+                .bind("2026-07-01T00:00:00+00:00")
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool.close().await;
+        }
+
+        // Connect (runs the migration) — twice, proving idempotence.
+        for _ in 0..2 {
+            let storage = SqliteStorage::connect(&path).await.unwrap();
+            let memories = storage.load_memories().await.unwrap();
+            assert_eq!(memories.len(), 1);
+            let m = &memories[0];
+            assert_eq!(m.id, "pre017-1");
+            assert_eq!(m.content, "a fact stored before the migration");
+            assert_eq!(m.status, Status::Active);
+            assert_eq!(m.replaced_by, None);
+            // Backfill: last_reinforced_at == created_at.
+            assert_eq!(m.last_reinforced_at, m.created_at);
+            drop(storage);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn status_updates_touch_only_status_columns_and_round_trip() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let memory = test_memory_017("m1");
+        storage.save_memory(&memory).await.unwrap();
+        storage
+            .update_memory_status("m1", Status::Superseded, Some("m2".to_string()))
+            .await
+            .unwrap();
+        let loaded = storage.load_memories().await.unwrap();
+        assert_eq!(loaded[0].status, Status::Superseded);
+        assert_eq!(loaded[0].replaced_by.as_deref(), Some("m2"));
+        // Content untouched (FR-010).
+        assert_eq!(loaded[0].content, memory.content);
+
+        // Reinforcement round trip.
+        let later = chrono::DateTime::parse_from_rfc3339("2026-08-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        storage
+            .touch_reinforcement(&["m1".to_string()], later)
+            .await
+            .unwrap();
+        let loaded = storage.load_memories().await.unwrap();
+        assert_eq!(loaded[0].last_reinforced_at, later);
+        assert_eq!(loaded[0].created_at, memory.created_at);
+    }
+
+    #[tokio::test]
+    async fn consolidation_records_round_trip_and_capture_count() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-23T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let row = |id: &str, session: Option<&str>, action: ConsolidationAction| {
+            crate::memory::consolidate::ConsolidationRecord {
+                id: id.into(),
+                session_id: session.map(str::to_string),
+                action,
+                source_id: "src".into(),
+                target_id: Some("dst".into()),
+                basis: "test basis".into(),
+                created_at: now,
+            }
+        };
+        storage
+            .record_consolidation(&row("c1", None, ConsolidationAction::Supersede))
+            .await
+            .unwrap();
+        storage
+            .record_consolidation(&row(
+                "c2",
+                Some("s-1"),
+                ConsolidationAction::CaptureProposed,
+            ))
+            .await
+            .unwrap();
+        storage
+            .record_consolidation(&row("c3", Some("s-1"), ConsolidationAction::CaptureDropped))
+            .await
+            .unwrap();
+
+        let listed = storage.list_consolidations().await.unwrap();
+        assert_eq!(listed.len(), 3);
+        // The cap counts only proposals (017 data-model §4).
+        assert_eq!(storage.captures_in_session("s-1").await.unwrap(), 1);
+        assert_eq!(storage.captures_in_session("s-none").await.unwrap(), 0);
+    }
+
+    fn test_memory_017(id: &str) -> Memory {
+        Memory {
+            id: id.into(),
+            content: format!("content of {id}"),
+            kind: Kind::Fact,
+            origin: "test".into(),
+            external: false,
+            trust: Trust::FirstHand,
+            tags: vec![],
+            embedding: vec![1.0, 0.0],
+            embedding_model: "voyage-4".into(),
+            created_at: chrono::DateTime::parse_from_rfc3339("2026-07-23T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            status: Status::Active,
+            replaced_by: None,
+            last_reinforced_at: chrono::DateTime::parse_from_rfc3339("2026-07-23T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        }
     }
 
     fn push_record(id: &str, session: &str, surfaced: &[&str], fail_open: bool) -> PushRecord {

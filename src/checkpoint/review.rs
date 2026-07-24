@@ -45,9 +45,9 @@ const POLARITY_CUES: &[&str] = &[
 ];
 
 const REVIEW_PROMPT_TEMPLATE: &str = "\
-You are an independent end-of-turn reviewer making two separate judgments \
+You are an independent end-of-turn reviewer making three separate judgments \
 about one working session. You see only the material below — no author \
-identity, no justification, no stakes. On BOTH judgments, when uncertain \
+identity, no justification, no stakes. On ALL judgments, when uncertain \
 answer false; a false alarm is worse than a miss.\n\
 \n\
 JUDGMENT 1 — self-contradiction. Decide whether ANY candidate statement pair \
@@ -73,9 +73,23 @@ violation_basis (one sentence: what in the turn violates it). If several are \
 violated, return the most material one. Otherwise (or when no preferences \
 are listed) violates=false with empty strings.\n\
 \n\
+JUDGMENT 3 — capture proposal. Decide whether this turn produced knowledge \
+worth keeping for future sessions: a reusable approach that DEMONSTRABLY \
+worked (capture_kind=skill) or a failure with a DIAGNOSED cause \
+(capture_kind=lesson). Most turns produce neither — routine progress, \
+partial work, and unverified hunches are NOT capture-worthy; when uncertain, \
+capture_worthy=false with capture_kind=none and empty strings. If capture is \
+marked DISABLED in the turn evidence, always return capture_worthy=false. \
+Otherwise, when one clearly qualifies, return capture_worthy=true with \
+capture_content (the candidate memory: one self-contained, specific \
+sentence or two — future sessions see ONLY this text) and capture_basis \
+(one sentence: what in the turn demonstrates it).\n\
+\n\
 Candidate pairs:\n<<candidates>>\n\
 \n\
-Stored preferences and turn evidence:\n<<preferences>>";
+Stored preferences:\n<<preferences>>\n\
+\n\
+Turn evidence:\n<<turn>>";
 
 /// The hop's constrained output (flat + closed — Principle II).
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -98,6 +112,40 @@ pub struct ReviewOut {
     /// One sentence: what in the turn violates it (empty when violates is
     /// false).
     pub violation_basis: String,
+    /// The turn produced capture-worthy knowledge (017; uncertain ⇒ false).
+    pub capture_worthy: bool,
+    /// skill | lesson | none (017).
+    pub capture_kind: CaptureKind,
+    /// The candidate memory, self-contained ("" when none). Stored verbatim
+    /// as an UNTRUSTED candidate; never trusted automatically.
+    pub capture_content: String,
+    /// One sentence of grounds ("" when none).
+    pub capture_basis: String,
+}
+
+/// The capture judgment's kind (flat-legal scalar enum, 017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(inline)]
+pub enum CaptureKind {
+    /// A reusable approach that demonstrably worked.
+    Skill,
+    /// A failure with a diagnosed cause.
+    Lesson,
+    /// Nothing capture-worthy (the decline default).
+    None,
+}
+
+/// A capture proposal mapped from the hop (017): server-side storage rules
+/// live in `run_turn` (quarantine, cap, audit).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureProposal {
+    /// The stored memory kind.
+    pub kind: crate::memory::Kind,
+    /// The candidate content, verbatim from the hop.
+    pub content: String,
+    /// The judgment's grounds.
+    pub basis: String,
 }
 
 /// One candidate pair for the hop.
@@ -193,6 +241,7 @@ pub fn mine_candidates(
 pub fn rank_recall(query: &[f32], memories: &[Memory]) -> Vec<(f32, Memory)> {
     let mut scored: Vec<(f32, Memory)> = memories
         .iter()
+        .filter(|m| m.status.is_active()) // 017 FR-011
         .map(|m| (cosine(query, &m.embedding), m.clone()))
         .filter(|(score, _)| *score >= REVIEW_RECALL_FLOOR)
         .collect();
@@ -211,24 +260,18 @@ pub fn turn_activity(window: &TrajectoryWindow) -> String {
     window_summary(&window.entries)
 }
 
-/// Run the single review hop — one pass, two judgments (015 FR-010).
-///
-/// Judges the mined contradiction candidates and preference candidates in
-/// a single constrained pass and returns the confirmed flags in delivery
-/// order: contradiction first, then violation (015 research D6).
-///
-/// # Errors
-///
-/// Provider classes from the model call; schema violations are
-/// `ValidationFailure`.
-pub async fn review_once(
-    client: &dyn ModelClient,
+/// Assemble the hop prompt: one-pass substitution on the pristine template
+/// only (the 005 template-injection rule) — all placeholders are located
+/// before any caller text is inserted, so listed content is never
+/// re-scanned for placeholders.
+fn assemble_prompt(
     mode: &CorrectiveMode,
     candidates: &[Candidate],
     preferences: &[PreferenceCandidate],
     final_message: &str,
     activity: &str,
-) -> Result<(Vec<(Signal, String)>, u64, u64), AppError> {
+    capture_enabled: bool,
+) -> Result<String, AppError> {
     use std::fmt::Write as _;
     let mut listing = String::new();
     if candidates.is_empty() {
@@ -251,28 +294,74 @@ pub async fn review_once(
         for (i, preference) in preferences.iter().enumerate() {
             let _ = writeln!(preference_block, "{}. \"{}\"", i + 1, preference.content);
         }
-        let _ = writeln!(
-            preference_block,
-            "Turn final message (excerpt): \"{}\"",
-            truncate(final_message, FINAL_MESSAGE_EXCERPT_CHARS)
-        );
-        let _ = writeln!(preference_block, "Turn activity: {activity}");
     }
-    // One-pass substitution on the pristine template only (the 005
-    // template-injection rule): both placeholders are located on the
-    // pristine template before any caller text is inserted, so listed
-    // content is never re-scanned for placeholders.
+    // 017: the turn evidence is its own always-present section — it serves
+    // both the violation and capture judgments.
+    let mut turn_block = String::new();
+    let _ = writeln!(
+        turn_block,
+        "Turn final message (excerpt): \"{}\"",
+        truncate(final_message, FINAL_MESSAGE_EXCERPT_CHARS)
+    );
+    let _ = writeln!(turn_block, "Turn activity: {activity}");
+    let _ = writeln!(
+        turn_block,
+        "Capture: {}",
+        if capture_enabled {
+            "ENABLED"
+        } else {
+            "DISABLED"
+        }
+    );
     let Some((head, rest)) = mode.prompt_template.split_once("<<candidates>>") else {
         return Err(AppError::ValidationFailure(
             "review template lost its candidates placeholder".to_string(),
         ));
     };
-    let Some((mid, tail)) = rest.split_once("<<preferences>>") else {
+    let Some((mid, rest2)) = rest.split_once("<<preferences>>") else {
         return Err(AppError::ValidationFailure(
             "review template lost its preferences placeholder".to_string(),
         ));
     };
-    let prompt = format!("{head}{listing}{mid}{preference_block}{tail}");
+    let Some((mid2, tail)) = rest2.split_once("<<turn>>") else {
+        return Err(AppError::ValidationFailure(
+            "review template lost its turn placeholder".to_string(),
+        ));
+    };
+    Ok(format!(
+        "{head}{listing}{mid}{preference_block}{mid2}{turn_block}{tail}"
+    ))
+}
+
+/// Run the single review hop — one pass, three judgments (015 FR-010 ·
+/// 017 research D6).
+///
+/// Judges the mined contradiction candidates, preference candidates, and
+/// capture-worthiness in a single constrained pass; returns the confirmed
+/// flags in delivery order (contradiction first, then violation) plus any
+/// capture proposal.
+///
+/// # Errors
+///
+/// Provider classes from the model call; schema violations are
+/// `ValidationFailure`.
+pub async fn review_once(
+    client: &dyn ModelClient,
+    mode: &CorrectiveMode,
+    candidates: &[Candidate],
+    preferences: &[PreferenceCandidate],
+    final_message: &str,
+    activity: &str,
+    capture_enabled: bool,
+) -> Result<(Vec<(Signal, String)>, Option<CaptureProposal>, u64, u64), AppError> {
+    let prompt = assemble_prompt(
+        mode,
+        candidates,
+        preferences,
+        final_message,
+        activity,
+        capture_enabled,
+    )?;
 
     let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
     validate(&mode.output_schema, &completion.value)?;
@@ -318,7 +407,32 @@ pub async fn review_once(
             flagged.push(preference::violation_signal(matched, &out.violation_basis));
         }
     }
-    Ok((flagged, completion.input_tokens, completion.output_tokens))
+    // 017: map the capture judgment (decline-biased, server-guarded — the
+    // proposal's storage rules live in run_turn).
+    let proposal =
+        if capture_enabled && out.capture_worthy && !out.capture_content.trim().is_empty() {
+            match out.capture_kind {
+                CaptureKind::Skill => Some(CaptureProposal {
+                    kind: crate::memory::Kind::Skill,
+                    content: out.capture_content,
+                    basis: out.capture_basis,
+                }),
+                CaptureKind::Lesson => Some(CaptureProposal {
+                    kind: crate::memory::Kind::Lesson,
+                    content: out.capture_content,
+                    basis: out.capture_basis,
+                }),
+                CaptureKind::None => None,
+            }
+        } else {
+            None
+        };
+    Ok((
+        flagged,
+        proposal,
+        completion.input_tokens,
+        completion.output_tokens,
+    ))
 }
 
 /// The fixed flag template (FR-005/SC-007): parameterized only by evidence.
@@ -481,6 +595,11 @@ mod tests {
             created_at: DateTime::parse_from_rfc3339("2026-06-12T00:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: DateTime::parse_from_rfc3339("2026-06-12T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
         }
     }
 
@@ -496,6 +615,15 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert!(candidates[0].earlier.contains("staging"));
         assert!(candidates[0].between.contains("1 tool call(s)"));
+    }
+
+    // 017 FR-011: non-active memories never enter review recall.
+    #[test]
+    fn rank_recall_excludes_non_active_memories() {
+        let mut superseded = constraint_memory("Old decision: deploy straight to production.");
+        superseded.status = crate::memory::Status::Superseded;
+        let ranked = rank_recall(&[1.0, 0.0], &[superseded]);
+        assert!(ranked.is_empty());
     }
 
     #[test]
@@ -534,6 +662,20 @@ mod tests {
         // enforces flat+closed) and carries the new violation fields.
         let properties = mode.output_schema["properties"].as_object().unwrap();
         for field in ["violates", "violated_preference", "violation_basis"] {
+            assert!(properties.contains_key(field), "{field} missing");
+        }
+        // 017: the third judgment (capture) — placeholder, decline bias,
+        // DISABLED honor, and the four schema fields.
+        assert!(mode.prompt_template.contains("<<turn>>"));
+        assert!(mode.prompt_template.contains("capture_worthy=false"));
+        assert!(mode.prompt_template.contains("NOT capture-worthy"));
+        assert!(mode.prompt_template.contains("DISABLED"));
+        for field in [
+            "capture_worthy",
+            "capture_kind",
+            "capture_content",
+            "capture_basis",
+        ] {
             assert!(properties.contains_key(field), "{field} missing");
         }
     }
@@ -577,19 +719,24 @@ mod tests {
                     "basis": "Both cannot hold as written.",
                     "violates": false,
                     "violated_preference": "",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": ""
                 }),
                 input_tokens: 50,
                 output_tokens: 20,
             })
         });
-        let (flagged, inp, out) = review_once(
+        let (flagged, _proposal, inp, out) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
             &[],
             "The migration is not reversible.",
             "no tool activity in this turn's window",
+            false,
         )
         .await
         .unwrap();
@@ -614,19 +761,24 @@ mod tests {
                     "basis": "The final statement is a refinement, not a reversal.",
                     "violates": false,
                     "violated_preference": "",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": ""
                 }),
                 input_tokens: 40,
                 output_tokens: 15,
             })
         });
-        let (flagged, _, _) = review_once(
+        let (flagged, _proposal, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
             &[],
             "The migration is not reversible in practice.",
             "no tool activity in this turn's window",
+            false,
         )
         .await
         .unwrap();
@@ -659,6 +811,10 @@ mod tests {
                     // the test-gate candidate, and the flag must quote the
                     // SERVER-held content, not this echo.
                     "violated_preference": "always run the test gate before you claim done",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": "The turn claims completion with no test activity."
                 }),
                 input_tokens: 60,
@@ -669,13 +825,14 @@ mod tests {
             preference_candidate("mem-friday", "never deploy on fridays"),
             preference_candidate("mem-gate", "always run the test gate before claiming done"),
         ];
-        let (flagged, _, _) = review_once(
+        let (flagged, _proposal, _, _) = review_once(
             &client,
             &test_mode(),
             &[],
             &preferences,
             "All done — everything works.",
             "no tool activity in this turn's window",
+            false,
         )
         .await
         .unwrap();
@@ -708,6 +865,10 @@ mod tests {
                     "basis": "Both cannot hold as written.",
                     "violates": true,
                     "violated_preference": "never deploy on fridays",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": "The turn deployed on a friday."
                 }),
                 input_tokens: 70,
@@ -718,19 +879,99 @@ mod tests {
             "mem-friday",
             "never deploy on fridays",
         )];
-        let (flagged, _, _) = review_once(
+        let (flagged, _proposal, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
             &preferences,
             "Deployed; the migration is not reversible.",
             "1 tool call(s) in this turn's window (0 failed; tools: bash)",
+            false,
         )
         .await
         .unwrap();
         assert_eq!(flagged.len(), 2);
         assert_eq!(flagged[0].0.kind, SignalKind::SelfContradiction);
         assert_eq!(flagged[1].0.kind, SignalKind::PreferenceViolation);
+    }
+
+    #[tokio::test]
+    async fn a_capture_proposal_maps_kind_and_content_and_disabled_suppresses() {
+        // Enabled: a worthy skill maps to a proposal.
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|prompt, _| {
+            assert!(prompt.contains("Capture: ENABLED"), "{prompt}");
+            Ok(Completion {
+                value: json!({
+                    "contradicts": false,
+                    "statement_a": "",
+                    "statement_b": "",
+                    "basis": "Consistent.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": "",
+                    "capture_worthy": true,
+                    "capture_kind": "skill",
+                    "capture_content": "pin the toolchain before bisecting flaky builds",
+                    "capture_basis": "The turn used exactly this to find the regression."
+                }),
+                input_tokens: 40,
+                output_tokens: 20,
+            })
+        });
+        let (flagged, proposal, _, _) = review_once(
+            &client,
+            &test_mode(),
+            &[],
+            &[],
+            "Found it by pinning the toolchain first.",
+            "3 tool call(s) in this turn's window (0 failed; tools: bash)",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(flagged.is_empty());
+        let proposal = proposal.unwrap();
+        assert_eq!(proposal.kind, crate::memory::Kind::Skill);
+        assert_eq!(
+            proposal.content,
+            "pin the toolchain before bisecting flaky builds"
+        );
+
+        // Disabled: even a worthy answer maps to nothing (server guard).
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|prompt, _| {
+            assert!(prompt.contains("Capture: DISABLED"), "{prompt}");
+            Ok(Completion {
+                value: json!({
+                    "contradicts": false,
+                    "statement_a": "",
+                    "statement_b": "",
+                    "basis": "Consistent.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": "",
+                    "capture_worthy": true,
+                    "capture_kind": "lesson",
+                    "capture_content": "should never reach storage",
+                    "capture_basis": "disabled test"
+                }),
+                input_tokens: 30,
+                output_tokens: 10,
+            })
+        });
+        let (_, proposal, _, _) = review_once(
+            &client,
+            &test_mode(),
+            &[candidate()],
+            &[],
+            "Anything at all for the disabled case.",
+            "no tool activity in this turn's window",
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(proposal.is_none());
     }
 
     #[tokio::test]
@@ -745,19 +986,24 @@ mod tests {
                     "basis": "Consistent.",
                     "violates": true,
                     "violated_preference": "a preference that was never listed",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": "hallucinated"
                 }),
                 input_tokens: 30,
                 output_tokens: 10,
             })
         });
-        let (flagged, _, _) = review_once(
+        let (flagged, _proposal, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
             &[],
             "Nothing notable.",
             "no tool activity in this turn's window",
+            false,
         )
         .await
         .unwrap();

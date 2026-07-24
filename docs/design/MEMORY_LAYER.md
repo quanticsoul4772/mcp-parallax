@@ -79,6 +79,28 @@ forgetting but by recalling badly.
 
 ## The write path: capture → reflect → consolidate
 
+> **2026-07-23 amendment (017, `memory-consolidation`).** The write path now
+> exists, on three clarify-decided rails (each decided via the `decide`
+> protocol; trace: [`specs/017-memory-consolidation/`](../../specs/017-memory-consolidation/)):
+> **consolidation runs on admission only** — a deterministic cosine screen
+> (0.75) gates one budgeted, decline-biased judgment
+> (same_assertion/updates/context_specific/distinct); `updates` supersedes
+> (status change, never deletion), `same_assertion` merges at ≥ 0.90 with a
+> trust guard (an untrusted admission never merges away a trusted record —
+> which also makes promotion-by-re-admission the promotion path, no new
+> surface). **Decay is ranking-only** — the recency term reads a
+> reinforcement-refreshed clock (retrieval refreshes it); nothing is ever
+> auto-evicted or hidden, keeping the no-silent-loss guarantee absolute and
+> the memory-blindness trap closed. **Capture is harness-triggered at end of
+> turn** — the checkpoint review hop's third judgment proposes at most a
+> capped few candidates per session, stored **untrusted/quarantined**
+> (push never surfaces them; recall labels them), so the poisoning surface
+> does not widen. The two traps below are encoded as hard rules: merge
+> survivors are byte-identical (no generated paraphrase ever replaces
+> stored content) and decay never removes. One `consolidation_records`
+> audit row per action/proposal/drop. Eviction remains manual-only
+> (`forget`), per the corpus's compliance framing.
+
 Storing everything is as bad as storing nothing. Four consolidation levers
 ([Letta](https://www.letta.com/blog/agent-memory), [mem0](https://mem0.ai/blog/memory-eviction-and-forgetting-in-ai-agents)):
 
