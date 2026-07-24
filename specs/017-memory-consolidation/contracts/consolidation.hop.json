@@ -1,0 +1,27 @@
+{
+  "$comment": "The admission-time consolidation judgment's constrained output (017 research D3). Invoked at most ONCE per admission, only when the deterministic cosine screen fires (best same-kind active pair >= SUPERSEDE_SCREEN_TAU). Flat + closed. The hop CLASSIFIES the pair; all apply rules (merge/supersede/keep-both), the trust guard, status writes, and audit wording are pure server functions. Decline bias: uncertain => distinct (keep both). The prompt presents both contents verbatim, blind to which the user 'prefers'.",
+  "name": "memory_consolidation",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "relation": {
+        "type": "string",
+        "enum": ["same_assertion", "updates", "context_specific", "distinct"],
+        "description": "same_assertion: the two state the same knowledge in different words. updates: the NEW memory replaces the OLD as current truth. context_specific: the new statement is situational and does not displace the standing one (the Berlin/Lisbon rule). distinct: different knowledge. Uncertain => distinct."
+      },
+      "basis": {
+        "type": "string",
+        "description": "One sentence of grounds for the classification."
+      }
+    },
+    "required": ["relation", "basis"],
+    "additionalProperties": false
+  },
+  "apply_rules": {
+    "same_assertion": "merge IF cosine >= MERGE_SCREEN_TAU AND NOT (new is untrusted AND old is trusted); older record status := merged, replaced_by := new id; contents byte-identical, never edited",
+    "updates": "older record status := superseded, replaced_by := new id",
+    "context_specific": "no action (both stay active)",
+    "distinct": "no action (both stay active)",
+    "judgment_failure_or_timeout": "no action (decline bias, fail-open)"
+  }
+}

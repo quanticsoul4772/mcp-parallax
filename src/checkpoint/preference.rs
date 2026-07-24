@@ -103,6 +103,9 @@ mod tests {
             embedding: vec![1.0, 0.0],
             embedding_model: "voyage-4".into(),
             created_at: fixed_now(),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: fixed_now(),
         }
     }
 

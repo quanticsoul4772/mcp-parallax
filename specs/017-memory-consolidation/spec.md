@@ -267,8 +267,12 @@ happened via the explicit deletion path.
 - **FR-008**: Capture MUST fail open within a hard time budget: a capture
   failure or overrun changes nothing about the session and stores nothing.
 - **FR-009**: Every consolidation action (supersession, merge) and every
-  capture evaluation MUST write exactly one audit record from which action
-  rates, per-memory histories, and drop counts are computable.
+  capture **proposal or cap-drop** MUST write exactly one consolidation
+  audit record from which action rates, per-memory histories, and drop
+  counts are computable. Capture **evaluations that propose nothing** are
+  auditable through the existing end-of-turn audit record (the capture
+  judgment appears in its evaluated surface) — no per-turn consolidation
+  row is written for silence.
 - **FR-010**: Stored memory content MUST never be modified in place by any
   lever; the only content-removing operation remains the user's explicit
   deletion, which continues to work on every record regardless of status.
@@ -282,7 +286,7 @@ happened via the explicit deletion path.
 
 ### Key Entities
 
-- **Memory status**: active | superseded | merged-away — a new dimension on
+- **Memory status**: active | superseded | merged — a new dimension on
   stored memories; only active records participate in retrieval; all
   records remain inspectable.
 - **Supersession link**: replaced-by relationship with date and basis.

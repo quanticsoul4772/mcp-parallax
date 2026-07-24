@@ -150,6 +150,10 @@ pub enum SignalKind {
     /// The turn violating a trusted stored preference (015 — the enforce
     /// half of capture→store→recall→enforce; flag-only authority).
     PreferenceViolation,
+    /// The turn-end capture judgment (017): listed as evaluated when memory
+    /// is configured; proposals store quarantined candidates and audit
+    /// through `consolidation_records` — this kind never fires as a signal.
+    CaptureProposal,
 }
 
 impl SignalKind {
@@ -162,6 +166,7 @@ impl SignalKind {
             Self::MemoryConflict => "memory_conflict",
             Self::SelfContradiction => "self_contradiction",
             Self::PreferenceViolation => "preference_violation",
+            Self::CaptureProposal => "capture_proposal",
         }
     }
 }

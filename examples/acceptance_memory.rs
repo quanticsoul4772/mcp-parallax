@@ -113,7 +113,12 @@ const QUERIES: &[(&str, usize)] = &[
 async fn deps(config: &Config, db_path: &str) -> MemoryDeps {
     let mut registry = ModeRegistry::new();
     verify::register(&mut registry, config.verify_ensemble_k).expect("register");
+    mcp_parallax::memory::consolidate::register(&mut registry).expect("register consolidation");
     let verify_mode = registry.get(VERIFY_ID).expect("mode").clone();
+    let consolidation_mode = registry
+        .get(mcp_parallax::memory::consolidate::CONSOLIDATION_MODE_ID)
+        .expect("mode")
+        .clone();
     let storage = SqliteStorage::connect(db_path).await.expect("store");
     MemoryDeps {
         embedder: Arc::new(VoyageClient::new(config).expect("voyage key present")),
@@ -121,6 +126,7 @@ async fn deps(config: &Config, db_path: &str) -> MemoryDeps {
         clock: Arc::new(SystemClock),
         model_client: Arc::new(AnthropicClient::new(config)),
         verify_mode,
+        consolidation_mode,
         input_max_chars: config.input_max_chars,
         default_recall_limit: config.memory_recall_limit,
     }

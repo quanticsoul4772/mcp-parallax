@@ -152,6 +152,9 @@ async fn main() {
                 embedding: embedding.vector,
                 embedding_model: embedder.model_id().to_string(),
                 created_at: clock.now(),
+                status: mcp_parallax::memory::Status::Active,
+                replaced_by: None,
+                last_reinforced_at: clock.now(),
             })
             .await
             .unwrap();

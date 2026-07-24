@@ -1,0 +1,44 @@
+{
+  "$comment": "The end-of-turn review hop's constrained output, extended for 017 (supersedes the 015/016-era shape). ONE model pass, now three judgments: self-contradiction (006), preference violation (015), capture proposal (017 research D6). Flat + closed. The hop classifies/proposes; verdict mapping, capture storage (external=true => Untrusted quarantine), the per-session cap, and all wording are server-side. Decline bias on all three judgments: uncertain => false/none.",
+  "name": "checkpoint_review",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "contradicts": { "type": "boolean" },
+      "statement_a": { "type": "string" },
+      "statement_b": { "type": "string" },
+      "basis": { "type": "string" },
+      "violates": { "type": "boolean" },
+      "violated_preference": { "type": "string" },
+      "violation_basis": { "type": "string" },
+      "capture_worthy": {
+        "type": "boolean",
+        "description": "The turn produced a reusable approach that demonstrably worked or a failure with a diagnosed cause. Most turns => false."
+      },
+      "capture_kind": {
+        "type": "string",
+        "enum": ["skill", "lesson", "none"],
+        "description": "skill: reusable approach that worked. lesson: what failed and why. none when capture_worthy is false."
+      },
+      "capture_content": {
+        "type": "string",
+        "description": "The candidate memory, self-contained and specific ('' when none). Stored verbatim as an UNTRUSTED candidate; never trusted automatically."
+      },
+      "capture_basis": {
+        "type": "string",
+        "description": "One sentence: what in the turn demonstrates it ('' when none)."
+      }
+    },
+    "required": [
+      "contradicts", "statement_a", "statement_b", "basis",
+      "violates", "violated_preference", "violation_basis",
+      "capture_worthy", "capture_kind", "capture_content", "capture_basis"
+    ],
+    "additionalProperties": false
+  },
+  "server_side": {
+    "storage": "capture_worthy && memory configured && captures_in_session < CAPTURE_SESSION_CAP => new memory (kind from judgment, origin 'auto-capture: session <id>', external=true => trust Untrusted) + capture_proposed audit row; cap exceeded => capture_dropped audit row, nothing stored",
+    "fail_open": "capture storage failure never affects the turn's checkpoint verdict",
+    "quarantine": "untrusted standing means push never surfaces it (016 FR-004) and recall labels it; promotion only via re-admission or verify (017 research D7)"
+  }
+}

@@ -113,6 +113,7 @@ pub struct PushRecord {
 pub fn select(ranked: Vec<ranking::Ranked>, already_pushed: &[String]) -> Vec<SurfacedMemory> {
     ranked
         .into_iter()
+        .filter(|r| r.memory.status.is_active())
         .filter(|r| r.memory.trust.is_trusted())
         .filter(|r| r.relevance >= PUSH_RELEVANCE_TAU)
         .filter(|r| !already_pushed.contains(&r.memory.id))
@@ -213,6 +214,17 @@ pub async fn run(
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
     crate::observability::emit_push(&record);
     deps.storage.record_push(&record).await?;
+    // 017 research D5: being surfaced refreshes the decay clock —
+    // fire-and-forget, failures never affect the response.
+    if !record.surfaced_ids.is_empty() {
+        if let Err(error) = deps
+            .storage
+            .touch_reinforcement(&record.surfaced_ids, deps.clock.now())
+            .await
+        {
+            tracing::warn!(%error, "push reinforcement update failed (ignored)");
+        }
+    }
 
     let hook_specific_output = (!surfaced.is_empty()).then(|| SurfaceHookOutput {
         hook_event_name: "UserPromptSubmit".to_string(),
@@ -261,6 +273,9 @@ mod tests {
             embedding,
             embedding_model: "voyage-4".into(),
             created_at: fixed_now(),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: fixed_now(),
         }
     }
 
@@ -279,6 +294,17 @@ mod tests {
         let ids: Vec<&str> = picked.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["at"]);
         assert!(picked[0].score >= PUSH_RELEVANCE_TAU);
+    }
+
+    #[test]
+    fn non_active_memories_are_excluded_at_any_relevance() {
+        // 017 FR-011: superseded/merged records never surface.
+        let mut superseded = memory("old", Trust::FirstHand, vec![1.0, 0.0]);
+        superseded.status = crate::memory::Status::Superseded;
+        let active = memory("current", Trust::FirstHand, vec![0.9, 0.1]);
+        let picked = select(ranked(vec![superseded, active], &[1.0, 0.0]), &[]);
+        let ids: Vec<&str> = picked.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["current"]);
     }
 
     #[test]
@@ -369,6 +395,7 @@ mod tests {
             clock.expect_now().return_const(fixed_now());
             let mut registry = ModeRegistry::new();
             crate::modes::verify::register(&mut registry, 1).unwrap();
+            crate::memory::consolidate::register(&mut registry).unwrap();
             MemoryDeps {
                 embedder: Arc::new(self.embedder),
                 storage: Arc::new(self.storage),
@@ -376,6 +403,10 @@ mod tests {
                 model_client: Arc::new(MockModelClient::new()),
                 verify_mode: registry
                     .get(crate::modes::verify::VERIFY_ID)
+                    .unwrap()
+                    .clone(),
+                consolidation_mode: registry
+                    .get(crate::memory::consolidate::CONSOLIDATION_MODE_ID)
                     .unwrap()
                     .clone(),
                 input_max_chars: 50_000,
@@ -416,6 +447,12 @@ mod tests {
                     && r.input_tokens == 7
             })
             .returning(|_| Ok(()));
+        // 017: surfacing refreshes the decay clock.
+        b.storage
+            .expect_touch_reinforcement()
+            .times(1)
+            .withf(|ids, _| ids == ["mem-1".to_string()])
+            .returning(|_, _| Ok(()));
 
         let (result, inp, out) = run(&b.build(), &surface_params("a clearly related prompt"))
             .await

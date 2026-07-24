@@ -221,20 +221,23 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-No active feature — last merged: `016-push-memory` (#50, 2026-07-23) — the push half of
-the memory layer (`MEMORY_LAYER.md`'s "effortless, not manual" contract): the
-harness-triggered, memory-gated `surface` tool, invoked by the installable
-`UserPromptSubmit` hook at each turn start — deterministic ranking (no model pass),
-trusted-only, floor 0.55 / cap 3, once-per-session suppression derived from its own
-`push_records` audit rows, hard 500 ms fail-open budget. S2 spike + T015 dogfood both
-PASS live (payload mapping, additionalContext round-trip, surfacing, suppression, zero
-false surfacings). Named finding: the 0.55 floor missed a related-but-not-paraphrase
-prompt at cosine 0.406 — the first measured datum for tuning `PUSH_RELEVANCE_TAU` from
-accumulated audit rows (it moves only with measurement). Auto-capture remains open,
-coupled to the consolidation levers. Artifacts:
-[spec](specs/016-push-memory/spec.md) ·
-[plan](specs/016-push-memory/plan.md) ·
-[tasks incl. S2 + T015 stamps](specs/016-push-memory/tasks.md).
+Active feature: `017-memory-consolidation` — the write-path half of the memory layer
+(consolidation levers + auto-capture, completing what 016 deferred). Rails decided in
+clarify via the `decide` protocol: capture is harness-triggered at end of turn (the
+turn hop gains a third judgment — capture proposal — keeping the boundary's single
+model pass; candidates enter untrusted/quarantined); consolidation runs on-admission
+only (deterministic cosine screen gates one budgeted decline-biased judgment:
+same_assertion/updates/context_specific/distinct); decay is ranking-only
+(reinforcement-refreshed recency, nothing ever removed). Memories gain
+status (active/superseded/merged) via the project's FIRST ALTER TABLE migration
+(pragma-guarded, fixture-tested). No new tools; promotion = re-admission through the
+levers. Artifacts:
+[spec](specs/017-memory-consolidation/spec.md) ·
+[plan](specs/017-memory-consolidation/plan.md) ·
+[research](specs/017-memory-consolidation/research.md) ·
+[data model](specs/017-memory-consolidation/data-model.md) ·
+[contracts](specs/017-memory-consolidation/contracts/) ·
+[quickstart](specs/017-memory-consolidation/quickstart.md). Next: `/speckit-tasks`.
 <!-- SPECKIT END -->
 
 ## Working style

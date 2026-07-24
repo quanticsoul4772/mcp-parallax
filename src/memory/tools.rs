@@ -37,6 +37,8 @@ pub struct MemoryDeps {
     pub model_client: Arc<dyn ModelClient>,
     /// The registered verify mode (verify-at-save reuses it unchanged).
     pub verify_mode: CorrectiveMode,
+    /// The registered consolidation judgment mode (017 research D3).
+    pub consolidation_mode: CorrectiveMode,
     /// Generic input bound (`INPUT_MAX_CHARS`).
     pub input_max_chars: usize,
     /// Default recall top-k (`MEMORY_RECALL_LIMIT`).
@@ -112,8 +114,17 @@ pub async fn save(
         embedding: embedding.vector,
         embedding_model: deps.embedder.model_id().to_string(),
         created_at: deps.clock.now(),
+        status: crate::memory::Status::Active,
+        replaced_by: None,
+        last_reinforced_at: deps.clock.now(),
     };
     deps.storage.save_memory(&memory).await?;
+
+    // 017: admission-time consolidation — fail-open (any failure ⇒ keep
+    // both, which is the decline-biased outcome anyway).
+    let (cons_in, cons_out) = consolidate_admission(deps, &memory, None).await;
+    input_tokens += cons_in;
+    output_tokens += cons_out;
 
     Ok((
         SaveResult {
@@ -166,12 +177,14 @@ pub async fn recall(
              VOYAGE_MODEL"
         );
     }
+    // 017 FR-011: only active records participate in retrieval.
+    memories.retain(|m| m.status.is_active());
     if let Some(kind) = params.kind {
         memories.retain(|m| m.kind == kind);
     }
 
     let ranked = ranking::rank(memories, &embedding.vector, deps.clock.now());
-    let memories = ranked
+    let memories: Vec<RecalledMemory> = ranked
         .into_iter()
         .take(limit)
         .map(|r| RecalledMemory {
@@ -185,6 +198,19 @@ pub async fn recall(
             score: r.relevance,
         })
         .collect();
+
+    // 017 research D5: being returned refreshes the decay clock —
+    // fire-and-forget, failures never affect the response.
+    let returned: Vec<String> = memories.iter().map(|m| m.id.clone()).collect();
+    if !returned.is_empty() {
+        if let Err(error) = deps
+            .storage
+            .touch_reinforcement(&returned, deps.clock.now())
+            .await
+        {
+            tracing::warn!(%error, "recall reinforcement update failed (ignored)");
+        }
+    }
 
     Ok((RecallResult { memories }, embedding.input_tokens, 0))
 }
@@ -254,6 +280,59 @@ fn check_text(field: &str, text: &str, max_chars: usize) -> Result<(), AppError>
     Ok(())
 }
 
+/// Admission-time consolidation (017 research D3): screen → at most one
+/// judgment → pure apply → audit.
+///
+/// Entirely fail-open — a wrong keep-both is the decline-biased outcome; a
+/// wrong action would destroy knowledge. Returns the judgment's token usage
+/// for attribution.
+pub async fn consolidate_admission(
+    deps: &MemoryDeps,
+    new_memory: &Memory,
+    session_id: Option<&str>,
+) -> (u64, u64) {
+    use crate::memory::consolidate::{self, ConsolidationRecord};
+
+    let evaluation = async {
+        let memories = deps.storage.load_memories().await?;
+        let Some((cosine, old)) = consolidate::screen(new_memory, &memories) else {
+            return Ok::<_, AppError>((0, 0));
+        };
+        let (out, input_tokens, output_tokens) = consolidate::judge(
+            deps.model_client.as_ref(),
+            &deps.consolidation_mode,
+            new_memory,
+            old,
+        )
+        .await?;
+        let Some(applied) = consolidate::apply(out.relation, cosine, new_memory, old) else {
+            return Ok((input_tokens, output_tokens));
+        };
+        deps.storage
+            .update_memory_status(&old.id, applied.old_status, Some(new_memory.id.clone()))
+            .await?;
+        let record = ConsolidationRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.map(str::to_string),
+            action: applied.action,
+            source_id: old.id.clone(),
+            target_id: Some(new_memory.id.clone()),
+            basis: out.basis,
+            created_at: deps.clock.now(),
+        };
+        crate::observability::emit_consolidation(&record);
+        deps.storage.record_consolidation(&record).await?;
+        Ok((input_tokens, output_tokens))
+    };
+    match evaluation.await {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            tracing::warn!(%error, "admission consolidation failed open (kept both)");
+            (0, 0)
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -272,6 +351,15 @@ mod tests {
         registry.get(verify::VERIFY_ID).unwrap().clone()
     }
 
+    fn consolidation_mode() -> CorrectiveMode {
+        let mut registry = ModeRegistry::new();
+        crate::memory::consolidate::register(&mut registry).unwrap();
+        registry
+            .get(crate::memory::consolidate::CONSOLIDATION_MODE_ID)
+            .unwrap()
+            .clone()
+    }
+
     async fn deps_with(embedder: MockEmbedder, model_client: MockModelClient) -> MemoryDeps {
         MemoryDeps {
             embedder: Arc::new(embedder),
@@ -279,6 +367,7 @@ mod tests {
             clock: Arc::new(SystemClock),
             model_client: Arc::new(model_client),
             verify_mode: verify_mode(),
+            consolidation_mode: consolidation_mode(),
             input_max_chars: 50_000,
             default_recall_limit: 5,
         }
@@ -367,9 +456,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recall_excludes_superseded_memories() {
+        // 017 FR-011: only active records participate in retrieval.
+        let embedder = embedder_returning(vec![1.0, 0.0], vec![1.0, 0.0]);
+        let deps = deps_with(embedder, distinct_judgments()).await;
+        let (old_save, _, _) = save(&deps, &save_params("stale fact", false, None))
+            .await
+            .unwrap();
+        let (new_save, _, _) = save(&deps, &save_params("current fact", false, None))
+            .await
+            .unwrap();
+        deps.storage
+            .update_memory_status(
+                &old_save.id,
+                crate::memory::Status::Superseded,
+                Some(new_save.id.clone()),
+            )
+            .await
+            .unwrap();
+        let (recalled, _, _) = recall(
+            &deps,
+            &RecallParams {
+                query: "fact".into(),
+                kind: None,
+                limit: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(recalled.memories.len(), 1);
+        assert_eq!(recalled.memories[0].id, new_save.id);
+    }
+
+    fn distinct_judgments() -> MockModelClient {
+        // Identical mock embeddings make every same-kind save screen against
+        // its predecessors (017); answering `distinct` keeps them all — this
+        // test is about recall mechanics, not consolidation.
+        let mut client = MockModelClient::new();
+        client.expect_complete().returning(|_, _| {
+            Ok(crate::traits::client::Completion {
+                value: serde_json::json!({ "relation": "distinct", "basis": "test" }),
+                input_tokens: 0,
+                output_tokens: 0,
+            })
+        });
+        client
+    }
+
+    #[tokio::test]
     async fn recall_respects_kind_filter_and_limit_and_empty_store() {
         let embedder = embedder_returning(vec![1.0, 0.0], vec![1.0, 0.0]);
-        let deps = deps_with(embedder, no_model_calls()).await;
+        let deps = deps_with(embedder, distinct_judgments()).await;
 
         // Empty store → empty result, success.
         let (empty, _, _) = recall(

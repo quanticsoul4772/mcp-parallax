@@ -15,6 +15,7 @@ use crate::deterministic::check::{self as check_tool, CheckDeps};
 use crate::deterministic::contract::{CheckParams, CheckResult};
 use crate::deterministic::translate as deterministic_translate;
 use crate::error::{AppError, Outcome};
+use crate::memory::consolidate as memory_consolidate;
 use crate::memory::push::{self as memory_push, SurfaceParams, SurfaceResult};
 use crate::memory::tools::{
     self as memory_tools, ForgetParams, ForgetResult, MemoryDeps, RecallParams, RecallResult,
@@ -154,6 +155,7 @@ impl Parallax {
         pipeline::register(&mut registry)?;
         deterministic_translate::register(&mut registry)?;
         checkpoint_review::register(&mut registry)?;
+        memory_consolidate::register(&mut registry)?;
         // Grounded-verify's mode registers unconditionally (its flat+closed
         // assertion belongs at boot); the tool is gated below on the root.
         grounded_verify::register(&mut registry, config.verify_ensemble_k)?;
@@ -161,6 +163,12 @@ impl Parallax {
         let verify_mode = registry
             .get(VERIFY_ID)
             .ok_or_else(|| AppError::Client("verify mode not registered at boot".to_string()))?
+            .clone();
+        let consolidation_mode = registry
+            .get(memory_consolidate::CONSOLIDATION_MODE_ID)
+            .ok_or_else(|| {
+                AppError::Client("consolidation mode not registered at boot".to_string())
+            })?
             .clone();
         let mode = |id: &str| -> Result<crate::modes::CorrectiveMode, AppError> {
             registry
@@ -187,6 +195,7 @@ impl Parallax {
                 clock: Arc::clone(&clock),
                 model_client: Arc::clone(&client),
                 verify_mode: verify_mode.clone(),
+                consolidation_mode: consolidation_mode.clone(),
                 input_max_chars: config.input_max_chars,
                 default_recall_limit: config.memory_recall_limit,
             })
@@ -523,7 +532,7 @@ impl Parallax {
     /// The `checkpoint_turn` tool: harness-triggered end-of-turn review.
     #[tool(
         name = "checkpoint_turn",
-        description = "End-of-turn checkpoint: deterministically mine the turn's final message and recent trajectory for candidate contradictions (against earlier committed statements and verified stored decisions) and, when memory is configured, candidate preference violations (the turn vs recalled trusted stored preferences); only when candidates exist, one independent blind review pass classifies them - a single hop judges both. A confirmed contradiction returns a flag citing both conflicting statements; a confirmed preference violation returns a flag quoting the stored preference verbatim with its provenance (memory id + trust standing) so the model can revise or explicitly contest it; both together return one combined flag. Delivered as forced continuation - the turn does not end until the model addresses it (at most once per turn). Otherwise silence. Preference enforcement never holds and never rewrites; with memory unconfigured, behavior is identical to the contradiction-only tool. Verdict and wording are server-assembled; the review pass never decides or phrases the verdict. Fails open. Intended to be invoked by the harness's stop hook; calling it directly behaves identically."
+        description = "End-of-turn checkpoint: deterministically mine the turn's final message and recent trajectory for candidate contradictions (against earlier committed statements and verified stored decisions) and, when memory is configured, candidate preference violations (the turn vs recalled trusted stored preferences); only when candidates exist, one independent blind review pass classifies them - a single hop judges both. A confirmed contradiction returns a flag citing both conflicting statements; a confirmed preference violation returns a flag quoting the stored preference verbatim with its provenance (memory id + trust standing) so the model can revise or explicitly contest it; both together return one combined flag. Delivered as forced continuation - the turn does not end until the model addresses it (at most once per turn). Otherwise silence. Preference enforcement never holds and never rewrites; with memory unconfigured, behavior is identical to the contradiction-only tool. With memory configured the same pass also judges capture-worthiness: a turn that produced a demonstrably working approach or a diagnosed failure may propose one candidate memory, stored quarantined (untrusted, never surfaced by push, capped per session) and promotable only through explicit re-admission or verification - capture never affects the verdict and fails open. Verdict and wording are server-assembled; the review pass never decides or phrases the verdict. Fails open. Intended to be invoked by the harness's stop hook; calling it directly behaves identically."
     )]
     pub async fn checkpoint_turn(
         &self,

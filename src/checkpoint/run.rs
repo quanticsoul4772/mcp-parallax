@@ -254,6 +254,7 @@ pub async fn run_turn(
         vec![
             SignalKind::SelfContradiction,
             SignalKind::PreferenceViolation,
+            SignalKind::CaptureProposal,
         ]
     } else {
         vec![SignalKind::SelfContradiction]
@@ -273,8 +274,12 @@ pub async fn run_turn(
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
         let preferences = preference::mine_preference_candidates(&recall);
-        if candidates.is_empty() && preferences.is_empty() {
-            // US3-AS2: no candidates of either class → no model pass.
+        // 017: with memory configured, the hop always runs — capture is an
+        // every-turn-end judgment (clarify Q1: harness-triggered), and its
+        // "screen" is the hop's own decline bias. Without memory, the
+        // 006-era gate stands: no candidates → no model pass (US3-AS2).
+        let capture_enabled = deps.embedder.is_some();
+        if candidates.is_empty() && preferences.is_empty() && !capture_enabled {
             let mut evaluation = Evaluated::pure(
                 evaluated_kinds.clone(),
                 vec![],
@@ -284,44 +289,30 @@ pub async fn run_turn(
             return Ok(evaluation);
         }
 
-        // One hop, two judgments (015 FR-010).
-        let (flagged, inp, out) = review::review_once(
+        // One hop, three judgments (015 FR-010 · 017 research D6).
+        let (flagged, proposal, inp, out) = review::review_once(
             deps.model_client.as_ref(),
             &deps.review_mode,
             &candidates,
             &preferences,
             &params.final_message,
             &review::turn_activity(&window),
+            capture_enabled,
         )
         .await?;
         input_tokens += inp;
         let cost_usd = telemetry::cost_usd(&deps.model, inp, out);
 
-        let mut delivered_keys: Vec<String> = vec![];
-        let (fired, result) = if flagged.is_empty() {
-            (vec![], CheckpointResult::silence(elapsed_ms(started)))
-        } else {
-            let fired: Vec<Signal> = flagged.iter().map(|(signal, _)| signal.clone()).collect();
-            let remaining = unsuppressed(deps, &params.session_id, &fired).await?;
-            let result = if remaining.is_empty() {
-                CheckpointResult::suppressed(&fired, elapsed_ms(started))
-            } else {
-                // One message, delivery order contradiction-first (015
-                // research D6); a suppressed signal's message part is
-                // dropped, not redelivered.
-                let remaining_keys: std::collections::HashSet<&str> =
-                    remaining.iter().map(|s| s.signal_key.as_str()).collect();
-                let message = flagged
-                    .iter()
-                    .filter(|(signal, _)| remaining_keys.contains(signal.signal_key.as_str()))
-                    .map(|(_, message)| message.as_str())
-                    .collect::<Vec<&str>>()
-                    .join(" ");
-                delivered_keys = remaining.iter().map(|s| s.signal_key.clone()).collect();
-                CheckpointResult::flag(message, &remaining, elapsed_ms(started))
-            };
-            (fired, result)
-        };
+        // 017: store an accepted capture proposal — entirely fail-open; the
+        // turn's verdict is never affected by capture (FR-008).
+        if let Some(proposal) = proposal {
+            if let Err(error) = store_capture(deps, &params.session_id, proposal).await {
+                tracing::warn!(%error, "capture storage failed open");
+            }
+        }
+
+        let (fired, delivered_keys, result) =
+            deliver_turn_flags(deps, &params.session_id, flagged, started).await?;
         Ok::<Evaluated, AppError>(Evaluated {
             signal_kinds: evaluated_kinds.clone(),
             fired,
@@ -342,6 +333,106 @@ pub async fn run_turn(
         evaluation.input_tokens,
         evaluation.output_tokens,
     ))
+}
+
+/// Turn-flag delivery (015 research D6): one message in delivery order
+/// (contradiction first), per-key cooldown via `unsuppressed` — a
+/// suppressed signal's message part is dropped, not redelivered.
+async fn deliver_turn_flags(
+    deps: &CheckpointDeps,
+    session_id: &str,
+    flagged: Vec<(Signal, String)>,
+    started: Instant,
+) -> Result<(Vec<Signal>, Vec<String>, CheckpointResult), AppError> {
+    if flagged.is_empty() {
+        return Ok((
+            vec![],
+            vec![],
+            CheckpointResult::silence(elapsed_ms(started)),
+        ));
+    }
+    let fired: Vec<Signal> = flagged.iter().map(|(signal, _)| signal.clone()).collect();
+    let remaining = unsuppressed(deps, session_id, &fired).await?;
+    if remaining.is_empty() {
+        let result = CheckpointResult::suppressed(&fired, elapsed_ms(started));
+        return Ok((fired, vec![], result));
+    }
+    let remaining_keys: std::collections::HashSet<&str> =
+        remaining.iter().map(|s| s.signal_key.as_str()).collect();
+    let message = flagged
+        .iter()
+        .filter(|(signal, _)| remaining_keys.contains(signal.signal_key.as_str()))
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<&str>>()
+        .join(" ");
+    let delivered_keys = remaining.iter().map(|s| s.signal_key.clone()).collect();
+    let result = CheckpointResult::flag(message, &remaining, elapsed_ms(started));
+    Ok((fired, delivered_keys, result))
+}
+
+/// Store one capture proposal (017 research D6): cap check → quarantined
+/// memory (`external = true` ⇒ `Untrusted` via the existing derivation) →
+/// one consolidation audit row. Callers treat every error as fail-open.
+async fn store_capture(
+    deps: &CheckpointDeps,
+    session_id: &str,
+    proposal: review::CaptureProposal,
+) -> Result<(), AppError> {
+    use crate::memory::consolidate::{
+        ConsolidationAction, ConsolidationRecord, CAPTURE_SESSION_CAP,
+    };
+
+    let Some(embedder) = deps.embedder.as_ref() else {
+        return Ok(()); // capture is memory-gated; the hop was told DISABLED
+    };
+    let proposal_id = uuid::Uuid::new_v4().to_string();
+    let capped = deps.storage.captures_in_session(session_id).await? >= CAPTURE_SESSION_CAP;
+    if capped {
+        let record = ConsolidationRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: Some(session_id.to_string()),
+            action: ConsolidationAction::CaptureDropped,
+            source_id: proposal_id,
+            target_id: None,
+            basis: proposal.basis,
+            created_at: deps.clock.now(),
+        };
+        crate::observability::emit_consolidation(&record);
+        return deps.storage.record_consolidation(&record).await;
+    }
+
+    let embedding = embedder.embed_document(&proposal.content).await?;
+    let now = deps.clock.now();
+    let memory = crate::memory::Memory {
+        id: proposal_id.clone(),
+        content: proposal.content,
+        kind: proposal.kind,
+        origin: format!("auto-capture: session {session_id}, end-of-turn"),
+        // Model-authored content the user did not write is not first-hand
+        // experience — quarantine falls out of the existing derivation
+        // (research D6): external + unverified ⇒ Untrusted.
+        external: true,
+        trust: crate::memory::Trust::Untrusted,
+        tags: vec![],
+        embedding: embedding.vector,
+        embedding_model: embedder.model_id().to_string(),
+        created_at: now,
+        status: crate::memory::Status::Active,
+        replaced_by: None,
+        last_reinforced_at: now,
+    };
+    deps.storage.save_memory(&memory).await?;
+    let record = ConsolidationRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: Some(session_id.to_string()),
+        action: ConsolidationAction::CaptureProposed,
+        source_id: proposal_id,
+        target_id: None,
+        basis: proposal.basis,
+        created_at: now,
+    };
+    crate::observability::emit_consolidation(&record);
+    deps.storage.record_consolidation(&record).await
 }
 
 /// Recall for the turn review: final message embedded, memories ranked.
@@ -622,6 +713,9 @@ mod tests {
             embedding: vec![1.0, 0.0],
             embedding_model: "voyage-4".into(),
             created_at: fixed_now(),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: fixed_now(),
         }
     }
 
@@ -766,6 +860,10 @@ mod tests {
                     "basis": "Both cannot hold.",
                     "violates": false,
                     "violated_preference": "",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": ""
                 }),
                 input_tokens: 80,
@@ -842,6 +940,10 @@ mod tests {
                     "basis": "The final statement is an evidence-justified update.",
                     "violates": false,
                     "violated_preference": "",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": ""
                 }),
                 input_tokens: 60,
@@ -882,6 +984,9 @@ mod tests {
             embedding: vec![1.0, 0.0],
             embedding_model: "voyage-4".into(),
             created_at: fixed_now(),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: fixed_now(),
         }
     }
 
@@ -905,7 +1010,11 @@ mod tests {
                 "basis": "No contradiction among the pairs.",
                 "violates": true,
                 "violated_preference": "final messages must never contain the word delve",
-                "violation_basis": "The final message contains the word delve."
+                "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
+                    "violation_basis": "The final message contains the word delve."
             }),
             input_tokens: 90,
             output_tokens: 35,
@@ -966,6 +1075,7 @@ mod tests {
                         == vec![
                             SignalKind::SelfContradiction,
                             SignalKind::PreferenceViolation,
+                            SignalKind::CaptureProposal,
                         ]
                     && r.signals_fired.len() == 1
                     && r.signals_fired[0].kind == SignalKind::PreferenceViolation
@@ -1016,6 +1126,10 @@ mod tests {
                     "basis": "Both cannot hold.",
                     "violates": true,
                     "violated_preference": "final messages must never contain the word delve",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
                     "violation_basis": "The final message contains the word delve."
                 }),
                 input_tokens: 90,
@@ -1108,7 +1222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn turn_with_only_untrusted_memories_never_reaches_the_hop() {
+    async fn turn_with_only_untrusted_memories_never_mines_preference_candidates() {
         let mut b = DepsBuilder::new();
         b.reader.expect_read().returning(|_, _| Ok(empty_window()));
         b.embedder = Some(Arc::new(matching_embedder()));
@@ -1119,13 +1233,39 @@ mod tests {
                 crate::memory::Trust::Untrusted,
             )])
         });
-        // FR-005: untrusted is structurally excluded — no candidates of
-        // either class, so the hop never runs.
-        b.client.expect_complete().times(0);
+        // 015 FR-005: untrusted is structurally excluded from preference
+        // mining. The hop still runs once (017: capture is an every-turn
+        // judgment with memory on) — with NO preferences listed, so a
+        // violates=true answer would be ignored anyway; the mock declines.
+        b.client.expect_complete().times(1).returning(|prompt, _| {
+            assert!(prompt.contains("Stored preferences:\n(none)"), "{prompt}");
+            Ok(Completion {
+                value: json!({
+                    "contradicts": false,
+                    "statement_a": "",
+                    "statement_b": "",
+                    "basis": "Nothing to compare.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "violation_basis": "",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": ""
+                }),
+                input_tokens: 30,
+                output_tokens: 10,
+            })
+        });
         b.storage
             .expect_record_checkpoint()
             .times(1)
-            .withf(|r| r.verdict == Verdict::Silence && !r.review_ran && !r.fail_open)
+            .withf(|r| {
+                r.verdict == Verdict::Silence
+                    && r.review_ran
+                    && !r.fail_open
+                    && r.signals_fired.is_empty()
+            })
             .returning(|_| Ok(()));
 
         let (result, _, _) = run_turn(
@@ -1134,6 +1274,165 @@ mod tests {
         )
         .await
         .unwrap();
+        assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    // ---- 017 US3: end-of-turn capture --------------------------------------
+
+    fn capture_completion() -> Completion {
+        Completion {
+            value: json!({
+                "contradicts": false,
+                "statement_a": "",
+                "statement_b": "",
+                "basis": "Nothing to compare.",
+                "violates": false,
+                "violated_preference": "",
+                "violation_basis": "",
+                "capture_worthy": true,
+                "capture_kind": "lesson",
+                "capture_content": "the staging deploy fails unless the cache is cleared first",
+                "capture_basis": "The turn diagnosed and fixed exactly this failure."
+            }),
+            input_tokens: 70,
+            output_tokens: 30,
+        }
+    }
+
+    #[tokio::test]
+    async fn turn_stores_a_capture_proposal_quarantined_with_one_audit_row() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        let mut embedder = matching_embedder();
+        embedder.expect_embed_document().times(1).returning(|_| {
+            Ok(Embedding {
+                vector: vec![0.5, 0.5],
+                input_tokens: 9,
+            })
+        });
+        embedder
+            .expect_model_id()
+            .return_const("voyage-4".to_string());
+        b.embedder = Some(Arc::new(embedder));
+        b.storage.expect_load_memories().returning(|| Ok(vec![]));
+        b.client
+            .expect_complete()
+            .times(1)
+            .returning(|_, _| Ok(capture_completion()));
+        b.storage
+            .expect_captures_in_session()
+            .withf(|s| s == "s1")
+            .returning(|_| Ok(0));
+        // Quarantine (research D6): external=true => Untrusted; origin names
+        // the session; content verbatim from the hop.
+        b.storage
+            .expect_save_memory()
+            .times(1)
+            .withf(|m| {
+                m.trust == crate::memory::Trust::Untrusted
+                    && m.external
+                    && m.kind == crate::memory::Kind::Lesson
+                    && m.origin.contains("auto-capture: session s1")
+                    && m.content == "the staging deploy fails unless the cache is cleared first"
+                    && m.status == crate::memory::Status::Active
+            })
+            .returning(|_| Ok(()));
+        b.storage
+            .expect_record_consolidation()
+            .times(1)
+            .withf(|r| {
+                r.action == crate::memory::consolidate::ConsolidationAction::CaptureProposed
+                    && r.session_id.as_deref() == Some("s1")
+            })
+            .returning(|_| Ok(()));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| {
+                r.verdict == Verdict::Silence
+                    && r.review_ran
+                    && r.signals_evaluated.contains(&SignalKind::CaptureProposal)
+            })
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params(
+                "Fixed it: the cache had to be cleared before the deploy.",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        // Capture never affects the verdict (FR-008).
+        assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    #[tokio::test]
+    async fn turn_drops_capture_proposals_at_the_session_cap() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.embedder = Some(Arc::new(matching_embedder()));
+        b.storage.expect_load_memories().returning(|| Ok(vec![]));
+        b.client
+            .expect_complete()
+            .times(1)
+            .returning(|_, _| Ok(capture_completion()));
+        b.storage
+            .expect_captures_in_session()
+            .returning(|_| Ok(crate::memory::consolidate::CAPTURE_SESSION_CAP));
+        b.storage.expect_save_memory().times(0);
+        b.storage
+            .expect_record_consolidation()
+            .times(1)
+            .withf(|r| r.action == crate::memory::consolidate::ConsolidationAction::CaptureDropped)
+            .returning(|_| Ok(()));
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params(
+                "Another fix worth remembering, but the cap is reached.",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    #[tokio::test]
+    async fn capture_storage_failure_never_affects_the_turn_verdict() {
+        let mut b = DepsBuilder::new();
+        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        let mut embedder = matching_embedder();
+        embedder
+            .expect_embed_document()
+            .returning(|_| Err(AppError::ValidationFailure("embed down".into())));
+        b.embedder = Some(Arc::new(embedder));
+        b.storage.expect_load_memories().returning(|| Ok(vec![]));
+        b.client
+            .expect_complete()
+            .times(1)
+            .returning(|_, _| Ok(capture_completion()));
+        b.storage.expect_captures_in_session().returning(|_| Ok(0));
+        b.storage.expect_save_memory().times(0);
+        b.storage
+            .expect_record_checkpoint()
+            .times(1)
+            .withf(|r| r.verdict == Verdict::Silence && !r.fail_open)
+            .returning(|_| Ok(()));
+
+        let (result, _, _) = run_turn(
+            &b.build(),
+            &turn_params("A fix that would be captured if embedding worked.", false),
+        )
+        .await
+        .unwrap();
+        // FR-008: fail-open — the turn proceeds; the verdict is untouched.
         assert_eq!(result.verdict, Verdict::Silence);
     }
 

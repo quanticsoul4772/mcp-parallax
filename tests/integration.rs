@@ -1769,7 +1769,11 @@ async fn checkpoint_turn_flags_a_stored_preference_violation_end_to_end() {
             "basis": "No contradiction among the pairs.",
             "violates": true,
             "violated_preference": "alpha rule: final messages must never contain the word delve",
-            "violation_basis": "The final message contains the word delve."
+            "violation_basis": "The final message contains the word delve.",
+            "capture_worthy": false,
+            "capture_kind": "none",
+            "capture_content": "",
+            "capture_basis": ""
         }))))
         .mount(&mock)
         .await;
@@ -2019,6 +2023,246 @@ async fn surface_stays_silent_when_nothing_is_relevant() {
     let pushes = storage.list_pushes().await.unwrap();
     assert_eq!(pushes.len(), 1);
     assert!(pushes[0].surfaced_ids.is_empty());
+
+    client.cancel().await.unwrap();
+}
+
+// ---- 017-memory-consolidation ----------------------------------------------
+
+async fn mount_consolidation(mock: &MockServer, relation: &str, basis: &str) {
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "relation": relation, "basis": basis
+        }))))
+        .mount(mock)
+        .await;
+}
+
+async fn save_fact(
+    client: &rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+    content: &str,
+) -> String {
+    let saved = client
+        .call_tool(tool_call(
+            "save",
+            &json!({ "content": content, "kind": "fact", "origin": "test", "external": false }),
+        ))
+        .await
+        .unwrap();
+    saved.structured_content.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_update_supersedes_and_retrieval_returns_only_the_update() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    mount_consolidation(&mock, "updates", "The pipeline moved providers.").await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let old_id = save_fact(&client, "alpha fact: the pipeline runs on the old provider").await;
+    let new_id = save_fact(
+        &client,
+        "alpha fact: the pipeline moved to the new provider",
+    )
+    .await;
+
+    // Retrieval returns only the update (FR-001/FR-011).
+    let recalled = client
+        .call_tool(tool_call("recall", &json!({ "query": "alpha pipeline" })))
+        .await
+        .unwrap();
+    let memories = recalled.structured_content.unwrap()["memories"].clone();
+    assert_eq!(memories.as_array().unwrap().len(), 1);
+    assert_eq!(memories[0]["id"], new_id.as_str());
+
+    // The superseded original is present, attributed, byte-identical (US4).
+    let all = storage.load_memories().await.unwrap();
+    assert_eq!(all.len(), 2);
+    let old = all.iter().find(|m| m.id == old_id).unwrap();
+    assert_eq!(old.status, mcp_parallax::memory::Status::Superseded);
+    assert_eq!(old.replaced_by.as_deref(), Some(new_id.as_str()));
+    assert_eq!(
+        old.content,
+        "alpha fact: the pipeline runs on the old provider"
+    );
+
+    // Exactly one supersede audit row (FR-009).
+    let audit = storage.list_consolidations().await.unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(
+        audit[0].action,
+        mcp_parallax::memory::consolidate::ConsolidationAction::Supersede
+    );
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_context_specific_statement_leaves_the_standing_fact_active() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    mount_consolidation(&mock, "context_specific", "A this-week circumstance.").await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    save_fact(&client, "alpha fact: the team is based in Lisbon").await;
+    save_fact(
+        &client,
+        "alpha note: working from the Berlin office this week",
+    )
+    .await;
+
+    // Both stay active (FR-002 - the Berlin/Lisbon rule); no audit row.
+    let all = storage.load_memories().await.unwrap();
+    assert!(all
+        .iter()
+        .all(|m| m.status == mcp_parallax::memory::Status::Active));
+    assert!(storage.list_consolidations().await.unwrap().is_empty());
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_near_duplicate_merges_to_a_byte_identical_canonical() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    mount_consolidation(&mock, "same_assertion", "Same knowledge, reworded.").await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let first = save_fact(
+        &client,
+        "alpha rule: clear the cache before staging deploys",
+    )
+    .await;
+    let second = save_fact(
+        &client,
+        "alpha rule: the cache must be cleared ahead of any staging deploy",
+    )
+    .await;
+
+    let all = storage.load_memories().await.unwrap();
+    let merged = all.iter().find(|m| m.id == first).unwrap();
+    assert_eq!(merged.status, mcp_parallax::memory::Status::Merged);
+    assert_eq!(merged.replaced_by.as_deref(), Some(second.as_str()));
+    // Survivor content byte-identical to the admission (FR-004).
+    let canonical = all.iter().find(|m| m.id == second).unwrap();
+    assert_eq!(
+        canonical.content,
+        "alpha rule: the cache must be cleared ahead of any staging deploy"
+    );
+
+    let recalled = client
+        .call_tool(tool_call("recall", &json!({ "query": "alpha cache" })))
+        .await
+        .unwrap();
+    let memories = recalled.structured_content.unwrap()["memories"].clone();
+    assert_eq!(memories.as_array().unwrap().len(), 1);
+    assert_eq!(memories[0]["id"], second.as_str());
+
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn end_of_turn_capture_stores_a_quarantined_candidate() {
+    let mock = MockServer::start().await;
+    mount_embeddings(&mock).await;
+    // The turn hop proposes a lesson; no contradiction, no violation.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "contradicts": false,
+            "statement_a": "",
+            "statement_b": "",
+            "basis": "Nothing to compare.",
+            "violates": false,
+            "violated_preference": "",
+            "violation_basis": "",
+            "capture_worthy": true,
+            "capture_kind": "lesson",
+            "capture_content": "the staging deploy fails unless the cache is cleared first",
+            "capture_basis": "The turn diagnosed and fixed exactly this failure."
+        }))))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let transcript = write_transcript(dir.path(), "cs-capture", &[("cargo test", false)]);
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_turn",
+            &json!({
+                "session_id": "cs-capture",
+                "transcript_path": transcript,
+                "final_message": "Fixed: the cache had to be cleared before the deploy.",
+                "continuation": false
+            }),
+        ))
+        .await
+        .unwrap();
+    // Capture never affects the verdict (FR-008).
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["verdict"],
+        "silence"
+    );
+
+    // The candidate is stored quarantined with its origin (FR-007).
+    let all = storage.load_memories().await.unwrap();
+    assert_eq!(all.len(), 1);
+    let candidate = &all[0];
+    assert_eq!(candidate.trust, mcp_parallax::memory::Trust::Untrusted);
+    assert!(candidate.external);
+    assert!(candidate
+        .origin
+        .contains("auto-capture: session cs-capture"));
+    assert_eq!(
+        candidate.content,
+        "the staging deploy fails unless the cache is cleared first"
+    );
+
+    // Quarantine: push never surfaces it, even on a related prompt.
+    let surfaced = client
+        .call_tool(tool_call(
+            "surface",
+            &json!({ "session_id": "cs-capture", "prompt": "the staging deploy is failing" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        surfaced.structured_content.as_ref().unwrap()["surfaced"],
+        json!([])
+    );
+
+    // Recall labels it untrusted; the audit row names the session.
+    let recalled = client
+        .call_tool(tool_call(
+            "recall",
+            &json!({ "query": "staging deploy cache" }),
+        ))
+        .await
+        .unwrap();
+    let memories = recalled.structured_content.unwrap()["memories"].clone();
+    assert_eq!(memories[0]["trust"], "untrusted");
+    let audit = storage.list_consolidations().await.unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(
+        audit[0].action,
+        mcp_parallax::memory::consolidate::ConsolidationAction::CaptureProposed
+    );
+    assert_eq!(audit[0].session_id.as_deref(), Some("cs-capture"));
+
+    // The candidate is deletable like any memory.
+    let forgotten = client
+        .call_tool(tool_call(
+            "forget",
+            &json!({ "id": memories[0]["id"].as_str().unwrap() }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(forgotten.structured_content.unwrap()["forgotten"], true);
 
     client.cancel().await.unwrap();
 }

@@ -25,10 +25,15 @@ pub fn risk_matched(tool_name: &str, tool_input: &str, extra_patterns: &[String]
 }
 
 /// A memory qualifies as a gate constraint when it is durable knowledge or
-/// a lesson (not a skill) and its trust standing is earned, never claimed.
+/// a lesson (not a skill), trusted, and active.
+///
+/// Trust is earned, never claimed; active-ness is 017 FR-011 — a superseded
+/// constraint stops holding, exactly as it stops being enforced at turn end.
 #[must_use]
 pub fn is_constraint(memory: &Memory) -> bool {
-    matches!(memory.kind, Kind::Lesson | Kind::Fact) && memory.trust.is_trusted()
+    matches!(memory.kind, Kind::Lesson | Kind::Fact)
+        && memory.trust.is_trusted()
+        && memory.status.is_active()
 }
 
 /// The deterministic hold decision (D4).
@@ -112,7 +117,21 @@ mod tests {
             created_at: DateTime::parse_from_rfc3339("2026-06-12T00:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
+            status: crate::memory::Status::Active,
+            replaced_by: None,
+            last_reinforced_at: DateTime::parse_from_rfc3339("2026-06-12T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
         }
+    }
+
+    // 017 FR-011: a superseded constraint stops holding.
+    #[test]
+    fn superseded_constraints_never_hold() {
+        let mut superseded = memory("m1", Kind::Lesson, Trust::FirstHand, vec![1.0, 0.0]);
+        superseded.status = crate::memory::Status::Superseded;
+        assert!(!is_constraint(&superseded));
+        assert!(constraint_hold(&[1.0, 0.0], &[superseded]).is_none());
     }
 
     // D4 threshold edges: ≥ τ holds, < τ silent, non-constraint kinds and

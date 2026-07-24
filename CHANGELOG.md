@@ -17,6 +17,24 @@ therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 
 ### Added
 
+* **Memory consolidation and auto-capture (017)** — the write-path half of
+  the memory layer. Supersession and merge run on admission: a
+  deterministic cosine screen (0.75) gates one budgeted decline-biased
+  judgment; updates supersede (status change with attribution, never
+  deletion), near-duplicates merge at ≥ 0.90 to a byte-identical survivor
+  under a trust guard that doubles as the promotion path
+  (re-admission). Decay is ranking-only via a reinforcement-refreshed
+  recency clock. The end-of-turn review hop gains a third judgment:
+  capture — a demonstrably working approach or diagnosed failure may
+  propose one candidate memory per turn (capped 2/session), stored
+  untrusted/quarantined and never auto-promoted; with memory configured
+  the turn hop now runs every turn end. First `ALTER TABLE` migration
+  (pragma-guarded, fixture-tested); new `memories.status` dimension
+  filtered to active across every retrieval path; new
+  `consolidation_records` audit table mirrored to OTLP. All three spec
+  clarifications decided via `decide` under the margin protocol.
+  `MEMORY_LAYER.md` amended in-change; artifacts under
+  `specs/017-memory-consolidation/`.
 * **Push memory (016)** — the push half of `MEMORY_LAYER.md`'s "effortless,
   not manual" contract: a new harness-triggered, memory-gated `surface`
   tool (invoked by an installable `UserPromptSubmit` hook) surfaces the few
