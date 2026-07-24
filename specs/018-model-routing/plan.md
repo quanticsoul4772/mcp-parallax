@@ -51,9 +51,10 @@ already existed.
 Routing must be invisible to callers (no tool schema changes). Unrouted behavior must
 be byte-identical, including recorded costs.
 
-**Scale/Scope**: 12 call sites, 2 tiers, ~14 environment variables, 1 new module
-(`src/routing.rs`), 4 modified (`config.rs`, `server.rs`, `telemetry.rs`,
-`observability.rs`, plus `storage/sqlite.rs` and `client/anthropic.rs`).
+**Scale/Scope**: 12 call sites, 2 tiers, 14 environment variables, 2 new modules
+(`src/routing.rs`, `src/client/pool.rs`), 9 modified (`config.rs`, `server.rs`,
+`telemetry.rs`, `observability.rs`, `storage/sqlite.rs`, `client/anthropic.rs`,
+`checkpoint/run.rs`, `research/mod.rs`, `research/pipeline.rs`).
 
 ## Constitution Check
 
@@ -100,15 +101,18 @@ specs/018-model-routing/
 ```text
 src/
 ├── routing.rs           # NEW — CallSite, Tier, resolution, RoutingTable, validation
-├── config.rs            # MODIFIED — parse + validate the PARALLAX_MODEL_* namespace
-├── server.rs            # MODIFIED — client pool; per-site Arcs into the deps structs;
-│                        #   run_recorded takes ModelUsage; startup routing table
+├── client/pool.rs       # NEW — one client per distinct resolved model (D10)
+├── config.rs            # MODIFIED — parse + validate the PARALLAX_MODEL_* namespace;
+│                        #   REQUEST_TIMEOUT_MS default raised with the budget (D7)
+├── server.rs            # MODIFIED — call the pool; per-site Arcs into the deps
+│                        #   structs; run_recorded takes ModelUsage; startup table
 ├── telemetry.rs         # MODIFIED — ModelUsage, per-model cost, pricing rows,
 │                        #   attributed model, cost_estimated
 ├── observability.rs     # MODIFIED — parallax.models, parallax.cost_estimated,
 │                        #   per-model cost + token metrics
 ├── storage/sqlite.rs    # MODIFIED — two nullable columns + pragma-guarded migration
 ├── client/anthropic.rs  # MODIFIED — output budget raised (D7)
+├── checkpoint/run.rs    # MODIFIED — cost call updated for pricing_known
 └── research/
     ├── mod.rs           # MODIFIED — RunMeter accumulates per model
     └── pipeline.rs      # MODIFIED — four per-call-site clients in ResearchDeps
@@ -117,11 +121,15 @@ docs/design/             # MODIFIED — corpus amendment (Principle I obligation
 specs/007-observability-layer/contracts/telemetry.md   # MODIFIED — amendment
 ```
 
-**Structure Decision**: single project, existing layout. Routing gets its own module
-because it is a pure, self-contained concern with a wide test surface; everything else
-is a modification to the module that already owns that responsibility. `ResearchDeps`
-gains per-call-site client fields rather than a resolver, keeping the dependency
-explicit at each use.
+**Structure Decision**: single project, existing layout, **two** new modules and nine
+modified. Routing gets its own module because it is a pure, self-contained concern with
+a wide test surface. The client pool gets a second one (D10) rather than living in
+either neighbour: putting it in `routing.rs` would drag a concrete client into the
+module whose value is not having one, and putting it in `server.rs` would add to a file
+already at 1397 lines — which is what `/speckit-analyze` flagged. Everything else is a
+modification to the module that already owns the responsibility. `ResearchDeps` gains
+per-call-site client fields rather than a resolver, keeping the dependency explicit at
+each use.
 
 ## Implementation Sequence
 
@@ -151,7 +159,7 @@ User Story 2 (P2). Step 7 is User Story 3 (P3).
 |---|---|
 | The `run_recorded` signature change touches all twelve call sites at once | Eleven are mechanical (`ModelUsage::single`). Land step 4 as its own commit with the suite green before step 5 changes any semantics. |
 | A byte-identical-when-unrouted claim is easy to assert and hard to prove | SC-004 is tested directly: existing record and telemetry tests keep their current expected values, unmodified. If an expectation needs editing, the invariant broke. |
-| Raising the output budget without measuring | D7 sets the direction; the concrete values are chosen against a measured call during step 7, not guessed here. A larger budget on a thinking-by-default family can outrun the timeout, so the two move together. |
+| Raising the output budget without measuring | D7's measurement procedure gives the budget a deterministic floor (the largest mode schema bounds its own output at ~3.5k tokens) and an empirical acceptance test (zero truncation and zero timeout outcomes across the T050 family sweep). Provisional values are set, then validated by the sweep and raised if it fails — an iteration, not a guess. |
 | Fable 5 rejects `thinking: disabled`, Opus 5 accepts it | Resolved by sending one universally-accepted shape (omit the field). The cheaper per-family suppression is a **named deferral** (D7), to be decided on measured cost. |
 | Provider price drift silently under-reporting | `pricing_known` surfaces the fallback in both the record and the span, so "correct by lookup" and "correct by coincidence" stop looking alike. |
 

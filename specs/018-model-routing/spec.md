@@ -302,8 +302,10 @@ and a correct cost, or fails at startup with a message naming the setting at fau
   test suite passes without modification to its expectations.
 - **SC-005**: A misconfigured route stops startup and names the offending setting,
   with no tool call ever reaching a provider.
-- **SC-006**: Every model in the shipped price list can serve every call site
-  without a truncated or malformed result, measured across one run of each tool.
+- **SC-006**: Every **completion** model in the shipped price list can serve every
+  call site without a truncated or malformed result, measured across one run of each
+  tool. The price list also carries embedding models, which answer no call site and
+  are outside this criterion.
 - **SC-007**: An operator can read the complete resolved routing table — every call
   site, its model, and the setting that supplied it — from the server's startup
   output alone, without issuing a call, reading source, or waiting for a bill.

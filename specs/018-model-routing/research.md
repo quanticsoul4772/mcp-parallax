@@ -175,6 +175,29 @@ Omitting the field is accepted everywhere. The timeout has to move with the budg
 a larger output ceiling on a thinking-by-default model can exceed the current 30 s
 default, converting a truncation into a timeout rather than fixing it.
 
+**Measurement procedure** *(added 2026-07-24 after `/speckit-analyze` flagged "measured
+against a real call" as unfalsifiable)*. The budget has a deterministic floor and an
+empirical ceiling, and only the ceiling needs a live call:
+
+1. **Answer floor — no network required.** The largest mode schema bounds its own
+   output: research synthesis allows 8 000 answer characters plus ten gaps of 500
+   (`MAX_ANSWER_CHARS`, `MAX_GAPS`, `MAX_GAP_CHARS` in `src/research/mod.rs`), so
+   ~13 000 characters ≈ **~3.5k tokens** of answer before any reasoning. Every other
+   mode schema is smaller. This is computed from the schemas, not observed.
+2. **Provisional budget.** Set `MAX_TOKENS` to at least **4× the floor**, leaving the
+   remainder for adaptive thinking on families that reason by default.
+3. **Provisional timeout.** Set the `REQUEST_TIMEOUT_MS` default to at least **3× the
+   slowest single call** observed while establishing the budget.
+4. **Acceptance is the family sweep (T050), not a separate harness.** The values are
+   correct when the sweep produces **zero `AppError::Truncation` and zero
+   `AppError::Timeout`** outcomes across one run of each tool on each completion
+   family. If either appears, raise the offending value and re-run the sweep.
+
+This makes both tasks falsifiable — the floor is checkable by arithmetic, and the
+acceptance criterion is an outcome count over work the plan already schedules. Steps 2
+and 3 set provisional values that step 4 validates; that is an iteration, not a
+circular dependency.
+
 **Alternatives considered**: a per-family capability table driving `thinking`
 suppression — measurably cheaper on the judgment tier, since suppressing adaptive
 thinking on Opus 5 avoids reasoning tokens on a flat verdict schema, but it adds a
@@ -183,6 +206,31 @@ family. **Named deferral**: per-family thinking suppression is deferred to a
 follow-up, to be decided on measured cost rather than prediction. This is a
 deliberate, named narrowing under Principle I, not a silent omission — the feature
 still satisfies FR-013 and FR-014, just not at the cheapest possible price.
+
+## D10 — The client pool lives in `src/client/pool.rs`, not in routing or the server
+
+*(Added 2026-07-24 after `/speckit-analyze` raised module placement as a Principle VII
+pressure point.)*
+
+**Decision**: a new `src/client/pool.rs` owns pool construction — a function from the
+resolved model ids plus `&Config` to a `BTreeMap<String, Arc<dyn ModelClient>>`.
+`src/routing.rs` stays pure config logic with no client dependency, and `src/server.rs`
+gains only the call, the per-call-site `Arc` hand-off, and the startup table.
+
+**Rationale**: `src/server.rs` is 1397 lines today. Principle VII scopes its ≤500-line
+target to *new* modules, so adding to it is not a violation, but four tasks piling onto
+the largest file in the tree is exactly the signal the principle says to read. Routing
+is the wrong home for the opposite reason: D2 justifies that module by its purity —
+resolution is testable with no client, no network, and no config beyond the environment
+— and having it construct `AnthropicClient` would trade that away for nothing. The pool
+is a client-layer concern, so it belongs beside the client. The module is small and has
+one job: dedupe model ids and build one client each.
+
+**Alternatives considered**: pool in `server.rs` — fewest files, but grows the file the
+analysis flagged and mixes "how to build a client" into the composition root. Pool in
+`routing.rs` — one fewer module, but inverts the dependency and makes the pure routing
+tests need a client fixture. Splitting `server.rs` more aggressively — out of scope
+under Principle VII's scope discipline; this feature is not a refactor.
 
 ## D8 — Pricing table refresh, and how "unknown price" becomes visible
 
