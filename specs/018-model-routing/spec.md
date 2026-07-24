@@ -8,6 +8,14 @@
 
 **Input**: User description: "Per-mode model routing: let each model hop run on a model chosen for the work it does, instead of every hop sharing one global ANTHROPIC_MODEL."
 
+## Clarifications
+
+### Session 2026-07-24
+
+- Q: Which tiers exist, and which call sites belong to each? → A: Two tiers — `bulk` holding only `research.extract` (the one call site that runs once per fetched source), `judgment` holding the other eleven. Per-call-site overrides cover anything finer.
+- Q: A call site is routed to a cheap model and that model fails — throttled, overloaded, or rejecting the request. What happens? → A: No cross-model fallback. The failure classifies through the existing outcome taxonomy and the layer above handles it as it does today; work is never silently re-run on a model the operator routed away from.
+- Q: Through what channel does an operator see which model each call site resolved to? → A: A startup log line on the server's existing diagnostic stream, listing every call site with its resolved model and which setting supplied it. No new tool; after the fact the invocation records already name the models that ran.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The operator of a Parallax deployment is the actor throughout. They configure the
@@ -31,7 +39,7 @@ delivers savings. Everything else in the feature exists to keep this honest.
 Shipped alone it is already a viable, valuable increment.
 
 **Independent Test**: Run one research question twice — once with no routing
-configured, once with the extraction hop routed to a cheaper model — and compare
+configured, once with the extraction call site routed to a cheaper model — and compare
 recorded cost and the resulting answer. Delivers value when cost drops materially
 and the answer's verified findings are unchanged.
 
@@ -40,13 +48,13 @@ and the answer's verified findings are unchanged.
 1. **Given** no routing is configured, **When** the operator runs any tool, **Then**
    every model call uses the single default model and the run is indistinguishable
    from the same run before this feature existed.
-2. **Given** the extraction hop is routed to a cheaper model, **When** the operator
+2. **Given** the extraction call site is routed to a cheaper model, **When** the operator
    runs a research question, **Then** extraction runs on the cheaper model, every
-   other hop runs on the default model, and the recorded cost is lower than the
+   other call site runs on the default model, and the recorded cost is lower than the
    same question with no routing configured.
-3. **Given** two hops are routed to the same model, **When** the server starts,
+3. **Given** two call sites are routed to the same model, **When** the server starts,
    **Then** they share one connection to that model rather than opening two.
-4. **Given** a hop is routed to a model, **When** the operator inspects the answer
+4. **Given** a call site is routed to a model, **When** the operator inspects the answer
    returned to the caller, **Then** it carries no indication of which model
    produced it — routing is an operator concern, not part of the tool contract.
 
@@ -73,7 +81,7 @@ agree and the record names both models.
 
 **Acceptance Scenarios**:
 
-1. **Given** an invocation whose hops ran on two different models, **When** the
+1. **Given** an invocation whose call sites ran on two different models, **When** the
    operator reads its cost record, **Then** the recorded cost equals the sum over
    models of that model's tokens at that model's own rate.
 2. **Given** the same invocation, **When** the operator reads its record, **Then**
@@ -95,30 +103,30 @@ and that reasoning is charged against the same output budget as the answer — o
 budget sized for a short verdict, the answer can be cut off before it is finished.
 Families also differ in whether that reasoning can be switched off at all, and
 newer models may be absent from the server's price list. The operator wants to
-route a hop to any model the provider offers and get either a correct result or a
+route a call site to any model the provider offers and get either a correct result or a
 clear, early failure — never a truncated verdict or a silently mispriced run.
 
 **Why this priority**: It widens which models are safe to route to. The primary
 saving in User Story 1 is reachable with a model family that has none of these
 differences, so this can follow.
 
-**Independent Test**: Route a hop to a model from each supported family in turn
-and run the hop's tool. Delivers value when every family returns a complete result
+**Independent Test**: Route a call site to a model from each supported family in turn
+and run the call site's tool. Delivers value when every family returns a complete result
 and a correct cost, or fails at startup with a message naming the setting at fault.
 
 **Acceptance Scenarios**:
 
-1. **Given** a hop routed to a model that reasons before answering by default,
-   **When** that hop runs, **Then** the result is complete rather than cut off
+1. **Given** a call site routed to a model that reasons before answering by default,
+   **When** that call site runs, **Then** the result is complete rather than cut off
    mid-answer.
-2. **Given** a hop routed to a model whose price the server does not know, **When**
-   the hop runs, **Then** the run still completes, the cost is estimated
+2. **Given** a call site routed to a model whose price the server does not know, **When**
+   the call site runs, **Then** the run still completes, the cost is estimated
    conservatively rather than under-reported, and the estimate is marked as such
    so the operator can tell it apart from a known price.
 3. **Given** a routing setting that names something the server cannot use, **When**
    the server starts, **Then** it refuses to start and names the offending setting
    and value.
-4. **Given** a hop in the checkpoint layer routed to an unreachable model, **When**
+4. **Given** a call site in the checkpoint layer routed to an unreachable model, **When**
    that checkpoint fires, **Then** the turn proceeds unimpeded and the failure is
    recorded — the checkpoint layer never blocks work on its own malfunction.
 
@@ -130,22 +138,26 @@ and a correct cost, or fails at startup with a message naming the setting at fau
   Per the project's configuration convention this is an error at startup, never a
   silent fall back to the default.
 - A routing setting is misspelled such that the server would never read it. Left
-  undetected the operator believes a hop is routed when it is not, and the only
+  undetected the operator believes a call site is routed when it is not, and the only
   symptom is a bill that does not fall. Because routing settings occupy a reserved
   namespace, the server can see a name it does not recognise and refuse to start
   (FR-006a), rather than ignoring it.
 - A call site is routed both by its tier and by its own setting. The more specific
   setting wins; the tier still governs every other call site assigned to it.
-- Every hop is routed to the same model. This must behave exactly like setting the
+- Every call site is routed to the same model. This must behave exactly like setting the
   default model to that value, with no duplicated connections.
-- An invocation's hops all run on one model. Its cost record must remain as simple
+- An invocation's call sites all run on one model. Its cost record must remain as simple
   and as accurate as it is today; the multi-model accounting must not distort the
   common single-model case.
-- A run stops early — budget exhausted, deadline reached, a hop fails and its work
-  is dropped. Partial work still consumed tokens on whichever model performed it,
-  and must still be costed to that model.
-- A model is routed for a hop that never executes on a given run (for example the
-  research synthesis hop when nothing survived verification). It must contribute
+- A run stops early — budget exhausted, deadline reached, a call site fails and its
+  work is dropped. Partial work still consumed tokens on whichever model performed
+  it, and must still be costed to that model.
+- The model a call site is routed to is throttled or unavailable for the whole run.
+  That call site fails and the layer above degrades as it would for any provider
+  failure; no work moves to another model, so a research run can complete having
+  dropped sources rather than completing at an unexpected price (FR-015a).
+- A model is routed for a call site that never executes on a given run (for example the
+  research synthesis call site when nothing survived verification). It must contribute
   nothing to cost and must not appear as a participant.
 - The provider ships a new model after this feature is built. Routing to it must
   work without a code change, even though its price is not yet known.
@@ -158,9 +170,13 @@ and a correct cost, or fails at startup with a message naming the setting at fau
 
 - **FR-001**: Each model call site MUST be able to run on a model chosen
   independently of the other call sites.
-- **FR-001a**: Call sites MUST be grouped into a small number of named tiers by the
-  kind of work they do, and an operator MUST be able to route a whole tier with one
-  setting.
+- **FR-001a**: Call sites MUST be grouped into exactly two tiers by the kind of work
+  they do, and an operator MUST be able to route a whole tier with one setting.
+  Membership is fixed by the server: `bulk` contains only the research extraction
+  call site, the one that runs once per fetched source; `judgment` contains the
+  other eleven — the five cognitive correctives, grounded verification, the
+  deterministic translation step, research scoping, research verification, research
+  synthesis, and the end-of-turn checkpoint review.
 - **FR-001b**: An operator MUST be able to override any individual call site,
   overriding whatever its tier says.
 - **FR-001c**: The model for a call site MUST resolve in a fixed, documented order:
@@ -174,8 +190,12 @@ and a correct cost, or fails at startup with a message naming the setting at fau
   calling model cannot select a judge likely to agree with it.
 - **FR-004**: Call sites routed to the same model MUST share one client; distinct
   models MUST get distinct clients.
-- **FR-005**: The server MUST report, on demand, which model each call site is
-  actually configured to use, so an operator can confirm a route took effect.
+- **FR-005**: At startup, before serving any request, the server MUST emit to its
+  diagnostic stream the resolved routing table — every call site, the model it will
+  use, and which setting supplied that model — so an operator can confirm a route
+  took effect without waiting for a call or reading source.
+- **FR-005a**: Route visibility MUST NOT add an entry to the tool catalog. The
+  audience is the operator, not the calling model.
 - **FR-006**: A routing setting that is present but unusable MUST stop the server
   at startup with a message naming the setting and the value, never a silent
   fallback to the default.
@@ -216,6 +236,15 @@ and a correct cost, or fails at startup with a message naming the setting at fau
 - **FR-015**: The checkpoint layer MUST remain fail-open: any routing or provider
   failure inside it results in silence and a recorded failure, never a blocked
   turn.
+- **FR-015a**: A call site whose routed model fails MUST NOT be retried on a
+  different model. The failure MUST classify through the existing outcome taxonomy
+  and be handled by the layer above exactly as an equivalent single-model failure is
+  handled today — research drops and counts the affected source or claim, the
+  checkpoint layer falls silent, and a corrective tool returns the error to its
+  caller.
+- **FR-015b**: An invocation's recorded set of participating models MUST contain
+  only models that actually ran, so a provider outage cannot cause spend to be
+  attributed to a model the operator routed away from.
 
 **Non-goals (stated as requirements so they are testable)**
 
@@ -226,13 +255,21 @@ and a correct cost, or fails at startup with a message naming the setting at fau
 ### Key Entities
 
 - **Call site**: One named place in the server that asks a model for a
-  schema-constrained answer. The routable unit. Today's set: the five cognitive
-  correctives (verify, unstick, diverge, decide, elicit), grounded verification,
-  the deterministic layer's translation step, the four research steps (scope,
-  extract, verify, synthesize), and the end-of-turn checkpoint review.
-- **Tier**: A named grouping of call sites by the kind of work they do — mechanical
-  transcription versus judgment. Tier membership is a property of the call site,
-  fixed by the server; which model a tier uses is the operator's to set.
+  schema-constrained answer. The routable unit, and the canonical term throughout
+  this spec — the feature's title and branch call the same thing a "hop". Today's
+  set is twelve: the five cognitive correctives (verify, unstick, diverge, decide,
+  elicit), grounded verification, the deterministic layer's translation step, the
+  four research steps (scope, extract, verify, synthesize), and the end-of-turn
+  checkpoint review.
+- **Tier**: A named grouping of call sites by the kind of work they do. There are
+  two. `bulk` is transcription work whose volume scales with the size of a run —
+  today only research extraction, which runs once per fetched source. `judgment` is
+  everything else: the five cognitive correctives, grounded verification, the
+  deterministic translation step, research scoping, research verification, research
+  synthesis, and the checkpoint review. Membership is a property of the call site,
+  fixed by the server; which model a tier uses is the operator's to set. A future
+  call site joins `bulk` only if its volume scales with the run rather than with the
+  invocation.
 - **Route**: The operator's assignment of a model, either to a tier or to a single
   call site. Absent at both levels means "use the server-wide default".
 - **Client pool**: The set of live model connections, one per distinct model in
@@ -247,9 +284,13 @@ and a correct cost, or fails at startup with a message naming the setting at fau
 
 ### Measurable Outcomes
 
-- **SC-001**: Routing the research extraction step to a cheaper model reduces the
-  recorded cost of a standard research question by at least 30% relative to the
-  same question with no routing configured.
+- **SC-001**: For a standard research question, routing the `bulk` tier to a cheaper
+  model reduces recorded cost by at least the saving predicted from the unrouted
+  baseline run's own numbers — that run's bulk-tier share of tokens multiplied by
+  the price difference between the two models — allowing 10% for run-to-run
+  variation. The target is derived from a measured baseline rather than a fixed
+  percentage, so the criterion tests what the feature controls instead of how
+  extraction-heavy a particular question happens to be.
 - **SC-002**: The same routed question yields the same set of verified findings as
   the unrouted question, allowing for the run-to-run variation already observed
   without routing.
@@ -263,8 +304,9 @@ and a correct cost, or fails at startup with a message naming the setting at fau
   with no tool call ever reaching a provider.
 - **SC-006**: Every model in the shipped price list can serve every call site
   without a truncated or malformed result, measured across one run of each tool.
-- **SC-007**: An operator can determine which model served each call site without
-  reading the server's source or its provider bill.
+- **SC-007**: An operator can read the complete resolved routing table — every call
+  site, its model, and the setting that supplied it — from the server's startup
+  output alone, without issuing a call, reading source, or waiting for a bill.
 
 ## Assumptions
 
@@ -276,13 +318,20 @@ and a correct cost, or fails at startup with a message naming the setting at fau
   behavior, so adopting the release carries no forced migration.
 - Cheaper models are appropriate for mechanical extraction and transcription work
   but not for judgment. This feature provides the mechanism; it does not decide the
-  policy, and it ships with no hop routed anywhere by default.
+  policy, and it ships with no call site routed anywhere by default.
 - Existing per-run budget ceilings, deadlines, and concurrency limits continue to
   operate unchanged and are counted in tokens, not currency, so they are unaffected
   by which model consumed them.
 - Model prices are compiled into the server as they are today; keeping them current
   remains a maintenance task, and FR-012 keeps an out-of-date list from
   under-reporting.
+- Invocation records written before this feature remain valid and read as
+  single-model records. The feature adds detail to records written from now on; it
+  does not rewrite history, and no backfill is expected.
+- The `bulk` tier is thin on purpose. Extraction is the only call site today whose
+  volume scales with the size of a run, so it is the only one where a cheaper model
+  changes the bill materially. Per-call-site overrides exist for operators who
+  disagree, which is what keeps a second tier from being needed.
 - The provider's behavioral differences between model families are stable enough to
   encode. Where they are not, FR-013 and FR-014 are satisfied by the conservative
   choice (a budget large enough for both reasoning and answer).

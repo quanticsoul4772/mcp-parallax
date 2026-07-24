@@ -62,5 +62,33 @@ request rather than a design decision taken here, and the Assumptions section is
 where such carried constraints belong. No language, framework, crate, type, or
 file path appears anywhere in the spec.
 
-No items remain incomplete. The spec is ready for `/speckit-plan`; `/speckit-clarify`
-is optional, since both clarifications it would have surfaced are already resolved.
+**Clarification session (2026-07-24)** — three questions asked and answered, all
+integrated; still passing.
+
+The scan found three Partial categories beyond the two already resolved at specify
+time. Each was a decision the spec named but did not settle:
+
+1. *Domain & Data Model* — FR-001a said "a small number of named tiers" without
+   saying which, or which call sites belong to them. Resolved to two tiers, `bulk`
+   (research extraction alone) and `judgment` (the other eleven). FR-001a and the
+   Tier entity now state membership.
+2. *Edge Cases & Failure Handling* — the spec never said what happens when a routed
+   model fails. Resolved to no cross-model fallback, added as FR-015a and FR-015b
+   plus an edge case, matching the project's error protocol and the existing
+   degradation behavior of each layer.
+3. *Observability* — FR-005 required reporting routes "on demand" without naming a
+   channel, leaving SC-007 untestable and implying a possible new tool. Resolved to
+   a startup line on the diagnostic stream; FR-005 rewritten, FR-005a added to
+   forbid a catalog entry, SC-007 rewritten to be checkable.
+
+Two lower-impact candidates were resolved by documented default rather than by
+spending a question, per the rule against asking where a reasonable default exists:
+SC-001's fixed 30% target became a figure derived from the unrouted baseline's own
+token split, and pre-existing invocation records are stated to remain valid as
+single-model records with no backfill.
+
+Terminology was normalized in the same pass: the spec now uses "call site"
+throughout, with the Call site entity noting that the feature's title and branch
+call the same thing a "hop". The verbatim user Input line is unchanged.
+
+No items remain incomplete. The spec is ready for `/speckit-plan`.
