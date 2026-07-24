@@ -71,6 +71,19 @@ single-source web claims, where "the model can't confirm this" must count
 against the claim. A bespoke per-lens verifier mode (deep/exhaustive's
 diverse lenses) — deferred with the exhaustive tier.
 
+> **Amendment (2026-07-24, live validation finding):** the context line is
+> no longer domain/title alone — it now carries a bounded, claim-relevant
+> excerpt of each backing source's readable text (up to 3 sources ×
+> 4 000 chars, deterministic word-overlap selection in
+> `research/evidence.rs`), and the template instructs the judge to test the
+> claim against the excerpts, not its own priors. With title-only context,
+> "default to refuted when you cannot establish support" made the verdict a
+> function of the judging model's training cutoff: a live run refuted
+> "Rust 1.97.0 was released 2026-07-09" while the official announcement sat
+> fetched in the same run's source list, because the judge had priors only
+> and post-cutoff facts can never be established from priors. Refute-bias
+> is only epistemically sound when the judge holds the evidence.
+
 ## D4 — Extraction output: flat `{claims: []}`, spans dropped (named deviation)
 
 **Decision**: the per-source claim-extraction call returns the flat+closed
@@ -86,6 +99,14 @@ claim-source granularity. Named deviation from RESEARCH_PRIMITIVE.md §2(3).
 **Alternatives considered**: parallel arrays `{claims[], spans[]}` — fragile
 index coupling for a field nothing consumes in v1; relaxing the flat
 invariant — rejected, constitutional.
+
+> **Amendment (2026-07-24):** "a field nothing consumes" was wrong —
+> verification was the consumer grounding needed (see the D3 amendment).
+> The span field stays dropped: instead of restoring it, `SourceRecord`
+> retains the (already-capped) readable text internally and
+> `research/evidence.rs` re-derives a claim-relevant excerpt
+> deterministically at verify time. Extraction's flat `{claims: []}` schema
+> is unchanged; nothing new reaches the wire (FR-012 holds).
 
 ## D5 — Fetch hygiene: reqwest + `robotstxt` + hard guards
 

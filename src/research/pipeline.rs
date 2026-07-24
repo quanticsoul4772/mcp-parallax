@@ -15,6 +15,7 @@ use crate::error::AppError;
 use crate::modes::verify::{self, VerifyParams};
 use crate::modes::CorrectiveMode;
 use crate::research::contract::{ResearchParams, ResearchResult, SourceRef, Stats, StopReason};
+use crate::research::evidence;
 use crate::research::extract;
 use crate::research::prompts::ScopeOut;
 use crate::research::settings::{per_angle_count, validate_params, RunSettings};
@@ -464,6 +465,7 @@ async fn fetch_and_extract(
         fetched_at: deps.clock.now().to_rfc3339(),
         credibility: source_credibility(&host),
         claims,
+        text: readable.text,
     })
 }
 
@@ -484,22 +486,38 @@ async fn verify_claim(
     if ceiling.probe().is_some() {
         return None;
     }
+    // Evidence-grounded context (004 D3 amendment, 2026-07-24): each backing
+    // source contributes a claim-relevant excerpt of its readable text, so
+    // the refute-biased judge tests the claim against the fetched evidence
+    // instead of its own (possibly stale) priors.
     let context = claim
         .source_ids
         .iter()
         .filter_map(|id| source_meta.get(id))
+        .take(evidence::EVIDENCE_SOURCES_MAX)
         .map(|s| {
             let host = reqwest::Url::parse(&s.url)
                 .ok()
                 .and_then(|u| u.host_str().map(String::from))
                 .unwrap_or_default();
-            format!("{} ({host})", s.title)
+            format!(
+                "[{}] {} ({host}):\n{}",
+                s.id,
+                s.title,
+                evidence::evidence_excerpt(
+                    &s.text,
+                    &claim.text,
+                    evidence::EVIDENCE_EXCERPT_MAX_CHARS
+                )
+            )
         })
         .collect::<Vec<_>>()
-        .join("; ");
+        .join("\n\n");
     let verify_params = VerifyParams {
         claim: claim.text.clone(),
-        context: Some(format!("Claim extracted from: {context}")),
+        context: Some(format!(
+            "Source excerpts the claim was extracted from:\n\n{context}"
+        )),
     };
 
     let run = match verify::run(

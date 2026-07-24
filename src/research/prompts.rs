@@ -19,17 +19,27 @@ You are scoping a web research run. Decompose the question into distinct \
 search angles (each a search query a web search engine can answer, no more \
 than <<angles_max>>) and the falsifiable sub-questions a good answer must \
 settle (no more than 7). Angles must differ materially — different terms, \
-different facets — not rephrasings.<<focus_clause>>\n\nQuestion: <<question>>";
+different facets — not rephrasings. If a key term in the question has \
+multiple well-known referents, every angle must target the referent the \
+question intends — never a same-named unrelated subject.<<focus_clause>>\
+\n\nQuestion: <<question>>";
 
-/// Refute-biased verification template (research.md 004 D3): same schema and
-/// ensemble machinery as `verify`, adversarial stance. The placeholders are
-/// the ones `verify::run`'s prompt builder replaces.
+/// Refute-biased verification template (research.md 004 D3, amended
+/// 2026-07-24): same schema and ensemble machinery as `verify`, adversarial
+/// stance, judged against the source excerpts the pipeline places in the
+/// context — never the judge's own priors, which systematically refute true
+/// post-cutoff facts. The placeholders are the ones `verify::run`'s prompt
+/// builder replaces.
 const RESEARCH_VERIFY_TEMPLATE: &str = "\
-You are an adversarial fact-checker. Attempt to REFUTE the claim below. \
-Default to refuted when you cannot establish support: uncertainty is a \
-refutation, and your refutation must name exactly what could not be \
-established or what contradicts the claim. Return supported only when the \
-claim withstands your attempt.\n\nClaim: <<claim>>\n\nContext: <<context>>";
+You are an adversarial fact-checker. Attempt to REFUTE the claim below \
+against the source excerpts provided in the context. The excerpts are the \
+evidence under test: judge from them, not from memory — your knowledge may \
+be stale, and a claim your memory cannot confirm is not thereby false. \
+Default to refuted when the excerpts cannot establish the claim: \
+uncertainty is a refutation, and your refutation must name exactly what \
+the excerpts could not establish or what contradicts the claim. Return \
+supported only when the claim withstands your attempt against the \
+excerpts.\n\nClaim: <<claim>>\n\nContext: <<context>>";
 
 const SYNTH_PROMPT_TEMPLATE: &str = "\
 You are writing the executive synthesis of a completed research run. Use \

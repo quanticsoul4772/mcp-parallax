@@ -244,6 +244,38 @@ async fn happy_path_citations_resolve_and_stats_account() {
     assert!(result.confidence > 0.0);
 }
 
+// 004 D3 amendment (2026-07-24): the refute-biased judge must see the
+// fetched source text, not source titles alone — a prior-only judge
+// systematically refutes true post-cutoff facts.
+#[tokio::test]
+async fn verify_prompt_carries_source_excerpts_not_titles_alone() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the page claim"] }),
+        |prompt, _| {
+            assert!(prompt.contains("Source excerpts the claim was extracted from"));
+            assert!(
+                prompt.contains("running text for the extractor"),
+                "the judge must receive the fetched evidence, not titles alone"
+            );
+            assert!(prompt.contains("[s1]"));
+            supported()
+        },
+        |_| json!({ "answer": "ok [s1]", "gaps": [] }),
+    );
+    let search = search_returning(&["https://example.com/a"]);
+    let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+
+    let (result, _, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert_eq!(result.stats.claims_verified, 1);
+    // FR-012 still holds: evidence reaches the judge, never the wire.
+    let wire = serde_json::to_string(&result).unwrap();
+    assert!(!wire.contains("running text for the extractor"));
+}
+
 #[tokio::test]
 async fn focus_reaches_the_scope_prompt() {
     let client = scripted(
