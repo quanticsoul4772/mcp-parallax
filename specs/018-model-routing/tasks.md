@@ -165,7 +165,38 @@ at startup naming the setting at fault.
 - [X] T043 Run the full gate and confirm the SC-004 evidence from T002 — the listed test expectations must still be unmodified
       **Confirmed 2026-07-24: 443 unit + 69 integration = 512 passing, fmt and clippy clean. Every register test passes with its original expected values. One assertion changed accessor only (`pipeline_tests` reads `usage.totals()` for the same `(60, 30)`).**
 - [ ] T044 Walk `specs/018-model-routing/quickstart.md` end to end against the built binary and correct anything that does not match observed behavior
-- [ ] T045 **[BLOCKED — needs live API credentials]** Live dogfood: run one research question unrouted, then with `PARALLAX_MODEL_BULK` set to a cheaper model; record in this file both costs, the per-model split, the measured saving against SC-001, and a diff of the two runs' verified findings against SC-002
+- [X] T045 Live dogfood: run one research question unrouted, then with `PARALLAX_MODEL_BULK` set to a cheaper model; record in this file both costs, the per-model split, the measured saving against SC-001, and a diff of the two runs' verified findings against SC-002
+      **Result: SC-001 not met; accounting exact. See Post-merge validation findings below.**
+
+---
+
+## Post-merge validation findings (2026-07-24)
+
+### T045 measured result
+
+**RUN 2026-07-24 against the merged binary, `PARALLAX_MODEL_BULK=claude-haiku-4-5`.**
+
+| run | tokens | recorded cost |
+| --- | ---: | ---: |
+| routed run (haiku extraction + opus judgment) | 174 952 | **$0.7911** |
+| same tokens priced all-Opus (the pre-018 arithmetic) | 174 952 | $1.0267 |
+| unrouted baseline, 2026-07-24 pre-018 | 175 900 | — |
+
+Per-model split from `usage_by_model`: `claude-haiku-4-5` 31 410 in / 5 498 out
+= $0.0589; `claude-opus-4-8` 135 943 in / 2 101 out = $0.7322. Hand-computed
+sum equals the recorded `cost_usd` with **delta exactly 0** — SC-003 confirmed
+live. Attribution went to Opus by measured tokens (138k vs 37k), as D5 intends.
+
+**SC-001 NOT MET, and the criterion's premise is wrong.** Total tokens moved
+175.9k → 175.0k: routing the `bulk` tier changed almost nothing. Extraction is
+**19% of input tokens (31k of 167k)**, not the majority the spec assumed. The
+dominant consumer is `research_verify` at ~136k input tokens, because the 004
+evidence-grounding fix feeds source excerpts into every per-claim verify call
+and there are ~90 claims. The run still tripped its 150k budget
+(`stop_reason: budget`, 53 of 90 claims verified).
+
+This is a spec defect, not an implementation defect: the mechanism works
+exactly as designed and the accounting is exact. See the follow-up note below.
 
 ---
 
@@ -292,3 +323,67 @@ existing expectation is the signal that FR-002 broke.
 ### Working notes
 
 - Commit after each task or logical group; the full gate runs before every commit
+
+### SC-001's premise is wrong — the cost lever is verification, not extraction
+
+T045 measured the routed run and the mechanism works exactly as specified, but the
+criterion it was meant to satisfy rests on a false assumption.
+
+The spec asserted that research's per-source claim extraction "consumes the largest
+share of a run's tokens". Measured, it is **19%** — 31 410 of 167 353 input tokens.
+The dominant consumer is `research_verify` at ~136 000 input tokens, because 004's
+evidence-grounding fix now feeds a source excerpt into every per-claim verification
+and a quick-tier run produces ~90 claims. Routing only the `bulk` tier therefore
+moves total tokens by well under 1% (175.9k → 175.0k), and the run still trips its
+150k budget and drops claims.
+
+What this does **not** invalidate: the routing mechanism, research's per-model
+accounting (hand-computed cost matched the record with delta exactly 0), attribution
+by measured tokens, or the migration. Those are confirmed live.
+
+> **Correction (2026-07-24, found while running T050):** an earlier draft of this
+> note said the feature "works exactly as designed". That is true of routing and of
+> research, and **false of record attribution on the other eleven call sites** — see
+> the defect below. Research was correct because its `RunMeter` attributes per hop
+> through the routing table; the eleven single-model tools attribute to the global
+> default instead.
+
+### DEFECT — single-model call sites record the default model, not the routed one
+
+Found running T050: `verify` routed to `claude-opus-5` answered from the correct
+routed client, but its invocation record named `claude-opus-4-8`, and its `cost_usd`
+was therefore computed at the **wrong model's rate**.
+
+Cause: in `src/server.rs` the eleven single-model tools call
+`run_recorded(<TOOL_ID>, self.model.clone(), ...)`, where `self.model` is
+`config.anthropic_model` — the global default — while the *call itself* correctly
+goes to `self.pool.for_site(CallSite::X)`. Routing works; attribution does not.
+FR-007 and FR-009 are violated on eleven of twelve call sites.
+
+This is the **same shape** as analyze finding C3, which was caught for the checkpoint
+layer and fixed as T046. The instance was found; the class was not. The other
+single-model sites in the same file were left attributing to the global default.
+
+Why the suite stayed green: `client::pool` tests prove the pool hands out the right
+*client*, and the `telemetry` tests prove cost sums correctly *given* a `ModelUsage`.
+Nothing asserted that a tool's record names the model that actually served it. That
+missing assertion is the gap that let this ship.
+
+**The uncomfortable part.** The obvious fix — move `research_verify` into the `bulk`
+tier — is the one change that should not be made casually. Verification is the
+corrective this server exists to provide; cheapening the judge to save money attacks
+the product's reason for existing. That is a decision to take deliberately, with
+evidence about whether a cheaper model's verdicts actually differ, not a tier
+reassignment slipped in to make a success criterion pass.
+
+**Recommended follow-ups**, in order:
+
+1. **Re-tune the research tier budgets.** Routing did not fix the claim-dropping, so
+   the 150k quick-tier ceiling is still the binding constraint and still loses ~40% of
+   claims on a normal question. This is now the highest-value fix and is unblocked.
+2. **Correct SC-001 in the spec** to target the measured token distribution rather
+   than the assumed one, or retire it in favour of a criterion about accounting
+   correctness (which passed).
+3. **Investigate verification cost separately** — the excerpt-per-claim design is what
+   made verification dominant. Whether that cost is reducible without weakening the
+   verdict is its own question, not a routing question.
