@@ -73,6 +73,7 @@ fn deps(config: &Config) -> ResearchDeps {
         verify_mode: pipeline::research_verify_mode(&verify_mode),
         input_max_chars: config.input_max_chars,
         concurrency: usize::from(config.research_concurrency),
+        routing: config.routing.clone(),
     }
 }
 
@@ -135,7 +136,7 @@ async fn main() {
         }
 
         match outcome {
-            Ok((result, _, _)) => {
+            Ok((result, _usage)) => {
                 total += 1;
                 let ok = citations_resolve(&result);
                 if ok {
@@ -167,7 +168,7 @@ async fn main() {
     }
 
     // SC-004: a deliberately tiny budget returns well-formed, stopped early.
-    let (tiny, _, _) = pipeline::run(
+    let (tiny, _usage) = pipeline::run(
         &deps,
         &fetcher(&config),
         &ResearchParams {

@@ -71,6 +71,7 @@ pub fn assemble(surviving: &[VerifiedClaim]) -> Assembled {
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // the gate needs exactly this run state
 pub async fn synthesize_grounded(
     model_client: &dyn ModelClient,
+    model: &str,
     synth_mode: &CorrectiveMode,
     params: &ResearchParams,
     plan: &ScopePlan,
@@ -151,7 +152,7 @@ pub async fn synthesize_grounded(
         let completion = model_client
             .complete(&prompt, &synth_mode.sanitized_schema)
             .await?;
-        meter.add(completion.input_tokens, completion.output_tokens);
+        meter.add(model, completion.input_tokens, completion.output_tokens);
         validate(&synth_mode.output_schema, &completion.value)?;
         let out: SynthOut = serde_json::from_value(completion.value)
             .map_err(|e| AppError::ValidationFailure(format!("synthesis shape: {e}")))?;

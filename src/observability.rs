@@ -631,6 +631,12 @@ mod tests {
             input_tokens: 300,
             output_tokens: 30,
             cost_usd: 0.00225,
+            // 018: single-model, so the new fields carry exactly what the
+            // pre-018 columns already said. Every existing expectation below
+            // is unchanged (SC-004).
+            models: vec!["claude-opus-4-8".into()],
+            usage_by_model: crate::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
+            cost_estimated: false,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")

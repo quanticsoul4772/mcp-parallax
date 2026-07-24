@@ -261,6 +261,7 @@ impl Parallax {
                 extract_client: pool.for_site(CallSite::ResearchExtract),
                 verify_client: pool.for_site(CallSite::ResearchVerify),
                 synth_client: pool.for_site(CallSite::ResearchSynthesize),
+                routing: config.routing.clone(),
                 search,
                 clock: Arc::clone(&clock),
                 scope_mode: mode(pipeline::SCOPE_MODE_ID)?,
@@ -835,7 +836,9 @@ impl Parallax {
         };
         // LLM calls dominate research cost; Brave bills per-request, not
         // per-token — attribute the record to the anthropic model (plan.md).
-        self.run_recorded("research", self.model.clone(), ct, async {
+        // Research is the one tool whose call sites can differ, so it records
+        // per-model usage rather than a single token pair (018 FR-007).
+        self.run_recorded_usage("research", self.model.clone(), ct, async {
             let fetcher = HygieneFetcher::new(policy)?;
             pipeline::run(&deps, &fetcher, &params).await
         })

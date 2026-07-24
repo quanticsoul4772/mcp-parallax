@@ -14,6 +14,12 @@ use chrono::{DateTime, Utc};
 /// estimate from token counts — invoice-exactness is explicitly not required
 /// (spec assumption). Cached from the model catalog 2026-06-04.
 const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
+    // Claude 5 family (cached 2026-07-24). `claude-opus-5` happens to match
+    // the fallback rate exactly — which is why `pricing_known` exists: without
+    // it, "correct by lookup" and "correct by coincidence" look identical.
+    ("claude-fable-5", 10.00, 50.00),
+    ("claude-opus-5", 5.00, 25.00),
+    ("claude-sonnet-5", 3.00, 15.00),
     ("claude-opus-4-8", 5.00, 25.00),
     ("claude-opus-4-7", 5.00, 25.00),
     ("claude-opus-4-6", 5.00, 25.00),
@@ -28,6 +34,16 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
 
 /// Conservative fallback for unknown model ids (Opus-tier rates).
 const FALLBACK_PRICING: (f64, f64) = (5.00, 25.00);
+
+/// Whether this model has a price row, or was costed at the conservative
+/// fallback (018 FR-012).
+///
+/// A `false` here means the figure is an over-estimate, not a measurement —
+/// the distinction an operator needs to tell a known price from a guess.
+#[must_use]
+pub fn pricing_known(model: &str) -> bool {
+    PRICING_PER_MTOK.iter().any(|(id, _, _)| *id == model)
+}
 
 /// Estimated cost in USD for a completed invocation.
 #[must_use]
@@ -148,6 +164,13 @@ impl ModelUsage {
             .map(|(model, u)| cost_usd(model, u.input_tokens, u.output_tokens))
             .sum()
     }
+
+    /// Whether any participating model priced off the fallback rather than a
+    /// price row — the cost is then a conservative over-estimate (FR-012).
+    #[must_use]
+    pub fn cost_estimated(&self) -> bool {
+        self.by_model.keys().any(|model| !pricing_known(model))
+    }
 }
 
 /// The observability record of one tool call (data-model.md §5; contract:
@@ -166,8 +189,17 @@ pub struct InvocationRecord {
     pub input_tokens: u64,
     /// Output tokens summed across passes.
     pub output_tokens: u64,
-    /// Estimated cost (tokens × configured per-model pricing).
+    /// Estimated cost — the sum over participating models of that model's own
+    /// tokens at that model's own rate (018 FR-008).
     pub cost_usd: f64,
+    /// Every model that actually ran, sorted (018 FR-009, FR-015b). One entry
+    /// for an unrouted invocation.
+    pub models: Vec<String>,
+    /// Per-model token usage behind [`Self::cost_usd`] (018 FR-009).
+    pub usage_by_model: ModelUsage,
+    /// True when a participating model had no price row and was costed at the
+    /// conservative fallback — the figure is an over-estimate (018 FR-012).
+    pub cost_estimated: bool,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -208,6 +240,9 @@ impl InvocationRecord {
             // 018 FR-008: each model priced at its own rate, then summed. For
             // one model this is the same arithmetic as before.
             cost_usd: usage.cost_usd(),
+            models: usage.models(),
+            usage_by_model: usage.clone(),
+            cost_estimated: usage.cost_estimated(),
             latency_ms,
             outcome,
             created_at,
@@ -350,6 +385,46 @@ mod tests {
         assert!((all_at_opus - 60.0).abs() < 1e-9);
         assert!((all_at_haiku - 12.0).abs() < 1e-9);
         assert!(usage.cost_usd() < all_at_opus && usage.cost_usd() > all_at_haiku);
+    }
+
+    // T022 / FR-011 / FR-012.
+    #[test]
+    fn unknown_models_price_conservatively_and_say_so() {
+        // The shipped current models are known.
+        for model in [
+            "claude-fable-5",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-opus-4-8",
+            "claude-haiku-4-5",
+        ] {
+            assert!(pricing_known(model), "{model}");
+        }
+        assert!(!pricing_known("some-future-model"));
+
+        // Fable 5 is double the Opus-tier fallback — the gap that made an
+        // unrouted-to-Fable deployment under-report spend by half.
+        assert!(
+            (cost_usd("claude-fable-5", 1_000_000, 1_000_000) - 60.0).abs() < 1e-9,
+            "fable 5 prices at 10/50"
+        );
+
+        // Unknown still over-estimates rather than under-reports...
+        let unknown = ModelUsage::single("some-future-model", 1_000, 1_000);
+        assert!(
+            (unknown.cost_usd() - cost_usd("claude-opus-4-8", 1_000, 1_000)).abs() < 1e-12,
+            "unknown falls back to Opus-tier"
+        );
+        // ...and says the figure is an estimate, which is what distinguishes
+        // "correct by lookup" from "correct by coincidence" — `claude-opus-5`
+        // happens to match the fallback exactly.
+        assert!(unknown.cost_estimated());
+        assert!(!ModelUsage::single("claude-opus-5", 1_000, 1_000).cost_estimated());
+
+        // One unpriced participant marks the whole invocation estimated.
+        let mut mixed = ModelUsage::single("claude-opus-5", 10, 10);
+        mixed.add("some-future-model", 10, 10);
+        assert!(mixed.cost_estimated());
     }
 
     // T021 / FR-009a / SC-004: a single-model record is byte-identical to what
