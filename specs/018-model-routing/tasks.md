@@ -34,8 +34,10 @@ cross-module tests in `tests/integration.rs`.
 
 **Purpose**: establish the baseline the byte-identical claim will be measured against.
 
-- [ ] T001 Run the full gate (`cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test`) and record the passing test count as the pre-feature baseline
-- [ ] T002 Identify and list, in `specs/018-model-routing/tasks.md` under Notes, the existing tests in `src/telemetry.rs` and `src/observability.rs` whose expected values must remain **unmodified** through this feature — these are the SC-004 evidence
+- [X] T001 Run the full gate (`cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test`) and record the passing test count as the pre-feature baseline
+      **Baseline at `ad90948` (2026-07-24): 414 unit + 69 integration = 483 passing. fmt clean, clippy `-D warnings` clean.**
+- [X] T002 Identify and list, in `specs/018-model-routing/tasks.md` under Notes, the existing tests in `src/telemetry.rs` and `src/observability.rs` whose expected values must remain **unmodified** through this feature — these are the SC-004 evidence
+      **Recorded under Notes → SC-004 evidence register.**
 
 ---
 
@@ -46,12 +48,12 @@ validation only.
 
 **⚠️ CRITICAL**: no user story work begins until this phase is complete.
 
-- [ ] T003 Create `src/routing.rs` with `Tier` (`Bulk`/`Judgment`), `CallSite` (the twelve ids from data-model.md §1), and their stable string suffixes, plus `RouteSource` (`Site`/`Tier`/`Default`)
-- [ ] T004 Implement `CallSite::tier()` in `src/routing.rs` mapping `research_extract` to `Bulk` and the other eleven to `Judgment`
-- [ ] T005 Implement `resolve(site, env, default) -> ResolvedRoute` in `src/routing.rs` applying most-specific-first order (site setting → tier setting → `ANTHROPIC_MODEL`)
-- [ ] T006 Implement `RoutingTable::from_env` in `src/routing.rs` returning all twelve resolved routes, and namespace validation rejecting any `PARALLAX_MODEL_*` variable with an unrecognised suffix or an empty/whitespace value (FR-006, FR-006a)
-- [ ] T007 [P] Unit tests in `src/routing.rs` covering: precedence (site beats tier beats default), tier fan-out, unknown suffix rejected by name, empty value rejected by name and value, unset namespace resolving every site to the default
-- [ ] T008 Wire `RoutingTable` into `Config::from_env` in `src/config.rs` so a routing error is a startup `ConfigError`, with unit tests asserting the server refuses to start (SC-005)
+- [X] T003 Create `src/routing.rs` with `Tier` (`Bulk`/`Judgment`), `CallSite` (the twelve ids from data-model.md §1), and their stable string suffixes, plus `RouteSource` (`Site`/`Tier`/`Default`)
+- [X] T004 Implement `CallSite::tier()` in `src/routing.rs` mapping `research_extract` to `Bulk` and the other eleven to `Judgment`
+- [X] T005 Implement `resolve(site, env, default) -> ResolvedRoute` in `src/routing.rs` applying most-specific-first order (site setting → tier setting → `ANTHROPIC_MODEL`)
+- [X] T006 Implement `RoutingTable::from_env` in `src/routing.rs` returning all twelve resolved routes, and namespace validation rejecting any `PARALLAX_MODEL_*` variable with an unrecognised suffix or an empty/whitespace value (FR-006, FR-006a)
+- [X] T007 [P] Unit tests in `src/routing.rs` covering: precedence (site beats tier beats default), tier fan-out, unknown suffix rejected by name, empty value rejected by name and value, unset namespace resolving every site to the default
+- [X] T008 Wire `RoutingTable` into `Config::from_env` in `src/config.rs` so a routing error is a startup `ConfigError`, with unit tests asserting the server refuses to start (SC-005)
 
 **Checkpoint**: routing resolves and validates as pure computation, fully tested,
 wired to nothing.
@@ -249,7 +251,43 @@ Task: "T036 unknown-price end to end in tests/integration.rs"
   order within each phase.
 - The `ModelClient` trait signature does not change in any task. If a task appears to
   require changing it, the design has drifted — re-read research D2 before proceeding
-- SC-004 evidence: T002 lists the test expectations that must survive untouched. If a
-  task requires editing one of them, the byte-identical-when-unrouted invariant broke
-  and that is a defect, not a test that needs updating
+- SC-004 evidence: the register below lists the test expectations that must survive
+  untouched. If a task requires editing one of them, the byte-identical-when-unrouted
+  invariant broke and that is a defect, not a test that needs updating
+
+### SC-004 evidence register (T002, baseline `ad90948`)
+
+These assertions encode single-model record and telemetry behavior. Their **expected
+values** must not change. Adding new assertions alongside them is fine; editing an
+existing expectation is the signal that FR-002 broke.
+
+**`src/telemetry.rs`**
+
+| Test | What it pins |
+|---|---|
+| `cost_uses_the_per_model_table` | Opus-4.8 rate arithmetic, Haiku < Opus ordering, unknown-model fallback equals Opus-tier, Voyage input-only billing |
+| `record_carries_latency_from_the_clock_and_all_fields` | Every record field for a single-model invocation, including `cost_usd > 0` |
+| `clock_skew_never_panics_or_goes_negative` | Zero-token, zero-latency edge |
+
+**`src/observability.rs`**
+
+| Test | What it pins |
+|---|---|
+| `invocation_span_matches_the_record_field_for_field` | The span's attribute set for a single-model record — the tightest SC-004 constraint |
+| `error_outcomes_carry_error_status_and_type` | `error.type` and span status on non-success |
+| `voyage_models_attribute_the_voyage_provider` | Provider attribution by model id (already a two-provider case) |
+| `checkpoint_span_matches_the_record_and_omits_evidence` | Checkpoint span shape — relevant once T046/T047 touch checkpoint cost |
+| `push_span_carries_counts_and_never_memory_content` | Push span shape |
+| `metrics_reflect_emissions` | Instrument emission counts — the test T024/T025 extend for per-model recording |
+
+**`tests/integration.rs`**
+
+| Test | What it pins |
+|---|---|
+| `telemetry_spans_match_the_stored_records` | The two-sink agreement contract end to end |
+| `verifying_save_runs_the_ensemble_and_attributes_the_anthropic_model` | Attribution on an already-multi-provider path |
+| the twelve `*_with_one_record` / `*_and_one_record` tests | One record per invocation — the invariant D4 preserves |
+
+### Working notes
+
 - Commit after each task or logical group; the full gate runs before every commit

@@ -1,6 +1,7 @@
 //! Runtime configuration, sourced entirely from the environment.
 
 use crate::error::ConfigError;
+use crate::routing::RoutingTable;
 
 /// Default model when `ANTHROPIC_MODEL` is unset — the design corpus's stated
 /// target (structured outputs GA).
@@ -32,8 +33,13 @@ pub struct Config {
     /// Anthropic API key (required). `ANTHROPIC_API_KEY`.
     pub anthropic_api_key: String,
     /// Model id for verification passes. `ANTHROPIC_MODEL`, default
-    /// [`DEFAULT_MODEL`].
+    /// [`DEFAULT_MODEL`]. The fall-through for every call site that no
+    /// `PARALLAX_MODEL_*` setting routes elsewhere.
     pub anthropic_model: String,
+    /// Per-call-site model routing (018). Resolved from the reserved
+    /// `PARALLAX_MODEL_*` namespace over [`Self::anthropic_model`]; with
+    /// nothing set every call site resolves to that default.
+    pub routing: RoutingTable,
     /// Parallel verification passes per Verify invocation. `VERIFY_ENSEMBLE_K`,
     /// default `3`; must be ≥ 1.
     pub verify_ensemble_k: u8,
@@ -108,6 +114,9 @@ impl Config {
 
         let anthropic_model =
             std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+        // Routing resolves over the default model. A bad `PARALLAX_MODEL_*`
+        // variable stops startup here, before any client is built (SC-005).
+        let routing = RoutingTable::from_env(&anthropic_model)?;
         let verify_ensemble_k = validate_ensemble_k(parse_env("VERIFY_ENSEMBLE_K", 3)?)?;
         // INPUT_MAX_CHARS is canonical; VERIFY_MAX_CLAIM_CHARS is the 002-era
         // alias, honored only when the canonical variable is unset.
@@ -151,6 +160,7 @@ impl Config {
         Ok(Self {
             anthropic_api_key,
             anthropic_model,
+            routing,
             verify_ensemble_k,
             input_max_chars,
             voyage_api_key,
@@ -237,6 +247,34 @@ mod tests {
         // A key guaranteed not to be set in the test environment.
         let got: u64 = parse_env("PARALLAX_TEST_DEFINITELY_UNSET_KEY", 42).unwrap();
         assert_eq!(got, 42);
+    }
+
+    // 018 T008 / SC-005. `from_env` reads the real process environment, which
+    // tests must not mutate (parallel threads share it), so the startup-refusal
+    // path is asserted at the pure resolution layer `from_env` delegates to.
+    // The wiring itself — that `from_env` propagates this error with `?` before
+    // any client is built — is a one-line call verified by review.
+    #[test]
+    fn a_bad_routing_variable_is_a_config_error_naming_it() {
+        let err = RoutingTable::resolve(
+            vec![(
+                "PARALLAX_MODEL_NOT_A_CALL_SITE".to_string(),
+                "claude-haiku-4-5".to_string(),
+            )],
+            DEFAULT_MODEL,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::Routing(_)));
+        assert!(err.to_string().contains("PARALLAX_MODEL_NOT_A_CALL_SITE"));
+    }
+
+    // FR-002: the identity `from_env` relies on — nothing set means every call
+    // site on `ANTHROPIC_MODEL`, which is exactly the pre-018 shape.
+    #[test]
+    fn unrouted_resolution_equals_the_single_model_table() {
+        let resolved = RoutingTable::resolve(Vec::new(), DEFAULT_MODEL).unwrap();
+        assert_eq!(resolved, RoutingTable::single(DEFAULT_MODEL));
+        assert_eq!(resolved.distinct_models(), vec![DEFAULT_MODEL.to_string()]);
     }
 
     #[test]

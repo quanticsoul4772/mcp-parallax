@@ -184,6 +184,12 @@ pub enum ConfigError {
     /// An environment variable held a value that failed to parse.
     #[error("invalid value for environment variable: {0}")]
     Invalid(&'static str),
+
+    /// A `PARALLAX_MODEL_*` variable was unrecognised or unusable (018 FR-006,
+    /// FR-006a). Carries an owned message because the offending variable name
+    /// is discovered at runtime — a misspelled suffix is not a `&'static str`.
+    #[error("invalid routing configuration: {0}")]
+    Routing(String),
 }
 
 #[cfg(test)]

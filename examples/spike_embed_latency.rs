@@ -20,6 +20,7 @@ async fn main() {
     let config = Config {
         anthropic_api_key: "unused".into(),
         anthropic_model: "claude-opus-4-8".into(),
+        routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
         verify_ensemble_k: 3,
         input_max_chars: 50_000,
         voyage_api_key: Some(voyage_api_key),
