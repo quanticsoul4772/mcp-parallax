@@ -47,8 +47,21 @@ OK on success; ERROR with the outcome class otherwise.
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
 | `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `search_provider`, `embedding_provider`, `cancelled`) |
-| `parallax.cost_usd` | double | computed cost |
+| `parallax.cost_usd` | double | computed cost — summed over participating models, each at its own rate (018) |
 | `parallax.session_id` | string | per-process session UUID |
+| `parallax.models` | string[] | **added 018** — every model that actually ran, sorted. One entry when nothing is routed |
+| `parallax.cost_estimated` | bool | **added 018** — true when a participating model had no price row and was costed at the conservative fallback; the figure is an over-estimate, not a measurement |
+
+> **Amendment (2026-07-24, feature 018 — per-call-site model routing).** Call
+> sites can now run on different models, so one invocation may span several.
+> The span stays **one per invocation**; `gen_ai.request.model` carries the
+> *attributed* model, defined as the participant with the most **measured
+> tokens** (ties lexicographic). Dominance is deliberately not computed from
+> cost: `parallax.cost_usd` may fall back to Opus-tier rates for a model with
+> no price row, so a cost-dominant rule could hand attribution to a model that
+> merely lacks a price. With one model — every invocation when nothing is
+> routed — the attributed model is trivially the only one, so every attribute
+> here is byte-identical to pre-018.
 
 ### `parallax.checkpoint.{boundary}` — one per checkpoint evaluation (kind INTERNAL)
 
@@ -74,6 +87,19 @@ data).
 | `parallax.invocation.duration` | histogram (f64) | `s` | `parallax.tool`, `parallax.outcome` |
 | `parallax.cost` | counter (f64) | `USD` | `parallax.tool`, `gen_ai.request.model` |
 | `gen_ai.client.token.usage` | histogram (u64) | `{token}` | `gen_ai.token.type` (`input`\|`output`), `gen_ai.request.model`, `gen_ai.provider.name`, `parallax.tool` |
+
+> **Amendment (2026-07-24, feature 018).** `parallax.cost` and
+> `gen_ai.client.token.usage` are recorded **once per participating model**,
+> each carrying that model's own `gen_ai.request.model` (and, for tokens, that
+> model's provider). Both instruments were already keyed by model, so this is
+> what they always meant: the sum is unchanged and the granularity is new —
+> spend per model is now exact rather than attributed wholesale to one.
+>
+> `parallax.invocations` and `parallax.invocation.duration` are deliberately
+> **not** split, and continue to record once per invocation using the
+> attributed model. Splitting them would stop them counting invocations.
+>
+> With a single model every emission is byte-identical to pre-018.
 | `parallax.checkpoint.evaluations` | counter (u64) | `{evaluation}` | `parallax.checkpoint.boundary`, `.verdict`, `.suppressed`, `.fail_open` |
 | `parallax.checkpoint.duration` | histogram (f64) | `s` | `parallax.checkpoint.boundary`, `.verdict` |
 

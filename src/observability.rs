@@ -351,6 +351,20 @@ pub fn emit_invocation(record: &InvocationRecord) {
         KeyValue::new("parallax.outcome", outcome),
         KeyValue::new("parallax.cost_usd", record.cost_usd),
         KeyValue::new("parallax.session_id", record.session_id.clone()),
+        // 018 D6: the full participant set alongside the attributed model,
+        // and whether any of them priced off the fallback (FR-012).
+        KeyValue::new(
+            "parallax.models",
+            opentelemetry::Value::Array(
+                record
+                    .models
+                    .iter()
+                    .map(|m| opentelemetry::StringValue::from(m.clone()))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+        ),
+        KeyValue::new("parallax.cost_estimated", record.cost_estimated),
     ];
     if record.outcome != Outcome::Success {
         attributes.push(KeyValue::new("error.type", outcome));
@@ -370,6 +384,17 @@ pub fn emit_invocation(record: &InvocationRecord) {
     });
     span.end_with_timestamp(end);
 
+    emit_invocation_metrics(handles, record, outcome, provider);
+}
+
+/// Metric emission for one invocation, split out of [`emit_invocation`] to
+/// keep each function within the project's length budget (Principle VII).
+fn emit_invocation_metrics(
+    handles: &Handles,
+    record: &InvocationRecord,
+    outcome: &'static str,
+    provider: &'static str,
+) {
     let base = [
         KeyValue::new("parallax.tool", record.tool.clone()),
         KeyValue::new(GEN_AI_REQUEST_MODEL, record.model.clone()),
@@ -384,26 +409,61 @@ pub fn emit_invocation(record: &InvocationRecord) {
             KeyValue::new("parallax.outcome", outcome),
         ],
     );
-    handles.cost.add(
-        record.cost_usd,
-        &[
-            KeyValue::new("parallax.tool", record.tool.clone()),
-            KeyValue::new(GEN_AI_REQUEST_MODEL, record.model.clone()),
-        ],
-    );
-    for (kind, count) in [
-        ("input", record.input_tokens),
-        ("output", record.output_tokens),
-    ] {
-        handles.token_usage.record(
-            count,
+    // 018 D6: cost and token usage are recorded ONCE PER PARTICIPATING MODEL,
+    // each with that model's own attribute. Both instruments were already
+    // keyed by model, so this is what they always meant — the sum is
+    // unchanged and the granularity is new. The invocation counter above is
+    // deliberately NOT split: adding per model would stop it counting
+    // invocations. With one model every emission below is byte-identical to
+    // pre-018 (SC-004).
+    for (model, usage) in record.usage_by_model.iter() {
+        handles.cost.add(
+            crate::telemetry::cost_usd(model, usage.input_tokens, usage.output_tokens),
             &[
-                KeyValue::new(GEN_AI_TOKEN_TYPE, kind),
-                KeyValue::new(GEN_AI_REQUEST_MODEL, record.model.clone()),
-                KeyValue::new(GEN_AI_PROVIDER_NAME, provider),
                 KeyValue::new("parallax.tool", record.tool.clone()),
+                KeyValue::new(GEN_AI_REQUEST_MODEL, model.to_string()),
             ],
         );
+        for (kind, count) in [
+            ("input", usage.input_tokens),
+            ("output", usage.output_tokens),
+        ] {
+            handles.token_usage.record(
+                count,
+                &[
+                    KeyValue::new(GEN_AI_TOKEN_TYPE, kind),
+                    KeyValue::new(GEN_AI_REQUEST_MODEL, model.to_string()),
+                    KeyValue::new(GEN_AI_PROVIDER_NAME, provider_of(model)),
+                    KeyValue::new("parallax.tool", record.tool.clone()),
+                ],
+            );
+        }
+    }
+    // An exit with no usage at all (cancelled, or failed before any pass)
+    // still records its zero cost against the attributed model, exactly as
+    // before.
+    if record.usage_by_model.is_empty() {
+        handles.cost.add(
+            record.cost_usd,
+            &[
+                KeyValue::new("parallax.tool", record.tool.clone()),
+                KeyValue::new(GEN_AI_REQUEST_MODEL, record.model.clone()),
+            ],
+        );
+        for (kind, count) in [
+            ("input", record.input_tokens),
+            ("output", record.output_tokens),
+        ] {
+            handles.token_usage.record(
+                count,
+                &[
+                    KeyValue::new(GEN_AI_TOKEN_TYPE, kind),
+                    KeyValue::new(GEN_AI_REQUEST_MODEL, record.model.clone()),
+                    KeyValue::new(GEN_AI_PROVIDER_NAME, provider),
+                    KeyValue::new("parallax.tool", record.tool.clone()),
+                ],
+            );
+        }
     }
 }
 
@@ -755,6 +815,79 @@ mod tests {
                 kv.key
             );
         }
+    }
+
+    // T024 / 018 D6: a multi-model invocation still emits ONE span, carrying
+    // the full participant set alongside the attributed model.
+    #[test]
+    fn multi_model_span_names_every_participant() {
+        let (spans, _, guard) = test_handles();
+        let mut usage = crate::telemetry::ModelUsage::default();
+        usage.add("claude-opus-5", 100, 20);
+        usage.add("claude-haiku-4-5", 900, 80);
+
+        let mut record = sample_invocation(Outcome::Success);
+        record.tool = "multi_model_probe".into();
+        record.models = usage.models();
+        record.cost_usd = usage.cost_usd();
+        record.cost_estimated = usage.cost_estimated();
+        // Dominance is by measured tokens: Haiku moved 980 vs Opus's 120.
+        record.model = "claude-haiku-4-5".into();
+        record.usage_by_model = usage;
+
+        emit_invocation(&record);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let matching: Vec<_> = exported
+            .iter()
+            .filter(|s| s.name == "parallax.multi_model_probe")
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "one span per invocation, not one per model"
+        );
+        let attrs = &matching[0].attributes;
+        assert_eq!(
+            attr(attrs, "gen_ai.request.model").unwrap().as_str(),
+            "claude-haiku-4-5"
+        );
+        let models = format!("{:?}", attr(attrs, "parallax.models").unwrap());
+        assert!(models.contains("claude-haiku-4-5"), "{models}");
+        assert!(models.contains("claude-opus-5"), "{models}");
+        assert_eq!(
+            attr(attrs, "parallax.cost_estimated").unwrap().to_string(),
+            "false"
+        );
+    }
+
+    // FR-012 reaching an operator who reads telemetry rather than the DB.
+    #[test]
+    fn an_unpriced_model_marks_the_span_estimated() {
+        let (spans, _, guard) = test_handles();
+        let usage = crate::telemetry::ModelUsage::single("some-future-model", 10, 10);
+        let mut record = sample_invocation(Outcome::Success);
+        record.tool = "unpriced_probe".into();
+        record.model = "some-future-model".into();
+        record.models = usage.models();
+        record.cost_estimated = usage.cost_estimated();
+        record.usage_by_model = usage;
+
+        emit_invocation(&record);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| s.name == "parallax.unpriced_probe")
+            .expect("span exported");
+        assert_eq!(
+            attr(&span.attributes, "parallax.cost_estimated")
+                .unwrap()
+                .to_string(),
+            "true"
+        );
     }
 
     #[test]

@@ -104,25 +104,25 @@ confirm the record names both models and that the exported telemetry agrees.
 
 ### Tests for User Story 2 (REQUIRED) ⚠️
 
-- [ ] T019 [P] [US2] Unit tests for `ModelUsage` in `src/telemetry.rs`: `totals()` sums, `dominant()` picks greatest input+output, ties break lexicographically, empty usage yields `None` (D5)
-- [ ] T020 [P] [US2] Unit test in `src/telemetry.rs` that a two-model record's `cost_usd` equals the sum over models of that model's own tokens at that model's own rate (FR-008, SC-003)
-- [ ] T021 [P] [US2] Unit test in `src/telemetry.rs` that a single-model record's `model`, `input_tokens`, `output_tokens`, and `cost_usd` are **identical** to the pre-feature values (FR-009a, SC-004)
-- [ ] T022 [P] [US2] Unit test in `src/telemetry.rs` that pricing lookup returns `pricing_known = false` for an unrecognised model and still prices at the conservative Opus-tier fallback (FR-012)
-- [ ] T023 [P] [US2] Test in `src/storage/sqlite.rs` that the migration is idempotent and that a row written before the migration reads back as a single-model record with `models`/`usage_by_model` absent (D4)
-- [ ] T024 [P] [US2] Test in `src/observability.rs` that a multi-model invocation emits one span carrying `parallax.models` and `parallax.cost_estimated`, and records `parallax.cost` and `gen_ai.client.token.usage` once per participating model while `parallax.invocations` increments once (D6, FR-010)
-- [ ] T025 [P] [US2] Test in `src/observability.rs` that every instrument is byte-identical to its pre-feature emission for a single-model invocation (SC-004)
-- [ ] T026 [P] [US2] Test in `src/telemetry.rs` that a model which failed or never ran contributes nothing to `models`, usage, or cost (FR-015b)
+- [X] T019 [P] [US2] Unit tests for `ModelUsage` in `src/telemetry.rs`: `totals()` sums, `dominant()` picks greatest input+output, ties break lexicographically, empty usage yields `None` (D5)
+- [X] T020 [P] [US2] Unit test in `src/telemetry.rs` that a two-model record's `cost_usd` equals the sum over models of that model's own tokens at that model's own rate (FR-008, SC-003)
+- [X] T021 [P] [US2] Unit test in `src/telemetry.rs` that a single-model record's `model`, `input_tokens`, `output_tokens`, and `cost_usd` are **identical** to the pre-feature values (FR-009a, SC-004)
+- [X] T022 [P] [US2] Unit test in `src/telemetry.rs` that pricing lookup returns `pricing_known = false` for an unrecognised model and still prices at the conservative Opus-tier fallback (FR-012)
+- [X] T023 [P] [US2] Test in `src/storage/sqlite.rs` that the migration is idempotent and that a row written before the migration reads back as a single-model record with `models`/`usage_by_model` absent (D4)
+- [X] T024 [P] [US2] Test in `src/observability.rs` that a multi-model invocation emits one span carrying `parallax.models` and `parallax.cost_estimated`, and records `parallax.cost` and `gen_ai.client.token.usage` once per participating model while `parallax.invocations` increments once (D6, FR-010)
+- [X] T025 [P] [US2] Test in `src/observability.rs` that every instrument is byte-identical to its pre-feature emission for a single-model invocation (SC-004)
+- [X] T026 [P] [US2] Test in `src/telemetry.rs` that a model which failed or never ran contributes nothing to `models`, usage, or cost (FR-015b)
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] Add `ModelUsage` (ordered `BTreeMap<String, Usage>`) with `single`, `add`, `totals`, `dominant`, and `cost_usd` in `src/telemetry.rs` (data-model.md §3)
-- [ ] T028 [US2] Add the current pricing rows (`claude-opus-5` 5/25, `claude-sonnet-5` 3/15, `claude-fable-5` 10/50) and return `pricing_known` from the rate lookup in `src/telemetry.rs` (FR-011, D8)
-- [ ] T029 [US2] Extend `InvocationRecord` in `src/telemetry.rs` with `models`, `usage_by_model`, and derived `cost_estimated`; change `create` to take `ModelUsage` and compute the attributed model, summed tokens, and summed cost (FR-007..FR-009)
-- [ ] T030 [US2] Add the two nullable columns and the pragma-guarded `ALTER TABLE` migration in `src/storage/sqlite.rs`, following the 017 pattern, and persist/read the new fields
-- [ ] T031 [US2] Change `run_recorded` and `RecordGuard` in `src/server.rs` to carry `ModelUsage`, and update all twelve call sites — eleven via `ModelUsage::single`, keeping the existing attributed-model fallback for cancelled and failed invocations
-- [ ] T032 [US2] Make `RunMeter` in `src/research/mod.rs` accumulate per model behind its existing lock, leaving `total()` summing across models so token budgets and deadlines behave exactly as before
-- [ ] T033 [US2] Update `src/observability.rs` for the new span attributes and per-model metric recording, and amend `specs/007-observability-layer/contracts/telemetry.md` in the same change (Principle I)
-- [ ] T047 [US2] Update the `telemetry::cost_usd` call at `src/checkpoint/run.rs:304` for the `pricing_known` return added in T028, and add a test in `src/checkpoint/run.rs` that a routed `checkpoint_review` prices `checkpoint_records.cost_usd` at the **routed** model's rate (depends on T028, T046)
+- [X] T027 [US2] Add `ModelUsage` (ordered `BTreeMap<String, Usage>`) with `single`, `add`, `totals`, `dominant`, and `cost_usd` in `src/telemetry.rs` (data-model.md §3)
+- [X] T028 [US2] Add the current pricing rows (`claude-opus-5` 5/25, `claude-sonnet-5` 3/15, `claude-fable-5` 10/50) and return `pricing_known` from the rate lookup in `src/telemetry.rs` (FR-011, D8)
+- [X] T029 [US2] Extend `InvocationRecord` in `src/telemetry.rs` with `models`, `usage_by_model`, and derived `cost_estimated`; change `create` to take `ModelUsage` and compute the attributed model, summed tokens, and summed cost (FR-007..FR-009)
+- [X] T030 [US2] Add the two nullable columns and the pragma-guarded `ALTER TABLE` migration in `src/storage/sqlite.rs`, following the 017 pattern, and persist/read the new fields
+- [X] T031 [US2] Change `run_recorded` and `RecordGuard` in `src/server.rs` to carry `ModelUsage`, and update all twelve call sites — eleven via `ModelUsage::single`, keeping the existing attributed-model fallback for cancelled and failed invocations
+- [X] T032 [US2] Make `RunMeter` in `src/research/mod.rs` accumulate per model behind its existing lock, leaving `total()` summing across models so token budgets and deadlines behave exactly as before
+- [X] T033 [US2] Update `src/observability.rs` for the new span attributes and per-model metric recording, and amend `specs/007-observability-layer/contracts/telemetry.md` in the same change (Principle I)
+- [X] T047 [US2] Update the `telemetry::cost_usd` call at `src/checkpoint/run.rs:304` for the `pricing_known` return added in T028, and add a test in `src/checkpoint/run.rs` that a routed `checkpoint_review` prices `checkpoint_records.cost_usd` at the **routed** model's rate (depends on T028, T046)
 
 **Checkpoint**: cost is correct and attributable across models; US1's savings are now
 measurable rather than merely real.
