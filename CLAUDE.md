@@ -221,23 +221,14 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active feature: `017-memory-consolidation` — the write-path half of the memory layer
-(consolidation levers + auto-capture, completing what 016 deferred). Rails decided in
-clarify via the `decide` protocol: capture is harness-triggered at end of turn (the
-turn hop gains a third judgment — capture proposal — keeping the boundary's single
-model pass; candidates enter untrusted/quarantined); consolidation runs on-admission
-only (deterministic cosine screen gates one budgeted decline-biased judgment:
-same_assertion/updates/context_specific/distinct); decay is ranking-only
-(reinforcement-refreshed recency, nothing ever removed). Memories gain
-status (active/superseded/merged) via the project's FIRST ALTER TABLE migration
-(pragma-guarded, fixture-tested). No new tools; promotion = re-admission through the
-levers. Artifacts:
-[spec](specs/017-memory-consolidation/spec.md) ·
-[plan](specs/017-memory-consolidation/plan.md) ·
-[research](specs/017-memory-consolidation/research.md) ·
-[data model](specs/017-memory-consolidation/data-model.md) ·
-[contracts](specs/017-memory-consolidation/contracts/) ·
-[quickstart](specs/017-memory-consolidation/quickstart.md). Next: `/speckit-tasks`.
+No active feature. Last merged: `017-memory-consolidation` (PR #52, `d79d8f8`) —
+the write-path half of the memory layer: admission-time consolidation levers
+(supersede/merge/context-specific via a cosine screen gating one decline-biased
+judgment), quarantined end-of-turn auto-capture as the turn hop's third judgment,
+ranking-only decay, and memory status (active/superseded/merged) via the project's
+first ALTER TABLE migration. T019 live dogfood PASS — all four sequences (result
+recorded in [tasks.md](specs/017-memory-consolidation/tasks.md)). Start the next
+feature with `/speckit-specify`.
 <!-- SPECKIT END -->
 
 ## Working style
