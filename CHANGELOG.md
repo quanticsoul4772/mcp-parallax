@@ -17,6 +17,54 @@ therefore read "Mechanism re-verified" rather than "Re-verified" (see the
 
 ### Added
 
+* **Per-call-site model routing (018)** — each of the server's twelve model
+  call sites can run on a model chosen for the work it does, instead of all
+  twelve sharing one `ANTHROPIC_MODEL`. Two work-kind tiers (`bulk`, holding
+  only research extraction — the one call site whose volume scales with the
+  number of fetched sources — and `judgment`, holding the other eleven) over a
+  reserved `PARALLAX_MODEL_*` namespace, with per-call-site overrides resolved
+  most-specific-first. The namespace is validated as a whole: an unrecognised
+  suffix is a startup error naming the variable, which is what makes a
+  misspelled route visible rather than a bill that silently never drops. A
+  resolved routing table is logged to stderr before serving. `ModelClient`
+  keeps its exact signature — the model stays a property of the client
+  instance, so routing is construction-time and the process holds one client
+  per distinct resolved model. **Off by default**: unset means the pre-018
+  behavior, byte-identical costs included.
+
+  Cost accounting became per-model as a consequence: once one invocation can
+  span models, a single rate applied to summed tokens is wrong under either.
+  An invocation still produces exactly one audit record and one exported span;
+  the record gains `models` and `usage_by_model` (two nullable columns via a
+  pragma-guarded `ALTER TABLE`; pre-existing rows read back as the
+  single-model records they were, no backfill), and `cost_usd` becomes the sum
+  over participants at each one's own rate. The attributed model — the record's
+  `model` column and the span's `gen_ai.request.model` — is the participant with
+  the most **measured tokens**, deliberately not the most cost, because an
+  unpriced model falls back to Opus-tier rates and would otherwise win
+  attribution by merely lacking a price. `parallax.cost` and
+  `gen_ai.client.token.usage` are now recorded once per participating model;
+  the invocation counters are not split, since that would stop them counting
+  invocations. The 007 telemetry contract is amended in-change.
+
+  Pricing gains the Claude 5 rows. This was not theoretical: `claude-fable-5`
+  bills at $10/$50 against an Opus-tier fallback of $5/$25, so a deployment
+  routed there was under-reporting spend by half. A new `pricing_known` flag
+  distinguishes a looked-up price from the fallback — necessary precisely
+  because `claude-opus-5` matches the fallback exactly, making "correct by
+  lookup" and "correct by coincidence" otherwise indistinguishable.
+
+  The per-call output budget rises from 4 096 to 16 000 tokens, derived from
+  the largest mode schema's own bounds (~3 500 tokens of answer) at ≥4×, with
+  the request timeout raised alongside it: on Claude 5 families, omitting
+  `thinking` runs adaptive reasoning charged against the same ceiling, so the
+  old budget could truncate a verdict before its JSON was emitted. The request
+  shape stays family-agnostic — no `thinking` field, which is the one form
+  every family accepts. **Named deferral**: per-family thinking suppression,
+  to be decided on measured cost (research D7). No tool's input or output
+  schema changes, and no caller-supplied value influences which model answers.
+  `SDK_LANDSCAPE.md` amended in-change; artifacts under
+  `specs/018-model-routing/`.
 * **Memory consolidation and auto-capture (017)** — the write-path half of
   the memory layer. Supersession and merge run on admission: a
   deterministic cosine screen (0.75) gates one budgeted decline-biased

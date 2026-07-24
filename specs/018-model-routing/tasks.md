@@ -76,8 +76,8 @@ sites routed alike share one client.
 - [X] T009 [P] [US1] Test in `src/server.rs` that the client pool holds one entry per **distinct** resolved model, so two call sites routed alike share one client (FR-004)
 - [X] T010 [P] [US1] Test in `src/server.rs` that each call site's dependency struct receives the client for its own resolved model (FR-001)
 - [X] T011 [P] [US1] Test in `src/server.rs` that with no `PARALLAX_MODEL_*` set, every call site resolves to `ANTHROPIC_MODEL` and exactly one client is built (FR-002)
-- [ ] T012 [P] [US1] Test in `tests/integration.rs` that the startup routing table names all twelve call sites with resolved model and supplying setting, and is emitted before serving (FR-005, SC-007)
-- [ ] T013 [P] [US1] Test in `tests/integration.rs` that no tool's input schema mentions a model and the catalog gains no entry (FR-003, FR-005a, FR-016)
+- [ ] T012 [P] [US1] **[deferred — startup-log assertion needs a tracing capture harness]** Test in `tests/integration.rs` that the startup routing table names all twelve call sites with resolved model and supplying setting, and is emitted before serving (FR-005, SC-007)
+- [ ] T013 [P] [US1] **[deferred]** Test in `tests/integration.rs` that no tool's input schema mentions a model and the catalog gains no entry (FR-003, FR-005a, FR-016)
 
 ### Implementation for User Story 1
 
@@ -150,8 +150,8 @@ at startup naming the setting at fault.
 
 - [X] T037 [US3] Raise `MAX_TOKENS` in `src/client/anthropic.rs` to **at least 4×** the schema-derived answer floor (research D7 step 1: research synthesis bounds its own output at 8 000 answer chars + 10×500 gap chars ≈ ~3.5k tokens; every other mode schema is smaller). Compute the floor from the schemas — no network needed — and record the arithmetic in the commit message
 - [X] T038 [US3] Raise the `REQUEST_TIMEOUT_MS` default in `src/config.rs` to **at least 3×** the slowest single call observed while setting T037's budget, since a larger ceiling on a thinking-by-default family can outrun 30 s (D7 step 3)
-- [ ] T039 [US3] Document in `specs/018-model-routing/quickstart.md` the measured values chosen in T037/T038, replacing the placeholder guidance
-- [ ] T050 [US3] Family sweep: route one call site to a model from each **completion** family in the shipped price list in turn and run its tool, recording in this file that each returned a complete result and a correct cost (SC-006; embedding models are excluded — they answer no call site). This sweep is also the **acceptance test for T037/T038** (D7 step 4): zero `AppError::Truncation` and zero `AppError::Timeout` outcomes. If either appears, raise the offending value and re-run the sweep
+- [X] T039 [US3] Document in `specs/018-model-routing/quickstart.md` the measured values chosen in T037/T038, replacing the placeholder guidance
+- [ ] T050 [US3] **[BLOCKED — needs live API credentials]** Family sweep: route one call site to a model from each **completion** family in the shipped price list in turn and run its tool, recording in this file that each returned a complete result and a correct cost (SC-006; embedding models are excluded — they answer no call site). This sweep is also the **acceptance test for T037/T038** (D7 step 4): zero `AppError::Truncation` and zero `AppError::Timeout` outcomes. If either appears, raise the offending value and re-run the sweep
 
 **Checkpoint**: every completion model in the shipped price list can serve every call site (SC-006), and the budget and timeout are validated rather than assumed.
 
@@ -159,12 +159,13 @@ at startup naming the setting at fault.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T040 Amend the design corpus in `docs/design/` for per-call-site routing — **required by Constitution Principle I, not optional follow-up**: `SDK_LANDSCAPE.md` §core currently describes a single `ModelClient` behind one configured model
-- [ ] T041 [P] Record the named deferral (per-family `thinking` suppression, research D7) in the corpus amendment so it is visible outside this feature's spec directory
-- [ ] T042 [P] Append the `[Unreleased]` entry to `CHANGELOG.md` in Keep a Changelog 1.1.0 format, covering the routing surface, the record/telemetry change, and the pricing rows
-- [ ] T043 Run the full gate and confirm the SC-004 evidence from T002 — the listed test expectations must still be unmodified
+- [X] T040 Amend the design corpus in `docs/design/` for per-call-site routing — **required by Constitution Principle I, not optional follow-up**: `SDK_LANDSCAPE.md` §core currently describes a single `ModelClient` behind one configured model
+- [X] T041 [P] Record the named deferral (per-family `thinking` suppression, research D7) in the corpus amendment so it is visible outside this feature's spec directory
+- [X] T042 [P] Append the `[Unreleased]` entry to `CHANGELOG.md` in Keep a Changelog 1.1.0 format, covering the routing surface, the record/telemetry change, and the pricing rows
+- [X] T043 Run the full gate and confirm the SC-004 evidence from T002 — the listed test expectations must still be unmodified
+      **Confirmed 2026-07-24: 443 unit + 69 integration = 512 passing, fmt and clippy clean. Every register test passes with its original expected values. One assertion changed accessor only (`pipeline_tests` reads `usage.totals()` for the same `(60, 30)`).**
 - [ ] T044 Walk `specs/018-model-routing/quickstart.md` end to end against the built binary and correct anything that does not match observed behavior
-- [ ] T045 Live dogfood: run one research question unrouted, then with `PARALLAX_MODEL_BULK` set to a cheaper model; record in this file both costs, the per-model split, the measured saving against SC-001, and a diff of the two runs' verified findings against SC-002
+- [ ] T045 **[BLOCKED — needs live API credentials]** Live dogfood: run one research question unrouted, then with `PARALLAX_MODEL_BULK` set to a cheaper model; record in this file both costs, the per-model split, the measured saving against SC-001, and a diff of the two runs' verified findings against SC-002
 
 ---
 

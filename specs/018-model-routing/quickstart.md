@@ -84,7 +84,20 @@ Resolution is most-specific-first: call site, then tier, then `ANTHROPIC_MODEL`.
 ## If you route to a Claude 5 model
 
 Those families reason before answering unless told not to, and that reasoning shares
-the output budget with the answer. The output ceiling and the request timeout both
-rise in this feature to accommodate it. If you see truncation or timeouts after
-routing a call site to one of them, raise `REQUEST_TIMEOUT_MS` before suspecting the
-route.
+the output budget with the answer — so a budget sized for a bare verdict can be spent
+before the JSON is emitted.
+
+Both ceilings rose in this feature, and the output budget is derived rather than
+guessed:
+
+| Setting | Was | Now | Where the number comes from |
+|---|---:|---:|---|
+| output budget (`MAX_TOKENS`, compiled in) | 4 096 | 16 000 | The largest mode schema bounds its own output: research synthesis allows 8 000 answer characters plus ten 500-character gaps — ~13 000 characters, roughly **3 500 tokens** of answer before any reasoning. The budget is ≥4× that floor. |
+| `REQUEST_TIMEOUT_MS` | 30 000 | 120 000 | A ceiling four times larger on a model that reasons first can outrun 30 s, which would turn a truncation into a timeout rather than fix it. |
+
+The floor is computed from the schema constants in a test, not hard-coded, so the
+relationship survives a schema change. The timeout figure is **provisional** until the
+family sweep confirms zero timeouts across the shipped completion models.
+
+If you still see truncation or timeouts after routing a call site to one of these
+families, raise `REQUEST_TIMEOUT_MS` before suspecting the route.
