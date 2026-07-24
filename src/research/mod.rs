@@ -62,6 +62,19 @@ pub struct DepthTier {
 }
 
 impl Depth {
+    /// The wire spelling, matching the contract's `depth` enum. Used to stamp
+    /// the invocation record so a recorded run can be attributed to its tier
+    /// (019 — without this, no historical run tells you which ceiling it ran
+    /// under, and the standard/deep budgets cannot be sized from data).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Standard => "standard",
+            Self::Deep => "deep",
+        }
+    }
+
     /// The tier table (research.md 004 D8).
     #[must_use]
     pub const fn tier(self) -> DepthTier {
@@ -71,7 +84,20 @@ impl Depth {
                 max_sources: 8,
                 verify_k: 1,
                 default_deadline_ms: 120_000,
-                default_budget_tokens: 150_000,
+                // Raised 150k -> 250k (2026-07-24), derived from this tier's
+                // own history rather than picked: the 004 evidence-grounding
+                // fix took an identical question from 104,783 tokens to
+                // 174,952, while the ceiling never moved, so every run tripped
+                // it and dropped ~40% of its claims. 150_000 / 104_783 gives
+                // the tier's original headroom ratio of 1.43; preserving that
+                // against the measured 174,952 gives ~250_000.
+                //
+                // Standard and deep are deliberately NOT raised by inference.
+                // The invocation record does not yet carry the depth (fixed in
+                // this change), so no recorded run can be attributed to a tier
+                // and their consumption is unmeasured. Raising them on a guess
+                // is the failure mode 018's SC-001 already demonstrated.
+                default_budget_tokens: 250_000,
             },
             Self::Standard => DepthTier {
                 angles: 5,
@@ -239,6 +265,15 @@ mod tests {
         assert_eq!(Depth::Standard.tier().max_sources, 25);
         assert_eq!(Depth::Deep.tier().angles, 8);
         assert_eq!(Depth::Deep.tier().verify_k, 3);
+        // 019: the quick ceiling is pinned to the value derived from the
+        // tier's own measured consumption (see the comment on the table). A
+        // silent drift back below the post-004 cost is what dropped ~40% of a
+        // run's claims, so the number is asserted, not merely commented.
+        assert_eq!(Depth::Quick.tier().default_budget_tokens, 250_000);
+        // The tier a record is stamped with must match the contract spelling.
+        assert_eq!(Depth::Quick.as_str(), "quick");
+        assert_eq!(Depth::Standard.as_str(), "standard");
+        assert_eq!(Depth::Deep.as_str(), "deep");
         // Tiers are strictly increasing in every scaling dimension.
         for (lo, hi) in [
             (Depth::Quick, Depth::Standard),

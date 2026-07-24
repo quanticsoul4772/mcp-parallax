@@ -200,6 +200,11 @@ pub struct InvocationRecord {
     /// True when a participating model had no price row and was costed at the
     /// conservative fallback — the figure is an over-estimate (018 FR-012).
     pub cost_estimated: bool,
+    /// The research rigor tier this invocation ran under, for the one tool
+    /// that has one (019). `None` for every other tool and for every record
+    /// written before the column existed — the budget a run was held to is
+    /// otherwise unrecoverable from the record.
+    pub depth: Option<String>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -243,10 +248,21 @@ impl InvocationRecord {
             models: usage.models(),
             usage_by_model: usage.clone(),
             cost_estimated: usage.cost_estimated(),
+            // Set by `with_depth` at the one call site that has a tier;
+            // chainable rather than a parameter so the other five `create`
+            // callers stay unchanged.
+            depth: None,
             latency_ms,
             outcome,
             created_at,
         }
+    }
+
+    /// Stamp the research rigor tier onto the record (019).
+    #[must_use]
+    pub fn with_depth(mut self, depth: Option<&str>) -> Self {
+        self.depth = depth.map(ToString::to_string);
+        self
     }
 
     /// Publish the record to every observability sink at an invocation exit

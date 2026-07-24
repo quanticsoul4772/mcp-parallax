@@ -33,8 +33,23 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// That headroom is why 4096 no longer suffices: on Claude 5 families,
 /// omitting `thinking` runs adaptive reasoning which is charged against this
 /// same ceiling, so a verdict could be truncated before its JSON was emitted.
-/// Acceptance is the family sweep (T050): zero truncation, zero timeout.
-const MAX_TOKENS: u32 = 16_000;
+///
+/// **Raised 16 000 → 32 000 (2026-07-24) after a real truncation.** The 018
+/// family sweep declared 16 000 validated, but it exercised only trivial
+/// inputs — a two-option `decide` with one sentence of context. A genuine
+/// four-option `decide` with a long context on `claude-sonnet-5` exhausted the
+/// ceiling. The schema floor bounds only the *answer*; on a model that reasons
+/// before answering the reasoning term is the larger one and is not bounded by
+/// any schema.
+///
+/// This value is **not** derived from measurement, and saying so matters: the
+/// largest successful thinking-inclusive output on record is 3 135 tokens,
+/// while the failing call exceeded 16 000, and how far past it went is unknown
+/// because truncated invocations currently record zero usage (see the
+/// follow-up note in the branch description). 32 000 is ~9× the schema floor
+/// and 2× the value that failed. It should be re-derived once truncation
+/// records its real usage.
+const MAX_TOKENS: u32 = 32_000;
 
 /// Thin `reqwest` client implementing [`ModelClient`] via structured outputs.
 pub struct AnthropicClient {

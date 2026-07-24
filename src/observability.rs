@@ -366,6 +366,13 @@ pub fn emit_invocation(record: &InvocationRecord) {
         ),
         KeyValue::new("parallax.cost_estimated", record.cost_estimated),
     ];
+    // 019: present only for the one tool that has a rigor tier. Absent rather
+    // than "none" — an attribute that is there for every tool would say
+    // nothing, and the query that matters is "what did runs at this tier
+    // cost", which needs the tiered runs separable from the untiered ones.
+    if let Some(depth) = record.depth.as_ref() {
+        attributes.push(KeyValue::new("parallax.depth", depth.clone()));
+    }
     if record.outcome != Outcome::Success {
         attributes.push(KeyValue::new("error.type", outcome));
     }
@@ -697,6 +704,7 @@ mod tests {
             models: vec!["claude-opus-4-8".into()],
             usage_by_model: crate::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
             cost_estimated: false,
+            depth: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")
