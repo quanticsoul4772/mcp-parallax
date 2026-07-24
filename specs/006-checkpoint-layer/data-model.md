@@ -41,8 +41,16 @@ TrajectoryEntry =
 ```
 
 Normalization (the precision lever, D5): whitespace-collapsed, volatile
-fields (ids, timestamps, absolute temp paths) dropped, then exact-match
+fields (harness ids — `tool_use_id`/`session_id`/`request_id` —
+timestamps, narrative `description`) dropped, then exact-match
 comparison. No fuzzy similarity anywhere in screening.
+
+> **Amendment (2026-07-24, 017 T019 dogfood finding):** an input-level
+> `id` is no longer dropped as volatile. It names the action's semantic
+> target (for `forget` it is the entire payload) and is stable across
+> retries of the same action — so keeping it distinguishes a finite batch
+> of distinct operations (six distinct `forget` ids, falsely flagged as a
+> loop) from a genuine retry loop, which still matches and fires.
 
 **`TrajectoryReader` seam (`src/traits/trajectory.rs`)**:
 `read(path, session_id, bounds) -> Result<TrajectoryWindow, AppError>`.

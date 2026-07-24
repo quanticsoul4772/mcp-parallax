@@ -39,8 +39,11 @@ pub enum TrajectoryEntry {
 /// Normalize a tool input for exact-match comparison.
 ///
 /// Serializes compactly with volatile fields dropped and whitespace runs
-/// collapsed. Volatile fields (ids, timestamps, absolute temp paths) would
-/// make every invocation unique and blind the repetition detector.
+/// collapsed. Volatile fields (harness ids, timestamps) would make every
+/// invocation unique and blind the repetition detector. An input-level
+/// `id` is NOT volatile: it names the action's target, is stable across
+/// retries of the same action, and distinguishes a finite batch of
+/// distinct operations from a genuine loop.
 #[must_use]
 pub fn normalize_input(input: &Value) -> String {
     let mut out = String::new();
@@ -49,8 +52,13 @@ pub fn normalize_input(input: &Value) -> String {
 }
 
 /// Keys dropped during normalization — volatile per-invocation noise.
+///
+/// `id` is deliberately absent (2026-07-24, 017 T019 dogfood finding): a
+/// tool input's `id` is the semantic target of the action — for a tool
+/// like `forget` it is the entire payload. Dropping it made six distinct
+/// deletions normalize identically and fire a false repetition flag,
+/// while retry loops on the SAME target match with or without it.
 const VOLATILE_KEYS: &[&str] = &[
-    "id",
     "tool_use_id",
     "session_id",
     "sessionId",
@@ -216,8 +224,14 @@ mod tests {
         let equal_pairs = [
             // Volatile fields dropped.
             (
-                json!({ "command": "cargo test", "id": "a1" }),
-                json!({ "command": "cargo test", "id": "zz9" }),
+                json!({ "command": "cargo test", "tool_use_id": "a1" }),
+                json!({ "command": "cargo test", "tool_use_id": "zz9" }),
+            ),
+            // A retry loop on the SAME target still matches — the target
+            // `id` is stable across retries (017 T019 finding).
+            (
+                json!({ "id": "cf1e08fc", "timestamp": "t1" }),
+                json!({ "id": "cf1e08fc", "timestamp": "t2" }),
             ),
             // Key order irrelevant.
             (json!({ "a": 1, "b": 2 }), json!({ "b": 2, "a": 1 })),
@@ -248,6 +262,11 @@ mod tests {
                 json!({ "file_path": "a.rs", "content": "x" }),
                 json!({ "file_path": "b.rs", "content": "x" }),
             ),
+            // An input-level `id` is the action's target, not volatile
+            // noise: a finite batch of distinct deletions must not
+            // normalize identically (017 T019 finding — six distinct
+            // `forget` ids fired a false repetition flag).
+            (json!({ "id": "cf1e08fc" }), json!({ "id": "cb575d30" })),
         ];
         for (a, b) in unequal_pairs {
             assert_ne!(normalize_input(&a), normalize_input(&b), "{a} vs {b}");
