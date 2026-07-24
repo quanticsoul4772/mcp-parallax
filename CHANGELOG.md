@@ -143,6 +143,27 @@ single advisory to its dep bump.
 
 ### Fixed
 
+* **Routed call sites recorded the wrong model, and were priced at its rate
+  (018).** Routing itself worked — a call went to the client its call site
+  resolved to — but the eleven single-model tools passed
+  `config.anthropic_model` to `run_recorded` as the attributed model, so the
+  invocation record named the server-wide default and `cost_usd` was computed
+  at that model's rate. A `verify` routed to Sonnet 5 ($3/$15) was billed in
+  the record at Opus 4.8 rates ($5/$25). Found by running 018's own T050
+  validation sweep against the merged binary. `Parallax` now carries the
+  resolved `RoutingTable` and every call site attributes through it; the
+  now-redundant global `model` field is removed, which is how the compiler
+  confirms no site was missed. Research was already correct — its `RunMeter`
+  attributes per hop through the routing table.
+
+  This is the same defect class `/speckit-analyze` caught for the checkpoint
+  layer before 018 merged: attribution taken from global config rather than the
+  resolved route. That instance was fixed; the eleven identical cases in the
+  same file were not. The regression test this shipped without —
+  `a_routed_call_site_records_the_model_that_served_it` — asserts that a routed
+  tool's record names the routed model, and was confirmed to fail against the
+  original bug before being kept.
+
 * **Research verification judged from priors, not evidence (004/D3+D4).**
   The per-claim refute-biased verifier received only source titles/hosts as
   context — the fetched page text was dropped after extraction — so
