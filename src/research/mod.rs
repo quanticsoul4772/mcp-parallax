@@ -84,20 +84,32 @@ impl Depth {
                 max_sources: 8,
                 verify_k: 1,
                 default_deadline_ms: 120_000,
-                // Raised 150k -> 250k (2026-07-24), derived from this tier's
-                // own history rather than picked: the 004 evidence-grounding
-                // fix took an identical question from 104,783 tokens to
-                // 174,952, while the ceiling never moved, so every run tripped
-                // it and dropped ~40% of its claims. 150_000 / 104_783 gives
-                // the tier's original headroom ratio of 1.43; preserving that
-                // against the measured 174,952 gives ~250_000.
+                // Raised 150k -> 350k (2026-07-24), derived from this tier's
+                // own history rather than picked. The 004 evidence-grounding
+                // fix gave each verification hop a real source excerpt instead
+                // of a title, and the ceiling never moved, so every quick run
+                // tripped it and dropped ~40% of its claims.
+                //
+                // The first attempt at this number was 250_000, from
+                // 1.43 (the tier's original 150_000 / 104_783 headroom ratio)
+                // times a post-004 measurement of 174,952. That measurement
+                // was taken from a run that had ITSELF stopped early and
+                // dropped 43 of 89 claims, so it was the cost of an incomplete
+                // run and understated the real figure. A run that actually
+                // completes measures 239,371 (77 claims extracted, 77
+                // verified, 8/8 sources — near this tier's structural
+                // maximum), which is 95.7% of 250_000. Applying 1.43 to the
+                // complete-run cost gives ~342_000, rounded to 350_000.
+                //
+                // Sizing a ceiling from a run that hit that ceiling is
+                // circular; the number it produces is always too low.
                 //
                 // Standard and deep are deliberately NOT raised by inference.
                 // The invocation record does not yet carry the depth (fixed in
                 // this change), so no recorded run can be attributed to a tier
                 // and their consumption is unmeasured. Raising them on a guess
                 // is the failure mode 018's SC-001 already demonstrated.
-                default_budget_tokens: 250_000,
+                default_budget_tokens: 350_000,
             },
             Self::Standard => DepthTier {
                 angles: 5,
@@ -269,7 +281,7 @@ mod tests {
         // tier's own measured consumption (see the comment on the table). A
         // silent drift back below the post-004 cost is what dropped ~40% of a
         // run's claims, so the number is asserted, not merely commented.
-        assert_eq!(Depth::Quick.tier().default_budget_tokens, 250_000);
+        assert_eq!(Depth::Quick.tier().default_budget_tokens, 350_000);
         // The tier a record is stamped with must match the contract spelling.
         assert_eq!(Depth::Quick.as_str(), "quick");
         assert_eq!(Depth::Standard.as_str(), "standard");

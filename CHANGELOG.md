@@ -218,16 +218,24 @@ single advisory to its dep bump.
 
 ### Changed
 
-* **Quick research budget raised 150 000 → 250 000 tokens (019).** Derived from
-  the tier's own history, not picked: the 004 evidence-grounding fix gave each
-  per-claim verification hop a real source excerpt instead of a title — the
-  change that made verification worth running — and moved an identical quick
-  question from 104,783 tokens to 174,952 against a ceiling that never moved.
-  Every quick run then tripped its budget and dropped roughly 40% of its
-  claims. 150 000 / 104 783 is the tier's original 1.43 headroom ratio;
-  preserving it against the measured 174 952 gives 250 000. Standard and deep
-  are unchanged, deliberately — see the `depth` column above for why they are
-  currently unmeasurable. Corpus amended in the same change
+* **Quick research budget raised 150 000 → 350 000 tokens (019).** The 004
+  evidence-grounding fix gave each per-claim verification hop a real source
+  excerpt instead of a title — the change that made verification worth running
+  — and every quick run then tripped a ceiling that had not moved, dropping
+  roughly 40% of its claims.
+
+  The first attempt at the new number was 250 000: the tier's original 1.43
+  headroom ratio (150 000 / 104 783) applied to a post-004 measurement of
+  174 952. **That measurement was taken from a run which had itself stopped
+  early and dropped 43 of 89 claims** — the cost of an incomplete run, and so
+  an understatement. A run that completes measures **239 371 tokens** (77
+  claims extracted, 77 verified, 8/8 sources — near this tier's structural
+  maximum), which is 95.7% of 250 000. Applying 1.43 to the complete-run cost
+  gives ~342 000, rounded to 350 000. Sizing a ceiling from a run that hit that
+  ceiling is circular and always yields a number that is too low.
+
+  Standard and deep are unchanged, deliberately — see the `depth` column above
+  for why they are currently unmeasurable. Corpus amended in the same change
   (`RESEARCH_PRIMITIVE.md` §5, `specs/004-research-layer/research.md` D8).
 
 * **Per-call output ceiling raised 16 000 → 32 000 tokens (019)**, after a real
@@ -239,7 +247,11 @@ single advisory to its dep bump.
   successful thinking-inclusive output on record is 3 135 tokens, and how far
   past 16 000 the failing call went is unknown, because a truncated invocation
   currently records zero usage (see *Known issues*). It should be re-derived
-  once that is fixed.
+  once that is fixed. A post-change attempt to reproduce the failure (a
+  four-option `decide` with a ~2 000-token context on `claude-sonnet-5`)
+  **did not** reproduce it: the call returned 445 output tokens, nowhere near
+  either ceiling. So the raise is currently unfalsified rather than validated,
+  and the mechanism behind the original truncation is still unexplained.
 
 * **OTel GenAI semconv deprecations cleared (#39, `eeb1608`).** The
   upstream `opentelemetry_semantic_conventions` crate deprecated its
