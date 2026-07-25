@@ -3,7 +3,10 @@
 //!
 //! MCP-side only — there is no model hop for this shape, so nesting is legal
 //! (003 D6 precedent). `key_findings`/`disagreements`/`sources`/`stats` are
-//! server-assembled; the model writes only the answer prose and gaps.
+//! server-assembled; the model writes the answer prose, the gaps, and the
+//! sub-question each gap concerns (021 `gap_targets`). Every published number
+//! is computed by the server from that input — the model never emits a
+//! confidence, a coverage figure, or a rate directly.
 
 use crate::research::{Depth, Support};
 use serde::{Deserialize, Serialize};
@@ -60,8 +63,11 @@ pub struct ResearchResult {
     /// FR-002) — breadth of resolution, which `confidence` used to be
     /// multiplied by and no longer is.
     ///
-    /// Equals the fraction of [`Self::sub_question_status`] marked settled, so
-    /// the figure is checkable from this output alone.
+    /// Equals the fraction of [`Self::sub_question_status`] marked settled —
+    /// or `1.0` when the run scoped no sub-questions, in which case that list
+    /// is empty and nothing is unsettled. Stated explicitly because the
+    /// fraction is undefined there, and a caller applying the equality to an
+    /// empty list would compute 0/0 rather than the 1.0 the server reports.
     pub coverage: f32,
     /// Each sub-question the run scoped, and whether it was settled (021
     /// FR-005). The published basis for [`Self::coverage`].
@@ -179,6 +185,15 @@ pub enum StopReason {
     Deadline,
     /// The grounding gate demoted content after its retry.
     Grounding,
+    /// The synthesis returned a malformed response twice — its gap list and
+    /// the sub-question keys for it disagreed in length — and was demoted
+    /// (021).
+    ///
+    /// Distinct from [`Self::Grounding`] because the grounding gate is never
+    /// reached on that path: reporting it as a grounding failure would tell
+    /// the caller the answer could not be cited when citation was never
+    /// evaluated, and 004 FR-007 requires the accounting be honest.
+    MalformedSynthesis,
 }
 
 #[cfg(test)]

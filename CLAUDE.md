@@ -38,8 +38,9 @@ verified-before-stored trust, brute-force cosine ranking — the named
 sqlite-vec deviation, `SDK_LANDSCAPE.md` §memory), and **`research`** (gated
 on `BRAVE_API_KEY`; five-phase scope→search→fetch+extract→verify→synthesize
 pipeline with refute-biased per-claim verification and a deterministic
-grounding gate — the model writes only the answer prose; findings, labels,
-confidences, sources, and stats are server-assembled), and the **checkpoint
+grounding gate — the model writes the answer prose, the gaps, and the
+sub-question each gap concerns; findings, labels, confidences, coverage,
+sources, and stats are server-assembled), and the **checkpoint
 layer** — the watchdog re-grounded for MCP (`WATCHDOG_LAYER.md` 2026-06-12
 amendment): three harness-triggered tools (`checkpoint_action` gate /
 `checkpoint_batch` loop screening / `checkpoint_turn` review with the

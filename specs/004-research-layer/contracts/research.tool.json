@@ -1,5 +1,5 @@
 {
-  "$comment": "MCP tool contract for `research`. MCP-side only (no model hop for this shape - 003 D6 precedent). key_findings/disagreements/sources/stats are server-assembled; the model writes only the answer prose and gaps. Every key finding cites at least one source; every cited id resolves in sources; the grounding gate enforces this before return.",
+  "$comment": "MCP tool contract for `research`. MCP-side only (no model hop for this shape - 003 D6 precedent). key_findings/disagreements/sources/stats are server-assembled; the model writes the answer prose, the gaps, and the sub-question each gap concerns (021 gap_targets). Every published number is computed by the server from that input - the model never emits a confidence, coverage, or rate directly. Every key finding cites at least one source; every cited id resolves in sources; the grounding gate enforces this before return.",
   "name": "research",
   "description": "Offload a research question; get back a short, cited, adversarially-verified answer - not a pile of links. Runs scoped parallel searches, fetches and extracts sources, verifies every claim with independent refute-biased passes, and synthesizes a compact answer with inline citations, surfaced disagreements, and honest gaps. Depth scales rigor; budget and deadline ceilings synthesize early and say so. Every citation resolves to a source fetched during the run.",
   "inputSchema": {
@@ -29,7 +29,7 @@
       "answer": { "type": "string", "description": "Executive synthesis with inline [sN] citations." },
       "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "Support established for the claims the answer asserts - the mean confidence of the published findings. NOT reduced by unsettled sub-questions; breadth is reported separately. Zero only when no claim was supported. (021)" },
       "refutation_rate": { "type": "number", "minimum": 0, "maximum": 1, "description": "Proportion of verified claims that verification refuted. Reported beside confidence rather than folded into it, so a run whose evidence largely fell apart is distinguishable from one whose evidence held. 0 when no claim was verified. (021)" },
-      "coverage": { "type": "number", "minimum": 0, "maximum": 1, "description": "Proportion of the run's scoped sub-questions that were settled - breadth of resolution, which confidence used to be multiplied by and no longer is. Equals the fraction of sub_question_status marked settled. (021)" },
+      "coverage": { "type": "number", "minimum": 0, "maximum": 1, "description": "Proportion of the run's scoped sub-questions that were settled - breadth of resolution, which confidence used to be multiplied by and no longer is. Equals the fraction of sub_question_status marked settled, or 1 when the run scoped no sub-questions (the list is then empty and nothing is unsettled). (021)" },
       "sub_question_status": {
         "type": "array",
         "items": {

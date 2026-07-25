@@ -66,7 +66,7 @@ amended.
 |---|---|---|
 | **I. Design-Corpus Fidelity** | PASS | `RESEARCH_PRIMITIVE.md` and `specs/004-research-layer/` are amended in this same change (FR-012). The feature *is* a correction to a corpus-described formula, so leaving the corpus stating the old one would be the drift this principle forbids. No crate change, no dropped layer. |
 | **II. Constrained-Output Contract** | PASS | `SynthOut` gains `gap_targets: Vec<u32>` and stays flat and closed. Nesting was rejected for this reason ([research.md](research.md) D1), as was a delimiter convention inside the gap text, which is free-text parsing by another name. The published tool contract may nest — it already does — because it is server-assembled, not model-constrained. |
-| **III. Compiler-Enforced Discipline** | PASS | No new production `unwrap`/`expect`; no stdout write. An arity mismatch is raised as a `ValidationFailure` rather than absorbed — [research.md](research.md) D2 rejects the "treat absent targets as none" reading precisely because it would be a fallback hiding a failure, and it would inflate coverage to full. |
+| **III. Compiler-Enforced Discipline** | PASS | No new production `unwrap`/`expect`; no stdout write. An arity mismatch feeds the retry rather than being absorbed — [research.md](research.md) D2 rejects the "treat absent targets as none" reading precisely because it would be a fallback hiding a failure, and it would inflate coverage to full. On a second failure it demotes under its own `StopReason::MalformedSynthesis`, so the caller is not told a grounding gate rejected the answer when that gate was never reached (004 FR-007, honest accounting). |
 | **IV. Seams, Composition, Tests** | PASS | No new external effect and no new seam. Every case in [quickstart.md](quickstart.md) is reachable through the existing mocks; the boundary rows (no sub-questions, no claims verified, out-of-range target) are pure-function tests. Tests are required, not optional. |
 | **V. Deterministic Over Probabilistic** | PASS | Coverage and refutation rate are counted from run data by pure functions. The model supplies only which sub-question a gap it wrote concerns — it does not supply, or influence, either figure. The alternative of inferring the association by text matching was refuted 3/3 and is explicitly out of scope. |
 | **VI. Capabilities Off By Default** | PASS | No new capability, no egress, no execution, no env var. Nothing to gate. |
@@ -79,10 +79,25 @@ consequence, not by omission.**
 
 ### One residual, named rather than papered over
 
-The design accepts that a `gap_target` which is *in range but wrong* is
+The design accepts two ways the model can misreport, and design review found the
+plan had named only one.
+
+**In range but wrong**: a key pointing at a sub-question the gap does not concern is
 indistinguishable from a correct one at the server. FR-006 covers out-of-range; no
-requirement can close in-range-but-wrong without inferring the association from text,
-which was refuted. This is the residual model-trust the design takes on, and
+requirement can close this without inferring the association from text, which was
+refuted. *Narrowed after review*: the synthesis prompt now presents the
+sub-questions **numbered** rather than bulleted, matching what `decide` does for the
+options it asks the model to index. That removes the largest source of these — the
+model miscounting unlabelled lines — though it does not eliminate the class.
+
+**Omission**: a synthesis that reports no gaps at all receives `coverage: 1.0` with
+no evidence anything was settled. Coverage rewards silence, and nothing in FR-003
+through FR-009 constrains under-reporting. This is the weaker direction of the same
+trust, and it was unnamed in the original plan.
+
+Both are bounded by the same structural fact: coverage no longer reaches
+`confidence`, so a mis-keyed or omitted gap cannot inflate the support figure — only
+the breadth figure, which is published beside the list it is computed from. This is the residual model-trust the design takes on, and
 Decision 1 took it knowingly: the status quo already trusts the same synthesis pass
 for the same number, with less structure and no bound at all. It is recorded in the
 spec's checklist notes and repeated here so it survives into review.

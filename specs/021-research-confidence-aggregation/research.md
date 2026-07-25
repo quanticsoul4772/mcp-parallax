@@ -40,8 +40,16 @@ FR-006; the encoding makes the check a single bound comparison.
 
 ## D2 — What happens when the two arrays disagree in length
 
-**Decision**: an arity mismatch is a `ValidationFailure` that feeds the synthesis
-pass's **existing** retry, and a second failure takes the **existing** demotion path.
+**Decision**: an arity mismatch feeds the synthesis pass's **existing** retry, and a
+second failure takes the **existing** demotion path — under its own stop reason, not
+the grounding gate's.
+
+*Amended after review*: the first draft said the mismatch is "raised as a
+`ValidationFailure`". The code constructs no error — it warns, sets a retry clause,
+and continues, which is what the second sentence describes. It also originally
+inherited `StopReason::Grounding` on demotion, telling the caller the answer could
+not be grounded when the grounding gate was never reached. That is now
+`StopReason::MalformedSynthesis`, with its own demotion text.
 
 **Rationale**: `synthesize_grounded` already has both — a violation-fed retry and a
 demotion that returns an honest answer listing what remains. Adding a second failure

@@ -42,8 +42,8 @@ Empty when the run scoped none.
 |---|---|---|
 | `answer` | string | unchanged |
 | `confidence` | f32 0..=1 | **redefined** — mean support of the findings the answer asserts, with no coverage factor |
-| `coverage` | f32 0..=1 | **new** — proportion of sub-question statuses marked settled |
 | `refutation_rate` | f32 0..=1 | **new** — proportion of verified claims that verification refuted |
+| `coverage` | f32 0..=1 | **new** — proportion of sub-question statuses marked settled, or 1.0 when none were scoped |
 | `sub_question_status` | SubQuestionStatus[] | **new** — the basis for `coverage`, so it is checkable from the output |
 | `key_findings` | KeyFinding[] | unchanged |
 | `disagreements` | Disagreement[] | unchanged |

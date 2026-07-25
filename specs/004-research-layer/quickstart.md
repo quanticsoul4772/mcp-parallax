@@ -80,7 +80,10 @@ only behavioral change in the amendment (quick deadline 90 s → 120 s) never
 tripped in the recorded run — so the verdict under the amended criteria is
 **PASS** without a third paid run. Known v1 bound, named in research.md D7:
 `confidence` saturates to ~0 when the model reports many gaps (coverage
-penalty); revisit alongside per-source stance tracking.
+penalty); revisit alongside per-source stance tracking. **Resolved 2026-07-25
+(feature 021)**: it was not a saturation bound but a defect — the coverage
+term reached exactly 0 by construction. The multiplier is removed and breadth
+is published as its own `coverage` field.
 
 ## Inspect
 

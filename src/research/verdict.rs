@@ -104,20 +104,36 @@ pub fn coverage(sub_questions: usize, targets: &[u32]) -> f32 {
     if sub_questions == 0 {
         return 1.0;
     }
-    let mut claimed = vec![false; sub_questions];
+    let settled = settled_mask(sub_questions, targets)
+        .iter()
+        .filter(|settled| **settled)
+        .count();
+    #[allow(clippy::cast_precision_loss)] // bounded by MAX_SUB_QUESTIONS
+    let ratio = (settled as f32) / (sub_questions as f32);
+    ratio.clamp(0.0, 1.0)
+}
+
+/// Per-sub-question settled flags, in scope order — the single decode of the
+/// 1-based keys (021).
+///
+/// [`coverage`] counts this, and the pipeline zips it into the published
+/// `sub_question_status`. One implementation rather than two: the contract
+/// promises coverage equals the settled share of that list, and two
+/// hand-written copies of an off-by-one-prone decode would let the promise
+/// drift. It now holds by construction.
+#[must_use]
+pub fn settled_mask(sub_questions: usize, targets: &[u32]) -> Vec<bool> {
+    let mut settled = vec![true; sub_questions];
     for &target in targets {
         // 0 = concerns no single sub-question; out of range = none here.
         if let Some(slot) = (target as usize)
             .checked_sub(1)
-            .and_then(|i| claimed.get_mut(i))
+            .and_then(|i| settled.get_mut(i))
         {
-            *slot = true;
+            *slot = false;
         }
     }
-    let settled = claimed.iter().filter(|claimed| !**claimed).count();
-    #[allow(clippy::cast_precision_loss)] // bounded by MAX_SUB_QUESTIONS
-    let ratio = (settled as f32) / (sub_questions as f32);
-    ratio.clamp(0.0, 1.0)
+    settled
 }
 
 /// The share of verified claims that verification refuted (021 FR-009a).

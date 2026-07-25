@@ -62,7 +62,7 @@ accounting): `angles`, `searches`, `sources_found`, `sources_fetched`,
 | scope | `{angles: [string], sub_questions: [string]}` | angles ≤ tier N; sub_questions ≤ 7; `focus` entries are woven into the scope prompt (FR-001) |
 | extract (per source) | `{claims: [string]}` | ≤ 12 claims/source; span dropped (research.md D4) |
 | verify (per claim) | existing verify schema (`{verdict, findings}`), refute-biased prompt variant (research.md D3) | K passes from tier |
-| synthesize | `{answer: string, gaps: [string]}` | answer ≤ 8000 chars, gaps ≤ 10 × 500 chars — enforced by the local validator |
+| synthesize | `{answer: string, gaps: [string], gap_targets: [integer]}` | answer ≤ 8000 chars, gaps ≤ 10 × 500 chars — enforced by the local validator. `gap_targets` is index-aligned with `gaps`: the 1-based sub-question each concerns, `0` for none; arity and range checked at assembly (021) |
 
 ## 4. Pure functions (`verdict.rs`, `grounding.rs`)
 
@@ -75,8 +75,15 @@ accounting): `angles`, `searches`, `sources_found`, `sources_fetched`,
   n = 1).
 - `claim_confidence(agreement, n_sources, mean_credibility) -> f32` —
   clamped 0..=1, weights are constants (tuned offline, never at runtime).
-- `overall_confidence(findings, settled, total_subqs) -> f32` —
-  coverage-weighted mean penalized by unanswered sub-questions.
+- `overall_confidence(findings) -> f32` — the mean of the finding
+  confidences. *Amended 021: the `settled`/`total_subqs` parameters and the
+  coverage weighting were removed; see spec.md FR-005.*
+- `coverage(sub_questions, targets) -> f32` — the settled share, counted from
+  the 1-based per-gap keys. `0` and out-of-range keys are discarded; a
+  sub-question named by several gaps counts unsettled once; no sub-questions
+  yields 1.0 (021).
+- `refutation_rate(refuted, verified) -> f32` — the refuted share; 0.0 when
+  nothing was verified (021).
 - `ground(answer, findings, sources) -> Result<Grounded, Violations>` —
   every `[sN]` token resolves; every finding's sources resolve; uncited
   sources pruned. Violations carry exact descriptions for the one retry.

@@ -1005,9 +1005,15 @@ async fn coverage_reconciles_with_the_published_statuses_and_preserves_the_old_f
         );
         assert!((result.coverage - expected).abs() < 1e-6, "{expected}");
 
-        // SC-005: `confidence * coverage` is the pre-change value.
+        // SC-005: `confidence * coverage` reproduces the pre-change figure.
+        // Asserted against the expected coverage rather than a range — both
+        // factors are already clamped, so a range check here would be
+        // unconditionally true and would test nothing.
         let legacy = result.confidence * result.coverage;
-        assert!((0.0..=1.0).contains(&legacy));
+        assert!(
+            (legacy - result.confidence * expected).abs() < 1e-6,
+            "the pre-change value must stay derivable"
+        );
     }
 }
 
@@ -1042,7 +1048,18 @@ async fn a_gap_target_arity_mismatch_is_retried_then_demoted_never_accepted() {
 
     // Retried once, then demoted — never silently accepted.
     assert_eq!(client.count_containing("executive synthesis"), 2);
-    assert_eq!(result.stats.stop_reason, Some(StopReason::Grounding));
+    // The reason names the failure that actually happened. Reporting this as
+    // `Grounding` would tell the caller the answer could not be cited when the
+    // grounding gate was never reached, which 004 FR-007 forbids.
+    assert_eq!(
+        result.stats.stop_reason,
+        Some(StopReason::MalformedSynthesis)
+    );
+    assert!(
+        !result.answer.contains("could not be grounded"),
+        "the demotion text must not blame grounding: {}",
+        result.answer
+    );
     assert!((result.coverage - 0.0).abs() < f32::EPSILON, "not inflated");
 }
 
@@ -1056,7 +1073,7 @@ async fn a_demoted_synthesis_reports_every_sub_question_unsettled() {
         |_, _| supported(),
         // Cites a source that was never fetched: the grounding gate rejects
         // both attempts.
-        |_| json!({ "answer": "It holds [s99].", "gaps": [], "gap_targets": [], "gap_targets": [] }),
+        |_| json!({ "answer": "It holds [s99].", "gaps": [], "gap_targets": [] }),
     );
     let deps = deps_with(
         client,
@@ -1139,7 +1156,7 @@ async fn a_run_stopped_early_still_reports_defined_coverage_and_statuses() {
 /// `MAX_SUB_QUESTIONS + 1` (8) — so this pins the invariant at the largest
 /// reachable gap count instead of a state the validator forbids.
 #[tokio::test]
-async fn coverage_stays_reconcilable_when_gaps_crowd_the_cap() {
+async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
     let client = scripted(
         scope_value(), // two sub-questions
         |_| json!({ "claims": ["the claim holds"] }),
@@ -1164,8 +1181,9 @@ async fn coverage_stays_reconcilable_when_gaps_crowd_the_cap() {
         .await
         .unwrap();
 
-    // Never more gaps than the caller is promised.
-    assert!(result.gaps.len() <= crate::research::MAX_GAPS);
+    // `gaps.truncate(MAX_GAPS)` is unreachable here — the synthesis schema
+    // already bounds the list at 10 — so asserting the length would be
+    // unconditionally true and would test nothing.
 
     // FR-004: nine gaps on one sub-question leave it unsettled once, so the
     // other sub-question is still settled.

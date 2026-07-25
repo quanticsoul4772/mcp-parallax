@@ -12,7 +12,7 @@ Added to `outputSchema.properties` and to `required`.
 ```jsonc
 "coverage": {
   "type": "number", "minimum": 0, "maximum": 1,
-  "description": "Proportion of the run's scoped sub-questions that were settled. Equals the fraction of sub_question_status entries with settled=true."
+  "description": "Proportion of the run's scoped sub-questions that were settled. Equals the fraction of sub_question_status entries with settled=true, or 1 when the run scoped none (the list is then empty and nothing is unsettled)."
 },
 "refutation_rate": {
   "type": "number", "minimum": 0, "maximum": 1,
@@ -52,6 +52,14 @@ companion figures are published rather than kept internal — the appearance of
 `coverage` beside it is the visible signal that the field moved.
 
 The previous value stays recoverable as `confidence * coverage` (SC-005).
+
+## Additive — a new `stats.stop_reason` value
+
+`malformedsynthesis` joins the enum. A synthesis whose `gaps` and `gap_targets`
+disagreed in length on both attempts demotes under this reason rather than
+inheriting `grounding` — the grounding gate is never reached on that path, and
+reporting it as a grounding failure tells the caller the answer could not be
+cited when citation was never evaluated (004 FR-007).
 
 ## Unchanged — `gaps`
 

@@ -315,7 +315,13 @@ single advisory to its dep bump.
   making two deployments emit incomparable values under the same contract
   version.
 
-  `gaps` deliberately keeps its wire shape as plain strings. Making each gap an
+  `gaps` deliberately keeps its wire shape as plain strings.
+
+  `stats.stop_reason` gains `malformedsynthesis`. A synthesis whose gap list
+  and sub-question keys disagreed in length twice used to demote under
+  `grounding`, telling the caller the answer could not be cited when the
+  grounding gate had never been reached. 004 FR-007 requires the accounting be
+  honest, so the two now have separate reasons and separate demotion text. Making each gap an
   object carrying its key was rejected: a breaking type change for callers that
   read gaps as text, and gaps raised by the grounding gate have no sub-question
   to name and would have had to carry a false one.

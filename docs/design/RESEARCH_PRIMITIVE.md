@@ -51,7 +51,13 @@ Only `question` is required. Everything else has depth-derived defaults (§5).
 ```jsonc
 {
   "answer": "string",              // the executive synthesis — the payload
-  "confidence": 0.0,               // 0–1, grounded in verification (§4), not vibes
+  "confidence": 0.0,               // 0–1, support of what the answer asserts (§4.2)
+  "coverage": 0.0,                 // 0–1, settled share of the scoped sub-questions (021)
+  "refutation_rate": 0.0,          // 0–1, refuted share of verified claims (021)
+  "sub_question_status": [{        // the published basis for `coverage` (021)
+    "sub_question": "string",
+    "settled": true
+  }],
   "key_findings": [{
     "claim": "string",
     "confidence": 0.0,             // post-verification
@@ -207,6 +213,8 @@ offline"), never at runtime.
   derived from a per-gap key the synthesis pass supplies. Published alongside
   `sub_question_status`, which lists each sub-question and whether it was
   settled, so the figure is checkable from the response rather than trusted.
+  A run that scoped no sub-questions reports `1.0` with an empty status list —
+  nothing was unsettled — rather than an undefined 0/0.
 - `refutation_rate` = the proportion of verified claims that verification
   refuted. The answer does not assert those claims, so `confidence` rightly
   ignores them — but without this a run that refuted nine of ten claims would

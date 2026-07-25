@@ -3,7 +3,8 @@
 //! Scope (1 call) → angle searches (concurrent, URL-dedup barrier) →
 //! fetch+extract (per-source pipeline, no cross-source barrier) → verify
 //! (fan-out per deduped claim, refute-biased ensemble) → synthesize
-//! ([`crate::research::synthesis`]: the model writes prose only) → the
+//! ([`crate::research::synthesis`]: the model writes prose, gaps, and the
+//! sub-question each gap concerns) → the
 //! grounding gate (one retry, then demotion).
 //!
 //! Budget/deadline are enforced ceilings, probed before *and inside* every
@@ -385,22 +386,16 @@ async fn run_metered(
     // rather than taken on trust. Verbatim sub-questions, in scope order —
     // they are not otherwise visible to the caller, so an index would
     // reference nothing.
-    let mut claimed = vec![false; plan.sub_questions.len()];
-    for &target in &gap_targets {
-        if let Some(slot) = (target as usize)
-            .checked_sub(1)
-            .and_then(|i| claimed.get_mut(i))
-        {
-            *slot = true;
-        }
-    }
     let sub_question_status: Vec<SubQuestionStatus> = plan
         .sub_questions
         .iter()
-        .zip(claimed)
-        .map(|(sub_question, claimed)| SubQuestionStatus {
+        .zip(verdict::settled_mask(
+            plan.sub_questions.len(),
+            &gap_targets,
+        ))
+        .map(|(sub_question, settled)| SubQuestionStatus {
             sub_question: sub_question.clone(),
-            settled: !claimed,
+            settled,
         })
         .collect();
     // FR-009a: refuted claims are excluded from confidence and surfaced here.
