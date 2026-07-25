@@ -6,14 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Per Keep a Changelog 1.1.0, this is
-the next-up change block; it persists verbatim until the project's next SemVer
-cut, at which point the entries move into a dated `## [X.Y.Z] - YYYY-MM-DD`
-block and the `[Unreleased]` header starts the next arc. Rolls up the
-post-#38-merged work on `main` (#38–#42). The agent doesn't carry `ANTHROPIC_API_KEY`,
-so live-dogfood freshness is not re-fired in this arc; the #42 stamps
-therefore read "Mechanism re-verified" rather than "Re-verified" (see the
-*Docs* entry below for the rationale).
+Per Keep a Changelog 1.1.0, this is the next-up change block; it persists
+verbatim until the project's next SemVer cut, at which point the entries move
+into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
+arc.
+
+Nothing yet.
+
+## [0.2.0] - 2026-07-25
+
+The project's first tagged release. Everything before it shipped only as merged
+commits on `main`.
+
+**Two internal constants in this release are underived rather than measured**,
+and are recorded here so a later change to them reads as routine rather than as
+a correction. The per-call output ceiling (32 000 tokens) was raised after a
+real truncation whose size was unknown, because the failure recorded zero
+tokens — the defect that the metered-failures work in this same release fixed.
+No truncation has occurred since, so it remains unmeasured. The default token
+budgets for the standard and deep research tiers have never been measured
+either; the invocation record only began storing a run's tier in this release,
+and those tiers accrue data only when deliberately exercised. Both are internal
+defaults, overridable per call, and not part of any published interface.
+Retuning either is an ordinary change for a subsequent release.
+
+Rolls up the post-#38-merged work on `main` (#38–#42) alongside features
+018–021. The agent doesn't carry `ANTHROPIC_API_KEY`, so live-dogfood freshness
+is not re-fired in this arc; the #42 stamps therefore read "Mechanism
+re-verified" rather than "Re-verified" (see the *Docs* entry below for the
+rationale).
 
 ### Added
 
