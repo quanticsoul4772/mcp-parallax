@@ -11,6 +11,7 @@ pub mod evidence;
 pub mod extract;
 pub mod fetch;
 pub mod grounding;
+pub(crate) mod outcome;
 pub mod pipeline;
 pub mod prompts;
 pub(crate) mod settings;

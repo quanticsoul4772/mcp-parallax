@@ -294,6 +294,15 @@ single advisory to its dep bump.
 
 ### Changed
 
+* **Research result assembly extracted to `src/research/outcome.rs`.** The
+  block was a pure function of finished run state sitting inside the five-phase
+  spine; `pipeline.rs` goes from 712 to 642 lines. The extraction is what makes
+  the published contract's promise testable — `coverage` equals the settled
+  share of `sub_question_status` — which previously held only because two call
+  sites happened to read the same helper. Three unit tests now pin it,
+  including the case where the gap cap drops a gap whose sub-question stays
+  correctly unsettled. No behaviour change.
+
 * **`research` output: three fields added, one redefined (021).** Added
   `coverage` (settled share of scoped sub-questions), `refutation_rate`
   (refuted share of verified claims), and `sub_question_status` (each
