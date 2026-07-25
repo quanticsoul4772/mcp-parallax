@@ -51,7 +51,13 @@ Only `question` is required. Everything else has depth-derived defaults (§5).
 ```jsonc
 {
   "answer": "string",              // the executive synthesis — the payload
-  "confidence": 0.0,               // 0–1, grounded in verification (§4), not vibes
+  "confidence": 0.0,               // 0–1, support of what the answer asserts (§4.2)
+  "coverage": 0.0,                 // 0–1, settled share of the scoped sub-questions (021)
+  "refutation_rate": 0.0,          // 0–1, refuted share of verified claims (021)
+  "sub_question_status": [{        // the published basis for `coverage` (021)
+    "sub_question": "string",
+    "settled": true
+  }],
   "key_findings": [{
     "claim": "string",
     "confidence": 0.0,             // post-verification
@@ -196,11 +202,39 @@ mean source credibility `c̄`:
 clamped 0–1. Weights are config, tuned **offline** (parent §"improvement is
 offline"), never at runtime.
 
-### 4.2 Overall confidence
+### 4.2 Overall confidence, coverage, and refutation rate
 
-`response.confidence` = coverage-weighted mean of the `key_findings` confidences,
-penalized by unanswered `sub_questions`. A research answer that settled 3 of 7
-sub-questions cannot report high confidence even if those 3 are airtight.
+**Three published figures, deliberately not one** (amended 2026-07-25, feature
+021):
+
+- `confidence` = the mean of the `key_findings` confidences. The support of
+  what the answer asserts, and nothing else.
+- `coverage` = the proportion of scoped `sub_questions` that no gap claims,
+  derived from a per-gap key the synthesis pass supplies. Published alongside
+  `sub_question_status`, which lists each sub-question and whether it was
+  settled, so the figure is checkable from the response rather than trusted.
+  A run that scoped no sub-questions reports `1.0` with an empty status list —
+  nothing was unsettled — rather than an undefined 0/0.
+- `refutation_rate` = the proportion of verified claims that verification
+  refuted. The answer does not assert those claims, so `confidence` rightly
+  ignores them — but without this a run that refuted nine of ten claims would
+  report the same confidence as one that refuted none.
+
+*This section previously specified `confidence` as the coverage-weighted mean —
+"an answer that settled 3 of 7 sub-questions cannot report high confidence even
+if those 3 are airtight". That was implemented and was a defect. Coverage was
+derived by subtracting the length of the synthesis pass's free-form gap list
+from the sub-question count — two lists with no correspondence — and the gap
+cap (10) exceeded the sub-question cap (7), so the term reached exactly zero by
+construction. Two live runs reported `confidence: 0` for factually correct
+answers whose every claim had survived refute-biased verification at ~0.78.*
+
+*A confidence of exactly 0 asserts certainty of falsehood, and makes the field
+return the same value for a correct evidence-backed answer as for a
+demonstrably wrong one. The intuition behind the original rule was sound —
+breadth of resolution matters — but folding it into the same number as support
+is what made the result indiscriminate. It is now its own figure. The prior
+value remains derivable as `confidence × coverage`.*
 
 ### 4.3 Grounding gate (hard)
 

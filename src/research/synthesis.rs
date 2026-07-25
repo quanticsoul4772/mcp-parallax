@@ -1,8 +1,10 @@
 //! Phase 5: server-assembled findings and the grounded synthesis call
 //! (research.md 004 D7; FR-003).
 //!
-//! The model writes prose and gap phrasing only. Findings, support labels,
-//! confidences, disagreements, and sources are deterministic functions of
+//! The model writes prose, gap phrasing, and the sub-question each gap
+//! concerns (021 `gap_targets` — a bounded, range-checked index into the
+//! server's own scope list, never a number it reports directly). Findings,
+//! support labels, confidences, disagreements, and sources are functions of
 //! pipeline state assembled here; the grounding gate validates the prose's
 //! citation tokens with one violation-fed retry, then demotes — nothing
 //! ungrounded ever leaves the server.
@@ -81,7 +83,7 @@ pub async fn synthesize_grounded(
     fetched_ids: &BTreeSet<String>,
     meter: &RunMeter,
     stop_reason: &mut Option<StopReason>,
-) -> Result<(String, Vec<String>, Vec<String>), AppError> {
+) -> Result<Synthesized, AppError> {
     let findings_block = surviving
         .iter()
         .map(|v| {
@@ -129,9 +131,18 @@ pub async fn synthesize_grounded(
     let sub_questions_block = if plan.sub_questions.is_empty() {
         "(none scoped)".to_string()
     } else {
+        // Numbered, not bulleted: the prompt asks the model to key each gap to
+        // "the 1-based number of the sub-question", and a bulleted list makes
+        // it count unlabelled lines to produce an index that determines a
+        // published figure. `decide` numbers its options for the same reason
+        // (`decide.rs`, `option_scores` alignment). A wrong-but-in-range key
+        // is the one failure here that nothing downstream can catch — it
+        // passes the arity check and the range discard, and silently reports
+        // the wrong sub-question as unsettled.
         plan.sub_questions
             .iter()
-            .map(|q| format!("- {q}"))
+            .enumerate()
+            .map(|(i, q)| format!("{}. {q}", i + 1))
             .collect::<Vec<_>>()
             .join("\n")
     };
@@ -141,6 +152,10 @@ pub async fn synthesize_grounded(
         .collect();
 
     let mut retry_clause = String::new();
+    // Which check rejected the last attempt, so the demotion below reports the
+    // failure that actually happened rather than inheriting the grounding
+    // gate's (021).
+    let mut last_rejection = Rejection::Grounding;
     for _attempt in 0..2 {
         let prompt = synth_mode
             .prompt_template
@@ -157,12 +172,41 @@ pub async fn synthesize_grounded(
         let out: SynthOut = serde_json::from_value(completion.value)
             .map_err(|e| AppError::ValidationFailure(format!("synthesis shape: {e}")))?;
 
+        // 021 D2: the two parallel arrays must agree in length. JSON Schema
+        // cannot state a relation between two arrays, so this is the local
+        // check — the same place `decide` validates its own arity. A mismatch
+        // feeds the retry rather than being absorbed: reading absent targets
+        // as "concerns nothing" would report full coverage for a malformed
+        // response, which is the server overstating what it established.
+        if out.gap_targets.len() != out.gaps.len() {
+            tracing::warn!(
+                gaps = out.gaps.len(),
+                targets = out.gap_targets.len(),
+                "synthesis returned mismatched gap/gap_target arity"
+            );
+            retry_clause = format!(
+                " YOUR PREVIOUS ATTEMPT WAS REJECTED: you returned {} gaps but {} \
+                 gap_targets. The two arrays must have exactly the same length — one \
+                 target per gap, in the same order.",
+                out.gaps.len(),
+                out.gap_targets.len()
+            );
+            last_rejection = Rejection::Arity;
+            continue;
+        }
+
         match grounding::ground(&out.answer, &finding_sources, fetched_ids) {
             Ok(grounded) => {
-                return Ok((out.answer, out.gaps, grounded.kept_source_ids));
+                return Ok(Synthesized {
+                    answer: out.answer,
+                    gaps: out.gaps,
+                    gap_targets: out.gap_targets,
+                    grounded_ids: grounded.kept_source_ids,
+                });
             }
             Err(violations) => {
                 tracing::warn!(?violations, "grounding gate rejected the synthesis");
+                last_rejection = Rejection::Grounding;
                 retry_clause = format!(
                     " YOUR PREVIOUS ATTEMPT WAS REJECTED for citation violations: {}. Cite \
                      only the listed source tokens.",
@@ -173,19 +217,64 @@ pub async fn synthesize_grounded(
     }
 
     // Second failure → demotion: nothing ungrounded leaves the server. An
-    // earlier budget/deadline reason is preserved over the grounding one.
-    stop_reason.get_or_insert(StopReason::Grounding);
-    let mut gaps = vec![
-        "the synthesis could not be grounded in the fetched sources and was demoted".to_string(),
-    ];
+    // earlier budget/deadline reason is preserved over this one.
+    let (reason, notice, answer) = match last_rejection {
+        Rejection::Grounding => (
+            StopReason::Grounding,
+            "the synthesis could not be grounded in the fetched sources and was demoted",
+            "The synthesis could not be grounded after a retry; see key_findings for \
+             the verified claims and gaps for what remains.",
+        ),
+        Rejection::Arity => (
+            StopReason::MalformedSynthesis,
+            "the synthesis returned a malformed gap list twice and was demoted",
+            "The synthesis returned a malformed response after a retry; see key_findings \
+             for the verified claims and gaps for what remains.",
+        ),
+    };
+    stop_reason.get_or_insert(reason);
+    let mut gaps = vec![notice.to_string()];
     gaps.extend(plan.sub_questions.clone());
+    // 021 T020: the demotion notice concerns no single sub-question (0); each
+    // appended sub-question is keyed to itself, so a demoted run reports every
+    // sub-question unsettled — which is the truth, nothing was grounded.
+    let mut gap_targets = vec![0_u32];
+    gap_targets
+        .extend((1..=plan.sub_questions.len()).map(|i| u32::try_from(i).unwrap_or(u32::MAX)));
     let grounded = grounding::ground("", &finding_sources, fetched_ids)
         .map_or_else(|_| Vec::new(), |g| g.kept_source_ids);
-    Ok((
-        "The synthesis could not be grounded after a retry; see key_findings for the \
-         verified claims and gaps for what remains."
-            .to_string(),
+    Ok(Synthesized {
+        answer: answer.to_string(),
         gaps,
-        grounded,
-    ))
+        gap_targets,
+        grounded_ids: grounded,
+    })
+}
+
+/// Which check rejected an attempt, so a demotion names the cause that
+/// actually occurred instead of inheriting the grounding gate's (021).
+#[derive(Clone, Copy)]
+enum Rejection {
+    /// The grounding gate found citation violations.
+    Grounding,
+    /// `gaps` and `gap_targets` disagreed in length.
+    Arity,
+}
+
+/// What the synthesis phase produces: the prose, the gaps, the sub-question
+/// each gap concerns, and the source ids the grounding gate kept.
+///
+/// A named struct rather than a fourth tuple element — the tuple was already
+/// at three, and unlabelled positions of the same type invite transposition.
+pub struct Synthesized {
+    /// Answer prose with inline `[sN]` citations.
+    pub answer: String,
+    /// Honest gaps, published to the caller as plain text.
+    pub gaps: Vec<String>,
+    /// Index-aligned with [`Self::gaps`]: the 1-based sub-question each gap
+    /// concerns, `0` for none. Internal — the caller receives the derived
+    /// per-sub-question status instead.
+    pub gap_targets: Vec<u32>,
+    /// Source ids the grounding gate kept.
+    pub grounded_ids: Vec<String>,
 }

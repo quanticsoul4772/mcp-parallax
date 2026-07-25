@@ -183,10 +183,15 @@ tracking is added.
 guarantees every citation resolves to a fetched source and every finding is
 source-backed, but an answer sentence with no citation token passes ungated
 (the corpus §4.3 asks for clause-level mapping). Near-miss citation forms
-(`[S3]`, `[s1, s2]`, unclosed brackets) are violations, not ignored. The
-coverage penalty in overall confidence depends on model-reported gaps —
-omitted gaps inflate confidence; both are accepted v1 bounds of the
-"model writes prose only" design.
+(`[S3]`, `[s1, s2]`, unclosed brackets) are violations, not ignored. Coverage
+depends on model-reported gaps and, since 021, on the sub-question each gap is
+keyed to; a gap keyed in range but to the wrong sub-question is
+indistinguishable from a correct one at the server. That residual is accepted
+knowingly — the alternative, inferring the association from text, was refuted:
+lexical overlap is neither necessary nor sufficient for answerhood, so such a
+rule is reproducibly wrong rather than merely imprecise. Coverage no longer
+reaches `confidence`, so an inflated coverage figure can no longer inflate the
+support figure.
 
 **Verdict mapping** (pure, `verdict.rs`): from the verify run's `(passes,
 agreement, verdict)` + independent source count `n`, evaluated **in this
@@ -202,8 +207,13 @@ aggregate verdict, or genuinely contested claims silently drop):
 3. **confirmed** if supported with `n ≥ 2` independent sources;
 4. **unverified** if supported with `n = 1` (never stated as fact).
 
-Overall confidence = coverage-weighted mean of finding confidences, penalized
-by unanswered sub-questions (design §4.2).
+Overall confidence = the mean of finding confidences (design §4.2). Amended
+2026-07-25 (feature 021): the coverage weighting was removed. It derived
+breadth by subtracting the gap-list length from the sub-question count, which
+measured nothing, and drove correct well-supported answers to exactly 0.
+Breadth is now published separately as `coverage`, alongside the
+`sub_question_status` list it is computed from, and the refuted share as
+`refutation_rate`. The prior value stays derivable as `confidence × coverage`.
 
 ## D8 — Depth tiers and ceilings (constants, constraints override)
 

@@ -176,9 +176,27 @@ exactly one correctly attributed record.
   and sources, never silently resolved; unverified claims MUST NOT be stated
   as fact.
 - **FR-005**: The response MUST report a confidence value derived from
-  verification agreement and coverage of the scoped sub-questions — an answer
-  that settled few of its sub-questions cannot report high confidence
-  regardless of how well-supported those few are.
+  verification agreement over the claims the answer asserts.
+
+  *Amended 2026-07-25 (feature 021).* This requirement previously read
+  "derived from verification agreement **and coverage of the scoped
+  sub-questions** — an answer that settled few of its sub-questions cannot
+  report high confidence regardless of how well-supported those few are." That
+  rule was implemented and was a defect: coverage was derived by subtracting
+  the synthesis pass's free-form gap-list length from the sub-question count,
+  two lists with no correspondence, and the gap cap (10) exceeded the
+  sub-question cap (7), so the product reached exactly zero by construction.
+  Two live runs reported confidence 0 for factually correct answers. Breadth
+  of resolution is a real signal and is now FR-005a, reported separately.
+- **FR-005a**: The response MUST report the proportion of scoped
+  sub-questions that were settled, as its own value, alongside the list of
+  sub-questions and their settled status it is derived from (feature 021).
+  Coverage MUST NOT reduce the confidence value.
+- **FR-005b**: The response MUST report the proportion of verified claims
+  that verification refuted, as its own value (feature 021). The answer does
+  not assert refuted claims, so confidence excludes them; without this figure
+  a run whose evidence largely fell apart is indistinguishable from one whose
+  evidence held.
 - **FR-006**: Depth tiers MUST scale the number of search angles, the source
   cap, and the verification votes per claim, with documented defaults per
   tier. Explicit caller constraints MUST override tier defaults.

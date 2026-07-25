@@ -1149,10 +1149,9 @@ async fn mount_research_llm(mock: &MockServer, answer: &str) {
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
         .and(body_string_contains("executive synthesis"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(end_turn(&json!({ "answer": answer, "gaps": [] }))),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(
+            &json!({ "answer": answer, "gaps": [], "gap_targets": [] }),
+        )))
         .mount(mock)
         .await;
 }
@@ -1281,6 +1280,49 @@ async fn research_round_trip_returns_grounded_citations_and_one_record() {
     // is recoverable. Without this, no historical run can be attributed to a
     // tier and the tier ceilings cannot be sized from measurement.
     assert_eq!(records[0].depth.as_deref(), Some("quick"));
+
+    // 021 T011: confidence reports the support of what the answer asserts and
+    // is never annihilated by unsettled sub-questions; the refutation rate
+    // reaches the wire as its own field rather than being folded in.
+    let confidence = structured["confidence"].as_f64().unwrap();
+    assert!(
+        confidence > 0.0,
+        "a supported answer must not report certainty of falsehood; got {confidence}"
+    );
+    assert!((0.0..=1.0).contains(&confidence));
+    let refutation_rate = structured["refutation_rate"].as_f64().unwrap();
+    assert!((0.0..=1.0).contains(&refutation_rate));
+
+    // 021 T025: coverage reaches the wire with the statuses it is derived
+    // from, so a caller can reconcile the figure instead of trusting it
+    // (SC-003). Confidence and coverage are separate values, and the
+    // pre-change figure stays derivable as their product (SC-005).
+    let coverage = structured["coverage"].as_f64().unwrap();
+    assert!((0.0..=1.0).contains(&coverage));
+    let statuses = structured["sub_question_status"].as_array().unwrap();
+    assert!(!statuses.is_empty(), "the run scoped sub-questions");
+    let settled = statuses
+        .iter()
+        .filter(|s| s["settled"].as_bool().unwrap())
+        .count();
+    #[allow(clippy::cast_precision_loss)]
+    let expected = (settled as f64) / (statuses.len() as f64);
+    assert!(
+        (coverage - expected).abs() < 1e-6,
+        "coverage {coverage} must equal the published statuses' settled share {expected}"
+    );
+    for status in statuses {
+        assert!(status["sub_question"]
+            .as_str()
+            .is_some_and(|q| !q.is_empty()));
+    }
+
+    // FR-005a: gaps keep their wire shape — plain strings, deliberately not
+    // objects carrying their key. A regression here would silently undo the
+    // decision that kept this field compatible.
+    for gap in structured["gaps"].as_array().unwrap() {
+        assert!(gap.is_string(), "gaps must stay plain strings, got {gap}");
+    }
 
     client.cancel().await.unwrap();
 }

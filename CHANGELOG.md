@@ -156,6 +156,33 @@ single advisory to its dep bump.
 
 ### Fixed
 
+* **Research reported confidence 0 for correct answers (021).** The top-level
+  `confidence` was `mean(finding_confidences) × coverage`, and coverage was
+  `sub_questions.len() − gaps.len()`, divided by the sub-question count. Those
+  are two unrelated lists: sub-questions are the falsifiable questions the
+  scope phase produces, gaps are free-form phrases the synthesis pass writes,
+  and no entry in one corresponds to an entry in the other. Because the gap cap
+  (10) exceeds the sub-question cap (7), zero was reachable by construction —
+  and reached, on two live runs whose answers were factually correct and whose
+  every claim had survived refute-biased verification at ~0.78.
+
+  A confidence of exactly 0 asserts certainty of falsehood. Worse for a caller,
+  it makes the field return the same value for a correct evidence-backed answer
+  as for a demonstrably wrong one, so a caller that sees 0 on correct answers
+  learns to ignore the field entirely — which removes the signal rather than
+  making it conservative.
+
+  The synthesis hop now keys each gap to the sub-question it concerns, as an
+  index-aligned `gap_targets` array (parallel arrays because Principle II
+  requires mode schemas to stay flat and closed — the idiom `decide` already
+  uses). The server counts unclaimed sub-questions from those keys. A key that
+  is out of range is discarded; several keys on one sub-question leave it
+  unsettled once, which is the specific arithmetic whose absence caused the
+  collapse. A length mismatch between the two arrays feeds the synthesis
+  pass's existing retry and then its existing demotion path — never accepted,
+  since reading absent keys as "concerns nothing" would report full coverage
+  for a malformed response.
+
 * **Failures that were billed now record their tokens (020).** A truncation and
   a refusal are HTTP 200 responses: the provider ran the model and charged for
   it, then returned a `stop_reason` the contract cannot use.
@@ -266,6 +293,38 @@ single advisory to its dep bump.
   table extended with both directions; `006` data-model amended in-change.
 
 ### Changed
+
+* **`research` output: three fields added, one redefined (021).** Added
+  `coverage` (settled share of scoped sub-questions), `refutation_rate`
+  (refuted share of verified claims), and `sub_question_status` (each
+  sub-question with a settled flag — the published basis for `coverage`, so the
+  figure is checkable from the response rather than taken on trust). Those are
+  compatible additions.
+
+  **`confidence` keeps its type and range but changes value**: it is now the
+  mean support of the findings the answer asserts, with no coverage factor. The
+  prior figure remains exactly derivable as `confidence × coverage`, so nothing
+  a caller could compute before is lost.
+
+  Splitting the field was chosen over blending the multiplier so it could
+  attenuate without annihilating. The blend would also have changed the field's
+  stated definition — deleting the invariant that zero coverage forces zero
+  confidence — while being the *less* detectable change, silently rescaling an
+  unchanged field name where a new key is something a value-reading caller can
+  notice. It would also have introduced a free parameter derived from nothing,
+  making two deployments emit incomparable values under the same contract
+  version.
+
+  `gaps` deliberately keeps its wire shape as plain strings.
+
+  `stats.stop_reason` gains `malformedsynthesis`. A synthesis whose gap list
+  and sub-question keys disagreed in length twice used to demote under
+  `grounding`, telling the caller the answer could not be cited when the
+  grounding gate had never been reached. 004 FR-007 requires the accounting be
+  honest, so the two now have separate reasons and separate demotion text. Making each gap an
+  object carrying its key was rejected: a breaking type change for callers that
+  read gaps as text, and gaps raised by the grounding gate have no sub-question
+  to name and would have had to carry a false one.
 
 * **Quick research budget raised 150 000 → 350 000 tokens (019).** The 004
   evidence-grounding fix gave each per-claim verification hop a real source
