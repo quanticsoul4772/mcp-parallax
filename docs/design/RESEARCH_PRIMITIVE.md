@@ -236,6 +236,19 @@ breadth of resolution matters — but folding it into the same number as support
 is what made the result indiscriminate. It is now its own figure. The prior
 value remains derivable as `confidence × coverage`.*
 
+### 4.2a Whole-phase failure is not degradation
+
+Per-item failure degrades a run (spec FR-013): a dropped source or claim is
+counted and the run continues. **Every** attempted item in a phase failing is a
+different thing, and since 023 it fails the run with the dominant error.
+
+The distinction is between *nothing to say* and *a call that failed*. A page
+that loaded and held no readable text produced nothing without failing, so a run
+whose candidates are all like that returns the honest empty answer. A run whose
+extraction calls were all rejected returns an error naming the rejection —
+previously it returned the same empty answer, reporting success, and no caller
+could tell the two apart.
+
 ### 4.3 Grounding gate (hard)
 
 Before returning, validate: every `answer` clause maps to a `key_findings` entry;

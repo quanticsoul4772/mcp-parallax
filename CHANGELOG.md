@@ -202,6 +202,26 @@ single advisory to its dep bump.
 
 ### Fixed
 
+* **Research reported success when an entire phase failed (023).** Per-source
+  and per-claim failures degrade a run by design (004 FR-013) — the item is
+  dropped, counted, and the run continues. Nothing distinguished *every* item
+  failing from a set of pages that genuinely held no claims, so both collapsed
+  to the same empty answer with `outcome: success`.
+
+  Found in production: setting a reasoning effort on a call site routed to a
+  model that does not support the parameter made every extraction call return a
+  400. The run reported `sources_found: 10, sources_fetched: 0`, an empty
+  answer, `confidence: 0`, and six plausible-looking gaps — indistinguishable
+  from "the web does not know", which was false. Every fact needed to detect it
+  was already in the run.
+
+  The search phase had the right rule all along: it propagates when no search
+  succeeded. Extraction and verification now do the same. The distinction drawn
+  is between *nothing to say* and *a call that failed* — a page that loaded and
+  held no readable text produced nothing without failing, so a run whose
+  candidates are all unreadable still returns the honest empty answer.
+  Degradation is untouched: one surviving source or claim is enough to continue.
+
 * **Research reported confidence 0 for correct answers (021).** The top-level
   `confidence` was `mean(finding_confidences) × coverage`, and coverage was
   `sub_questions.len() − gaps.len()`, divided by the sub-question count. Those
