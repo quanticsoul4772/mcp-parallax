@@ -209,7 +209,7 @@ by unanswered sub-questions (design §4.2).
 
 | tier | angles | max_sources | verify K | default deadline | default budget |
 |---|---|---|---|---|---|
-| quick | 3 | 8 | 1 | 120 s | 250k tok |
+| quick | 3 | 8 | 1 | 120 s | 350k tok |
 | standard (default) | 5 | 25 | 2 | 240 s | 450k tok |
 | deep | 8 | 60 | 3 | 480 s | 1M tok |
 
@@ -219,9 +219,11 @@ original 40k/120k/350k estimates starved every real run mid-verification
 empty early-stopped answers. The corpus §5 table is amended in the same
 change.
 
-Quick re-tuned again 2026-07-24 (150k → 250k) after the evidence-grounding fix
-raised the same question's cost from 104,783 to 174,952 tokens — see
-`RESEARCH_PRIMITIVE.md` §5 for the derivation. Standard and deep are held
+Quick re-tuned again 2026-07-24 (150k → 350k) after the evidence-grounding
+fix. A first pass set 250k from the cost of a run that had itself stopped
+early; a run that completes measures 239,371 tokens, so 250k left only 4.3%
+margin. See `RESEARCH_PRIMITIVE.md` §5 for the derivation and the circularity
+that caused the first number to be too low. Standard and deep are held
 until `invocation_records.depth` (added in the same change) has produced
 per-tier measurements; nothing recorded before that date can be attributed to
 a tier.

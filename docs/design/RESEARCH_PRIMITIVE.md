@@ -216,7 +216,7 @@ set. The tool never emits an ungrounded claim.
 
 | | angles | max_sources | verifier votes K | completeness loops | typical budget |
 |---|---|---|---|---|---|
-| **quick** | 3 | 8 | 1 | 0 | ~250k tok |
+| **quick** | 3 | 8 | 1 | 0 | ~350k tok |
 | **standard** | 5 | 25 | 2 | 0 | ~450k tok |
 | **deep** | 8 | 60 | 3 (diverse lenses) | 1 | ~1M tok |
 | **exhaustive** | 12 | 120 | 3–5 (diverse) | 2 | ~2.5M tok |
@@ -225,12 +225,20 @@ set. The tool never emits an ungrounded claim.
 40k/120k/350k/800k estimates starved real runs mid-verification — claim
 extraction alone costs ~4k input tokens per source.)*
 
-*(Quick amended again 2026-07-24, 150k → 250k. The 004 evidence-grounding fix
+*(Quick amended again 2026-07-24, 150k → 350k. The 004 evidence-grounding fix
 gave each per-claim verification hop a real source excerpt instead of a title,
-which is what made verification worth running — and moved an identical quick
-question from 104,783 tokens to 174,952 against a ceiling that never moved.
-Every run then tripped it and dropped ~40% of its claims. 250k preserves the
-tier's original 1.43 headroom ratio against the new measured cost.*
+which is what made verification worth running — and every quick run then
+tripped a ceiling that had not moved, dropping ~40% of its claims.*
+
+*The first attempt at the new number was 250k: 1.43 (the tier's original
+150k / 104,783 headroom ratio) applied to a post-004 measurement of 174,952.
+That measurement came from a run which had itself stopped early and dropped 43
+of 89 claims — the cost of an **incomplete** run, and so an understatement. A
+run that completes measures **239,371** (77 claims extracted, 77 verified, 8/8
+sources — near this tier's structural maximum), which is 95.7% of 250k.
+Applying 1.43 to the complete-run cost gives ~342k, rounded to 350k. Sizing a
+ceiling from a run that hit that ceiling is circular, and always yields a
+number that is too low.*
 
 *Standard and deep are deliberately unchanged. `invocation_records` did not
 store the rigor tier until 2026-07-24, so no recorded run can be attributed to
