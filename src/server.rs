@@ -130,14 +130,10 @@ impl Parallax {
     /// Adds no tool-catalog entry: the audience is the operator, not the
     /// calling model (FR-005a).
     fn log_routing_table(routing: &RoutingTable, distinct: usize) {
-        for route in routing.routes() {
-            tracing::info!(
-                call_site = route.site.id(),
-                tier = route.site.tier().id(),
-                model = %route.model,
-                source = %route.source.variable(route.site),
-                "routing resolved"
-            );
+        // Rendered by `RoutingTable::report`, which is pure and directly
+        // tested (018 T012) — this loop only puts it on the wire.
+        for (call_site, tier, model, source) in routing.report() {
+            tracing::info!(call_site, tier, %model, %source, "routing resolved");
         }
         tracing::info!(
             call_sites = routing.routes().len(),
@@ -956,6 +952,7 @@ impl Parallax {
     where
         Fut: std::future::Future<Output = Result<(T, ModelUsage), AppError>>,
     {
+        let billed_to = attributed.clone();
         let guard = RecordGuard::new(
             Arc::clone(&self.storage),
             Arc::clone(&self.clock),
@@ -977,16 +974,22 @@ impl Parallax {
                         Ok(Json(value))
                     }
                     Err(error) => {
-                        // Recorded as empty. This is correct for a timeout
-                        // or a transport failure, and WRONG for truncation and
-                        // refusal: both are HTTP 200 responses carrying real
-                        // billed usage that the client reads (to build the
-                        // truncation message) and then discards. Spend is
-                        // under-reported for those two classes. Fixing it means
-                        // carrying usage on those error variants — a change to
-                        // the outcome taxonomy, tracked in CHANGELOG
-                        // "Known issues" rather than papered over here.
-                        guard.finish(&ModelUsage::default(), error.outcome()).await;
+                        // A failure can still have been billed: a truncation
+                        // or a refusal is an HTTP 200 the provider charged
+                        // for, and an ensemble below quorum was charged for
+                        // every pass it did complete. The producer counts
+                        // those tokens; this is where they get a model, which
+                        // is sound because the eleven single-model tools run
+                        // exactly one (020). A failure that genuinely cost
+                        // nothing — a timeout, a transport error, invalid
+                        // input — carries (0, 0) and still records empty.
+                        let (input_tokens, output_tokens) = error.billed();
+                        let usage = if input_tokens == 0 && output_tokens == 0 {
+                            ModelUsage::default()
+                        } else {
+                            ModelUsage::single(&billed_to, input_tokens, output_tokens)
+                        };
+                        guard.finish(&usage, error.outcome()).await;
                         Err(to_error_data(&error))
                     }
                 }

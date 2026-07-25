@@ -128,16 +128,36 @@ impl Ceiling<'_> {
 /// `InvalidInput` before any provider call; the scope call's class if scope
 /// fails; `SearchProvider`-class when every angle search fails. Individual
 /// source/claim failures degrade the run instead (FR-013).
-#[allow(clippy::too_many_lines)] // the five-phase spine reads best unbroken; helpers carry the logic
 pub async fn run(
     deps: &ResearchDeps,
     fetcher: &dyn Fetcher,
     params: &ResearchParams,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
-    let settings = validate_params(deps, params)?;
     let meter = RunMeter::default();
+    let outcome = run_metered(deps, fetcher, params, &meter).await;
+    // 020: the pipeline can fail after most of its spend — synthesis is the
+    // last phase and propagates. Without this the record would show only the
+    // failing call's own tokens: a plausible few thousand in place of the
+    // couple of hundred thousand the run actually cost, which reads as a real
+    // number and is worse than the zero it used to show.
+    //
+    // Totals rather than the meter's per-model breakdown, because
+    // `AppError::metered` carries raw tokens: with routing configured this can
+    // price bulk-tier extraction at the judgment rate, over-estimating a rare
+    // error row. Losing 99% of the tokens is the larger error.
+    outcome.map_err(|error| error.metered(meter.input_tokens(), meter.output_tokens()))
+}
+
+#[allow(clippy::too_many_lines)] // the five-phase spine reads best unbroken; helpers carry the logic
+async fn run_metered(
+    deps: &ResearchDeps,
+    fetcher: &dyn Fetcher,
+    params: &ResearchParams,
+    meter: &RunMeter,
+) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
+    let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
-        meter: &meter,
+        meter,
         clock: deps.clock.as_ref(),
         started_at: deps.clock.now(),
         budget_tokens: settings.budget_tokens,
@@ -148,7 +168,7 @@ pub async fn run(
     let mut stats = Stats::default();
 
     // ---- (1) SCOPE — the only fully sequential phase -----------------------
-    let plan = scope(deps, params, &settings, &meter).await?;
+    let plan = scope(deps, params, &settings, meter).await?;
     stats.angles = u32::try_from(plan.angles.len()).unwrap_or(u32::MAX);
 
     // ---- (2) SEARCH — concurrent, then the URL-dedup barrier ---------------
@@ -224,7 +244,7 @@ pub async fn run(
                 deps,
                 fetcher,
                 Arc::clone(&semaphore),
-                &meter,
+                meter,
                 &ceiling,
                 id,
                 url.clone(),
@@ -273,7 +293,7 @@ pub async fn run(
                 deps,
                 &verify_mode,
                 Arc::clone(&semaphore),
-                &meter,
+                meter,
                 &ceiling,
                 &source_meta,
                 claim,
@@ -324,7 +344,7 @@ pub async fn run(
             &refuted,
             &source_meta,
             &fetched_ids,
-            &meter,
+            meter,
             &mut stop_reason,
         )
         .await?
@@ -466,6 +486,18 @@ async fn fetch_and_extract(
         {
             Ok(ok) => ok,
             Err(e) => {
+                // The source is dropped, but the extraction call may still
+                // have been billed — a truncation or refusal is a 200 the
+                // provider charged for (020). Meter it before discarding the
+                // result, or a run full of failed extractions reports a
+                // fraction of what it cost.
+                let (input, output) = e.billed();
+                meter.add(
+                    deps.routing
+                        .model_for(crate::routing::CallSite::ResearchExtract),
+                    input,
+                    output,
+                );
                 tracing::debug!(url, error = %e, "source dropped at extraction");
                 return None;
             }
@@ -553,6 +585,17 @@ async fn verify_claim(
     {
         Ok(run) => run,
         Err(e) => {
+            // Same as extraction: the claim is dropped, the tokens were not
+            // free (020). Verification is the tool's dominant cost, so
+            // silently unmetering its failures is the largest under-report of
+            // the three phases.
+            let (input, output) = e.billed();
+            meter.add(
+                deps.routing
+                    .model_for(crate::routing::CallSite::ResearchVerify),
+                input,
+                output,
+            );
             tracing::debug!(claim = %claim.text, error = %e, "claim dropped at verification");
             return None;
         }

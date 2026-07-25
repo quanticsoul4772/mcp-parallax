@@ -265,6 +265,22 @@ pub async fn run(
     params: &DecideParams,
     max_chars: usize,
 ) -> Result<DecideRun, AppError> {
+    // 020: the retry means a failure can follow two complete model calls. The
+    // accumulated tokens ride out on the error rather than being discarded
+    // with it — "the assessment was malformed twice" is not "the call was
+    // free".
+    let mut spent = (0_u64, 0_u64);
+    let outcome = run_spent(client, mode, params, max_chars, &mut spent).await;
+    outcome.map_err(|error| error.metered(spent.0, spent.1))
+}
+
+async fn run_spent(
+    client: &dyn ModelClient,
+    mode: &CorrectiveMode,
+    params: &DecideParams,
+    max_chars: usize,
+    spent: &mut (u64, u64),
+) -> Result<DecideRun, AppError> {
     let mut owned = params.clone();
     owned.normalize(); // options_text -> options when the array argument was omitted
     let params = &owned;
@@ -278,6 +294,7 @@ pub async fn run(
         let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
         input_tokens += completion.input_tokens;
         output_tokens += completion.output_tokens;
+        *spent = (input_tokens, output_tokens);
 
         // The constrained-output contract itself (schema/shape) is a hard error,
         // not retried — only a well-formed-but-malformed assessment (the arity /
@@ -564,7 +581,12 @@ mod tests {
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both attempts were billed; a malformed assessment is not free.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("arity"));
         assert!(err.to_string().contains("after the retry"));
     }
@@ -576,7 +598,12 @@ mod tests {
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both attempts were billed; a malformed assessment is not free.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("0-100"));
         assert!(err.to_string().contains("after the retry"));
     }
@@ -588,7 +615,12 @@ mod tests {
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both attempts were billed; a malformed assessment is not free.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("deciding_factors"));
         assert!(err.to_string().contains("after the retry"));
     }

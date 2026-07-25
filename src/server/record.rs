@@ -14,7 +14,10 @@ use std::sync::Arc;
 /// outcome-taxonomy prefix plus the `AppError` Display text.
 pub(super) fn to_error_data(error: &AppError) -> ErrorData {
     let message = format!("[{}] {error}", error.outcome().as_str());
-    match error {
+    // Match the root: attached usage (020) is orthogonal to the failure class,
+    // and a wrapper must not silently reclassify an invalid-params error as an
+    // internal one.
+    match error.root() {
         AppError::InvalidInput(_) => ErrorData::invalid_params(message, None),
         _ => ErrorData::internal_error(message, None),
     }

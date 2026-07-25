@@ -299,7 +299,10 @@ pub async fn run_turn(
             &review::turn_activity(&window),
             capture_enabled,
         )
-        .await?;
+        .await
+        // The recall hop above already ran and was billed; fold it in so the
+        // whole boundary's spend survives a review failure (020).
+        .map_err(|error| error.metered(input_tokens, 0))?;
         input_tokens += inp;
         let cost_usd = telemetry::cost_usd(&deps.model, inp, out);
 
@@ -466,6 +469,13 @@ fn recover(
             CheckpointResult::fail_open(elapsed_ms(started)),
         );
         failed.review_ran = false;
+        // 020: failing open changes the verdict, not the bill. Whatever the
+        // boundary spent before it failed is carried onto the recovered
+        // evaluation, so the checkpoint record shows the cost of an evaluation
+        // that silently produced nothing.
+        let (input_tokens, output_tokens) = error.billed();
+        failed.input_tokens = input_tokens;
+        failed.output_tokens = output_tokens;
         failed
     })
 }

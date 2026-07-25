@@ -284,7 +284,12 @@ pub(crate) fn aggregate_core(
 
     let quorum = usize::from(k).div_ceil(2);
     if completed.len() < quorum {
-        return Err(dominant_failure(failures));
+        // The completed passes were billed even though they cannot produce a
+        // verdict — their tokens ride out on the error (020).
+        return Err(dominant_failure_metered(
+            failures,
+            (input_tokens, output_tokens),
+        ));
     }
 
     let refuted = completed
@@ -336,6 +341,31 @@ pub(crate) fn aggregate_core(
 /// Pick the most frequent failure class from `failures` (helper for quorum
 /// failure; separated for testability). Reused by `diverge` for its
 /// zero-completion case (012, no shared aggregation otherwise).
+///
+/// `completed` is the token total from passes that succeeded but could not
+/// reach quorum. Those passes were billed, as were the sibling failures that
+/// lost the class vote, and only one error survives to the record — so every
+/// token from the round is attached to it (020). Without this the class choice
+/// would silently determine how much spend gets reported.
+pub(crate) fn dominant_failure_metered(failures: Vec<AppError>, completed: (u64, u64)) -> AppError {
+    let (mut input_tokens, mut output_tokens) = completed;
+    for failure in &failures {
+        let (inp, out) = failure.billed();
+        input_tokens = input_tokens.saturating_add(inp);
+        output_tokens = output_tokens.saturating_add(out);
+    }
+    // The chosen error's own tokens are already in the sum above; take its
+    // root so they are not counted a second time when it is re-metered.
+    let chosen = dominant_failure(failures);
+    let chosen = match chosen {
+        AppError::Metered { source, .. } => *source,
+        other => other,
+    };
+    chosen.metered(input_tokens, output_tokens)
+}
+
+/// Pick the most frequent failure class, ignoring usage. Prefer
+/// [`dominant_failure_metered`] at aggregation points.
 pub(crate) fn dominant_failure(failures: Vec<AppError>) -> AppError {
     use std::collections::HashMap;
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
@@ -642,7 +672,11 @@ mod tests {
         ]);
 
         let err = run(&mock, &mode, &params("c"), 50_000).await.unwrap_err();
-        assert!(matches!(err, AppError::Refusal(_)), "got: {err}");
+        assert!(matches!(err.root(), AppError::Refusal(_)), "got: {err}");
+        // 020: the one pass that completed was billed 100/10 even though it
+        // could not reach quorum. Before this, choosing the dominant failure
+        // class silently discarded that spend.
+        assert_eq!(err.billed(), (100, 10));
     }
 
     #[tokio::test]
