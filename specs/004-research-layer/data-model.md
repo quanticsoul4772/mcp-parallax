@@ -24,7 +24,10 @@ each, matched by registrable-domain suffix.
 | field | type | notes |
 |---|---|---|
 | answer | string | synthesis prose with inline `[sN]` citations; model-written |
-| confidence | number 0..=1 | server-computed (§4) |
+| confidence | number 0..=1 | server-computed (§4) — mean finding support; **no coverage factor** since 021 |
+| coverage | number 0..=1 | server-computed — settled share of scoped sub-questions (021) |
+| refutation_rate | number 0..=1 | server-computed — refuted share of verified claims (021) |
+| sub_question_status | array | server-computed — each sub-question + settled flag; the published basis for `coverage` (021) |
 | key_findings | [KeyFinding] | server-assembled from verified claims |
 | disagreements | [Disagreement] | contested claims, positions + sources |
 | gaps | [string] | unanswered sub-questions + demoted-by-grounding content |

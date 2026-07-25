@@ -44,8 +44,28 @@ pub struct Constraints {
 pub struct ResearchResult {
     /// Executive synthesis with inline `[sN]` citations.
     pub answer: String,
-    /// Verification- and coverage-grounded confidence (0..=1).
+    /// Support established for the claims the answer asserts (0..=1) — the
+    /// mean confidence of the published findings (021 FR-001).
+    ///
+    /// **Not** reduced by unsettled sub-questions; breadth of resolution is
+    /// reported separately. Zero only when no claim was supported.
     pub confidence: f32,
+    /// Proportion of verified claims that verification refuted (021 FR-009a).
+    ///
+    /// Beside `confidence` rather than inside it: the answer does not assert
+    /// refuted claims, but without this a run whose evidence largely fell
+    /// apart would be indistinguishable from one whose evidence held.
+    pub refutation_rate: f32,
+    /// Proportion of the run's scoped sub-questions that were settled (021
+    /// FR-002) — breadth of resolution, which `confidence` used to be
+    /// multiplied by and no longer is.
+    ///
+    /// Equals the fraction of [`Self::sub_question_status`] marked settled, so
+    /// the figure is checkable from this output alone.
+    pub coverage: f32,
+    /// Each sub-question the run scoped, and whether it was settled (021
+    /// FR-005). The published basis for [`Self::coverage`].
+    pub sub_question_status: Vec<SubQuestionStatus>,
     /// Server-assembled findings, each citing at least one source.
     pub key_findings: Vec<KeyFinding>,
     /// Contested claims with their conflicting positions — surfaced, not
@@ -58,6 +78,19 @@ pub struct ResearchResult {
     pub sources: Vec<SourceRef>,
     /// Honest accounting (FR-007).
     pub stats: Stats,
+}
+
+/// One scoped sub-question and whether the run settled it (021 FR-005).
+///
+/// Published so `coverage` can be reconciled against the output rather than
+/// taken on trust — the sub-questions are not otherwise visible to the caller,
+/// so a bare index would reference nothing.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct SubQuestionStatus {
+    /// The sub-question, verbatim as the scope phase produced it.
+    pub sub_question: String,
+    /// True when no retained gap targets this sub-question.
+    pub settled: bool,
 }
 
 /// One verified finding.

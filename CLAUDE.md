@@ -221,26 +221,36 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active: `018-model-routing` — plan complete, tasks not yet generated. Plan:
-[specs/018-model-routing/plan.md](specs/018-model-routing/plan.md) (spec, research,
-data-model, contracts/config.md, and quickstart alongside it).
+Active: `021-research-confidence-aggregation` — plan complete, tasks not yet
+generated. Plan:
+[specs/021-research-confidence-aggregation/plan.md](specs/021-research-confidence-aggregation/plan.md)
+(spec, research, data-model, contracts/output-contract.md, and quickstart alongside
+it).
 
-Per-call-site model routing: each of the twelve model call sites can run on a model
-chosen for the work it does, instead of all twelve sharing `ANTHROPIC_MODEL`. Two
-tiers (`bulk` = research extraction alone, `judgment` = the other eleven) over a
-reserved `PARALLAX_MODEL_*` namespace, with per-call-site overrides resolved
-most-specific-first; an unknown suffix in that namespace is a startup error, which is
-what makes a misspelled route visible. `ModelClient` keeps its signature — routing is
-construction-time, one client per distinct model. Cost accounting becomes per-model
-(`ModelUsage`) so one invocation spanning two models is priced at each model's own
-rate; the record stays one row per invocation, gaining `models` and `usage_by_model`,
-with the attributed model chosen by measured tokens rather than estimated cost. Off
-by default: unset means byte-identical behavior, costs included.
+`research` reports overall confidence as `mean(finding_confidences) * coverage`,
+where coverage subtracts the length of the model's free-form gap list from the count
+of scoped sub-questions. The two lists have no correspondence, and the gap cap (10)
+exceeds the sub-question cap (7), so the term reaches exactly zero by construction —
+observed twice on live runs whose answers were correct and whose per-claim support
+was ~0.78. A confidence of exactly 0 asserts certainty of falsehood, and a caller
+that learns the field reads 0 on correct answers stops reading it.
 
-Motivation is measured, not assumed — after the 004 evidence-grounding fix a
-quick-tier research question went 104k → 175.9k tokens and tripped its 150k budget,
-dropping 43 of 89 claims. Named deferral (research D7): per-family `thinking`
-suppression, to be decided on measured cost. Next: `/speckit-tasks`.
+The fix separates the quantities the number folded together. The synthesis hop gains
+an index-aligned `gap_targets` array (1-based sub-question, 0 = none) — parallel
+arrays because Principle II forbids nesting in a mode schema, following the idiom
+`decide` already uses. The server counts unclaimed sub-questions and publishes
+`coverage`, a per-sub-question `settled` status, and a `refutation_rate` as their own
+fields; `confidence` keeps the findings' mean support alone. `gaps` keeps its wire
+shape. Verification, support labelling, and per-claim confidence are untouched.
+
+Four design questions were settled by a `decide` pass then a `verify` confirmation
+pass; **two of the four recommendations were overturned by their confirmation** —
+deriving the claim-to-sub-question association by deterministic text matching
+(refuted 3/3: lexical overlap is neither necessary nor sufficient for answerhood) and
+blending the coverage multiplier rather than splitting the field (refuted 3/3). Named
+residual: an in-range-but-wrong `gap_target` is indistinguishable from a correct one
+at the server, accepted knowingly because the status quo trusts the same pass for the
+same number with no bound at all. Next: `/speckit-tasks`.
 <!-- SPECKIT END -->
 
 ## Working style

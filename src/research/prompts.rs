@@ -46,7 +46,11 @@ You are writing the executive synthesis of a completed research run. Use \
 ONLY the verified findings below — cite them inline with their source \
 tokens exactly as given (for example [s3]). Never cite a source not listed. \
 Surface uncertainty honestly; never state refuted or unverified content as \
-fact. List what remains unanswered as gaps (short phrases).\
+fact. List what remains unanswered as gaps (short phrases). For EVERY gap, \
+give the matching entry in gap_targets IN THE SAME ORDER: gap_targets[i] is \
+the 1-based number of the sub-question that gaps[i] concerns, counting the \
+sub-questions listed below from 1, or 0 when the gap concerns no single one \
+of them. The two arrays MUST be the same length.\
 <<retry_clause>>\n\nQuestion: <<question>>\n\nSub-questions a good answer \
 settles:\n<<sub_questions>>\n\nVerified findings (cite by token):\n\
 <<findings>>\n\nRefuted during verification (do NOT assert; you may note \
@@ -71,6 +75,16 @@ pub(crate) struct SynthOut {
     /// Unanswered sub-questions / honest gaps.
     #[schemars(length(max = 10), inner(length(max = 500)))]
     pub(crate) gaps: Vec<String>,
+    /// Index-aligned with [`Self::gaps`]: entry *i* is the 1-based
+    /// sub-question that `gaps[i]` concerns, or `0` for none (021 FR-003).
+    ///
+    /// Parallel arrays rather than a list of objects because Principle II
+    /// requires mode schemas to stay flat and closed — the same idiom
+    /// `decide` uses between `option_scores` and `option_rationales`. Arity
+    /// and range are checked at assembly, since JSON Schema cannot state a
+    /// relation between two arrays.
+    #[schemars(length(max = 10))]
+    pub(crate) gap_targets: Vec<u32>,
 }
 
 /// Register the research-internal modes (boot-time; enforces flat+closed).

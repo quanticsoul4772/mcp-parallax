@@ -81,7 +81,7 @@ pub async fn synthesize_grounded(
     fetched_ids: &BTreeSet<String>,
     meter: &RunMeter,
     stop_reason: &mut Option<StopReason>,
-) -> Result<(String, Vec<String>, Vec<String>), AppError> {
+) -> Result<Synthesized, AppError> {
     let findings_block = surviving
         .iter()
         .map(|v| {
@@ -157,9 +157,36 @@ pub async fn synthesize_grounded(
         let out: SynthOut = serde_json::from_value(completion.value)
             .map_err(|e| AppError::ValidationFailure(format!("synthesis shape: {e}")))?;
 
+        // 021 D2: the two parallel arrays must agree in length. JSON Schema
+        // cannot state a relation between two arrays, so this is the local
+        // check — the same place `decide` validates its own arity. A mismatch
+        // feeds the retry rather than being absorbed: reading absent targets
+        // as "concerns nothing" would report full coverage for a malformed
+        // response, which is the server overstating what it established.
+        if out.gap_targets.len() != out.gaps.len() {
+            tracing::warn!(
+                gaps = out.gaps.len(),
+                targets = out.gap_targets.len(),
+                "synthesis returned mismatched gap/gap_target arity"
+            );
+            retry_clause = format!(
+                " YOUR PREVIOUS ATTEMPT WAS REJECTED: you returned {} gaps but {} \
+                 gap_targets. The two arrays must have exactly the same length — one \
+                 target per gap, in the same order.",
+                out.gaps.len(),
+                out.gap_targets.len()
+            );
+            continue;
+        }
+
         match grounding::ground(&out.answer, &finding_sources, fetched_ids) {
             Ok(grounded) => {
-                return Ok((out.answer, out.gaps, grounded.kept_source_ids));
+                return Ok(Synthesized {
+                    answer: out.answer,
+                    gaps: out.gaps,
+                    gap_targets: out.gap_targets,
+                    grounded_ids: grounded.kept_source_ids,
+                });
             }
             Err(violations) => {
                 tracing::warn!(?violations, "grounding gate rejected the synthesis");
@@ -179,13 +206,38 @@ pub async fn synthesize_grounded(
         "the synthesis could not be grounded in the fetched sources and was demoted".to_string(),
     ];
     gaps.extend(plan.sub_questions.clone());
+    // 021 T020: the demotion notice concerns no single sub-question (0); each
+    // appended sub-question is keyed to itself, so a demoted run reports every
+    // sub-question unsettled — which is the truth, nothing was grounded.
+    let mut gap_targets = vec![0_u32];
+    gap_targets
+        .extend((1..=plan.sub_questions.len()).map(|i| u32::try_from(i).unwrap_or(u32::MAX)));
     let grounded = grounding::ground("", &finding_sources, fetched_ids)
         .map_or_else(|_| Vec::new(), |g| g.kept_source_ids);
-    Ok((
-        "The synthesis could not be grounded after a retry; see key_findings for the \
-         verified claims and gaps for what remains."
+    Ok(Synthesized {
+        answer: "The synthesis could not be grounded after a retry; see key_findings for the \
+                 verified claims and gaps for what remains."
             .to_string(),
         gaps,
-        grounded,
-    ))
+        gap_targets,
+        grounded_ids: grounded,
+    })
+}
+
+/// What the synthesis phase produces: the prose, the gaps, the sub-question
+/// each gap concerns, and the source ids the grounding gate kept.
+///
+/// A named struct rather than a fourth tuple element — the tuple was already
+/// at three, and unlabelled positions of the same type invite transposition.
+pub struct Synthesized {
+    /// Answer prose with inline `[sN]` citations.
+    pub answer: String,
+    /// Honest gaps, published to the caller as plain text.
+    pub gaps: Vec<String>,
+    /// Index-aligned with [`Self::gaps`]: the 1-based sub-question each gap
+    /// concerns, `0` for none. Internal — the caller receives the derived
+    /// per-sub-question status instead.
+    pub gap_targets: Vec<u32>,
+    /// Source ids the grounding gate kept.
+    pub grounded_ids: Vec<String>,
 }

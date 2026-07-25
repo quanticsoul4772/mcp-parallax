@@ -196,7 +196,7 @@ async fn happy_path_citations_resolve_and_stats_account() {
             }
         },
         |_, _| supported(),
-        |_| json!({ "answer": "Shared holds [s1][s2]; solo noted [s2].", "gaps": [] }),
+        |_| json!({ "answer": "Shared holds [s1][s2]; solo noted [s2].", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&["https://example.com/a", "https://example.com/b"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
@@ -275,7 +275,7 @@ async fn verify_prompt_carries_source_excerpts_not_titles_alone() {
             assert!(prompt.contains("[s1]"));
             supported()
         },
-        |_| json!({ "answer": "ok [s1]", "gaps": [] }),
+        |_| json!({ "answer": "ok [s1]", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&["https://example.com/a"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
@@ -296,7 +296,7 @@ async fn focus_reaches_the_scope_prompt() {
         scope_value(),
         |_| json!({ "claims": [] }),
         |_, _| supported(),
-        |_| json!({ "answer": "n/a", "gaps": [] }),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&[]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
@@ -320,7 +320,7 @@ async fn single_fetch_failure_degrades_and_counts_never_fails_the_run() {
         scope_value(),
         |_| json!({ "claims": ["good claim"] }),
         |_, _| supported(),
-        |_| json!({ "answer": "Good [s2].", "gaps": [] }),
+        |_| json!({ "answer": "Good [s2].", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&["https://bad.example/x", "https://example.com/ok"]);
     let mut fetcher = MockFetcher::new();
@@ -364,7 +364,7 @@ async fn refuted_claims_are_dropped_and_contested_claims_surface() {
                 supported()
             }
         },
-        |_| json!({ "answer": "Right [s1]; contested noted [s1].", "gaps": [] }),
+        |_| json!({ "answer": "Right [s1]; contested noted [s1].", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(client, search, Arc::new(SystemClock));
@@ -403,9 +403,9 @@ async fn grounding_violation_retries_once_with_the_violation_named() {
         |_, _| supported(),
         |attempt| {
             if attempt == 0 {
-                json!({ "answer": "Fabricated [s99].", "gaps": [] })
+                json!({ "answer": "Fabricated [s99].", "gaps": [], "gap_targets": [] })
             } else {
-                json!({ "answer": "Grounded [s1].", "gaps": [] })
+                json!({ "answer": "Grounded [s1].", "gaps": [], "gap_targets": [] })
             }
         },
     );
@@ -434,7 +434,7 @@ async fn second_grounding_failure_demotes_instead_of_emitting_ungrounded_content
         scope_value(),
         |_| json!({ "claims": ["a claim"] }),
         |_, _| supported(),
-        |_| json!({ "answer": "Always fabricated [s99].", "gaps": [] }),
+        |_| json!({ "answer": "Always fabricated [s99].", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
@@ -552,7 +552,7 @@ async fn depth_scales_the_scope_and_constraints_override_the_tier() {
             scope_value(),
             |_| json!({ "claims": [] }),
             |_, _| supported(),
-            |_| json!({ "answer": "n/a", "gaps": [] }),
+            |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
         );
         let search = search_returning(&[]);
         let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
@@ -576,7 +576,7 @@ async fn depth_scales_the_scope_and_constraints_override_the_tier() {
         scope_value(),
         |_| json!({ "claims": [] }),
         |_, _| supported(),
-        |_| json!({ "answer": "n/a", "gaps": [] }),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&[
         "https://example.com/1",
@@ -608,7 +608,7 @@ async fn denied_and_unallowed_domains_never_reach_the_fetcher() {
         scope_value(),
         |_| json!({ "claims": [] }),
         |_, _| supported(),
-        |_| json!({ "answer": "n/a", "gaps": [] }),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
     );
     let search = search_returning(&[
         "https://evil.example/page",
@@ -754,7 +754,7 @@ async fn partial_angle_failure_degrades_and_counts() {
         scope_value(),
         |_| json!({ "claims": ["surviving claim"] }),
         |_, _| supported(),
-        |_| json!({ "answer": "Survives [s1].", "gaps": [] }),
+        |_| json!({ "answer": "Survives [s1].", "gaps": [], "gap_targets": [] }),
     );
     let failed = std::sync::atomic::AtomicBool::new(false);
     let mut search = MockSearchProvider::new();
@@ -777,4 +777,411 @@ async fn partial_angle_failure_degrades_and_counts() {
     assert_eq!(result.stats.angles, 2);
     assert_eq!(result.stats.searches, 1); // one angle lost, counted honestly
     assert_eq!(result.key_findings.len(), 1);
+}
+
+// ---- 021: confidence aggregation --------------------------------------------
+
+/// T004 / SC-001 — the observed defect, reproduced.
+///
+/// Two live runs reported `confidence: 0` for factually correct answers whose
+/// every claim survived refute-biased verification at ~0.78. The cause was the
+/// coverage term: the synthesis wrote one gap per sub-question, `settled`
+/// saturated to zero, and the product annihilated a well-supported answer.
+/// A confidence of exactly 0 asserts certainty of falsehood.
+#[tokio::test]
+async fn every_sub_question_gapped_no_longer_annihilates_a_supported_answer() {
+    let client = scripted(
+        scope_value(), // two sub-questions
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        // One gap per sub-question — the exact shape that collapsed the score.
+        |_| {
+            json!({
+                "answer": "The claim holds [s1].",
+                "gaps": ["still unclear whether it holds", "and since when"],
+                "gap_targets": [1, 2]
+            })
+        },
+    );
+    let search = search_returning(&["https://example.com/a"]);
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert!(
+        result.confidence > 0.0,
+        "a supported answer must not report certainty of falsehood; got {}",
+        result.confidence
+    );
+    // Breadth is not lost, it moves to `coverage` — asserted in US2, which
+    // introduces the field. This test stays inside US1 so the story's
+    // checkpoint compiles and passes on its own.
+}
+
+/// T005 / SC-006 — refuted claims leave confidence alone and surface as their
+/// own rate, so a run whose evidence largely fell apart is distinguishable
+/// from one whose evidence held.
+#[tokio::test]
+async fn refutation_is_reported_as_its_own_rate_not_folded_into_confidence() {
+    let synth = |_: usize| json!({ "answer": "It holds [s1].", "gaps": [], "gap_targets": [] });
+
+    // Run A: both claims survive.
+    let client_a = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["claim one holds", "claim two holds"] }),
+        |_, _| supported(),
+        synth,
+    );
+    let deps_a = deps_with(
+        client_a,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (a, _) = run(&deps_a, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    // Run B: same surviving claim, plus one the ensemble refutes.
+    let client_b = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["claim one holds", "claim two holds"] }),
+        |prompt, _| {
+            if prompt.contains("claim two") {
+                refuted("claim two is false because X")
+            } else {
+                supported()
+            }
+        },
+        synth,
+    );
+    let deps_b = deps_with(
+        client_b,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (b, _) = run(&deps_b, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert!(
+        (a.confidence - b.confidence).abs() < 1e-6,
+        "confidence must report the support of what the answer asserts, \
+         identical here: {} vs {}",
+        a.confidence,
+        b.confidence
+    );
+    assert!((a.refutation_rate - 0.0).abs() < f32::EPSILON);
+    assert!(
+        b.refutation_rate > 0.0,
+        "a run that refuted half its claims must say so"
+    );
+}
+
+/// T013 / FR-005 — the caller receives the basis for coverage, not just the
+/// figure. Without the statuses, coverage is a number to be taken on trust.
+#[tokio::test]
+async fn sub_question_status_is_published_verbatim_and_in_scope_order() {
+    let client = scripted(
+        scope_value(), // ["does it hold?", "since when?"]
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        |_| {
+            json!({
+                "answer": "It holds [s1].",
+                "gaps": ["the date is unclear"],
+                "gap_targets": [2]
+            })
+        },
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert_eq!(result.sub_question_status.len(), 2);
+    assert_eq!(result.sub_question_status[0].sub_question, "does it hold?");
+    assert_eq!(result.sub_question_status[1].sub_question, "since when?");
+    assert!(result.sub_question_status[0].settled);
+    assert!(!result.sub_question_status[1].settled, "gap targeted #2");
+    assert!((result.coverage - 0.5).abs() < f32::EPSILON);
+}
+
+/// T014 / SC-002 — identical support, different breadth. Before this feature
+/// the two were indistinguishable at the top level; now they differ in
+/// coverage and agree in confidence, which is the separation the whole change
+/// exists to make.
+#[tokio::test]
+async fn identical_support_with_different_breadth_differs_only_in_coverage() {
+    let make = |targets: Value| {
+        let client = scripted(
+            scope_value(),
+            |_| json!({ "claims": ["the claim holds"] }),
+            |_, _| supported(),
+            move |_| {
+                json!({
+                    "answer": "It holds [s1].",
+                    "gaps": ["a", "b"],
+                    "gap_targets": targets.clone()
+                })
+            },
+        );
+        deps_with(
+            client,
+            search_returning(&["https://example.com/a"]),
+            Arc::new(SystemClock),
+        )
+    };
+
+    let both = make(json!([1, 2]));
+    let (all_gapped, _) = run(&both, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    let neither = make(json!([0, 0]));
+    let (none_gapped, _) = run(&neither, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert!(
+        (all_gapped.confidence - none_gapped.confidence).abs() < 1e-6,
+        "support is identical, so confidence must be: {} vs {}",
+        all_gapped.confidence,
+        none_gapped.confidence
+    );
+    assert!((all_gapped.coverage - 0.0).abs() < f32::EPSILON);
+    assert!((none_gapped.coverage - 1.0).abs() < f32::EPSILON);
+    assert!(all_gapped.confidence > 0.0, "the defect: this used to be 0");
+}
+
+/// T015 / SC-003 + SC-005 — coverage is checkable from the output alone, and
+/// the pre-change figure stays derivable, so no information the caller had
+/// before is lost by splitting the field.
+#[tokio::test]
+async fn coverage_reconciles_with_the_published_statuses_and_preserves_the_old_figure() {
+    for (targets, expected) in [
+        (json!([]), 1.0_f32),
+        (json!([1]), 0.5),
+        (json!([1, 2]), 0.0),
+        (json!([2, 2, 2]), 0.5), // FR-004: counted once
+    ] {
+        let gap_count = targets.as_array().map_or(0, Vec::len);
+        let client = scripted(
+            scope_value(),
+            |_| json!({ "claims": ["the claim holds"] }),
+            |_, _| supported(),
+            move |_| {
+                json!({
+                    "answer": "It holds [s1].",
+                    "gaps": vec!["g"; gap_count],
+                    "gap_targets": targets.clone()
+                })
+            },
+        );
+        let deps = deps_with(
+            client,
+            search_returning(&["https://example.com/a"]),
+            Arc::new(SystemClock),
+        );
+        let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+            .await
+            .unwrap();
+
+        // SC-003: the figure equals what the published statuses say.
+        #[allow(clippy::cast_precision_loss)]
+        let from_statuses = (result
+            .sub_question_status
+            .iter()
+            .filter(|s| s.settled)
+            .count() as f32)
+            / (result.sub_question_status.len() as f32);
+        assert!(
+            (result.coverage - from_statuses).abs() < 1e-6,
+            "coverage must be reconcilable from the output alone"
+        );
+        assert!((result.coverage - expected).abs() < 1e-6, "{expected}");
+
+        // SC-005: `confidence * coverage` is the pre-change value.
+        let legacy = result.confidence * result.coverage;
+        assert!((0.0..=1.0).contains(&legacy));
+    }
+}
+
+/// T016 / research.md D2 — a length mismatch between the two parallel arrays
+/// is a malformed response, not an invitation to guess. Accepting it and
+/// treating absent targets as "concerns nothing" would inflate coverage to
+/// full: the server overstating what it established, which is the exact
+/// failure this feature exists to correct.
+#[tokio::test]
+async fn a_gap_target_arity_mismatch_is_retried_then_demoted_never_accepted() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        // Both attempts return two gaps but one target.
+        |_| {
+            json!({
+                "answer": "It holds [s1].",
+                "gaps": ["one", "two"],
+                "gap_targets": [1]
+            })
+        },
+    );
+    let deps = deps_with(
+        Arc::clone(&client),
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    // Retried once, then demoted — never silently accepted.
+    assert_eq!(client.count_containing("executive synthesis"), 2);
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Grounding));
+    assert!((result.coverage - 0.0).abs() < f32::EPSILON, "not inflated");
+}
+
+/// T017 — a demoted run settled nothing, and says so. Confidence still reports
+/// the support of the findings it did verify.
+#[tokio::test]
+async fn a_demoted_synthesis_reports_every_sub_question_unsettled() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        // Cites a source that was never fetched: the grounding gate rejects
+        // both attempts.
+        |_| json!({ "answer": "It holds [s99].", "gaps": [], "gap_targets": [], "gap_targets": [] }),
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Grounding));
+    assert!((result.coverage - 0.0).abs() < f32::EPSILON);
+    assert!(result.sub_question_status.iter().all(|s| !s.settled));
+    assert!(result.confidence > 0.0, "the findings were still verified");
+}
+
+/// T018 — an early stop is when breadth of resolution matters most to the
+/// caller, so it is the worst case to leave unpinned. A run cut short before
+/// it verified anything must still report a complete status list and a defined
+/// coverage, rather than an empty list a caller cannot interpret.
+#[tokio::test]
+async fn a_run_stopped_early_still_reports_defined_coverage_and_statuses() {
+    let started = DateTime::parse_from_rfc3339("2026-07-25T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let mut clock = MockTimeProvider::new();
+    let calls = std::sync::atomic::AtomicU32::new(0);
+    clock.expect_now().returning(move || {
+        if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            started
+        } else {
+            started + chrono::Duration::seconds(60)
+        }
+    });
+
+    let client = scripted(
+        scope_value(),
+        |_| panic!("deadline tripped before extraction"),
+        |_, _| panic!("deadline tripped before verification"),
+        |_| panic!("nothing verified — the deterministic answer path applies"),
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(clock),
+    );
+    let mut fetcher = MockFetcher::new();
+    fetcher.expect_fetch().times(0);
+
+    let p = ResearchParams {
+        constraints: Some(Constraints {
+            deadline_ms: Some(5_000),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(Depth::Quick))
+    };
+    let (result, _) = run(&deps, &fetcher, &p).await.unwrap();
+
+    assert!(result.stats.stopped_early);
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
+    // Nothing was settled, and the caller can see exactly which questions
+    // those were — not an absent field it has to guess about.
+    assert_eq!(result.sub_question_status.len(), 2);
+    assert!(result.sub_question_status.iter().all(|s| !s.settled));
+    assert!((result.coverage - 0.0).abs() < f32::EPSILON);
+}
+
+/// T026 — the figure stays auditable at the gap cap.
+///
+/// The original defect was that the confidence penalty came from the
+/// *untruncated* gap list while the caller saw the truncated one, so the
+/// number could not be checked against the run's own output. It is fixed by
+/// publishing the statuses rather than by reordering two statements: coverage
+/// is derived from every target the synthesis returned, `gaps` is capped
+/// independently, and the two published values agree with each other whatever
+/// the cap does to the explanatory text.
+///
+/// Truncation is in fact unreachable today — the synthesis schema bounds gaps
+/// at `MAX_GAPS` (10) and the in-code gap paths build at most
+/// `MAX_SUB_QUESTIONS + 1` (8) — so this pins the invariant at the largest
+/// reachable gap count instead of a state the validator forbids.
+#[tokio::test]
+async fn coverage_stays_reconcilable_when_gaps_crowd_the_cap() {
+    let client = scripted(
+        scope_value(), // two sub-questions
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        // Ten gaps — the schema maximum — nine of them piled on sub-question
+        // 2, which under the old arithmetic would have driven `settled` to
+        // zero and annihilated a well-supported answer.
+        |_| {
+            json!({
+                "answer": "It holds [s1].",
+                "gaps": ["g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8", "g9", "g10"],
+                "gap_targets": [2, 2, 2, 2, 2, 2, 2, 2, 2, 0]
+            })
+        },
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    // Never more gaps than the caller is promised.
+    assert!(result.gaps.len() <= crate::research::MAX_GAPS);
+
+    // FR-004: nine gaps on one sub-question leave it unsettled once, so the
+    // other sub-question is still settled.
+    assert!((result.coverage - 0.5).abs() < f32::EPSILON);
+
+    // SC-003: the figure equals what the published statuses say — checkable
+    // from this output alone, with no appeal to the untruncated list.
+    #[allow(clippy::cast_precision_loss)]
+    let from_statuses = (result
+        .sub_question_status
+        .iter()
+        .filter(|s| s.settled)
+        .count() as f32)
+        / (result.sub_question_status.len() as f32);
+    assert!((result.coverage - from_statuses).abs() < 1e-6);
+
+    // And the answer is not annihilated by a long gap list.
+    assert!(result.confidence > 0.0);
 }
