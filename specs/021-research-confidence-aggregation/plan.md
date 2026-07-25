@@ -97,10 +97,12 @@ trust, and it was unnamed in the original plan.
 
 Both are bounded by the same structural fact: coverage no longer reaches
 `confidence`, so a mis-keyed or omitted gap cannot inflate the support figure — only
-the breadth figure, which is published beside the list it is computed from. This is the residual model-trust the design takes on, and
-Decision 1 took it knowingly: the status quo already trusts the same synthesis pass
-for the same number, with less structure and no bound at all. It is recorded in the
-spec's checklist notes and repeated here so it survives into review.
+the breadth figure, which is published beside the list it is computed from.
+
+Decision 1 took this trust knowingly: the status quo already trusted the same
+synthesis pass for the same number, with less structure and no bound at all. Both
+residuals are recorded here so they survive into review rather than living only in
+the checklist notes.
 
 ## Project Structure
 
