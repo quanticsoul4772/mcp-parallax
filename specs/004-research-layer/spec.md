@@ -127,6 +127,10 @@ exactly one correctly attributed record.
 - Every source for a sub-question fails to fetch (unreachable, paywalled,
   oversized, wrong content type) → that sub-question is reported as a gap; the
   failed fetches are counted, and the run continues for other sub-questions.
+  *Bounded by FR-013a (023)*: this holds while some source survives somewhere.
+  If **every** source in the run fails, there are no other sub-questions to
+  continue for, and the run fails with the dominant error rather than returning
+  an answer that reports gaps as though the web had been consulted.
 - A single source fails to fetch → dropped and counted; one bad URL never fails
   the run.
 - All verifiable claims for the question are refuted → the answer states that
@@ -232,6 +236,22 @@ exactly one correctly attributed record.
   fetch, one extraction, one verification pass — MUST degrade the run, not
   fail it: the item is dropped after bounded retries and counted in run
   statistics.
+- **FR-013a**: A phase in which **every** attempted item failed MUST fail the
+  run, reporting the dominant failure, rather than degrading to an empty
+  answer (added 2026-07-25, feature 023).
+
+  *Why this boundary exists.* FR-013 was implemented for the search phase with
+  this rule already in place, and for extraction and verification without it. A
+  misconfiguration that rejected every extraction call therefore produced
+  `sources_found: 10, sources_fetched: 0`, an empty answer, `confidence: 0`,
+  and plausible-looking gaps — reported as a **successful** run. That is
+  indistinguishable from "the web does not know", which was false, and the run
+  held every fact needed to tell the difference.
+
+  An item that produced nothing **without failing** — a page that loaded and
+  held no readable text, or work a ceiling stopped — is not a failure and does
+  not trigger this. A run whose every candidate is unreadable genuinely has no
+  findings, and the empty answer is the truthful one.
 
 ### Key Entities
 

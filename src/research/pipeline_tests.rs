@@ -1203,3 +1203,166 @@ async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
     // And the answer is not annihilated by a long gap list.
     assert!(result.confidence > 0.0);
 }
+
+// ---- 023: a phase that wholly fails must say so ----------------------------
+
+/// The production failure, reproduced.
+///
+/// `PARALLAX_EFFORT_BULK=low` was set while the bulk tier routed to a model
+/// that does not support the `effort` parameter, so every extraction call
+/// returned a 400. The run reported `outcome: success` with
+/// `sources_found: 10, sources_fetched: 0`, an empty answer, `confidence: 0`,
+/// and six plausible-looking gaps — indistinguishable from "the web does not
+/// know", which was false.
+#[tokio::test]
+async fn every_extraction_failing_is_an_error_not_an_empty_answer() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("extraction is stubbed by the failing client below"),
+        |_, _| supported(),
+        |_| panic!("synthesis must not run when nothing was extracted"),
+    );
+    // A client whose extraction calls all fail, as a rejected request would.
+    struct FailingExtract(Arc<ScriptedClient>);
+    #[async_trait::async_trait]
+    impl crate::traits::client::ModelClient for FailingExtract {
+        async fn complete(&self, prompt: &str, schema: &Value) -> Result<Completion, AppError> {
+            if prompt.contains("extract falsifiable claims") {
+                return Err(AppError::Client(
+                    "HTTP 400: effort is not supported for this model".to_string(),
+                ));
+            }
+            self.0.complete(prompt, schema).await
+        }
+    }
+
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(&["https://example.com/a", "https://example.com/b"]),
+        Arc::new(SystemClock),
+    );
+    deps.extract_client = Arc::new(FailingExtract(Arc::clone(&client)));
+
+    let error = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap_err();
+
+    // The class the provider gave, not a synthesized empty answer.
+    assert!(
+        matches!(error.root(), AppError::Client(_)),
+        "a whole-phase failure must surface, got: {error}"
+    );
+    assert!(
+        error.to_string().contains("effort is not supported"),
+        "the provider's reason must reach the caller: {error}"
+    );
+}
+
+/// The line this draws: one surviving source is still a degraded run, not a
+/// failure. 004 FR-013 makes per-source failure tolerable, and 023 must not
+/// turn a partly-successful run into an error.
+#[tokio::test]
+async fn one_surviving_source_still_degrades_rather_than_failing() {
+    let client = scripted(
+        scope_value(),
+        |prompt| {
+            if prompt.contains("example.com/a") {
+                json!({ "claims": ["the surviving claim"] })
+            } else {
+                json!({ "claims": ["also fine"] })
+            }
+        },
+        |_, _| supported(),
+        |_| json!({ "answer": "Survives [s1].", "gaps": [], "gap_targets": [] }),
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a", "https://example.com/b"]),
+        Arc::new(SystemClock),
+    );
+    // Only the first URL fetches; the second fails.
+    let mut fetcher = MockFetcher::new();
+    fetcher.expect_fetch().returning(|url| {
+        if url.contains("example.com/a") {
+            Ok(crate::traits::fetcher::FetchedPage {
+                url: url.to_string(),
+                html: article_html("Content that extracts."),
+            })
+        } else {
+            Err(AppError::Client("fetch refused".to_string()))
+        }
+    });
+
+    let (result, _) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(result.stats.sources_fetched, 1);
+    assert!(!result.key_findings.is_empty());
+}
+
+/// A page that loaded and held no readable text is not a failure. A run where
+/// every candidate is like that genuinely has no findings, and the honest
+/// answer is the empty one — so this must NOT become an error.
+#[tokio::test]
+async fn unreadable_pages_still_produce_the_honest_empty_answer() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("nothing readable to extract from"),
+        |_, _| supported(),
+        |_| panic!("synthesis must not be called with nothing to ground"),
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let mut fetcher = MockFetcher::new();
+    fetcher.expect_fetch().returning(|url| {
+        Ok(crate::traits::fetcher::FetchedPage {
+            url: url.to_string(),
+            html: "<html><body></body></html>".to_string(),
+        })
+    });
+
+    let (result, _) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(result.stats.sources_fetched, 0);
+    assert!(result.answer.contains("No verifiable findings"));
+}
+
+/// The same rule in the phase that dominates a run's cost. A systematic
+/// verification failure would otherwise produce an answer asserting nothing
+/// while reporting success — which reads as "the evidence did not support
+/// anything" rather than "nothing was checked".
+#[tokio::test]
+async fn every_verification_failing_is_an_error_not_a_silent_empty_answer() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["a claim that will never be checked"] }),
+        |_, _| panic!("verification is stubbed by the failing client below"),
+        |_| panic!("synthesis must not run when nothing was verified"),
+    );
+    struct FailingVerify(Arc<ScriptedClient>);
+    #[async_trait::async_trait]
+    impl crate::traits::client::ModelClient for FailingVerify {
+        async fn complete(&self, prompt: &str, schema: &Value) -> Result<Completion, AppError> {
+            if prompt.contains("adversarial fact-checker") {
+                return Err(AppError::Client("HTTP 400: bad request".to_string()));
+            }
+            self.0.complete(prompt, schema).await
+        }
+    }
+
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    deps.verify_client = Arc::new(FailingVerify(Arc::clone(&client)));
+
+    let error = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap_err();
+    assert!(matches!(error.root(), AppError::Client(_)), "got: {error}");
+}

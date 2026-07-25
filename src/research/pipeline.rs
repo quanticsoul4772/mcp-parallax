@@ -122,6 +122,35 @@ impl Ceiling<'_> {
     }
 }
 
+/// What one source produced (023).
+///
+/// The distinction that matters is between *nothing to say* and *a call that
+/// failed*. Both used to collapse to `None`, so a configuration error that
+/// broke every extraction call in a run was indistinguishable from a set of
+/// pages that genuinely held no claims — and the run reported success with an
+/// empty answer.
+enum SourceOutcome {
+    /// Claims were extracted.
+    Extracted(Box<SourceRecord>),
+    /// Nothing was produced and nothing failed: an unreadable page, or a
+    /// ceiling that stopped work before this source. Legitimate degradation.
+    Empty,
+    /// A call failed. Carried so that *every* source failing can surface as a
+    /// phase failure rather than as an honest-looking empty answer.
+    Failed(Box<AppError>),
+}
+
+/// What one claim's verification produced (023) — the same distinction
+/// [`SourceOutcome`] draws, in the phase that dominates a run's cost.
+enum ClaimOutcome {
+    /// The claim was verified, whatever the verdict.
+    Verified(Box<VerifiedClaim>),
+    /// Skipped without failing: a ceiling stopped work before this claim.
+    Empty,
+    /// A verification call failed.
+    Failed(Box<AppError>),
+}
+
 /// Run one research invocation. Returns the result plus (input, output)
 /// token usage for the invocation record.
 ///
@@ -252,8 +281,27 @@ async fn run_metered(
                 url.clone(),
             ));
         }
-        for record in futures::future::join_all(tasks).await.into_iter().flatten() {
-            sources.push(record);
+        let mut failures: Vec<AppError> = Vec::new();
+        for outcome in futures::future::join_all(tasks).await {
+            match outcome {
+                SourceOutcome::Extracted(record) => sources.push(*record),
+                SourceOutcome::Empty => {}
+                SourceOutcome::Failed(error) => failures.push(*error),
+            }
+        }
+        // 023: every source failing is a phase failure, not degradation. The
+        // search phase already draws this line — it propagates when no search
+        // succeeded — and extraction did not, so a misconfiguration that broke
+        // every extraction call returned a well-formed empty answer reporting
+        // success. `sources_found: 10, sources_fetched: 0` was a systematic
+        // failure the run had the information to detect and did not.
+        //
+        // Degradation is preserved: one surviving source is enough to continue
+        // (FR-013), and a page that simply held no readable text is `Empty`,
+        // not a failure — a run where every candidate is unreadable genuinely
+        // has no findings, and saying so is truthful.
+        if sources.is_empty() && !failures.is_empty() {
+            return Err(verify::dominant_failure_metered(failures, (0, 0)));
         }
     }
     stats.sources_fetched = u32::try_from(sources.len()).unwrap_or(u32::MAX);
@@ -302,11 +350,27 @@ async fn run_metered(
             ));
         }
         claims_dropped += deferred;
+        let mut failures: Vec<AppError> = Vec::new();
+        let mut attempted = 0_u32;
         for outcome in futures::future::join_all(tasks).await {
+            attempted += 1;
             match outcome {
-                Some(v) => verified.push(v),
-                None => claims_dropped += 1,
+                ClaimOutcome::Verified(v) => verified.push(*v),
+                ClaimOutcome::Empty => claims_dropped += 1,
+                ClaimOutcome::Failed(error) => {
+                    claims_dropped += 1;
+                    failures.push(*error);
+                }
             }
+        }
+        // 023, same rule as extraction: every attempted claim failing is a
+        // phase failure. Verification is the run's dominant cost, so a
+        // systematic failure here is both the most expensive to hide and the
+        // most misleading — the answer would assert nothing while reporting
+        // success, which reads as "the evidence did not support anything"
+        // rather than "nothing was checked".
+        if attempted > 0 && verified.is_empty() && !failures.is_empty() {
+            return Err(verify::dominant_failure_metered(failures, (0, 0)));
         }
     }
     stats.claims_verified = u32::try_from(verified.len()).unwrap_or(u32::MAX);
@@ -454,26 +518,29 @@ async fn fetch_and_extract(
     ceiling: &Ceiling<'_>,
     id: String,
     url: String,
-) -> Option<SourceRecord> {
+) -> SourceOutcome {
     let Ok(_permit) = semaphore.acquire().await else {
-        return None;
+        return SourceOutcome::Empty;
     };
     if ceiling.probe().is_some() {
-        return None;
+        return SourceOutcome::Empty;
     }
     let page = match fetcher.fetch(&url).await {
         Ok(page) => page,
         Err(e) => {
             tracing::debug!(url, error = %e, "source dropped at fetch");
-            return None;
+            return SourceOutcome::Failed(Box::new(e));
         }
     };
+    // Not a failure: the page loaded and held no main text. A run where every
+    // candidate is unreadable genuinely has no findings, and saying so is the
+    // truthful answer.
     let Some(readable) = extract::readable_text(&page) else {
         tracing::debug!(
             url,
             "source dropped at readability (no extractable main text)"
         );
-        return None;
+        return SourceOutcome::Empty;
     };
     let (claims, input, output) =
         match extract::extract_claims(deps.extract_client.as_ref(), &deps.extract_mode, &readable)
@@ -494,7 +561,7 @@ async fn fetch_and_extract(
                     output,
                 );
                 tracing::debug!(url, error = %e, "source dropped at extraction");
-                return None;
+                return SourceOutcome::Failed(Box::new(e));
             }
         };
     meter.add(
@@ -508,7 +575,7 @@ async fn fetch_and_extract(
         .ok()
         .and_then(|u| u.host_str().map(String::from))
         .unwrap_or_default();
-    Some(SourceRecord {
+    SourceOutcome::Extracted(Box::new(SourceRecord {
         id,
         url: page.url.clone(),
         title: readable.title,
@@ -516,7 +583,7 @@ async fn fetch_and_extract(
         credibility: source_credibility(&host),
         claims,
         text: readable.text,
-    })
+    }))
 }
 
 /// Verify one claim through the refute-biased ensemble. `None` drops the
@@ -529,12 +596,12 @@ async fn verify_claim(
     ceiling: &Ceiling<'_>,
     source_meta: &BTreeMap<String, &SourceRecord>,
     claim: Claim,
-) -> Option<VerifiedClaim> {
+) -> ClaimOutcome {
     let Ok(_permit) = semaphore.acquire().await else {
-        return None;
+        return ClaimOutcome::Empty;
     };
     if ceiling.probe().is_some() {
-        return None;
+        return ClaimOutcome::Empty;
     }
     // Evidence-grounded context (004 D3 amendment, 2026-07-24): each backing
     // source contributes a claim-relevant excerpt of its readable text, so
@@ -592,7 +659,7 @@ async fn verify_claim(
                 output,
             );
             tracing::debug!(claim = %claim.text, error = %e, "claim dropped at verification");
-            return None;
+            return ClaimOutcome::Failed(Box::new(e));
         }
     };
     meter.add(
@@ -629,12 +696,12 @@ async fn verify_claim(
         claim.source_ids.len(),
         mean_credibility,
     );
-    Some(VerifiedClaim {
+    ClaimOutcome::Verified(Box::new(VerifiedClaim {
         claim,
         support,
         confidence,
         findings: run.verdict.findings,
-    })
+    }))
 }
 
 #[cfg(test)]
