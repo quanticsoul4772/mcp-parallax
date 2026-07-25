@@ -258,6 +258,47 @@ async fn truncation_surfaces_as_truncation_never_salvaged() {
     expect_failure(&mock, "truncation", Outcome::Truncation).await;
 }
 
+/// 020: a truncated call is an HTTP 200 the provider billed for, and the
+/// record must say so. This is the end-to-end version of the defect: before
+/// this, the row read 0 input / 0 output / $0.00, which under-reported spend
+/// and — because truncated calls are the only ones that reveal how much output
+/// headroom was wanted — made the output ceiling unsizable from its own data.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_truncated_call_records_the_tokens_it_was_billed_for() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "content": [{ "type": "text", "text": "{\"verdict\": \"refu" }],
+            "stop_reason": "max_tokens",
+            "usage": { "input_tokens": 10, "output_tokens": 4096 }
+        })))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 500).await;
+
+    client.call_tool(call("any claim")).await.unwrap_err();
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.outcome, Outcome::Truncation);
+    // Every pass of the ensemble truncated, and every one of them was billed —
+    // not just the one whose error survived the dominant-class choice.
+    assert_eq!(record.input_tokens % 10, 0);
+    assert_eq!(record.output_tokens % 4096, 0);
+    assert!(record.input_tokens >= 10, "got {}", record.input_tokens);
+    assert!(record.output_tokens >= 4096, "got {}", record.output_tokens);
+    // A priced model plus real tokens means a real cost, not a silent zero.
+    assert!(record.cost_usd > 0.0, "got {}", record.cost_usd);
+    assert_eq!(record.models, vec![record.model.clone()]);
+    assert_eq!(
+        record.usage_by_model.totals(),
+        (record.input_tokens, record.output_tokens)
+    );
+
+    client.cancel().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exhausted_retries_surface_with_attempt_count() {
     let mock = MockServer::start().await;
@@ -618,6 +659,60 @@ fn mount_embeddings(mock: &MockServer) -> impl std::future::Future<Output = ()> 
 }
 
 // ---- T014: catalog gating (FR-007) ----------------------------------------
+
+/// 018 T013 (FR-003, FR-005a, FR-016): routing is an operator concern, not a
+/// caller one. No tool may expose a model as an input, and enabling routing
+/// must not add a tool. If a caller could name a model, routing would stop
+/// being a property of the deployment and start being negotiable per call —
+/// and the cost attribution on the record would no longer be predictable from
+/// configuration alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn routing_is_invisible_to_callers_no_model_input_and_no_new_tool() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let before: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+
+    for tool in &tools {
+        let schema = serde_json::to_string(&tool.input_schema).unwrap();
+        let properties = tool
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .map_or_else(Vec::new, |p| p.keys().cloned().collect::<Vec<_>>());
+        for property in &properties {
+            let lower = property.to_lowercase();
+            assert!(
+                !lower.contains("model") && !lower.contains("tier"),
+                "{}: input property `{property}` exposes routing to the caller",
+                tool.name
+            );
+        }
+        // Nothing in the schema — property, description, or enum — may name a
+        // routing setting either.
+        assert!(
+            !schema.contains("PARALLAX_MODEL"),
+            "{}: input schema references the routing namespace",
+            tool.name
+        );
+        assert!(
+            !schema.contains("ANTHROPIC_MODEL"),
+            "{}: input schema references the model setting",
+            tool.name
+        );
+    }
+
+    // The catalog is gated by capability keys alone; routing adds nothing.
+    assert!(
+        !before
+            .iter()
+            .any(|n| n.contains("model") || n.contains("rout")),
+        "routing must not add a tool to the catalog; got {before:?}"
+    );
+
+    client.cancel().await.unwrap();
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_a_voyage_key_the_catalog_has_no_memory_tools() {

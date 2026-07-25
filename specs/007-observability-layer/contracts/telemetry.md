@@ -47,6 +47,14 @@ OK on success; ERROR with the outcome class otherwise.
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
 | `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `search_provider`, `embedding_provider`, `cancelled`) |
+
+**A non-`success` outcome does not imply zero usage** (020). A `refusal` or
+`truncation` is an HTTP 200 the provider billed for, and an ensemble that
+failed to reach quorum was billed for every pass that did complete. Those spans
+and records carry real `gen_ai.usage.*` values and a real `parallax.cost`.
+Outcomes that genuinely cost nothing — `timeout`, `retries_exhausted`,
+`invalid_input`, `cancelled` — still report zero. Do not filter on
+`parallax.outcome = success` when totalling spend; it will under-count.
 | `parallax.cost_usd` | double | computed cost — summed over participating models, each at its own rate (018) |
 | `parallax.session_id` | string | per-process session UUID |
 | `parallax.models` | string[] | **added 018** — every model that actually ran, sorted. One entry when nothing is routed |

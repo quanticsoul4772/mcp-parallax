@@ -738,7 +738,14 @@ async fn all_angles_failing_fails_the_invocation_with_the_provider_class() {
     )
     .await
     .unwrap_err();
-    assert!(matches!(err, AppError::SearchProvider(_)), "{err}");
+    assert!(matches!(err.root(), AppError::SearchProvider(_)), "{err}");
+    // 020: the search phase failed, but scope already ran and was billed. The
+    // record must carry that spend rather than reporting the run as free.
+    let (input_tokens, output_tokens) = err.billed();
+    assert!(
+        input_tokens > 0 && output_tokens > 0,
+        "scope spend lost on a search-phase failure: {input_tokens}/{output_tokens}"
+    );
 }
 
 #[tokio::test]

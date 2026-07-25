@@ -12,7 +12,7 @@
 //! no verdict to converge on): it collects and dedups, it does not vote.
 
 use crate::error::AppError;
-use crate::modes::verify::dominant_failure;
+use crate::modes::verify::dominant_failure_metered;
 use crate::modes::{CorrectiveMode, ModeRegistry};
 use crate::schema::validate;
 use crate::traits::client::ModelClient;
@@ -284,7 +284,12 @@ fn aggregate(
     }
 
     if perspectives.is_empty() {
-        return Err(dominant_failure(failures));
+        // No perspective survived, but the passes behind these failures were
+        // billed — carry their tokens out on the error (020).
+        return Err(dominant_failure_metered(
+            failures,
+            (input_tokens, output_tokens),
+        ));
     }
 
     #[allow(clippy::cast_possible_truncation)] // bounded by k: u8

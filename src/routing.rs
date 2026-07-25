@@ -340,6 +340,28 @@ impl RoutingTable {
         &self.routes
     }
 
+    /// The startup report, one row per call site:
+    /// `(call site, tier, resolved model, supplying setting)`.
+    ///
+    /// Pure, so what the operator is told at startup is assertable without a
+    /// tracing capture harness (018 T012). The point of the report is that a
+    /// misrouted call site is visible before the bill arrives, which only
+    /// holds if **every** site appears with the setting that decided it.
+    #[must_use]
+    pub fn report(&self) -> Vec<(&'static str, &'static str, String, String)> {
+        self.routes
+            .iter()
+            .map(|route| {
+                (
+                    route.site.id(),
+                    route.site.tier().id(),
+                    route.model.clone(),
+                    route.source.variable(route.site),
+                )
+            })
+            .collect()
+    }
+
     /// The distinct models in use, sorted — one client is built per entry
     /// (FR-004).
     #[must_use]
@@ -363,6 +385,65 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect()
+    }
+
+    /// 018 T012: the startup report must name every call site with the model
+    /// it resolved to and the setting that decided it. A misrouted site is
+    /// only visible before the bill arrives if the report is complete — a
+    /// report that silently omits sites is worse than none, because it reads
+    /// as confirmation.
+    #[test]
+    fn the_startup_report_names_every_call_site_with_its_model_and_source() {
+        let table = RoutingTable::resolve(
+            vars(&[
+                ("PARALLAX_MODEL_BULK", "claude-haiku-4-5"),
+                ("PARALLAX_MODEL_VERIFY", "claude-opus-5"),
+            ]),
+            "claude-opus-4-8",
+        )
+        .unwrap();
+        let report = table.report();
+
+        // Every site, exactly once, in the canonical order.
+        assert_eq!(report.len(), CallSite::ALL.len());
+        let listed: Vec<&str> = report.iter().map(|row| row.0).collect();
+        let expected: Vec<&str> = CallSite::ALL.iter().map(|s| s.id()).collect();
+        assert_eq!(listed, expected);
+
+        // Each row names a non-empty model and the setting that supplied it,
+        // and the setting named is one that actually exists.
+        for (site, tier, model, source) in &report {
+            assert!(!model.is_empty(), "{site}: empty model");
+            assert!(
+                source == "ANTHROPIC_MODEL" || source.starts_with(PREFIX),
+                "{site}: source {source} is not a real setting"
+            );
+            assert!(*tier == "bulk" || *tier == "judgment", "{site}: {tier}");
+        }
+
+        // The three resolution paths each appear, named by their own variable.
+        let row = |id: &str| {
+            report
+                .iter()
+                .find(|r| r.0 == id)
+                .map(|r| (r.2.clone(), r.3.clone()))
+                .unwrap()
+        };
+        assert_eq!(
+            row("verify"),
+            ("claude-opus-5".to_string(), "PARALLAX_MODEL_VERIFY".into()),
+            "a per-site override must be reported as itself, not as its tier"
+        );
+        assert_eq!(
+            row("research_extract"),
+            ("claude-haiku-4-5".to_string(), "PARALLAX_MODEL_BULK".into()),
+            "a tier route must name the tier variable"
+        );
+        assert_eq!(
+            row("unstick"),
+            ("claude-opus-4-8".to_string(), "ANTHROPIC_MODEL".into()),
+            "an unrouted site must name the default, never blank"
+        );
     }
 
     #[test]

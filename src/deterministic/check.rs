@@ -36,10 +36,22 @@ pub struct CheckDeps {
 /// up; `ValidationFailure` (translation-naming message) when both
 /// translation attempts fail. A verdict is NEVER synthesized from a failed
 /// translation (FR-005).
-#[allow(clippy::too_many_lines)] // the translate-execute-assemble spine reads best unbroken
 pub async fn run(
     deps: &CheckDeps,
     params: &CheckParams,
+) -> Result<(CheckResult, u64, u64), AppError> {
+    // 020: as in decide — the violation-fed retry means a failure can follow
+    // two translation calls, and those were billed.
+    let mut spent = (0_u64, 0_u64);
+    let outcome = run_spent(deps, params, &mut spent).await;
+    outcome.map_err(|error| error.metered(spent.0, spent.1))
+}
+
+#[allow(clippy::too_many_lines)] // the translate-execute-assemble spine reads best unbroken
+async fn run_spent(
+    deps: &CheckDeps,
+    params: &CheckParams,
+    spent: &mut (u64, u64),
 ) -> Result<(CheckResult, u64, u64), AppError> {
     check_text("claim", &params.claim, deps.input_max_chars)?;
     if let Some(context) = &params.context {
@@ -60,6 +72,7 @@ pub async fn run(
         .await?;
         input_tokens += inp;
         output_tokens += out;
+        *spent = (input_tokens, output_tokens);
 
         let translation = match outcome {
             Ok(translation) => translation,
@@ -449,7 +462,12 @@ mod tests {
             })
         });
         let err = run(&deps_with(client), &params("c")).await.unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both translation attempts were billed; the failure carries them.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err
             .to_string()
             .contains("translation failed after the retry"));

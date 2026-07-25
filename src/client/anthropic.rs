@@ -190,16 +190,25 @@ impl ModelClient for AnthropicClient {
 }
 
 /// Map a 2xx Messages response to a [`Completion`] or its outcome class.
+///
+/// Every failure here is a 200 that was billed — the provider ran the model
+/// and returned a `stop_reason` the contract cannot use. Each error carries
+/// that usage (020); before this, a truncated call recorded zero tokens, which
+/// under-reported spend and made the output ceiling unsizable from data.
 fn interpret(payload: &MessagesResponse) -> Result<Completion, AppError> {
+    let billed =
+        |error: AppError| error.metered(payload.usage.input_tokens, payload.usage.output_tokens);
     match payload.stop_reason.as_deref() {
         Some("end_turn") => {
             let text = payload.first_text().ok_or_else(|| {
-                AppError::Client("out-of-contract provider response: no text block".to_string())
+                billed(AppError::Client(
+                    "out-of-contract provider response: no text block".to_string(),
+                ))
             })?;
             let value = serde_json::from_str(text).map_err(|e| {
-                AppError::Client(format!(
+                billed(AppError::Client(format!(
                     "out-of-contract provider response: constrained body failed to parse: {e}"
-                ))
+                )))
             })?;
             Ok(Completion {
                 value,
@@ -207,19 +216,19 @@ fn interpret(payload: &MessagesResponse) -> Result<Completion, AppError> {
                 output_tokens: payload.usage.output_tokens,
             })
         }
-        Some("refusal") => Err(AppError::Refusal(
+        Some("refusal") => Err(billed(AppError::Refusal(
             payload
                 .first_text()
                 .unwrap_or("the provider declined to answer")
                 .to_string(),
-        )),
-        Some("max_tokens") => Err(AppError::Truncation(format!(
+        ))),
+        Some("max_tokens") => Err(billed(AppError::Truncation(format!(
             "output budget exhausted after {} output tokens",
             payload.usage.output_tokens
-        ))),
-        other => Err(AppError::Client(format!(
+        )))),
+        other => Err(billed(AppError::Client(format!(
             "out-of-contract provider response: unexpected stop_reason: {other:?}"
-        ))),
+        )))),
     }
 }
 
@@ -423,7 +432,10 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Refusal(_)), "got: {err}");
+        assert!(matches!(err.root(), AppError::Refusal(_)), "got: {err}");
+        // 020: the provider ran the model and billed for it. Those tokens
+        // reach the record instead of being dropped on the floor.
+        assert_eq!(err.billed(), (10, 0));
     }
 
     #[tokio::test]
@@ -442,7 +454,11 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Truncation(_)), "got: {err}");
+        assert!(matches!(err.root(), AppError::Truncation(_)), "got: {err}");
+        // 020: this is the case that made the output ceiling unsizable — a
+        // truncated call recorded zero tokens, so nothing said how much
+        // headroom the call actually wanted.
+        assert_eq!(err.billed(), (10, 4096));
     }
 
     #[tokio::test]
@@ -545,7 +561,7 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Client(_)), "got: {err}");
+        assert!(matches!(err.root(), AppError::Client(_)), "got: {err}");
         assert!(err.to_string().contains("pause_turn"));
     }
 
@@ -563,7 +579,9 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::Client(_)), "got: {err}");
+        assert!(matches!(err.root(), AppError::Client(_)), "got: {err}");
+        // An out-of-contract body is still a 200 the provider billed for.
+        assert_eq!(err.billed(), (100, 25));
     }
 
     #[tokio::test]

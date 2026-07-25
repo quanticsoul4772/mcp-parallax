@@ -63,6 +63,18 @@ pub async fn save(
     deps: &MemoryDeps,
     params: &SaveParams,
 ) -> Result<(SaveResult, u64, u64), AppError> {
+    // 020: a refuted save runs the whole verify ensemble and then fails. That
+    // is the most expensive failure this tool has, and it recorded zero.
+    let mut spent = (0_u64, 0_u64);
+    let outcome = save_spent(deps, params, &mut spent).await;
+    outcome.map_err(|error| error.metered(spent.0, spent.1))
+}
+
+async fn save_spent(
+    deps: &MemoryDeps,
+    params: &SaveParams,
+    spent: &mut (u64, u64),
+) -> Result<(SaveResult, u64, u64), AppError> {
     check_text("content", &params.content, deps.input_max_chars)?;
     check_text("origin", &params.origin, deps.input_max_chars)?;
     check_tags(params.tags.as_deref())?;
@@ -86,6 +98,7 @@ pub async fn save(
             .await?;
             input_tokens += run.input_tokens;
             output_tokens += run.output_tokens;
+            *spent = (input_tokens, output_tokens);
             if run.verdict.verdict == VerdictKind::Refuted {
                 return Err(AppError::ValidationFailure(format!(
                     "save rejected: verification refuted the content: {}",
@@ -102,6 +115,7 @@ pub async fn save(
 
     let embedding = deps.embedder.embed_document(&params.content).await?;
     input_tokens += embedding.input_tokens;
+    *spent = (input_tokens, output_tokens);
 
     let memory = Memory {
         id: uuid::Uuid::new_v4().to_string(),
@@ -667,7 +681,12 @@ mod tests {
         let err = save(&deps, &save_params("a poisoned claim", true, Some(true)))
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: the verify ensemble ran in full before the save was rejected.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("that is false because X"));
 
         // Nothing was stored — re-check via the same storage with an embedder

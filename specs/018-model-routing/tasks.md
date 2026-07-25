@@ -76,8 +76,8 @@ sites routed alike share one client.
 - [X] T009 [P] [US1] Test in `src/server.rs` that the client pool holds one entry per **distinct** resolved model, so two call sites routed alike share one client (FR-004)
 - [X] T010 [P] [US1] Test in `src/server.rs` that each call site's dependency struct receives the client for its own resolved model (FR-001)
 - [X] T011 [P] [US1] Test in `src/server.rs` that with no `PARALLAX_MODEL_*` set, every call site resolves to `ANTHROPIC_MODEL` and exactly one client is built (FR-002)
-- [ ] T012 [P] [US1] **[deferred — startup-log assertion needs a tracing capture harness]** Test in `tests/integration.rs` that the startup routing table names all twelve call sites with resolved model and supplying setting, and is emitted before serving (FR-005, SC-007)
-- [ ] T013 [P] [US1] **[deferred]** Test in `tests/integration.rs` that no tool's input schema mentions a model and the catalog gains no entry (FR-003, FR-005a, FR-016)
+- [X] T012 [P] [US1] Test that the startup routing table names all twelve call sites with resolved model and supplying setting (FR-005, SC-007). **Done 020** — no capture harness was needed: the report's rendering is extracted to the pure `RoutingTable::report`, asserted in `src/routing.rs`, and the logging loop only puts it on the wire. "Before serving" is structural rather than asserted: the report is emitted inside `Parallax::new`, and `serve` takes a constructed `Parallax`.
+- [X] T013 [P] [US1] Test in `tests/integration.rs` that no tool's input schema mentions a model and the catalog gains no entry (FR-003, FR-005a, FR-016). **Done 020** — `routing_is_invisible_to_callers_no_model_input_and_no_new_tool`.
 
 ### Implementation for User Story 1
 

@@ -148,18 +148,97 @@ pub enum AppError {
     /// The search provider failed (research capability).
     #[error("search provider error: {0}")]
     SearchProvider(String),
+
+    /// A failure that nonetheless consumed billable tokens (020).
+    ///
+    /// A truncation or a refusal is an HTTP 200 response: the provider ran the
+    /// model, billed for it, and returned a `stop_reason` the contract cannot
+    /// use. Discarding that usage under-reports spend, and — because the
+    /// truncated calls are exactly the ones that would say how much output
+    /// headroom is needed — makes the output ceiling unsizable from data.
+    ///
+    /// The same applies above the single call: when an ensemble fails to reach
+    /// quorum, the passes that *did* complete were still billed, as were the
+    /// sibling failures that lost the dominant-class vote.
+    ///
+    /// This wraps rather than extending each variant, so the outcome taxonomy
+    /// is unchanged — [`AppError::outcome`] and [`std::fmt::Display`] both
+    /// delegate to `source`, and [`AppError::root`] recovers the wrapped error
+    /// for matching. Tokens are raw rather than per-model because the
+    /// producers (a client, an aggregator) know the count and the recorder
+    /// knows the model; attributing them here would mean guessing.
+    #[error("{source}")]
+    Metered {
+        /// The failure that actually occurred.
+        source: Box<Self>,
+        /// Input tokens billed before the failure.
+        input_tokens: u64,
+        /// Output tokens billed before the failure.
+        output_tokens: u64,
+    },
 }
 
 impl AppError {
+    /// Attach billed tokens to this failure, merging if some are already
+    /// attached. Zero tokens are not wrapped — an error that cost nothing
+    /// stays exactly the error it was.
+    #[must_use]
+    pub fn metered(self, input_tokens: u64, output_tokens: u64) -> Self {
+        if input_tokens == 0 && output_tokens == 0 {
+            return self;
+        }
+        match self {
+            Self::Metered {
+                source,
+                input_tokens: have_in,
+                output_tokens: have_out,
+            } => Self::Metered {
+                source,
+                input_tokens: have_in.saturating_add(input_tokens),
+                output_tokens: have_out.saturating_add(output_tokens),
+            },
+            other => Self::Metered {
+                source: Box::new(other),
+                input_tokens,
+                output_tokens,
+            },
+        }
+    }
+
+    /// Tokens billed before this failure, `(0, 0)` when none are attached.
+    #[must_use]
+    pub const fn billed(&self) -> (u64, u64) {
+        match self {
+            Self::Metered {
+                input_tokens,
+                output_tokens,
+                ..
+            } => (*input_tokens, *output_tokens),
+            _ => (0, 0),
+        }
+    }
+
+    /// The underlying failure, unwrapping any attached usage. Match on this
+    /// rather than on the error directly — metering is orthogonal to class.
+    #[must_use]
+    pub fn root(&self) -> &Self {
+        match self {
+            Self::Metered { source, .. } => source.root(),
+            other => other,
+        }
+    }
+
     /// Classify this error into the outcome taxonomy.
     ///
     /// Total mapping: `Storage` classifies as `ConfigError` (an
     /// operator/environment problem — and a failed record write cannot be
     /// recorded anyway); `Client` classifies as `ValidationFailure` (the
-    /// response was outside the contract).
+    /// response was outside the contract); `Metered` delegates to the failure
+    /// it wraps, so attaching usage never changes an error's class.
     #[must_use]
-    pub const fn outcome(&self) -> Outcome {
+    pub fn outcome(&self) -> Outcome {
         match self {
+            Self::Metered { source, .. } => source.outcome(),
             Self::Config(_) | Self::Storage(_) => Outcome::ConfigError,
             Self::Client(_) | Self::ValidationFailure(_) => Outcome::ValidationFailure,
             Self::Refusal(_) => Outcome::Refusal,

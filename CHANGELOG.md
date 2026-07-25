@@ -156,6 +156,69 @@ single advisory to its dep bump.
 
 ### Fixed
 
+* **Failures that were billed now record their tokens (020).** A truncation and
+  a refusal are HTTP 200 responses: the provider ran the model and charged for
+  it, then returned a `stop_reason` the contract cannot use.
+  `AnthropicClient::interpret` read `usage.output_tokens` to build the
+  truncation message and then discarded it, and `run_recorded_usage` wrote an
+  empty `ModelUsage` for every error class — so those rows read 0 input, 0
+  output, $0.00.
+
+  Investigating it showed the loss was wider than those two classes. When an
+  ensemble fails to reach quorum, `dominant_failure` picks one error and drops
+  the rest, discarding the tokens of the sibling failures **and** of every pass
+  that completed successfully but could not form a verdict. Research's
+  extraction and verification phases swallow per-item failures by design, and
+  dropped their tokens with them — verification being the tool's dominant cost,
+  that was the largest under-report of the three phases.
+
+  The fix is one additive error variant, `AppError::Metered { source,
+  input_tokens, output_tokens }`, rather than fields on the two classes.
+  `outcome()` and `Display` delegate to `source`, so **the outcome taxonomy is
+  unchanged** and attaching usage can never reclassify an error; `root()`
+  recovers the wrapped error for matching. Tokens are raw rather than per-model
+  because the producers (a client, an aggregator) know the count while the
+  recorder knows the model — attributing them at the producer would mean
+  guessing. A failure that genuinely cost nothing (timeout, transport error,
+  invalid input) carries `(0, 0)` and still records empty.
+
+  Research needed a further fix. Its pipeline can fail *after* most of its
+  spend — synthesis is the last phase and propagates — so recording only the
+  failing call's own tokens would show a plausible few thousand in place of the
+  couple of hundred thousand the run cost. That reads as a real number, which
+  is worse than the zero it replaced. The run meter is now attached to any
+  error the pipeline propagates. Its per-model breakdown is flattened to totals
+  in the process, so with routing configured a rare error row can price
+  bulk-tier extraction at the judgment rate; over-estimating one row beats
+  losing 99% of its tokens.
+
+  Reviewing the change found the same defect at every other point that
+  accumulates tokens and can then fail, so all seven are fixed rather than the
+  two the issue named:
+
+  * `decide` and `check` each run a violation-fed retry — two complete model
+    calls — and recorded zero when the second attempt was still malformed.
+  * `elicit` bills a recall hop before its pass, then two attempts.
+  * `save` runs the entire verify ensemble before rejecting a refuted memory.
+    That is the most expensive failure the memory layer has.
+  * The checkpoint layer fails **open**: `recover` replaced a failed evaluation
+    with a fresh zero-token result, so a boundary that ran a review hop and
+    then failed reported a free evaluation that silently produced nothing.
+    Failing open changes the verdict, not the bill.
+
+  Consequences: spend stops being under-reported, and the per-call output
+  ceiling becomes sizable from data, since a truncated call now says how much
+  output it wanted before it ran out.
+
+* **018 T012 and T013, deferred at the time, are done (020).** T012 needed a
+  tracing capture harness only because the startup report was rendered inline;
+  extracting it to the pure `RoutingTable::report` makes what the operator is
+  told directly assertable — every call site present, in canonical order, each
+  with a non-empty model and a setting that actually exists. T013 asserts that
+  routing stays invisible to callers: no tool input property names a model or
+  tier, no schema references `PARALLAX_MODEL_*` or `ANTHROPIC_MODEL`, and
+  enabling routing adds no tool to the catalog.
+
 * **Routed call sites recorded the wrong model, and were priced at its rate
   (018).** Routing itself worked — a call went to the client its call site
   resolved to — but the eleven single-model tools passed
@@ -201,20 +264,6 @@ single advisory to its dep bump.
   still fire — recall is unchanged; the harness's genuinely volatile ids
   (`tool_use_id`, `session_id`, `request_id`) stay dropped. Ground-truth
   table extended with both directions; `006` data-model amended in-change.
-
-### Known issues
-
-* **A truncated or refused model call records zero tokens.** Both are HTTP 200
-  responses carrying real, billed usage — `AnthropicClient::interpret` even
-  reads `usage.output_tokens` to build the truncation message, then discards
-  it, and `run_recorded_usage` writes an empty `ModelUsage` for every error
-  class. The comment there ("failed passes carry no usage") is true for a
-  timeout or a transport failure and false for these two. Two consequences:
-  spend is under-reported, and the per-call output ceiling cannot be sized from
-  data, because the runs that would tell you how much headroom is needed are
-  exactly the ones recording nothing. Fixing it means carrying usage on the
-  `Truncation` and `Refusal` error variants, which is a change to the outcome
-  taxonomy and its own piece of work.
 
 ### Changed
 

@@ -283,6 +283,21 @@ pub async fn run(
     params: &ElicitParams,
     max_chars: usize,
 ) -> Result<ElicitRun, AppError> {
+    // 020: a recall hop can succeed and be billed before the elicit pass
+    // fails. Those tokens survive the failure.
+    let mut spent = (0_u64, 0_u64);
+    let outcome = run_spent(client, mode, memory, params, max_chars, &mut spent).await;
+    outcome.map_err(|error| error.metered(spent.0, spent.1))
+}
+
+async fn run_spent(
+    client: &dyn ModelClient,
+    mode: &CorrectiveMode,
+    memory: Option<&MemoryDeps>,
+    params: &ElicitParams,
+    max_chars: usize,
+    spent: &mut (u64, u64),
+) -> Result<ElicitRun, AppError> {
     check_input(params, max_chars)?;
 
     let (preferences, recall_in, recall_out, memory_consulted) = match memory {
@@ -299,6 +314,8 @@ pub async fn run(
     };
 
     let (mut input_tokens, mut output_tokens) = (recall_in, recall_out);
+    // The recall hop was billed even if the pass below never completes.
+    *spent = (input_tokens, output_tokens);
     let mut violation: Option<String> = None;
 
     for _ in 1..=ELICIT_ATTEMPTS_MAX {
@@ -311,6 +328,7 @@ pub async fn run(
         let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
         input_tokens += completion.input_tokens;
         output_tokens += completion.output_tokens;
+        *spent = (input_tokens, output_tokens);
 
         // The constrained-output contract itself (schema/shape) is a hard error,
         // not retried — only a well-formed-but-malformed inference (the arity /
@@ -638,7 +656,12 @@ mod tests {
         let err = run(&mock, &mode, None, &params("t", None), 50_000)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both attempts were billed; a malformed inference is not free.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("preference arrays"));
         assert!(err.to_string().contains("after the retry"), "{err}");
     }
@@ -650,7 +673,12 @@ mod tests {
         let err = run(&mock, &mode, None, &params("t", None), 50_000)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both attempts were billed; a malformed inference is not free.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("revealed"));
         assert!(err.to_string().contains("after the retry"), "{err}");
     }
@@ -670,7 +698,12 @@ mod tests {
         let err = run(&mock, &mode, None, &params("t", None), 50_000)
             .await
             .unwrap_err();
-        assert!(matches!(err, AppError::ValidationFailure(_)), "{err}");
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        // 020: both attempts were billed; a malformed inference is not free.
+        assert!(err.billed().0 > 0, "spend lost on the failure path");
         assert!(err.to_string().contains("divergence arrays"));
         assert!(err.to_string().contains("after the retry"), "{err}");
     }
