@@ -132,3 +132,45 @@ pub fn research_verify_mode(verify_mode: &CorrectiveMode) -> CorrectiveMode {
     mode.prompt_template = RESEARCH_VERIFY_TEMPLATE;
     mode
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// 021 FR-010: every published figure is computed by the server from run
+    /// data, never accepted as a number the model reported about its own work.
+    ///
+    /// That holds today because the synthesis schema gives the model no
+    /// channel to send one — but it held only structurally, with nothing
+    /// asserting it, so adding a `confidence` or `coverage` field to `SynthOut`
+    /// would have silently handed the model the figure this whole feature
+    /// exists to keep out of its hands. This fails the moment someone does.
+    #[test]
+    fn the_synthesis_schema_gives_the_model_no_way_to_report_a_figure() {
+        let schema = serde_json::to_value(schemars::schema_for!(SynthOut)).unwrap();
+        let properties = schema["properties"].as_object().unwrap();
+
+        // Exactly the three inputs the server takes from the synthesis pass.
+        let mut names: Vec<&str> = properties.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["answer", "gap_targets", "gaps"]);
+
+        for (name, spec) in properties {
+            // No published figure may be named here.
+            for reserved in ["confidence", "coverage", "refutation", "rate", "score"] {
+                assert!(
+                    !name.to_lowercase().contains(reserved),
+                    "`{name}` looks like a figure the server must compute itself"
+                );
+            }
+            // `gap_targets` is an array of indices into the server's own scope
+            // list, not a quantity — so no property may be a scalar number.
+            let kind = spec["type"].as_str().unwrap_or_default();
+            assert!(
+                kind != "number" && kind != "integer",
+                "`{name}` is a scalar {kind}: the model must not send figures"
+            );
+        }
+    }
+}

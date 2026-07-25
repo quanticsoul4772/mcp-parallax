@@ -15,11 +15,10 @@
 use crate::error::AppError;
 use crate::modes::verify::{self, VerifyParams};
 use crate::modes::CorrectiveMode;
-use crate::research::contract::{
-    ResearchParams, ResearchResult, SourceRef, Stats, StopReason, SubQuestionStatus,
-};
+use crate::research::contract::{ResearchParams, ResearchResult, Stats, StopReason};
 use crate::research::evidence;
 use crate::research::extract;
+use crate::research::outcome;
 use crate::research::prompts::ScopeOut;
 use crate::research::settings::{per_angle_count, validate_params, RunSettings};
 use crate::research::synthesis::{assemble, synthesize_grounded, Synthesized};
@@ -363,90 +362,26 @@ async fn run_metered(
         .await?
     };
 
-    // Confidence: the support of what the answer asserts, and nothing else
-    // (021 FR-001). The coverage multiplier that used to stand here was the
-    // defect — it derived breadth by subtracting the length of the synthesis
-    // pass's free-form gap list from the sub-question count, two lists with no
-    // correspondence, and drove correct answers to exactly 0.
-    let Synthesized {
-        answer,
-        mut gaps,
-        gap_targets,
-        grounded_ids,
-    } = synthesized;
-
-    let finding_confidences: Vec<f32> = assembled.findings.iter().map(|f| f.confidence).collect();
-    let confidence = verdict::overall_confidence(&finding_confidences);
-    // Breadth of resolution, published in its own right (021 FR-002). Derived
-    // from the keys the synthesis attached to its gaps, never from comparing
-    // gap text to sub-question text — that association is semantic, and a
-    // lexical rule for it is reproducibly wrong.
-    let coverage = verdict::coverage(plan.sub_questions.len(), &gap_targets);
-    // FR-005: publish the basis, so the figure is checkable from the output
-    // rather than taken on trust. Verbatim sub-questions, in scope order —
-    // they are not otherwise visible to the caller, so an index would
-    // reference nothing.
-    let sub_question_status: Vec<SubQuestionStatus> = plan
-        .sub_questions
-        .iter()
-        .zip(verdict::settled_mask(
-            plan.sub_questions.len(),
-            &gap_targets,
-        ))
-        .map(|(sub_question, settled)| SubQuestionStatus {
-            sub_question: sub_question.clone(),
-            settled,
-        })
-        .collect();
-    // FR-009a: refuted claims are excluded from confidence and surfaced here.
-    let refutation_rate = verdict::refutation_rate(refuted.len(), refuted.len() + surviving.len());
-
-    // Sources: only what the grounding kept (uncited pruned).
-    let source_refs: Vec<SourceRef> = grounded_ids
-        .iter()
-        .filter_map(|id| source_meta.get(id))
-        .map(|s| SourceRef {
-            id: s.id.clone(),
-            url: s.url.clone(),
-            title: s.title.clone(),
-            fetched_at: s.fetched_at.clone(),
-            credibility: s.credibility,
-        })
-        .collect();
-
-    // 021: this cap acts on the published gap *text* only. Coverage and the
-    // per-sub-question statuses were derived above from every target the
-    // synthesis returned, so a gap dropped here cannot flip its sub-question
-    // to settled — truncating the targets alongside would do exactly that and
-    // inflate the figure.
-    //
-    // The original defect (D3) was that the confidence penalty came from the
-    // untruncated list while the caller saw the truncated one, making the
-    // number uncheckable. It is fixed by publishing `sub_question_status`, not
-    // by reordering these two statements: the caller now reconciles coverage
-    // against the statuses, which always agree with it. Explanatory gap text
-    // is best-effort under the cap.
-    gaps.truncate(crate::research::MAX_GAPS);
     stats.tokens = meter.total();
     stats.elapsed_ms = ceiling.elapsed_ms();
     stats.stopped_early = stop_reason.is_some();
     stats.stop_reason = stop_reason;
 
-    Ok((
-        ResearchResult {
-            answer,
-            confidence,
-            refutation_rate,
-            coverage,
-            sub_question_status,
-            key_findings: assembled.findings,
-            disagreements: assembled.disagreements,
-            gaps,
-            sources: source_refs,
-            stats,
+    // Result assembly is a pure function of finished run state and lives in
+    // `outcome.rs` — extracted from this spine (code review, 021) so the
+    // coverage/status agreement has a unit-testable home.
+    let result = outcome::assemble_result(
+        outcome::Outcome {
+            plan: &plan,
+            assembled,
+            synthesized,
+            refuted: &refuted,
+            surviving: &surviving,
+            source_meta: &source_meta,
         },
-        meter.usage(),
-    ))
+        stats,
+    );
+    Ok((result, meter.usage()))
 }
 
 async fn scope(
