@@ -273,14 +273,22 @@ traits are already the seams these slot behind):
    costs included. Cost accounting became per-model as a consequence — one
    invocation may now span models, so a single rate applied to summed tokens would
    be wrong under either. Artifacts: `specs/018-model-routing/`.
-   **Named deferral (018 research D7):** per-family suppression of adaptive thinking
-   is deferred. The families disagree about the `thinking` parameter — Opus 5 and
-   Sonnet 5 accept an explicit disable, Fable 5 rejects it with a 400 at any effort —
-   so the server sends the one shape all of them accept (omit the field) and budgets
-   output for reasoning it cannot switch off. Suppressing it per family would be
-   cheaper on the judgment tier; that is to be decided on measured cost, not
-   predicted, and is recorded here so the narrowing is visible outside the feature's
-   spec directory.
+   **Deferral discharged by 022, under a different mechanism.** 018 research D7
+   deferred per-family suppression of adaptive thinking: the families disagree about
+   the `thinking` parameter — Opus 5 and Sonnet 5 accept an explicit disable, Fable 5
+   rejects it with a 400 at any effort — so the server sends the one shape all accept
+   (omit the field) and budgets output for reasoning it cannot switch off.
+
+   The `thinking` route stayed closed, and suppression is not what shipped. The
+   provider's supported control is `output_config.effort` (`low`/`medium`/`high`/
+   `max`/`xhigh`, no beta header), which governs *all* output tokens including
+   thinking and is accepted by every routed family. 022 exposes it per call site
+   over a `PARALLAX_EFFORT_*` namespace mirroring `PARALLAX_MODEL_*`, off by default:
+   unset sends no field, so the request stays byte-identical. What D7 wanted — spend
+   less reasoning where reasoning is not the value — is delivered; the "measured
+   cost" condition it set applies now to *choosing levels*, which the server
+   deliberately does not decide for the operator. Artifacts:
+   `specs/022-per-call-site-effort/`.
 2. **Memory (next):** Voyage 4 client; spike **sqlite-vec under sqlx** (resolve the
    loading caveat) before building recall.
 3. **Research primitive:** Brave provider behind the trait + rs-trafilatura extract.

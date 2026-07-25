@@ -8,7 +8,7 @@
 
 use crate::client::AnthropicClient;
 use crate::config::Config;
-use crate::routing::{CallSite, RoutingTable};
+use crate::routing::{CallSite, Effort, RoutingTable};
 use crate::traits::client::ModelClient;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -28,8 +28,9 @@ impl ClientPool {
     /// the one it resolved to.
     #[must_use]
     pub fn build(config: &Config) -> Self {
-        Self::from_factory(&config.routing, |model| {
-            Arc::new(AnthropicClient::for_model(config, model)) as Arc<dyn ModelClient>
+        Self::from_factory(&config.routing, |model, effort| {
+            Arc::new(AnthropicClient::for_model_and_effort(config, model, effort))
+                as Arc<dyn ModelClient>
         })
     }
 
@@ -38,24 +39,26 @@ impl ClientPool {
     #[must_use]
     pub fn from_factory<F>(routing: &RoutingTable, mut factory: F) -> Self
     where
-        F: FnMut(&str) -> Arc<dyn ModelClient>,
+        F: FnMut(&str, Option<Effort>) -> Arc<dyn ModelClient>,
     {
-        let mut by_model: BTreeMap<String, Arc<dyn ModelClient>> = BTreeMap::new();
-        for model in routing.distinct_models() {
-            let client = factory(&model);
-            by_model.insert(model, client);
+        let mut by_key: BTreeMap<(String, Option<Effort>), Arc<dyn ModelClient>> = BTreeMap::new();
+        for (model, effort) in routing.distinct_clients() {
+            let client = factory(&model, effort);
+            by_key.insert((model, effort), client);
         }
-        let distinct = by_model.len();
+        let distinct = by_key.len();
 
         // `distinct_models` is drawn from the same table `model_for` reads, so
         // every lookup below hits. The miss arm cannot fire; it exists because
         // `get` returns an `Option` and building a duplicate client is the only
         // behavior-preserving thing to do with a branch that never runs.
         let by_site = std::array::from_fn(|index| {
-            let model = routing.model_for(CallSite::ALL[index]);
-            by_model
-                .get(model)
-                .map_or_else(|| factory(model), Arc::clone)
+            let site = CallSite::ALL[index];
+            let model = routing.model_for(site);
+            let effort = routing.effort_for(site);
+            by_key
+                .get(&(model.to_string(), effort))
+                .map_or_else(|| factory(model, effort), Arc::clone)
         });
 
         Self { by_site, distinct }
@@ -97,7 +100,7 @@ mod tests {
     /// Build a pool, recording every model the factory was asked for.
     fn pool_for(routing: RoutingTable) -> (ClientPool, Vec<String>) {
         let built = Mutex::new(Vec::new());
-        let pool = ClientPool::from_factory(&routing, |model| {
+        let pool = ClientPool::from_factory(&routing, |model, _effort| {
             built.lock().unwrap().push(model.to_string());
             Arc::new(Tagged(model.to_string())) as Arc<dyn ModelClient>
         });
@@ -182,7 +185,7 @@ mod tests {
         let failing_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let healthy_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (f, h) = (Arc::clone(&failing_calls), Arc::clone(&healthy_calls));
-        let pool = ClientPool::from_factory(&routing, move |model| {
+        let pool = ClientPool::from_factory(&routing, move |model, _effort| {
             if model == "unreachable-model" {
                 Arc::new(Failing(Arc::clone(&f))) as Arc<dyn ModelClient>
             } else {

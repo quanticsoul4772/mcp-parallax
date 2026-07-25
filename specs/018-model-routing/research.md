@@ -161,6 +161,17 @@ by removing the dimension, losing per-model invocation counts operators have tod
 
 ## D7 — One request shape for every family: omit `thinking`, raise the output budget
 
+> **Deferral discharged by 022 (2026-07-25), under a different mechanism.** This
+> decision deferred per-family thinking suppression "to be decided on measured
+> cost". Suppression is still not sent: `thinking: {"type": "disabled"}` remains
+> rejected by Fable 5, so omitting the field is still the one universally
+> accepted shape. The supported control turned out to be
+> `output_config.effort`, which governs all output tokens including thinking and
+> which every routed family accepts. 022 exposes it per call site, off by
+> default. The "measured cost" condition now applies to choosing levels, which
+> 022 deliberately leaves to the operator rather than shipping a recommended
+> default on evidence nobody has. See `specs/022-per-call-site-effort/`.
+
 **Decision**: raise `MAX_TOKENS` from 4096 so a verdict cannot be truncated by
 reasoning that shares the budget, and continue to send no `thinking` field. Raise
 `REQUEST_TIMEOUT_MS`'s default in step with it.

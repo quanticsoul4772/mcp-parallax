@@ -19,6 +19,56 @@ use std::collections::BTreeSet;
 /// rather than an ignored setting, which is what makes a misspelled route
 /// visible (FR-006a).
 pub const PREFIX: &str = "PARALLAX_MODEL_";
+/// Reserved namespace for per-call-site reasoning effort (022).
+pub const EFFORT_PREFIX: &str = "PARALLAX_EFFORT_";
+
+/// How much reasoning a call site should spend (022).
+///
+/// Maps to the provider's `output_config.effort`. It governs *all* output
+/// tokens, thinking included, and is a behavioural signal rather than a hard
+/// token budget — `MAX_TOKENS` remains the ceiling.
+///
+/// Unset is not `High`: an unset call site sends no `effort` field at all, so
+/// the request body is byte-identical to before this feature. The provider's
+/// own default is `high`, so unset and `High` behave the same, but only unset
+/// is provably unchanged on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Effort {
+    /// Minimal reasoning; thinking skipped on simple tasks.
+    Low,
+    /// Moderate reasoning; thinking may be skipped on simple queries.
+    Medium,
+    /// Deep reasoning on complex tasks. The provider's default.
+    High,
+    /// Always thinks, no constraint on depth.
+    Max,
+    /// Always thinks deeply, with extended exploration.
+    XHigh,
+}
+
+impl Effort {
+    /// Every level, cheapest first.
+    pub const ALL: [Self; 5] = [Self::Low, Self::Medium, Self::High, Self::Max, Self::XHigh];
+
+    /// The wire spelling the provider expects.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
+            Self::XHigh => "xhigh",
+        }
+    }
+
+    /// Parse an operator-supplied value, case-insensitively.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim().to_lowercase();
+        Self::ALL.into_iter().find(|e| e.as_str() == value)
+    }
+}
 
 /// A work-kind grouping of call sites. Membership is fixed by the server; the
 /// model a tier uses is the operator's to set.
@@ -198,6 +248,39 @@ impl RouteSource {
     }
 }
 
+/// Reject an unrecognised suffix or an unparseable level in the effort
+/// namespace (022).
+///
+/// Same treatment the model namespace gets, for the same reason: a misspelled
+/// setting that silently does nothing leaves a call site at the provider
+/// default while the operator believes it was changed.
+fn validate_effort_namespace(efforts: &[(String, String)]) -> Result<(), ConfigError> {
+    let known: BTreeSet<String> = Tier::ALL
+        .iter()
+        .map(|tier| format!("{EFFORT_PREFIX}{}", tier.suffix()))
+        .chain(
+            CallSite::ALL
+                .iter()
+                .map(|site| format!("{EFFORT_PREFIX}{}", site.suffix())),
+        )
+        .collect();
+    for (name, value) in efforts {
+        if !known.contains(name) {
+            return Err(ConfigError::Routing(format!(
+                "unknown variable `{name}` in the reserved `{EFFORT_PREFIX}*` namespace                  — check the spelling against the call-site and tier names"
+            )));
+        }
+        if Effort::parse(value).is_none() {
+            let levels: Vec<&str> = Effort::ALL.iter().map(|e| e.as_str()).collect();
+            return Err(ConfigError::Routing(format!(
+                "`{name}` is `{value}` — expected one of {}",
+                levels.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// One call site's resolved model and where it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRoute {
@@ -207,6 +290,11 @@ pub struct ResolvedRoute {
     pub model: String,
     /// Which setting supplied that model.
     pub source: RouteSource,
+    /// The reasoning effort this call site will request, if the operator set
+    /// one (022). `None` means no `effort` field is sent at all.
+    pub effort: Option<Effort>,
+    /// Which setting supplied the effort, when one was.
+    pub effort_source: Option<RouteSource>,
 }
 
 /// Every call site's resolved route. Complete by construction — all twelve
@@ -237,10 +325,18 @@ impl RoutingTable {
     where
         I: IntoIterator<Item = (String, String)>,
     {
+        let vars: Vec<(String, String)> = vars.into_iter().collect();
         let mut settings: Vec<(String, String)> = vars
-            .into_iter()
+            .iter()
             .filter(|(name, _)| name.starts_with(PREFIX))
+            .cloned()
             .collect();
+        let mut efforts: Vec<(String, String)> = vars
+            .iter()
+            .filter(|(name, _)| name.starts_with(EFFORT_PREFIX))
+            .cloned()
+            .collect();
+        efforts.sort_by(|(a, _), (b, _)| a.cmp(b));
         // Deterministic error ordering: with two bad variables the message must
         // not depend on environment iteration order.
         settings.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -269,6 +365,16 @@ impl RoutingTable {
             }
         }
 
+        validate_effort_namespace(&efforts)?;
+
+        let effort_lookup = |suffix: &str| -> Option<Effort> {
+            let key = format!("{EFFORT_PREFIX}{suffix}");
+            efforts
+                .iter()
+                .find(|(name, _)| *name == key)
+                .and_then(|(_, value)| Effort::parse(value))
+        };
+
         let lookup = |suffix: &str| -> Option<String> {
             let key = format!("{PREFIX}{suffix}");
             settings
@@ -280,27 +386,32 @@ impl RoutingTable {
         let routes = CallSite::ALL
             .iter()
             .map(|&site| {
-                lookup(site.suffix()).map_or_else(
+                // Most specific wins, for both namespaces independently: a
+                // call site may take its model from a tier and its effort from
+                // its own variable, or either from the default.
+                let (model, source) = lookup(site.suffix()).map_or_else(
                     || {
                         lookup(site.tier().suffix()).map_or_else(
-                            || ResolvedRoute {
-                                site,
-                                model: default_model.to_string(),
-                                source: RouteSource::Default,
-                            },
-                            |model| ResolvedRoute {
-                                site,
-                                model,
-                                source: RouteSource::Tier,
-                            },
+                            || (default_model.to_string(), RouteSource::Default),
+                            |model| (model, RouteSource::Tier),
                         )
                     },
-                    |model| ResolvedRoute {
-                        site,
-                        model,
-                        source: RouteSource::Site,
+                    |model| (model, RouteSource::Site),
+                );
+                let (effort, effort_source) = effort_lookup(site.suffix()).map_or_else(
+                    || {
+                        effort_lookup(site.tier().suffix())
+                            .map_or((None, None), |e| (Some(e), Some(RouteSource::Tier)))
                     },
-                )
+                    |e| (Some(e), Some(RouteSource::Site)),
+                );
+                ResolvedRoute {
+                    site,
+                    model,
+                    source,
+                    effort,
+                    effort_source,
+                }
             })
             .collect();
 
@@ -320,9 +431,36 @@ impl RoutingTable {
                     site,
                     model: model.to_string(),
                     source: RouteSource::Default,
+                    effort: None,
+                    effort_source: None,
                 })
                 .collect(),
         }
+    }
+
+    /// The reasoning effort a call site requests, if any (022).
+    #[must_use]
+    pub fn effort_for(&self, site: CallSite) -> Option<Effort> {
+        self.routes
+            .iter()
+            .find(|route| route.site == site)
+            .and_then(|route| route.effort)
+    }
+
+    /// Every distinct `(model, effort)` pair in use, sorted — one client is
+    /// built per entry (022 extends 018 FR-004: effort is part of the request
+    /// body, so two call sites sharing a model but not an effort need two
+    /// clients).
+    #[must_use]
+    pub fn distinct_clients(&self) -> Vec<(String, Option<Effort>)> {
+        let mut pairs: Vec<(String, Option<Effort>)> = self
+            .routes
+            .iter()
+            .map(|route| (route.model.clone(), route.effort))
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        pairs
     }
 
     /// The model a call site resolved to.
@@ -392,6 +530,167 @@ mod tests {
     /// only visible before the bill arrives if the report is complete — a
     /// report that silently omits sites is worse than none, because it reads
     /// as confirmation.
+
+    /// 022: unset means unset. The whole feature is off by default, and the
+    /// proof is that no route carries an effort when the namespace is empty —
+    /// which is what keeps the request body byte-identical to pre-022.
+    #[test]
+    fn an_empty_effort_namespace_leaves_every_call_site_without_one() {
+        let table = RoutingTable::resolve(vars(&[]), "claude-opus-4-8").unwrap();
+        for route in table.routes() {
+            assert_eq!(route.effort, None, "{}", route.site.id());
+            assert_eq!(route.effort_source, None);
+        }
+        // One model, one effort (none) — still exactly one client.
+        assert_eq!(table.distinct_clients().len(), 1);
+    }
+
+    /// Model and effort resolve independently: a call site may take its model
+    /// from a tier and its effort from its own variable, or either from the
+    /// default. Collapsing them into one lookup would make the cheap tier
+    /// unable to carry a cheap effort without also naming a model.
+    #[test]
+    fn effort_and_model_resolve_most_specific_first_and_independently() {
+        let table = RoutingTable::resolve(
+            vars(&[
+                ("PARALLAX_MODEL_BULK", "claude-haiku-4-5"),
+                ("PARALLAX_EFFORT_BULK", "low"),
+                ("PARALLAX_EFFORT_VERIFY", "max"),
+            ]),
+            "claude-opus-4-8",
+        )
+        .unwrap();
+
+        let route = |id: &str| {
+            table
+                .routes()
+                .iter()
+                .find(|r| r.site.id() == id)
+                .expect("call site")
+                .clone()
+        };
+
+        // Bulk tier: model and effort both from the tier variables.
+        let extract = route("research_extract");
+        assert_eq!(extract.model, "claude-haiku-4-5");
+        assert_eq!(extract.effort, Some(Effort::Low));
+        assert_eq!(extract.effort_source, Some(RouteSource::Tier));
+
+        // Per-site effort on a default-model site: the two are independent.
+        let verify = route("verify");
+        assert_eq!(verify.model, "claude-opus-4-8");
+        assert_eq!(verify.source, RouteSource::Default);
+        assert_eq!(verify.effort, Some(Effort::Max));
+        assert_eq!(verify.effort_source, Some(RouteSource::Site));
+
+        // Untouched site: neither.
+        let unstick = route("unstick");
+        assert_eq!(unstick.model, "claude-opus-4-8");
+        assert_eq!(unstick.effort, None);
+    }
+
+    /// A per-site effort beats its tier's, the same precedence the model
+    /// namespace uses.
+    #[test]
+    fn a_per_site_effort_overrides_its_tier() {
+        let table = RoutingTable::resolve(
+            vars(&[
+                ("PARALLAX_EFFORT_JUDGMENT", "low"),
+                ("PARALLAX_EFFORT_DECIDE", "xhigh"),
+            ]),
+            "claude-opus-4-8",
+        )
+        .unwrap();
+        let effort = |id: &str| {
+            table
+                .routes()
+                .iter()
+                .find(|r| r.site.id() == id)
+                .and_then(|r| r.effort)
+        };
+        assert_eq!(effort("decide"), Some(Effort::XHigh));
+        assert_eq!(effort("verify"), Some(Effort::Low));
+        // Bulk is a different tier and the judgment setting must not reach it.
+        assert_eq!(effort("research_extract"), None);
+    }
+
+    /// A typo in the effort namespace is a startup error naming the variable —
+    /// the same treatment the model namespace gets, and for the same reason: a
+    /// misspelled setting that silently does nothing is worse than a refusal
+    /// to start.
+    #[test]
+    fn an_unknown_or_unparseable_effort_variable_is_a_startup_error() {
+        let unknown = RoutingTable::resolve(
+            vars(&[("PARALLAX_EFFORT_VERFIY", "low")]),
+            "claude-opus-4-8",
+        )
+        .unwrap_err();
+        assert!(
+            unknown.to_string().contains("PARALLAX_EFFORT_VERFIY"),
+            "{unknown}"
+        );
+
+        let bad_level = RoutingTable::resolve(
+            vars(&[("PARALLAX_EFFORT_VERIFY", "cheap")]),
+            "claude-opus-4-8",
+        )
+        .unwrap_err();
+        let message = bad_level.to_string();
+        assert!(message.contains("PARALLAX_EFFORT_VERIFY"), "{message}");
+        assert!(message.contains("cheap"), "{message}");
+        // The message must list what was expected, not just reject.
+        for level in ["low", "medium", "high", "max", "xhigh"] {
+            assert!(message.contains(level), "{message} is missing {level}");
+        }
+
+        // An empty value is caught by the model namespace's own rule; the
+        // effort namespace rejects it as unparseable rather than silently
+        // treating it as unset.
+        let empty =
+            RoutingTable::resolve(vars(&[("PARALLAX_EFFORT_VERIFY", "  ")]), "claude-opus-4-8")
+                .unwrap_err();
+        assert!(empty.to_string().contains("PARALLAX_EFFORT_VERIFY"));
+    }
+
+    /// Effort is part of the request body, so two call sites on one model at
+    /// different efforts cannot share a client. Getting this wrong would send
+    /// one site's effort on the other's calls.
+    #[test]
+    fn distinct_clients_keys_on_model_and_effort_together() {
+        let table = RoutingTable::resolve(
+            vars(&[
+                ("PARALLAX_EFFORT_VERIFY", "max"),
+                ("PARALLAX_EFFORT_DECIDE", "low"),
+            ]),
+            "claude-opus-4-8",
+        )
+        .unwrap();
+        // One model, three effort states (max, low, none) → three clients.
+        assert_eq!(table.distinct_models().len(), 1);
+        assert_eq!(table.distinct_clients().len(), 3);
+
+        // Same effort on the same model collapses to one entry.
+        let shared = RoutingTable::resolve(
+            vars(&[
+                ("PARALLAX_EFFORT_VERIFY", "low"),
+                ("PARALLAX_EFFORT_DECIDE", "low"),
+            ]),
+            "claude-opus-4-8",
+        )
+        .unwrap();
+        assert_eq!(shared.distinct_clients().len(), 2); // low, and none
+    }
+
+    #[test]
+    fn effort_parses_case_insensitively_and_round_trips() {
+        assert_eq!(Effort::parse("LOW"), Some(Effort::Low));
+        assert_eq!(Effort::parse(" xhigh "), Some(Effort::XHigh));
+        assert_eq!(Effort::parse("enormous"), None);
+        for level in Effort::ALL {
+            assert_eq!(Effort::parse(level.as_str()), Some(level));
+        }
+    }
+
     #[test]
     fn the_startup_report_names_every_call_site_with_its_model_and_source() {
         let table = RoutingTable::resolve(

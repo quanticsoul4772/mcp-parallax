@@ -57,6 +57,9 @@ pub struct AnthropicClient {
     base_url: String,
     api_key: String,
     model: String,
+    /// Reasoning effort for this client's call sites (022). `None` sends no
+    /// `effort` field, leaving the request byte-identical to pre-022.
+    effort: Option<crate::routing::Effort>,
     timeout_ms: u64,
     max_retries: u32,
     backoff_base_ms: u64,
@@ -80,6 +83,19 @@ impl AnthropicClient {
         }
     }
 
+    /// Build a client for a named model at a named reasoning effort (022).
+    #[must_use]
+    pub fn for_model_and_effort(
+        config: &Config,
+        model: &str,
+        effort: Option<crate::routing::Effort>,
+    ) -> Self {
+        Self {
+            effort,
+            ..Self::for_model(config, model)
+        }
+    }
+
     /// Build a client against a custom endpoint (tests point this at a local
     /// wiremock server; nothing else should override it).
     #[must_use]
@@ -89,6 +105,7 @@ impl AnthropicClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: config.anthropic_api_key.clone(),
             model: config.anthropic_model.clone(),
+            effort: None,
             timeout_ms: config.request_timeout_ms,
             max_retries: config.max_retries,
             backoff_base_ms: 200,
@@ -129,11 +146,18 @@ impl AnthropicClient {
 #[async_trait::async_trait]
 impl ModelClient for AnthropicClient {
     async fn complete(&self, prompt: &str, schema: &Value) -> Result<Completion, AppError> {
+        // 022: `effort` joins `format` under `output_config` only when the
+        // operator set one. Unset omits the key entirely, so an unrouted
+        // deployment sends exactly the pre-022 body.
+        let mut output_config = json!({ "format": { "type": "json_schema", "schema": schema } });
+        if let (Some(effort), Some(map)) = (self.effort, output_config.as_object_mut()) {
+            map.insert("effort".to_string(), json!(effort.as_str()));
+        }
         let body = json!({
             "model": self.model,
             "max_tokens": MAX_TOKENS,
             "messages": [{ "role": "user", "content": prompt }],
-            "output_config": { "format": { "type": "json_schema", "schema": schema } },
+            "output_config": output_config,
         });
 
         let attempts_max = self.max_retries.saturating_add(1);
@@ -327,6 +351,55 @@ mod tests {
         let out = client_for(&mock).complete("p", &json!({})).await.unwrap();
         assert_eq!(out.value, json!({ "ok": true }));
         assert_eq!((out.input_tokens, out.output_tokens), (100, 25));
+    }
+
+    /// 022: an unrouted client sends no `effort` key at all. This is the
+    /// off-by-default guarantee — the request body is byte-identical to
+    /// pre-022, so enabling the feature is an operator decision and never a
+    /// side effect of upgrading.
+    #[tokio::test]
+    async fn without_a_routed_effort_the_request_carries_no_effort_key() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = req.body_json().unwrap();
+                let output_config = body["output_config"].as_object().unwrap();
+                assert!(
+                    !output_config.contains_key("effort"),
+                    "unset effort must not appear on the wire: {output_config:?}"
+                );
+                let mut keys: Vec<&str> = output_config.keys().map(String::as_str).collect();
+                keys.sort_unstable();
+                assert_eq!(keys, ["format"]);
+                ResponseTemplate::new(200).set_body_json(end_turn_body("{}"))
+            })
+            .mount(&mock)
+            .await;
+
+        client_for(&mock).complete("p", &json!({})).await.unwrap();
+    }
+
+    /// 022: a routed effort reaches `output_config.effort` in its wire
+    /// spelling, alongside the format rather than replacing it.
+    #[tokio::test]
+    async fn a_routed_effort_reaches_the_request_body() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = req.body_json().unwrap();
+                assert_eq!(body["output_config"]["effort"], "low");
+                // The constrained-output contract survives alongside it.
+                assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+                ResponseTemplate::new(200).set_body_json(end_turn_body("{}"))
+            })
+            .mount(&mock)
+            .await;
+
+        let client = AnthropicClient {
+            effort: Some(crate::routing::Effort::Low),
+            ..client_for(&mock)
+        };
+        client.complete("p", &json!({})).await.unwrap();
     }
 
     #[tokio::test]

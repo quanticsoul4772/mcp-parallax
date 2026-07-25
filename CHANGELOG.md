@@ -38,6 +38,31 @@ rationale).
 
 ### Added
 
+* **Per-call-site reasoning effort (022)** — each of the twelve model call sites
+  can request a reasoning-effort level from the provider, over a
+  `PARALLAX_EFFORT_*` namespace mirroring `PARALLAX_MODEL_*`: per-site and
+  per-tier, most-specific-first, and resolved **independently of the model**, so
+  the bulk tier can carry a cheap effort without also naming a model. Levels are
+  `low`, `medium`, `high`, `max`, `xhigh`; an unrecognised suffix or an
+  unparseable level is a startup error naming the variable, on the same reasoning
+  018 used — a setting that silently does nothing leaves the operator believing a
+  call site changed when it did not.
+
+  **Off by default, and provably so.** Absent is a distinct state from `high`,
+  not a synonym: an unset call site sends no `effort` field at all, so the
+  request body is byte-identical to before. A wire test fails if the key appears.
+
+  The client pool now keys on `(model, effort)` rather than model alone — two
+  call sites on one model at different efforts need separate clients, or the
+  first site's effort would ride on the second's calls.
+
+  This discharges the deferral named in 018 research D7, under a different
+  mechanism than the one deferred: `thinking: {"type": "disabled"}` is still
+  rejected by Fable 5, and the control that every routed family accepts is
+  `output_config.effort`. Which level suits which call site is deliberately not
+  shipped — that wants measurement, and a recommended default on no evidence
+  would be the guessing this project keeps having to undo.
+
 * **Rigor tier on the invocation record (019)** — `invocation_records` gains a
   nullable `depth` column, stamped `quick`/`standard`/`deep` for `research` and
   left NULL for every other tool. Additive, pragma-guarded `ALTER TABLE`, the

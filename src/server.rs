@@ -221,14 +221,22 @@ impl Parallax {
         // exactly the `Arc` the server used before this feature, and every
         // existing test keeps talking to its mock (FR-002). Only a model an
         // operator actually routed to gets a client built here.
-        let pool = Arc::new(ClientPool::from_factory(&config.routing, move |model| {
-            if model == config.anthropic_model {
-                Arc::clone(&client)
-            } else {
-                Arc::new(crate::client::AnthropicClient::for_model(config, model))
-                    as Arc<dyn ModelClient>
-            }
-        }));
+        let pool = Arc::new(ClientPool::from_factory(
+            &config.routing,
+            move |model, effort| {
+                // 022: the injected client is reused only when the call site
+                // is both on the default model AND at no explicit effort —
+                // an effort setting changes the request body, so it needs its
+                // own client rather than the pre-built one.
+                if model == config.anthropic_model && effort.is_none() {
+                    Arc::clone(&client)
+                } else {
+                    Arc::new(crate::client::AnthropicClient::for_model_and_effort(
+                        config, model, effort,
+                    )) as Arc<dyn ModelClient>
+                }
+            },
+        ));
         Self::log_routing_table(&config.routing, pool.distinct());
 
         let checkpoint = Arc::new(CheckpointDeps {
