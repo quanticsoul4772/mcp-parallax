@@ -28,7 +28,7 @@
       "passes": {
         "type": "integer",
         "minimum": 1,
-        "description": "Independent passes to run for this call alone. May be lower than the configured count, never higher - each pass is a whole model call. Omit to use the configured count. Confidence is derived from cross-pass agreement, so fewer passes means a narrower basis; the result reports the count it actually used."
+        "description": "Independent passes to run for this call alone. Minimum 1. The effective maximum is the deployment's configured count (VERIFY_ENSEMBLE_K), not a fixed number, so it cannot appear here - a request above it is rejected with an error naming the ceiling. Each pass is a whole model call, so a call may request fewer than the deployment allows, never more. Confidence is derived from cross-pass agreement, so fewer passes means a narrower basis; the result reports the count it actually used."
       }
     },
     "required": [
