@@ -59,6 +59,43 @@ arc.
 
 ### Changed
 
+* **Three cross-cutting principles recorded in `NEW_SERVER_DESIGN.md` §10
+  (037)** — the 027–036 arc produced rules for placing future work, not just
+  fixes to past work, and §10 is where they belong beside the operator-owned vs
+  caller-owned test.
+
+  **The verification ladder.** Five rungs, and the point is not that a test
+  gets stronger — it gets *closer to what it checks*, and each rung fails
+  differently. A test listing what to check inherits whoever wrote the list;
+  deriving expectations from the same source production reads collapses the
+  test's blind spot into the editor's, so drift between the two stops existing.
+  Recorded with its cost, which is what says when not to climb: a derived check
+  can no longer tell you a value is wrong, only that the two agree. Both
+  directions were run in this arc and both were right — `--help` defaults are
+  derived because the failure was drift, while the research tier budgets are
+  deliberately *not* derived from observed runs, because a truncated run
+  encodes the ceiling that truncated it. That is the circularity that produced
+  the quick tier's 250 000.
+
+  The top rung — making the class unrepresentable — is what
+  `deny(clippy::unwrap_used)` does at the type level, and Principle III already
+  says so. What the audits found is that it was being applied only where a lint
+  happened to exist.
+
+  **Derive the facts, hand-write the reasons.** The caller-visible surface is
+  canonical for facts; `README.md` and `CLAUDE.md` are downstream of it, and a
+  sweep that searches the documents is one refactor from being wrong. It
+  inverts for reasons, which have no source to derive from. Nearly every
+  documentation defect in this arc was a document restating a fact it could
+  have derived.
+
+  **Ask what fails silently, not what is currently wrong.** Two silences worth
+  telling apart: `CallSite::index` would have failed while the system kept
+  working — a valid client, a real model, a plausible bill — and `--help`
+  failed because nobody re-reads it.
+
+  Docs only.
+
 * **`CallSite::index` is derived from the discriminant instead of hand-written
   (035)** — it was a twelve-arm `match` mapping each variant to a literal,
   which meant two orderings (`index` and `ALL`) that had to agree. `ClientPool`
