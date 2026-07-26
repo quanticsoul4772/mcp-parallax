@@ -120,6 +120,45 @@ impl AnthropicClient {
         self
     }
 
+    /// Name the operator's setting when the provider rejects the effort
+    /// parameter (027).
+    ///
+    /// The provider's message describes its own view — *this model* does not
+    /// support the parameter. The operator needs the other half: which of their
+    /// settings sent it. This client holds both facts the message omits, so it
+    /// is where the two can be joined.
+    ///
+    /// **Appended, never substituted.** The hint is an inference about *why* a
+    /// request was rejected, and a confident wrong diagnosis in front of the
+    /// operator is worse than the bare message. The provider's own text always
+    /// survives beside it.
+    ///
+    /// The guard is deliberately narrow — a client-error status, an effort
+    /// actually configured, and a body naming the parameter. If the provider
+    /// rewords its rejection the guard stops matching and the message degrades
+    /// to what it was before this change, which is the safe direction: a lost
+    /// hint costs nothing, a false one misdirects.
+    ///
+    /// Naming the *variable* rather than the model would need one client per
+    /// call site, discarding the pooling that keys on `(model, effort)`. Given
+    /// the model and the level, the responsible `PARALLAX_EFFORT_*` setting is
+    /// immediate.
+    fn effort_rejection_hint(&self, status: reqwest::StatusCode, body: &str) -> String {
+        let Some(effort) = self.effort else {
+            return String::new();
+        };
+        if !status.is_client_error() || !body.to_lowercase().contains("effort") {
+            return String::new();
+        }
+        format!(
+            " — parallax sent effort=`{}` to `{}`, which does not accept it. \
+             Unset the PARALLAX_EFFORT_* variable covering this call site, or \
+             route the site to a model that accepts effort.",
+            effort.as_str(),
+            self.model
+        )
+    }
+
     async fn send_once(&self, body: &Value) -> Result<reqwest::Response, AppError> {
         self.http
             .post(format!("{}/v1/messages", self.base_url))
@@ -188,7 +227,10 @@ impl ModelClient for AnthropicClient {
             }
             if !status.is_success() {
                 let detail = response.text().await.unwrap_or_default();
-                return Err(AppError::Client(format!("HTTP {status}: {detail}")));
+                return Err(AppError::Client(format!(
+                    "HTTP {status}: {detail}{}",
+                    self.effort_rejection_hint(status, &detail)
+                )));
             }
 
             // reqwest's .timeout() covers the body read too — a timeout that
@@ -400,6 +442,109 @@ mod tests {
             ..client_for(&mock)
         };
         client.complete("p", &json!({})).await.unwrap();
+    }
+
+    /// 027 / FR-001, FR-002, FR-003: the provider says *this model*; the
+    /// operator needs to know which of their settings sent it. This is the
+    /// production failure of 2026-07-25 — `PARALLAX_EFFORT_BULK=low` on a tier
+    /// routed to a model that rejects the parameter.
+    #[tokio::test]
+    async fn an_effort_rejection_names_the_model_and_the_level() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "type": "error",
+                "error": { "type": "invalid_request_error",
+                           "message": "This model does not support the effort parameter." }
+            })))
+            .mount(&mock)
+            .await;
+
+        let client = AnthropicClient {
+            effort: Some(crate::routing::Effort::Low),
+            model: "claude-haiku-4-5".to_string(),
+            ..client_for(&mock)
+        };
+        let err = client.complete("p", &json!({})).await.unwrap_err();
+        let message = err.to_string();
+
+        // FR-001: both facts the provider's message omits.
+        assert!(message.contains("claude-haiku-4-5"), "{message}");
+        assert!(message.contains("effort=`low`"), "{message}");
+        // FR-002: both remedies.
+        assert!(message.contains("PARALLAX_EFFORT_"), "{message}");
+        assert!(message.contains("route the site"), "{message}");
+        // FR-003: the provider's own text survives beside the diagnosis.
+        assert!(
+            message.contains("This model does not support the effort parameter"),
+            "the provider's message must not be replaced: {message}"
+        );
+    }
+
+    /// 027 / FR-004: the hint is an inference about *why* a request failed, so
+    /// it must not appear on a failure it cannot explain. A confident wrong
+    /// diagnosis is worse than the bare message.
+    #[tokio::test]
+    async fn a_rejection_the_hint_cannot_explain_is_left_alone() {
+        // (a) no effort configured — nothing to blame.
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": { "message": "This model does not support the effort parameter." }
+            })))
+            .mount(&mock)
+            .await;
+        let err = client_for(&mock)
+            .complete("p", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            !err.to_string().contains("parallax sent effort"),
+            "no effort was configured: {err}"
+        );
+
+        // (b) effort configured, but the rejection is about something else.
+        let other = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": { "message": "max_tokens: must be greater than 0" }
+            })))
+            .mount(&other)
+            .await;
+        let client = AnthropicClient {
+            effort: Some(crate::routing::Effort::Low),
+            ..client_for(&other)
+        };
+        let err = client.complete("p", &json!({})).await.unwrap_err();
+        assert!(
+            !err.to_string().contains("parallax sent effort"),
+            "the rejection does not name the parameter: {err}"
+        );
+        assert!(err.to_string().contains("max_tokens"), "{err}");
+    }
+
+    /// 027 / FR-004: a server-side failure is not a configuration mistake, and
+    /// saying so would send the operator to edit a setting that is fine.
+    #[tokio::test]
+    async fn a_server_error_is_never_blamed_on_the_effort_setting() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("effort effort effort"))
+            .mount(&mock)
+            .await;
+        let client = AnthropicClient {
+            effort: Some(crate::routing::Effort::Max),
+            max_retries: 0,
+            ..client_for(&mock)
+        };
+        let err = client.complete("p", &json!({})).await.unwrap_err();
+        // A 5xx exhausts retries rather than returning Client, but either way
+        // the effort diagnosis must not appear — the body naming the word is
+        // not enough when the status says the fault is the provider's.
+        assert!(
+            !err.to_string().contains("parallax sent effort"),
+            "a server error is not a configuration mistake: {err}"
+        );
     }
 
     #[tokio::test]
