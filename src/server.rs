@@ -53,6 +53,43 @@ mod record;
 
 use record::{to_error_data, RecordGuard};
 
+/// The per-invocation dimensions an [`InvocationRecord`] stamps beyond tokens
+/// and outcome: the research tier (019) and the caller's two 028 overrides.
+///
+/// Bundled rather than passed as three more parameters — each feature that
+/// records something new was extending the same argument list, and it had
+/// grown past the point where a reader could tell which `None` meant what.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct RecordDims {
+    /// Research rigor tier (019); `None` for every other tool.
+    depth: Option<Depth>,
+    /// The caller's effort override (028); `None` when configuration decided.
+    effort: Option<crate::routing::Effort>,
+    /// The caller's pass-count override (028); `None` when the configured
+    /// count ran.
+    passes: Option<u32>,
+}
+
+impl RecordDims {
+    /// Dimensions for a corrective: an effort override, no tier.
+    const fn effort(effort: Option<crate::routing::Effort>) -> Self {
+        Self {
+            depth: None,
+            effort,
+            passes: None,
+        }
+    }
+
+    /// Dimensions for an ensemble corrective, which also records its count.
+    const fn ensemble(effort: Option<crate::routing::Effort>, passes: Option<u32>) -> Self {
+        Self {
+            depth: None,
+            effort,
+            passes,
+        }
+    }
+}
+
 /// The Parallax MCP server: the seams it composes plus the mode registry.
 #[derive(Clone)]
 pub struct Parallax {
@@ -138,6 +175,11 @@ impl Parallax {
         tracing::info!(
             call_sites = routing.routes().len(),
             distinct_models = distinct,
+            // 028: the table states what *configuration* resolved to. A caller
+            // may override the effort on any single invocation, so a level
+            // printed here is the default, not a guarantee. Saying so at
+            // startup is cheaper than an operator inferring it from a bill.
+            effort_overridable_per_call = true,
             "routing table complete"
         );
     }
@@ -221,6 +263,11 @@ impl Parallax {
         // exactly the `Arc` the server used before this feature, and every
         // existing test keeps talking to its mock (FR-002). Only a model an
         // operator actually routed to gets a client built here.
+        // 028 T001: one transport for every entry. The cross product
+        // multiplies clients, and a `reqwest::Client` each would multiply
+        // connection pools with them — five extra per model in a default
+        // deployment, up to 71 in a fully routed one.
+        let http = reqwest::Client::new();
         let pool = Arc::new(ClientPool::from_factory(
             &config.routing,
             move |model, effort| {
@@ -231,8 +278,12 @@ impl Parallax {
                 if model == config.anthropic_model && effort.is_none() {
                     Arc::clone(&client)
                 } else {
-                    Arc::new(crate::client::AnthropicClient::for_model_and_effort(
-                        config, model, effort,
+                    Arc::new(crate::client::AnthropicClient::with_http_client(
+                        config,
+                        &http,
+                        &config.anthropic_api_base,
+                        model,
+                        effort,
                     )) as Arc<dyn ModelClient>
                 }
             },
@@ -517,7 +568,7 @@ impl Parallax {
         let deps = Arc::clone(self.memory_deps()?);
         // Attribution: the embed lookup is the only metered call on this path.
         let model = deps.embedder.model_id().to_string();
-        self.run_recorded("surface", model, ct, async {
+        self.run_recorded("surface", model, RecordDims::default(), ct, async {
             memory_push::run(&deps, &params).await
         })
         .await
@@ -625,9 +676,13 @@ impl Parallax {
             || self.attributed(CallSite::CheckpointReview),
             |e| e.model_id().to_string(),
         );
-        self.run_recorded("checkpoint_action", model, ct, async {
-            checkpoint_run::run_action(&deps, &params).await
-        })
+        self.run_recorded(
+            "checkpoint_action",
+            model,
+            RecordDims::default(),
+            ct,
+            async { checkpoint_run::run_action(&deps, &params).await },
+        )
         .await
     }
 
@@ -640,6 +695,7 @@ impl Parallax {
         self.run_recorded(
             "checkpoint_batch",
             self.attributed(CallSite::CheckpointReview),
+            RecordDims::default(),
             ct,
             async { checkpoint_run::run_batch(&deps, &params).await },
         )
@@ -655,6 +711,7 @@ impl Parallax {
         self.run_recorded(
             "checkpoint_turn",
             self.attributed(CallSite::CheckpointReview),
+            RecordDims::default(),
             ct,
             async { checkpoint_run::run_turn(&deps, &params).await },
         )
@@ -666,19 +723,28 @@ impl Parallax {
         params: VerifyParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<Verdict>, ErrorData> {
+        let effort = params.effort;
         let mode = self.registry.get(VERIFY_ID).ok_or_else(|| {
             ErrorData::internal_error("verify mode not registered".to_string(), None)
         })?;
-        self.run_recorded(VERIFY_ID, self.attributed(CallSite::Verify), ct, async {
-            verify::run(
-                self.pool.for_site(CallSite::Verify).as_ref(),
-                mode,
-                &params,
-                self.max_claim_chars,
-            )
-            .await
-            .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
-        })
+        self.run_recorded(
+            VERIFY_ID,
+            self.attributed(CallSite::Verify),
+            RecordDims::ensemble(effort, params.passes.map(u32::from)),
+            ct,
+            async {
+                verify::run(
+                    self.pool
+                        .for_site_with_effort(CallSite::Verify, effort)
+                        .as_ref(),
+                    mode,
+                    &params,
+                    self.max_claim_chars,
+                )
+                .await
+                .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
+            },
+        )
         .await
     }
 
@@ -687,19 +753,28 @@ impl Parallax {
         params: UnstickParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<NextStep>, ErrorData> {
+        let effort = params.effort;
         let mode = self.registry.get(UNSTICK_ID).ok_or_else(|| {
             ErrorData::internal_error("unstick mode not registered".to_string(), None)
         })?;
-        self.run_recorded(UNSTICK_ID, self.attributed(CallSite::Unstick), ct, async {
-            unstick::run(
-                self.pool.for_site(CallSite::Unstick).as_ref(),
-                mode,
-                &params,
-                self.max_claim_chars,
-            )
-            .await
-            .map(|run| (run.step, run.input_tokens, run.output_tokens))
-        })
+        self.run_recorded(
+            UNSTICK_ID,
+            self.attributed(CallSite::Unstick),
+            RecordDims::effort(effort),
+            ct,
+            async {
+                unstick::run(
+                    self.pool
+                        .for_site_with_effort(CallSite::Unstick, effort)
+                        .as_ref(),
+                    mode,
+                    &params,
+                    self.max_claim_chars,
+                )
+                .await
+                .map(|run| (run.step, run.input_tokens, run.output_tokens))
+            },
+        )
         .await
     }
 
@@ -708,19 +783,28 @@ impl Parallax {
         params: DecideParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<DecideResult>, ErrorData> {
+        let effort = params.effort;
         let mode = self.registry.get(DECIDE_ID).ok_or_else(|| {
             ErrorData::internal_error("decide mode not registered".to_string(), None)
         })?;
-        self.run_recorded(DECIDE_ID, self.attributed(CallSite::Decide), ct, async {
-            decide::run(
-                self.pool.for_site(CallSite::Decide).as_ref(),
-                mode,
-                &params,
-                self.max_claim_chars,
-            )
-            .await
-            .map(|run| (run.result, run.input_tokens, run.output_tokens))
-        })
+        self.run_recorded(
+            DECIDE_ID,
+            self.attributed(CallSite::Decide),
+            RecordDims::effort(effort),
+            ct,
+            async {
+                decide::run(
+                    self.pool
+                        .for_site_with_effort(CallSite::Decide, effort)
+                        .as_ref(),
+                    mode,
+                    &params,
+                    self.max_claim_chars,
+                )
+                .await
+                .map(|run| (run.result, run.input_tokens, run.output_tokens))
+            },
+        )
         .await
     }
 
@@ -729,22 +813,31 @@ impl Parallax {
         params: ElicitParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<ElicitResult>, ErrorData> {
+        let effort = params.effort;
         let mode = self.registry.get(ELICIT_ID).ok_or_else(|| {
             ErrorData::internal_error("elicit mode not registered".to_string(), None)
         })?;
         // Memory only enriches: pass it when configured, run without it otherwise.
         let memory = self.memory.as_deref();
-        self.run_recorded(ELICIT_ID, self.attributed(CallSite::Elicit), ct, async {
-            elicit::run(
-                self.pool.for_site(CallSite::Elicit).as_ref(),
-                mode,
-                memory,
-                &params,
-                self.max_claim_chars,
-            )
-            .await
-            .map(|run| (run.result, run.input_tokens, run.output_tokens))
-        })
+        self.run_recorded(
+            ELICIT_ID,
+            self.attributed(CallSite::Elicit),
+            RecordDims::effort(effort),
+            ct,
+            async {
+                elicit::run(
+                    self.pool
+                        .for_site_with_effort(CallSite::Elicit, effort)
+                        .as_ref(),
+                    mode,
+                    memory,
+                    &params,
+                    self.max_claim_chars,
+                )
+                .await
+                .map(|run| (run.result, run.input_tokens, run.output_tokens))
+            },
+        )
         .await
     }
 
@@ -753,19 +846,28 @@ impl Parallax {
         params: DivergeParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<DivergeResult>, ErrorData> {
+        let effort = params.effort;
         let mode = self.registry.get(DIVERGE_ID).ok_or_else(|| {
             ErrorData::internal_error("diverge mode not registered".to_string(), None)
         })?;
-        self.run_recorded(DIVERGE_ID, self.attributed(CallSite::Diverge), ct, async {
-            diverge::run(
-                self.pool.for_site(CallSite::Diverge).as_ref(),
-                mode,
-                &params,
-                self.max_claim_chars,
-            )
-            .await
-            .map(|run| (run.result, run.input_tokens, run.output_tokens))
-        })
+        self.run_recorded(
+            DIVERGE_ID,
+            self.attributed(CallSite::Diverge),
+            RecordDims::ensemble(effort, params.passes.map(u32::from)),
+            ct,
+            async {
+                diverge::run(
+                    self.pool
+                        .for_site_with_effort(CallSite::Diverge, effort)
+                        .as_ref(),
+                    mode,
+                    &params,
+                    self.max_claim_chars,
+                )
+                .await
+                .map(|run| (run.result, run.input_tokens, run.output_tokens))
+            },
+        )
         .await
     }
 
@@ -801,7 +903,7 @@ impl Parallax {
         } else {
             deps.embedder.model_id().to_string()
         };
-        self.run_recorded("save", model, ct, async {
+        self.run_recorded("save", model, RecordDims::default(), ct, async {
             memory_tools::save(&deps, &params).await
         })
         .await
@@ -814,7 +916,7 @@ impl Parallax {
     ) -> Result<Json<RecallResult>, ErrorData> {
         let deps = Arc::clone(self.memory_deps()?);
         let model = deps.embedder.model_id().to_string();
-        self.run_recorded("recall", model, ct, async {
+        self.run_recorded("recall", model, RecordDims::default(), ct, async {
             memory_tools::recall(&deps, &params).await
         })
         .await
@@ -825,13 +927,20 @@ impl Parallax {
         params: CheckParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<CheckResult>, ErrorData> {
+        let effort = params.effort;
         let deps = Arc::clone(&self.deterministic);
         // Translation is the only metered call — anthropic-model attribution.
         self.run_recorded(
             "check",
             self.attributed(CallSite::CheckTranslate),
+            RecordDims::effort(effort),
             ct,
-            async { check_tool::run(&deps, &params).await },
+            async {
+                let client = self
+                    .pool
+                    .for_site_with_effort(CallSite::CheckTranslate, effort);
+                check_tool::run_with(&deps, &params, client.as_ref()).await
+            },
         )
         .await
     }
@@ -865,14 +974,45 @@ impl Parallax {
         // from the record. The default must match `settings`' — a request that
         // omits `depth` still ran under a tier.
         let depth = params.depth.unwrap_or(Depth::Standard);
+        // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
+        // rather than rejected — see 028 research D3: the caller asked for the
+        // research, and the concurrency was advice about running it, so a
+        // request above the ceiling is one the server declines while still
+        // doing the work. The effective value is what the run uses.
+        let concurrency = crate::research::contract::effective_concurrency(
+            constraints.concurrency,
+            deps.concurrency,
+        )
+        .map_err(|e| to_error_data(&e))?;
+        // 028 D3: a reduced value is otherwise invisible — the caller is not
+        // told and the record has no column for it. Naming both numbers here
+        // is what keeps the clamp inspectable, which is the condition the
+        // corpus rule attaches to any value configuration can no longer
+        // predict.
+        if let Some(requested) = constraints.concurrency {
+            if requested as usize != concurrency {
+                tracing::info!(
+                    requested,
+                    effective = concurrency,
+                    "research concurrency reduced to the configured ceiling"
+                );
+            }
+        }
         self.run_recorded_usage(
             "research",
             self.attributed(CallSite::ResearchScope),
-            Some(depth),
+            // `research` exposes no effort argument (028 FR-011): its four
+            // call sites are independently configured, so there is no single
+            // override to record. Nor a pass count — its verification fan-out
+            // is per claim, not a caller-set ensemble.
+            RecordDims {
+                depth: Some(depth),
+                ..RecordDims::default()
+            },
             ct,
             async {
                 let fetcher = HygieneFetcher::new(policy)?;
-                pipeline::run(&deps, &fetcher, &params).await
+                pipeline::run_at(&deps, &fetcher, &params, concurrency).await
             },
         )
         .await
@@ -883,6 +1023,7 @@ impl Parallax {
         params: GroundedVerifyParams,
         ct: tokio_util::sync::CancellationToken,
     ) -> Result<Json<GroundedVerdict>, ErrorData> {
+        let effort = params.effort;
         let deps = Arc::clone(self.grounded.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
                 "grounded_verify capability is disabled (GROUNDED_VERIFY_ROOT is not configured)"
@@ -894,9 +1035,13 @@ impl Parallax {
         self.run_recorded(
             GROUNDED_VERIFY_ID,
             self.attributed(CallSite::GroundedVerify),
+            RecordDims::ensemble(effort, params.passes.map(u32::from)),
             ct,
             async {
-                deps.evaluate(&params)
+                let client = self
+                    .pool
+                    .for_site_with_effort(CallSite::GroundedVerify, effort);
+                deps.evaluate_with(&params, client.as_ref())
                     .await
                     .map(|run| (run.verdict, run.input_tokens, run.output_tokens))
             },
@@ -913,7 +1058,7 @@ impl Parallax {
         // No provider call is involved; attribute to the embedder model the
         // capability is keyed on.
         let model = deps.embedder.model_id().to_string();
-        self.run_recorded("forget", model, ct, async {
+        self.run_recorded("forget", model, RecordDims::default(), ct, async {
             memory_tools::forget(&deps, &params).await
         })
         .await
@@ -928,6 +1073,7 @@ impl Parallax {
         &self,
         tool_id: &'static str,
         model: String,
+        dims: RecordDims,
         ct: tokio_util::sync::CancellationToken,
         work: Fut,
     ) -> Result<Json<T>, ErrorData>
@@ -935,7 +1081,7 @@ impl Parallax {
         Fut: std::future::Future<Output = Result<(T, u64, u64), AppError>>,
     {
         let attributed = model.clone();
-        self.run_recorded_usage(tool_id, model, None, ct, async move {
+        self.run_recorded_usage(tool_id, model, dims, ct, async move {
             work.await.map(|(value, input_tokens, output_tokens)| {
                 (
                     value,
@@ -953,7 +1099,7 @@ impl Parallax {
         &self,
         tool_id: &'static str,
         attributed: String,
-        depth: Option<Depth>,
+        dims: RecordDims,
         ct: tokio_util::sync::CancellationToken,
         work: Fut,
     ) -> Result<Json<T>, ErrorData>
@@ -967,7 +1113,7 @@ impl Parallax {
             self.session_id.clone(),
             tool_id.to_string(),
             attributed,
-            depth.map(|d| d.as_str().to_string()),
+            dims,
         );
 
         tokio::select! {
@@ -1064,6 +1210,7 @@ mod tests {
         Config {
             anthropic_api_key: "test-key".into(),
             anthropic_model: "claude-opus-4-8".into(),
+            anthropic_api_base: "http://127.0.0.1:1".into(),
             routing: crate::routing::RoutingTable::single("claude-opus-4-8"),
             verify_ensemble_k: 3,
             input_max_chars: 50_000,
@@ -1166,6 +1313,321 @@ mod tests {
         assert!(info.instructions.unwrap().contains("research"));
     }
 
+    /// 028 T011 / FR-006: an unrecognised effort is a **caller input error**
+    /// and the accepted values are in the published schema.
+    ///
+    /// The first implementation took `Option<String>` and hand-parsed it,
+    /// which rejected correctly but left the schema saying only "string" — and
+    /// the consumer of this server is a model reading that schema. Typing the
+    /// field moves the accepted set into the contract, so the caller is
+    /// constrained rather than merely corrected, and serde's own error names
+    /// the alternatives.
+    #[test]
+    fn the_effort_argument_publishes_its_accepted_values_and_rejects_others() {
+        let schema = serde_json::to_value(schemars::schema_for!(VerifyParams)).unwrap();
+        let effort = &schema["properties"]["effort"];
+        let rendered = serde_json::to_string(effort).unwrap();
+        for level in ["low", "medium", "high", "max", "xhigh"] {
+            assert!(
+                rendered.contains(level),
+                "the schema must name `{level}`: {rendered}"
+            );
+        }
+
+        // Every accepted level round-trips.
+        for level in crate::routing::Effort::ALL {
+            let parsed: VerifyParams =
+                serde_json::from_value(json!({ "claim": "c", "effort": level.as_str() })).unwrap();
+            assert_eq!(parsed.effort, Some(level));
+        }
+
+        // Omitting it is absent, not a default level.
+        let parsed: VerifyParams = serde_json::from_value(json!({ "claim": "c" })).unwrap();
+        assert_eq!(parsed.effort, None);
+
+        // An unknown level is refused, and the error names the alternatives so
+        // the caller can retry without consulting documentation.
+        let err =
+            serde_json::from_value::<VerifyParams>(json!({ "claim": "c", "effort": "aggressive" }))
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("aggressive"), "{err}");
+        assert!(err.contains("low") && err.contains("xhigh"), "{err}");
+    }
+
+    /// 028 T015 + T021 / FR-007, FR-007a: the record carries the caller's
+    /// **override** and nothing else.
+    ///
+    /// A configured level must still record `None`. That looks like a gap and
+    /// is the point: the column exists to explain spend configuration cannot
+    /// predict, and a configured level is predictable — it is in the startup
+    /// routing table. Writing it here would also be a lie for any invocation
+    /// spanning several call sites at different configured levels, which is
+    /// exactly what a research run is.
+    #[tokio::test]
+    async fn the_record_carries_the_override_and_never_the_configured_level() {
+        async fn effort_recorded(
+            configured: Vec<(String, String)>,
+            supplied: Option<crate::routing::Effort>,
+        ) -> Option<String> {
+            let mut client = MockModelClient::new();
+            client
+                .expect_complete()
+                .returning(|_, _| Err(AppError::Refusal("declined".into())));
+            let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+            let mut config = test_config();
+            config.routing =
+                crate::routing::RoutingTable::resolve(configured, &config.anthropic_model).unwrap();
+            let server = Parallax::with_capabilities(
+                Arc::new(client),
+                storage.clone(),
+                Arc::new(SystemClock),
+                &config,
+                None,
+                None,
+            )
+            .unwrap();
+            let _ = server
+                .verify_with_ct(
+                    VerifyParams {
+                        claim: "a claim".into(),
+                        context: None,
+                        effort: supplied,
+                        passes: None,
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await;
+            storage.list_invocations().await.unwrap()[0].effort.clone()
+        }
+
+        // A caller override is recorded.
+        assert_eq!(
+            effort_recorded(vec![], Some(crate::routing::Effort::Max)).await,
+            Some("max".into())
+        );
+
+        // Nothing supplied, nothing configured: no override.
+        assert_eq!(effort_recorded(vec![], None).await, None);
+
+        // Configured but not overridden: still None. The configured level is
+        // recoverable from the startup table; the record answers a different
+        // question.
+        let configured = vec![("PARALLAX_EFFORT_VERIFY".to_string(), "high".to_string())];
+        assert_eq!(effort_recorded(configured.clone(), None).await, None);
+
+        // Overriding a configured level records the override, not the config.
+        assert_eq!(
+            effort_recorded(configured, Some(crate::routing::Effort::Low)).await,
+            Some("low".into()),
+        );
+    }
+
+    /// 028 T009 / FR-001, SC-001: the level a caller supplies reaches the
+    /// **request body**, through the whole server.
+    ///
+    /// This is the assertion the feature nearly shipped without, and the gap
+    /// was structural: the pool's per-effort clients were built against the
+    /// hard-coded production endpoint, so a test could not observe them — and
+    /// a `--lib` run was in fact opening TLS connections to the live API.
+    /// `Config::anthropic_api_base` closes that; without it the record-level
+    /// tests below pass whether the override reached the wire or nothing at
+    /// all.
+    #[tokio::test]
+    async fn a_caller_supplied_effort_reaches_the_request_body() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+        let recorder = Arc::clone(&seen);
+        Mock::given(method("POST"))
+            .respond_with(move |req: &Request| {
+                if let Ok(body) = req.body_json::<serde_json::Value>() {
+                    #[allow(clippy::unwrap_used)]
+                    recorder.lock().unwrap().push(body);
+                }
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "content": [{ "type": "text", "text": "{\"verdict\":\"supported\",\"findings\":[]}" }],
+                    "stop_reason": "end_turn",
+                    "usage": { "input_tokens": 10, "output_tokens": 5 }
+                }))
+            })
+            .mount(&mock)
+            .await;
+
+        let mut config = test_config();
+        config.anthropic_api_base = mock.uri();
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let injected = Arc::new(crate::client::AnthropicClient::with_base_url(
+            &config,
+            &mock.uri(),
+        ));
+        let server = Parallax::with_capabilities(
+            injected,
+            storage,
+            Arc::new(SystemClock),
+            &config,
+            None,
+            None,
+        )
+        .unwrap();
+
+        server
+            .verify_with_ct(
+                VerifyParams {
+                    claim: "a claim".into(),
+                    context: None,
+                    effort: Some(crate::routing::Effort::Max),
+                    passes: Some(1),
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+
+        let bodies = seen.lock().unwrap().clone();
+        assert_eq!(bodies.len(), 1, "one pass requested, one request sent");
+        assert_eq!(
+            bodies[0]["output_config"]["effort"], "max",
+            "the caller's level must reach the wire: {}",
+            bodies[0]
+        );
+        // The constrained-output contract survives beside it.
+        assert_eq!(bodies[0]["output_config"]["format"]["type"], "json_schema");
+    }
+
+    /// 028 T012 / FR-004: concurrent invocations at different efforts each
+    /// carry their own level, with no leakage between them.
+    ///
+    /// The pool hands out a shared `Arc` per `(model, effort)` pair, so if the
+    /// effort lived on the client rather than being selected per call, two
+    /// simultaneous calls at different levels would collide. Run together on a
+    /// multi-thread runtime rather than sequentially, because sequential calls
+    /// cannot exhibit the failure.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_invocations_do_not_leak_effort_between_each_other() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let recorder = Arc::clone(&seen);
+        Mock::given(method("POST"))
+            .respond_with(move |req: &Request| {
+                if let Ok(body) = req.body_json::<serde_json::Value>() {
+                    let level = body["output_config"]["effort"]
+                        .as_str()
+                        .unwrap_or("<none>")
+                        .to_string();
+                    #[allow(clippy::unwrap_used)]
+                    recorder.lock().unwrap().push(level);
+                }
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "content": [{ "type": "text", "text": "{\"verdict\":\"supported\",\"findings\":[]}" }],
+                    "stop_reason": "end_turn",
+                    "usage": { "input_tokens": 10, "output_tokens": 5 }
+                }))
+            })
+            .mount(&mock)
+            .await;
+
+        let mut config = test_config();
+        config.anthropic_api_base = mock.uri();
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let injected = Arc::new(crate::client::AnthropicClient::with_base_url(
+            &config,
+            &mock.uri(),
+        ));
+        let server = Arc::new(
+            Parallax::with_capabilities(
+                injected,
+                storage,
+                Arc::new(SystemClock),
+                &config,
+                None,
+                None,
+            )
+            .unwrap(),
+        );
+
+        let call = |level: Option<crate::routing::Effort>| {
+            let server = Arc::clone(&server);
+            async move {
+                server
+                    .verify_with_ct(
+                        VerifyParams {
+                            claim: "a claim".into(),
+                            context: None,
+                            effort: level,
+                            passes: Some(1),
+                        },
+                        tokio_util::sync::CancellationToken::new(),
+                    )
+                    .await
+            }
+        };
+
+        let (a, b, c) = tokio::join!(
+            call(Some(crate::routing::Effort::Low)),
+            call(Some(crate::routing::Effort::Max)),
+            call(None),
+        );
+        a.unwrap();
+        b.unwrap();
+        c.unwrap();
+
+        let mut levels = seen.lock().unwrap().clone();
+        levels.sort();
+        assert_eq!(
+            levels,
+            vec!["<none>".to_string(), "low".to_string(), "max".to_string()],
+            "each concurrent call must carry its own level, and the one that              supplied none must carry none"
+        );
+    }
+
+    /// 028 T010 / FR-004: a per-call effort affects exactly the invocation
+    /// carrying it. The next call reverts, with no state carried between them.
+    #[tokio::test]
+    async fn a_per_call_effort_does_not_persist_to_the_next_call() {
+        let mut client = MockModelClient::new();
+        client
+            .expect_complete()
+            .returning(|_, _| Err(AppError::Refusal("declined".into())));
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let config = test_config();
+        let server = Parallax::with_capabilities(
+            Arc::new(client),
+            storage.clone(),
+            Arc::new(SystemClock),
+            &config,
+            None,
+            None,
+        )
+        .unwrap();
+
+        for supplied in [Some(crate::routing::Effort::XHigh), None] {
+            let _ = server
+                .verify_with_ct(
+                    VerifyParams {
+                        claim: "a claim".into(),
+                        context: None,
+                        effort: supplied,
+                        passes: None,
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await;
+        }
+
+        let records = storage.list_invocations().await.unwrap();
+        let efforts: Vec<Option<String>> = records.iter().map(|r| r.effort.clone()).collect();
+        assert!(
+            efforts.contains(&Some("xhigh".to_string())) && efforts.contains(&None),
+            "one call overridden, the next not: {efforts:?}"
+        );
+    }
+
     /// 018 regression: a routed call site's record must name the model that
     /// actually served it.
     ///
@@ -1210,6 +1672,8 @@ mod tests {
                 VerifyParams {
                     claim: "a claim".into(),
                     context: None,
+                    effort: None,
+                    passes: None,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )
@@ -1231,6 +1695,7 @@ mod tests {
                     goal: "ship it".into(),
                     blocked: "stuck".into(),
                     tried: None,
+                    effort: None,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )
@@ -1484,6 +1949,8 @@ mod tests {
                 VerifyParams {
                     claim: "c".into(),
                     context: None,
+                    effort: None,
+                    passes: None,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )
@@ -1511,6 +1978,8 @@ mod tests {
                 VerifyParams {
                     claim: "c".into(),
                     context: None,
+                    effort: None,
+                    passes: None,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )
@@ -1536,6 +2005,8 @@ mod tests {
                 VerifyParams {
                     claim: "   ".into(),
                     context: None,
+                    effort: None,
+                    passes: None,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )
@@ -1597,7 +2068,9 @@ mod tests {
             server.verify_with_ct(
                 VerifyParams {
                     claim: "c".into(),
-                    context: None
+                    context: None,
+                    effort: None,
+                    passes: None,
                 },
                 ct
             ),
@@ -1621,6 +2094,8 @@ mod tests {
                 VerifyParams {
                     claim: "again".into(),
                     context: None,
+                    effort: None,
+                    passes: None,
                 },
                 tokio_util::sync::CancellationToken::new(),
             )

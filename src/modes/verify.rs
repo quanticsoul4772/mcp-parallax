@@ -105,6 +105,23 @@ pub struct VerifyParams {
     /// Optional supporting context the verifier may consult. This is the only
     /// extra information a verification pass receives.
     pub context: Option<String>,
+    /// Reasoning effort for this call alone. Omit to use the deployment's
+    /// configured level. Not every model family accepts this; when one rejects
+    /// it the error names the model, the level, and the remedies.
+    ///
+    /// Typed rather than a free string so the accepted levels appear in the
+    /// published schema — the consumer of this server is a model reading that
+    /// schema, and a prose-only list is not something it can be constrained by.
+    #[serde(default)]
+    pub effort: Option<crate::routing::Effort>,
+    /// Independent passes to run for this call alone. May be **lower** than
+    /// the configured count, never higher — each pass is a whole model call,
+    /// so raising it would buy work the operator did not authorise. Omit to
+    /// use the configured count. Confidence is derived from cross-pass
+    /// agreement, so fewer passes means a narrower basis; the result reports
+    /// the count it actually used.
+    #[serde(default)]
+    pub passes: Option<u8>,
 }
 
 /// Verdict status.
@@ -218,11 +235,14 @@ pub async fn run(
     max_claim_chars: usize,
 ) -> Result<VerifyRun, AppError> {
     check_input(params, max_claim_chars)?;
+    // 028 FR-012/FR-012a: the caller may narrow the ensemble for this claim,
+    // never widen it. `mode.ensemble_k` stays the configured default.
+    let k = super::resolve_passes(params.passes, mode.ensemble_k)?;
 
     // Each pass scrutinizes under a distinct lens (research D1/D2): pass i uses
     // LENSES[i % LENSES.len()], so genuinely contestable claims scatter and the
     // agreement-ratio confidence spans its range. Aggregation is unchanged.
-    let passes = futures::future::join_all((0..mode.ensemble_k).map(|i| {
+    let passes = futures::future::join_all((0..k).map(|i| {
         let lens = LENSES[usize::from(i) % LENSES.len()];
         let prompt = build_prompt(
             mode.prompt_template,
@@ -237,7 +257,7 @@ pub async fn run(
         .into_iter()
         .map(|pass| pass.map(|(v, inp, out)| (v.verdict, v.findings, inp, out)))
         .collect();
-    aggregate_core(core, mode.ensemble_k)
+    aggregate_core(core, k)
 }
 
 /// One blind pass: constrained completion → local validation → typed verdict.
@@ -407,6 +427,8 @@ mod tests {
         VerifyParams {
             claim: claim.to_string(),
             context: None,
+            effort: None,
+            passes: None,
         }
     }
 
@@ -436,6 +458,72 @@ mod tests {
 
     fn supported() -> Value {
         json!({ "verdict": "supported", "findings": [] })
+    }
+
+    /// 028 T027 / FR-012, FR-013: a lowered count actually runs that many
+    /// passes and the result reports the count it ran.
+    ///
+    /// `resolve_passes` is unit-tested next door; what this adds is that the
+    /// resolved value reaches both the fan-out *and* the aggregation. Those
+    /// are two separate uses of the same number, and a change that updated one
+    /// and not the other would produce a confidence computed over a different
+    /// denominator than the passes that ran — the exact failure the reported
+    /// count exists to make visible.
+    #[tokio::test]
+    async fn a_lowered_pass_count_runs_and_is_reported() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().returning(move |_, _| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                value: supported(),
+                input_tokens: 100,
+                output_tokens: 10,
+            })
+        });
+
+        let mode = test_mode(3);
+        let narrowed = VerifyParams {
+            passes: Some(1),
+            ..params("a claim")
+        };
+        let outcome = run(&mock, &mode, &narrowed, 50_000).await.unwrap();
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "one pass requested, so exactly one model call"
+        );
+        assert_eq!(
+            outcome.verdict.passes, 1,
+            "the result must report what it ran"
+        );
+
+        // Omitting the field still runs the configured count.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().returning(move |_, _| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                value: supported(),
+                input_tokens: 100,
+                output_tokens: 10,
+            })
+        });
+        let outcome = run(&mock, &mode, &params("a claim"), 50_000).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(outcome.verdict.passes, 3);
+
+        // Above the ceiling: rejected before any model call is made.
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().never();
+        let over = VerifyParams {
+            passes: Some(9),
+            ..params("a claim")
+        };
+        assert!(run(&mock, &mode, &over, 50_000).await.is_err());
     }
 
     // ---- T015: schema/contract sync ----------------------------------------

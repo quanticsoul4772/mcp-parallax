@@ -1366,3 +1366,43 @@ async fn every_verification_failing_is_an_error_not_a_silent_empty_answer() {
         .unwrap_err();
     assert!(matches!(error.root(), AppError::Client(_)), "got: {error}");
 }
+
+/// 028 T031/T032/T033 / FR-015, D3: a caller may reduce a run's concurrency;
+/// a request above the ceiling is reduced to it rather than failing the run.
+///
+/// Calls the production function rather than restating it. The first version
+/// of this test defined a local closure with the same expression and asserted
+/// the closure against itself — it would have stayed green with the real
+/// clamp deleted, which is the opposite of what a test citing FR-015 should do.
+///
+/// The asymmetry with the pass count is deliberate. Concurrency is advice
+/// about running work already authorised and does not change what the answer
+/// means, so exceeding the ceiling is reduced. A pass count *is* the basis for
+/// the returned confidence, so exceeding that errors.
+#[test]
+fn a_caller_may_lower_concurrency_and_a_raise_is_reduced_to_the_ceiling() {
+    use crate::research::contract::effective_concurrency;
+
+    // Omitted: the configured value.
+    assert_eq!(effective_concurrency(None, 8).unwrap(), 8);
+
+    // Lower: honoured.
+    assert_eq!(effective_concurrency(Some(2), 8).unwrap(), 2);
+    assert_eq!(effective_concurrency(Some(1), 8).unwrap(), 1);
+
+    // Equal: honoured, not an off-by-one.
+    assert_eq!(effective_concurrency(Some(8), 8).unwrap(), 8);
+
+    // Above the ceiling: reduced, and the run still proceeds.
+    assert_eq!(effective_concurrency(Some(16), 8).unwrap(), 8);
+    assert_eq!(effective_concurrency(Some(u32::MAX), 8).unwrap(), 8);
+
+    // Zero is rejected, matching the published `minimum: 1` and matching how
+    // `resolve_passes` treats the same mistake. Silently rewriting a value the
+    // contract calls invalid would be a swallowed input.
+    assert!(effective_concurrency(Some(0), 8).is_err());
+
+    // The ceiling follows configuration, not a constant.
+    assert_eq!(effective_concurrency(Some(16), 32).unwrap(), 16);
+    assert_eq!(effective_concurrency(Some(16), 4).unwrap(), 4);
+}

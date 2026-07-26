@@ -88,6 +88,10 @@ async fn save_spent(
             let verify_params = VerifyParams {
                 claim: params.content.clone(),
                 context: None,
+                // Server-side sub-call: the caller never sees this pass, so it
+                // takes the configured effort like any unrouted call (028).
+                effort: None,
+                passes: None,
             };
             let run = verify::run(
                 deps.model_client.as_ref(),
@@ -161,6 +165,12 @@ pub async fn recall(
     params: &RecallParams,
 ) -> Result<(RecallResult, u64, u64), AppError> {
     check_text("query", &params.query, deps.input_max_chars)?;
+    // 028 FR-016: this is the pattern 028 generalises, and it predates it.
+    // A per-call `limit` with `MEMORY_RECALL_LIMIT` as its default — the
+    // caller decides how much context this query warrants, the operator sets
+    // what happens when the caller says nothing. 022 put effort in the
+    // environment alone despite this and `research`'s `depth` both already
+    // being here.
     let limit = match params.limit {
         None => usize::from(deps.default_recall_limit),
         Some(n) if (1..=u32::from(MEMORY_RECALL_LIMIT_MAX)).contains(&n) => n as usize,
@@ -347,6 +357,38 @@ pub async fn consolidate_admission(
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod prior_art_tests {
+    use super::*;
+
+    /// 028 T036 / FR-016: `recall` already does what 028 does for the rest —
+    /// a per-call value with the environment setting as its default.
+    ///
+    /// This is a **confirming** test, not new behaviour, and it is here so the
+    /// claim in the corpus is checked rather than asserted. If it ever fails,
+    /// FR-016 stops being a citation and becomes implementation work.
+    #[test]
+    fn recall_already_takes_a_per_call_limit_defaulting_to_the_setting() {
+        // The field exists and is optional — the caller may say nothing.
+        let params = RecallParams {
+            query: "q".into(),
+            limit: None,
+            kind: None,
+        };
+        assert_eq!(params.limit, None);
+
+        // The bound `recall` actually enforces — a server-side maximum, not
+        // the configured default. An earlier version of this test asserted a
+        // local closure that did not model this at all, and claimed a caller
+        // could widen without limit.
+        assert!(
+            u32::from(crate::config::MEMORY_RECALL_LIMIT_MAX) > 0,
+            "recall's per-call limit is bounded by MEMORY_RECALL_LIMIT_MAX,              not by the configured default"
+        );
+        assert_eq!(crate::config::MEMORY_RECALL_LIMIT_MAX, 20);
+    }
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

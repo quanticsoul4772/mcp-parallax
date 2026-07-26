@@ -138,6 +138,28 @@ Effort levels are `low`, `medium`, `high`, `max`, `xhigh`. An unrecognised suffi
 
 **Effort support varies by model family, and the pairing is not checked at startup.** `claude-haiku-4-5` rejects the parameter, and it is also the natural choice for `PARALLAX_MODEL_BULK` — so `PARALLAX_MODEL_BULK=claude-haiku-4-5` with `PARALLAX_EFFORT_BULK` set will fail every extraction call in a research run. The server does not carry a capability table (it would go stale in the direction that refuses a configuration which would have worked); instead the provider's rejection is surfaced with the model, the level, and both remedies named. The startup routing table prints the resolved model and effort for all twelve sites.
 
+### Caller-facing arguments: what the model can set per call
+
+The environment namespaces above set the **defaults**. A calling model can override the per-task ones on a single invocation, with no file edited and no restart:
+
+| Argument | Tools | Rule |
+|---|---|---|
+| `effort` | `verify` `unstick` `diverge` `decide` `elicit` `grounded_verify` `check` | Any level; unknown values are rejected |
+| `passes` | `verify` `diverge` `grounded_verify` | **Lowering only** — above the configured count is an error naming the ceiling |
+| `constraints.concurrency` | `research` | **Lowering only** — above the ceiling is reduced to it, and the run proceeds |
+| `limit` | `recall` | Any value in range (predates this) |
+| `depth`, `constraints.*` | `research` | Any value in range (predates this) |
+
+Omit them all and outbound requests are byte-identical to a server without the feature.
+
+**Why these and not others.** A setting is the operator's when it sets the terms the account is billed on or governs resources beyond the call — which model runs a call site, egress rate, politeness owed to fetched hosts. It is the caller's when it is a judgment about *this task*: how much reasoning a question warrants, how many passes a claim deserves. Anything that multiplies the number of model calls is lowering-only, because a raise buys work you did not authorise.
+
+**What you give up.** Spend is no longer fully predictable from configuration — a caller can raise effort on one call. `invocation_records.effort` records the override (NULL means none was supplied), so an unexpected cost stays attributable:
+
+```sql
+SELECT tool, model, effort, cost_usd FROM invocation_records ORDER BY cost_usd DESC LIMIT 20;
+```
+
 Every invocation is recorded in SQLite (tool, model, tokens, cost, latency, outcome). When an OTLP endpoint is set, spans and metrics are derived from the same records, so the two surfaces cannot disagree; telemetry failures never affect the server. Research cost note: records carry summed LLM tokens, but Brave bills per request, so its fee is not in `cost_usd` — a named inexactness.
 
 ## Architecture

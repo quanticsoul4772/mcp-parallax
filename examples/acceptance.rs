@@ -79,6 +79,8 @@ async fn main() {
         let params = VerifyParams {
             claim: claim.to_string(),
             context: context.map(String::from),
+            effort: None,
+            passes: None,
         };
         let client = &client;
         let mode = &mode;

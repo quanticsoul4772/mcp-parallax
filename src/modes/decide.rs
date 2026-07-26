@@ -89,6 +89,15 @@ pub struct DecideParams {
     pub options_text: Option<String>,
     /// Optional neutral context/criteria — the only extra subject input.
     pub context: Option<String>,
+    /// Reasoning effort for this call alone. Omit to use the deployment's
+    /// configured level. Not every model family accepts this; when one rejects
+    /// it the error names the model, the level, and the remedies.
+    ///
+    /// Typed rather than a free string so the accepted levels appear in the
+    /// published schema — the consumer of this server is a model reading that
+    /// schema, and a prose-only list is not something it can be constrained by.
+    #[serde(default)]
+    pub effort: Option<crate::routing::Effort>,
 }
 
 impl DecideParams {
@@ -405,6 +414,7 @@ mod tests {
             options: options.iter().map(|s| (*s).to_string()).collect(),
             options_text: None,
             context: None,
+            effort: None,
         }
     }
 

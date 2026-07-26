@@ -41,9 +41,24 @@ impl GroundedDeps {
     /// # Errors
     ///
     /// See [`run`].
-    pub async fn evaluate(&self, params: &GroundedVerifyParams) -> Result<GroundedRun, AppError> {
+    /// Evaluate against the client the server selected for this call (028).
+    ///
+    /// The deps struct binds its client at startup, so a per-call effort has
+    /// nowhere to land without this. Non-optional: every production path
+    /// supplies one, and a `None` arm nothing takes would be a branch only
+    /// tests exercise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] when evidence assembly or the verification passes
+    /// fail — the same classes [`Self::evaluate`] returns.
+    pub async fn evaluate_with(
+        &self,
+        params: &GroundedVerifyParams,
+        client: &dyn ModelClient,
+    ) -> Result<GroundedRun, AppError> {
         run(
-            self.model_client.as_ref(),
+            client,
             self.reader.as_ref(),
             &self.mode,
             params,
@@ -111,6 +126,23 @@ pub struct GroundedVerifyParams {
     pub claim: String,
     /// Source locators to read verbatim as the evidence (non-empty).
     pub locators: Vec<SourceLocator>,
+    /// Reasoning effort for this call alone. Omit to use the deployment's
+    /// configured level. Not every model family accepts this; when one rejects
+    /// it the error names the model, the level, and the remedies.
+    ///
+    /// Typed rather than a free string so the accepted levels appear in the
+    /// published schema — the consumer of this server is a model reading that
+    /// schema, and a prose-only list is not something it can be constrained by.
+    #[serde(default)]
+    pub effort: Option<crate::routing::Effort>,
+    /// Independent passes to run for this call alone. May be **lower** than
+    /// the configured count, never higher — each pass is a whole model call,
+    /// so raising it would buy work the operator did not authorise. Omit to
+    /// use the configured count. Confidence is derived from cross-pass
+    /// agreement, so fewer passes means a narrower basis; the result reports
+    /// the count it actually used.
+    #[serde(default)]
+    pub passes: Option<u8>,
 }
 
 /// What each pass is grammar-constrained to produce.
@@ -274,19 +306,15 @@ pub async fn run(
     max_claim_chars: usize,
 ) -> Result<GroundedRun, AppError> {
     check_claim(&params.claim, max_claim_chars)?;
+    // 028: resolved before any evidence is read, so a rejected count costs
+    // nothing — the ceiling is a caller-input rule, not a runtime failure.
+    let k = crate::modes::resolve_passes(params.passes, mode.ensemble_k)?;
     let assembled = assemble(reader, &params.locators, limits)?;
     let prompt = build_prompt(mode.prompt_template, &params.claim, &assembled.text);
 
-    let passes =
-        futures::future::join_all((0..mode.ensemble_k).map(|_| one_pass(client, mode, &prompt)))
-            .await;
+    let passes = futures::future::join_all((0..k).map(|_| one_pass(client, mode, &prompt))).await;
 
-    aggregate(
-        passes,
-        mode.ensemble_k,
-        assembled.manifest,
-        &assembled.units,
-    )
+    aggregate(passes, k, assembled.manifest, &assembled.units)
 }
 
 /// One blind pass: constrained completion → local validation → typed pass.
@@ -448,6 +476,8 @@ mod tests {
                     end_line: None,
                 })
                 .collect(),
+            effort: None,
+            passes: None,
         }
     }
 
@@ -551,6 +581,43 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("source not found: gone.rs"));
+    }
+
+    /// 028 / FR-012, FR-013: a lowered count runs that many passes and the
+    /// reported count matches.
+    ///
+    /// 028 changed both the fan-out and the `aggregate` denominator here. The
+    /// confidence is the agreement ratio over that denominator, so if the two
+    /// drifted the number would be computed against a pass count that never
+    /// ran — the precise failure the reported count exists to expose.
+    #[tokio::test]
+    async fn a_lowered_pass_count_runs_and_is_reported() {
+        let mode = test_mode(3);
+        let reader = ok_reader();
+        let client = scripted_client(vec![gpass("supported", json!([]), json!([]), false)]);
+
+        let narrowed = GroundedVerifyParams {
+            passes: Some(1),
+            ..params("c", &["a.rs"])
+        };
+        let out = run(&client, &reader, &mode, &narrowed, limits(), 50_000)
+            .await
+            .unwrap();
+        assert_eq!(out.verdict.passes, 1, "the result reports what it ran");
+        assert!(
+            (out.verdict.confidence - 1.0).abs() < f64::EPSILON,
+            "one agreeing pass over a denominator of one is full agreement,              not one third"
+        );
+
+        // Above the ceiling: rejected before any evidence is read.
+        let client = scripted_client(vec![gpass("supported", json!([]), json!([]), false)]);
+        let over = GroundedVerifyParams {
+            passes: Some(9),
+            ..params("c", &["a.rs"])
+        };
+        assert!(run(&client, &reader, &mode, &over, limits(), 50_000)
+            .await
+            .is_err());
     }
 
     #[tokio::test]

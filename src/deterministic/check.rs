@@ -36,14 +36,27 @@ pub struct CheckDeps {
 /// up; `ValidationFailure` (translation-naming message) when both
 /// translation attempts fail. A verdict is NEVER synthesized from a failed
 /// translation (FR-005).
-pub async fn run(
+/// Run against the client the server selected for this call (028).
+///
+/// Taken as a parameter rather than read from `deps` because the deps struct
+/// binds its client at startup, and a per-call effort resolves to a different
+/// one. Non-optional: every production path supplies it, and an `Option` whose
+/// `None` arm nothing takes is a branch the tests would exercise and
+/// production never would.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when translation or engine execution fails — the same
+/// classes [`run`] returns, metered with whatever the attempts were billed.
+pub async fn run_with(
     deps: &CheckDeps,
     params: &CheckParams,
+    client: &dyn ModelClient,
 ) -> Result<(CheckResult, u64, u64), AppError> {
     // 020: as in decide — the violation-fed retry means a failure can follow
     // two translation calls, and those were billed.
     let mut spent = (0_u64, 0_u64);
-    let outcome = run_spent(deps, params, &mut spent).await;
+    let outcome = run_spent(deps, params, client, &mut spent).await;
     outcome.map_err(|error| error.metered(spent.0, spent.1))
 }
 
@@ -51,6 +64,7 @@ pub async fn run(
 async fn run_spent(
     deps: &CheckDeps,
     params: &CheckParams,
+    client: &dyn ModelClient,
     spent: &mut (u64, u64),
 ) -> Result<(CheckResult, u64, u64), AppError> {
     check_text("claim", &params.claim, deps.input_max_chars)?;
@@ -63,7 +77,7 @@ async fn run_spent(
 
     for attempt in 1..=TRANSLATION_ATTEMPTS_MAX {
         let (outcome, inp, out) = translate::translate_once(
-            deps.model_client.as_ref(),
+            client,
             &deps.translate_mode,
             &params.claim,
             params.context.as_deref(),
@@ -314,6 +328,7 @@ mod tests {
         CheckParams {
             claim: claim.to_string(),
             context: None,
+            effort: None,
         }
     }
 
@@ -324,9 +339,16 @@ mod tests {
         let client = client_translating(arithmetic_translation(
             "math::abs(1840 * 0.63 - 1159.2) <= 0.001",
         ));
-        let (result, inp, out) = run(&deps_with(client), &params("63% of 1840 is 1159.2"))
+        let (result, inp, out) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("63% of 1840 is 1159.2"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Supported);
         assert_eq!(result.engine, Some(Engine::Arithmetic));
         assert!(result.formal_form.as_deref().unwrap().contains("math::abs"));
@@ -339,9 +361,16 @@ mod tests {
     #[tokio::test]
     async fn false_arithmetic_claims_are_refuted() {
         let client = client_translating(arithmetic_translation("2^31 - 1 >= 2147483648"));
-        let (result, _, _) = run(&deps_with(client), &params("i32::MAX is at least 2^31"))
+        let (result, _, _) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("i32::MAX is at least 2^31"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Refuted);
         assert!(result.explanation.contains("evaluated to false"));
     }
@@ -354,9 +383,16 @@ mod tests {
             "(declare-const x Int)\n(assert (> x 2))\n(assert (< x 10))",
             "unsatisfiable",
         ));
-        let (result, _, _) = run(&deps_with(client), &params("no x is both >2 and <10"))
+        let (result, _, _) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("no x is both >2 and <10"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Refuted);
         assert_eq!(result.engine, Some(Engine::Constraints));
         assert_eq!(result.engine_result.as_deref(), Some("sat"));
@@ -371,9 +407,16 @@ mod tests {
             "(declare-const a Bool)\n(assert a)\n(assert (not a))",
             "unsatisfiable",
         ));
-        let (result, _, _) = run(&deps_with(client), &params("a and not-a cannot both hold"))
+        let (result, _, _) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("a and not-a cannot both hold"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Supported);
         assert_eq!(result.engine_result.as_deref(), Some("unsat"));
         assert!(result.witness.is_none());
@@ -385,9 +428,16 @@ mod tests {
             "(declare-const x Int)\n(declare-const y Int)\n(assert (= (+ x y) 11))\n(assert (> x 2))",
             "satisfiable",
         ));
-        let (result, _, _) = run(&deps_with(client), &params("x+y=11 with x>2 is solvable"))
+        let (result, _, _) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("x+y=11 with x>2 is solvable"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Supported);
         assert!(result.witness.is_some());
     }
@@ -401,9 +451,16 @@ mod tests {
             "engine": null, "arithmetic_expression": null,
             "smtlib_constraints": null, "asserted": null
         }));
-        let (result, _, _) = run(&deps_with(client), &params("Rust is more elegant than C++"))
+        let (result, _, _) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("Rust is more elegant than C++"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::NotCheckable);
         assert!(result.reason.unwrap().contains("judgment"));
         assert!(result.engine.is_none());
@@ -443,9 +500,16 @@ mod tests {
                     })
                 }
             });
-        let (result, inp, _) = run(&deps_with(client), &params("63% of 1840 is about 1159"))
+        let (result, inp, _) = {
+            let d = &deps_with(client);
+            run_with(
+                &d,
+                &params("63% of 1840 is about 1159"),
+                d.model_client.as_ref(),
+            )
             .await
-            .unwrap();
+        }
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Supported);
         assert_eq!(result.translation_attempts, 2);
         assert_eq!(inp, 20); // both attempts metered
@@ -461,7 +525,11 @@ mod tests {
                 output_tokens: 5,
             })
         });
-        let err = run(&deps_with(client), &params("c")).await.unwrap_err();
+        let err = {
+            let d = &deps_with(client);
+            run_with(&d, &params("c"), d.model_client.as_ref()).await
+        }
+        .unwrap_err();
         assert!(
             matches!(err.root(), AppError::ValidationFailure(_)),
             "{err}"
@@ -481,10 +549,18 @@ mod tests {
         client.expect_complete().times(0);
         let deps = deps_with(client);
 
-        let err = run(&deps, &params("   ")).await.unwrap_err();
+        let err = run_with(&deps, &params("   "), deps.model_client.as_ref())
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
 
-        let err = run(&deps, &params(&"x".repeat(50_001))).await.unwrap_err();
+        let err = run_with(
+            &deps,
+            &params(&"x".repeat(50_001)),
+            deps.model_client.as_ref(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("INPUT_MAX_CHARS"), "{err}");
     }
 }

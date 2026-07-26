@@ -111,6 +111,23 @@ pub struct DivergeParams {
     /// Optional neutral context a pass may consult — the only extra information a
     /// pass receives. There is no slot for the caller's stance or preferred answer.
     pub context: Option<String>,
+    /// Reasoning effort for this call alone. Omit to use the deployment's
+    /// configured level. Not every model family accepts this; when one rejects
+    /// it the error names the model, the level, and the remedies.
+    ///
+    /// Typed rather than a free string so the accepted levels appear in the
+    /// published schema — the consumer of this server is a model reading that
+    /// schema, and a prose-only list is not something it can be constrained by.
+    #[serde(default)]
+    pub effort: Option<crate::routing::Effort>,
+    /// Independent passes to run for this call alone. May be **lower** than
+    /// the configured count, never higher — each pass is a whole model call,
+    /// so raising it would buy work the operator did not authorise. Omit to
+    /// use the configured count. Each pass applies a distinct generative lens,
+    /// so fewer passes means fewer distinct framings returned; the result
+    /// reports the count it actually used.
+    #[serde(default)]
+    pub passes: Option<u8>,
 }
 
 /// What each pass is grammar-constrained to produce (data-model.md).
@@ -223,7 +240,8 @@ pub async fn run(
 
     // Each pass reframes under a distinct lens (research D1/D2): pass i uses
     // LENSES[i % LENSES.len()], so the framings scatter in different directions.
-    let passes = futures::future::join_all((0..mode.ensemble_k).map(|i| {
+    let k = super::resolve_passes(params.passes, mode.ensemble_k)?;
+    let passes = futures::future::join_all((0..k).map(|i| {
         let lens = LENSES[usize::from(i) % LENSES.len()];
         let prompt = build_prompt(
             mode.prompt_template,
@@ -371,6 +389,8 @@ mod tests {
         DivergeParams {
             problem: problem.to_string(),
             context: context.map(ToString::to_string),
+            effort: None,
+            passes: None,
         }
     }
 
@@ -483,6 +503,34 @@ mod tests {
         assert!((jaccard(&a, &b) - 1.0).abs() < f64::EPSILON); // same tokens
         let c = normalize("a totally different sentence");
         assert!(jaccard(&a, &c) < 0.2);
+    }
+
+    /// 028 / FR-012, FR-013: a lowered count runs that many passes and the
+    /// reported count matches.
+    ///
+    /// `diverge` threads `k` into both the fan-out and the aggregation, and
+    /// 028 changed both. Without this the two could drift — the reported count
+    /// describing a different number of passes than actually ran, which is the
+    /// failure the reported count exists to prevent.
+    #[tokio::test]
+    async fn a_lowered_pass_count_runs_and_is_reported() {
+        let mode = test_mode(3);
+        let client = scripted_client(vec![Ok(persp("invert framing", "impl a"))]);
+        let narrowed = DivergeParams {
+            passes: Some(1),
+            ..params("p", None)
+        };
+        let out = run(&client, &mode, &narrowed, 50_000).await.unwrap();
+        assert_eq!(out.result.passes, 1, "the result reports what it ran");
+        assert_eq!(out.result.perspectives.len(), 1);
+
+        // Above the ceiling: rejected, and no pass runs.
+        let client = scripted_client(vec![Ok(persp("invert framing", "impl a"))]);
+        let over = DivergeParams {
+            passes: Some(9),
+            ..params("p", None)
+        };
+        assert!(run(&client, &mode, &over, 50_000).await.is_err());
     }
 
     // ---- T007: the wired path through run ----------------------------------

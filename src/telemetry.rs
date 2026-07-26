@@ -205,6 +205,28 @@ pub struct InvocationRecord {
     /// written before the column existed — the budget a run was held to is
     /// otherwise unrecoverable from the record.
     pub depth: Option<String>,
+    /// The reasoning effort the **caller overrode** for this invocation (028).
+    ///
+    /// The override only — never the configured level. An invocation that fans
+    /// out across call sites can use several *configured* efforts (a research
+    /// run spans four independently routable sites), which one field cannot
+    /// represent; an override is single-valued by construction. It is also the
+    /// only part configuration does not already explain, and explaining spend
+    /// that configuration cannot predict is why this field exists.
+    ///
+    /// `None` means no override was supplied — the configured layers applied,
+    /// and the startup routing table says what they are.
+    pub effort: Option<String>,
+    /// The pass count the **caller overrode** for this invocation (028).
+    ///
+    /// Same criterion as [`Self::effort`]: spend configuration cannot predict
+    /// must stay explainable. A caller asking for one pass against a
+    /// configured three cuts an ensemble's model calls by two thirds, which
+    /// moves spend further than any effort level does — recording one and not
+    /// the other would leave the stated criterion half-applied.
+    ///
+    /// `None` means the configured count ran.
+    pub passes: Option<u32>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -252,6 +274,10 @@ impl InvocationRecord {
             // chainable rather than a parameter so the other five `create`
             // callers stay unchanged.
             depth: None,
+            // Set by `with_effort` at the corrective call sites, chainable for
+            // the same reason as `depth` (028).
+            effort: None,
+            passes: None,
             latency_ms,
             outcome,
             created_at,
@@ -262,6 +288,28 @@ impl InvocationRecord {
     #[must_use]
     pub fn with_depth(mut self, depth: Option<&str>) -> Self {
         self.depth = depth.map(ToString::to_string);
+        self
+    }
+
+    /// Stamp the caller's effort **override** onto the record (028).
+    ///
+    /// Only the override. The configured level is deliberately not written:
+    /// it is constant for the deployment, already printed in the startup
+    /// routing table, and — for an invocation spanning several call sites —
+    /// not a single value at all.
+    #[must_use]
+    pub fn with_effort(mut self, effort: Option<crate::routing::Effort>) -> Self {
+        self.effort = effort.map(|e| e.as_str().to_string());
+        self
+    }
+
+    /// Stamp the caller's pass-count **override** onto the record (028).
+    ///
+    /// Only the override, for the same reason as [`Self::with_effort`]: the
+    /// configured count is constant and already known.
+    #[must_use]
+    pub const fn with_passes(mut self, passes: Option<u32>) -> Self {
+        self.passes = passes;
         self
     }
 

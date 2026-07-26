@@ -36,6 +36,11 @@ pub(super) struct RecordGuard {
     /// that fails or is cancelled still records which ceiling it ran under,
     /// which is precisely the case worth knowing about when sizing budgets.
     depth: Option<String>,
+    /// The caller's effort override (028), or `None` when configuration
+    /// alone decided. Only the override: see `InvocationRecord::with_effort`.
+    effort: Option<crate::routing::Effort>,
+    /// The caller's pass-count override (028), or `None`.
+    passes: Option<u32>,
     started_at: DateTime<Utc>,
     done: bool,
 }
@@ -47,7 +52,7 @@ impl RecordGuard {
         session_id: String,
         tool: String,
         model: String,
-        depth: Option<String>,
+        dims: super::RecordDims,
     ) -> Self {
         let started_at = clock.now();
         Self {
@@ -56,7 +61,9 @@ impl RecordGuard {
             session_id,
             tool,
             model,
-            depth,
+            depth: dims.depth.map(|d| d.as_str().to_string()),
+            effort: dims.effort,
+            passes: dims.passes,
             started_at,
             done: false,
         }
@@ -75,7 +82,9 @@ impl RecordGuard {
             outcome,
             self.started_at,
         )
-        .with_depth(self.depth.as_deref());
+        .with_depth(self.depth.as_deref())
+        .with_effort(self.effort)
+        .with_passes(self.passes);
         // One measurement, two sinks (007 FR-009): tracing + telemetry, both
         // derived from this record value via the single publish() door.
         record.publish();
@@ -103,7 +112,9 @@ impl Drop for RecordGuard {
             Outcome::Cancelled,
             self.started_at,
         )
-        .with_depth(self.depth.as_deref());
+        .with_depth(self.depth.as_deref())
+        .with_effort(self.effort)
+        .with_passes(self.passes);
         record.publish();
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {

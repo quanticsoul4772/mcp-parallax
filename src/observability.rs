@@ -373,6 +373,17 @@ pub fn emit_invocation(record: &InvocationRecord) {
     if let Some(depth) = record.depth.as_ref() {
         attributes.push(KeyValue::new("parallax.depth", depth.clone()));
     }
+    // 028: the caller's effort override, on the same present-or-absent
+    // reasoning as depth — absent means configuration decided, which is
+    // already knowable, so an attribute on every span would say nothing. The
+    // 007 contract requires the exported surface and the record to agree; a
+    // column with no attribute is exactly the disagreement it forbids.
+    if let Some(effort) = record.effort.as_ref() {
+        attributes.push(KeyValue::new("parallax.effort", effort.clone()));
+    }
+    if let Some(passes) = record.passes {
+        attributes.push(KeyValue::new("parallax.passes", i64::from(passes)));
+    }
     if record.outcome != Outcome::Success {
         attributes.push(KeyValue::new("error.type", outcome));
     }
@@ -705,6 +716,8 @@ mod tests {
             usage_by_model: crate::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
             cost_estimated: false,
             depth: None,
+            effort: None,
+            passes: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")
