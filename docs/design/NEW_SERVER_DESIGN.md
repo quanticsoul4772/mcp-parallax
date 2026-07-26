@@ -512,6 +512,33 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
 - **Off by default, gated, read-only first** — every new capability (network egress,
   code execution, self-mutation if any) is opt-in like the existing `SELF_HEAL_*`
   flags.
+- **Operator-owned vs caller-owned: the test is *whose judgment is it*, not
+  *what is convenient to configure*** (028). A setting belongs to the
+  **operator** when it sets the terms the account is billed on or governs
+  resources beyond this call — which model runs a call site, egress rate,
+  politeness owed to fetched hosts. It belongs to the **caller** when it is a
+  judgment about *this task* that a model in the middle of the task is best
+  placed to make — how much reasoning a question warrants, how many independent
+  passes a claim deserves, how much context a query needs.
+
+  The consumer of this server is a model, so a caller-owned setting reachable
+  only through a config file and a restart is unreachable in practice: changing
+  it destroys the context that motivated changing it.
+
+  Two rules keep the caller's half bounded. **Anything that multiplies the
+  number of model calls is lowering-only** — a caller may narrow a pass count or
+  a concurrency, never widen it, because a raise buys work the operator did not
+  authorise. And **whatever configuration can no longer predict, the invocation
+  record must explain**: a caller override is recorded, so an unexplained cost
+  stays attributable.
+
+  This was learned by getting it wrong. 022 put reasoning effort in an
+  environment namespace by mirroring 018's model-routing shape — a copy, not a
+  decision — while `research`'s `depth`/`constraints` and `recall`'s `limit`
+  were already caller-facing in the same codebase. 028 corrected effort, pass
+  count, and research concurrency. **The remaining configuration variables were
+  not audited against this test**; the rule's presence here is not evidence it
+  has been applied everywhere.
 
 ---
 

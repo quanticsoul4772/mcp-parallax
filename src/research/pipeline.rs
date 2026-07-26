@@ -164,8 +164,27 @@ pub async fn run(
     fetcher: &dyn Fetcher,
     params: &ResearchParams,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
+    run_at(deps, fetcher, params, deps.concurrency).await
+}
+
+/// Run at a caller-reduced concurrency (028 FR-015).
+///
+/// `concurrency` is the **effective** value: the server clamps a caller's
+/// request to the configured ceiling before it gets here, so this is only ever
+/// at or below `deps.concurrency`.
+///
+/// # Errors
+///
+/// Returns [`AppError`] for the same classes [`run`] does, metered with
+/// whatever the run had already spent.
+pub async fn run_at(
+    deps: &ResearchDeps,
+    fetcher: &dyn Fetcher,
+    params: &ResearchParams,
+    concurrency: usize,
+) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered(deps, fetcher, params, &meter).await;
+    let outcome = run_metered_at(deps, fetcher, params, &meter, concurrency).await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -180,11 +199,12 @@ pub async fn run(
 }
 
 #[allow(clippy::too_many_lines)] // the five-phase spine reads best unbroken; helpers carry the logic
-async fn run_metered(
+async fn run_metered_at(
     deps: &ResearchDeps,
     fetcher: &dyn Fetcher,
     params: &ResearchParams,
     meter: &RunMeter,
+    concurrency: usize,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
@@ -262,7 +282,7 @@ async fn run_metered(
     candidates.truncate(settings.max_sources);
 
     // ---- (3) FETCH + EXTRACT — per-source pipeline, no cross-source barrier
-    let semaphore = Arc::new(Semaphore::new(deps.concurrency));
+    let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
         let mut tasks = Vec::new();
@@ -632,6 +652,10 @@ async fn verify_claim(
         .join("\n\n");
     let verify_params = VerifyParams {
         claim: claim.text.clone(),
+        // Internal to the research pipeline; `research` exposes no effort
+        // argument (028 FR-011), so this takes the configured level.
+        effort: None,
+        passes: None,
         context: Some(format!(
             "Source excerpts the claim was extracted from:\n\n{context}"
         )),

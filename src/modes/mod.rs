@@ -317,3 +317,89 @@ mod tests {
         assert!(err.to_string().contains("duplicate mode id"), "{err}");
     }
 }
+
+/// Resolve the pass count for one call (028 FR-012, FR-012a).
+///
+/// Override else configured, and **never above** the configured value. A
+/// caller lowering the count is judging that this claim does not warrant a
+/// full ensemble; a caller raising it would be spending the operator's budget
+/// on parallel model calls they did not authorise. The asymmetry with the
+/// effort argument is deliberate: effort changes how one call's budget is
+/// spent, while the pass count multiplies the number of calls.
+///
+/// # Errors
+///
+/// Returns [`AppError::InvalidInput`] when the requested count is zero or
+/// exceeds the configured ceiling — a rejection, not a clamp, because a caller
+/// that asked for more rigor and silently got less would read the resulting
+/// confidence as if it rested on the wider basis.
+pub(crate) fn resolve_passes(requested: Option<u8>, configured: u8) -> Result<u8, AppError> {
+    let Some(k) = requested else {
+        return Ok(configured);
+    };
+    if k == 0 {
+        return Err(AppError::InvalidInput(
+            "passes must be at least 1".to_string(),
+        ));
+    }
+    if k > configured {
+        return Err(AppError::InvalidInput(format!(
+            "passes must not exceed the configured count of {configured}; a call may request fewer passes than the deployment allows, never more"
+        )));
+    }
+    Ok(k)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod pass_count_tests {
+    use super::*;
+
+    /// 028 T024/T025/T026 / FR-012, FR-012a: lowering is the caller's
+    /// judgment; raising is not the caller's to make.
+    ///
+    /// The ceiling is a **rejection**, not a clamp — the opposite of how
+    /// research concurrency is treated, and deliberately so. A silently
+    /// reduced pass count would make the returned confidence rest on a
+    /// narrower basis than the caller believes, and confidence is exactly what
+    /// a caller reads this tool for. Concurrency carries no such meaning, so it
+    /// clamps.
+    #[test]
+    fn a_call_may_narrow_the_ensemble_but_never_widen_it() {
+        // Omitted: the configured count, unchanged.
+        assert_eq!(resolve_passes(None, 3).unwrap(), 3);
+
+        // Lower: honoured exactly.
+        assert_eq!(resolve_passes(Some(1), 3).unwrap(), 1);
+        assert_eq!(resolve_passes(Some(2), 3).unwrap(), 2);
+
+        // Equal to the ceiling: allowed, not an off-by-one rejection.
+        assert_eq!(resolve_passes(Some(3), 3).unwrap(), 3);
+
+        // Higher: rejected, and the message states the ceiling so the caller
+        // can retry at a count that will be honoured.
+        let err = resolve_passes(Some(4), 3).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains('3'), "must name the ceiling: {text}");
+        assert!(
+            text.contains("never more") || text.contains("not exceed"),
+            "must say which direction is allowed: {text}"
+        );
+
+        // Zero is a caller error too — distinct from omitting the field, which
+        // means "use the default", not "run nothing".
+        assert!(resolve_passes(Some(0), 3).is_err());
+        assert_eq!(resolve_passes(None, 1).unwrap(), 1);
+    }
+
+    /// 028 FR-012a: the ceiling follows the *configured* value, so a
+    /// deployment that raised or lowered `VERIFY_ENSEMBLE_K` moves it with
+    /// them. Pinned because hard-coding 3 here would pass today and silently
+    /// bound every deployment to the default.
+    #[test]
+    fn the_ceiling_is_the_configured_count_not_a_constant() {
+        assert_eq!(resolve_passes(Some(5), 7).unwrap(), 5);
+        assert!(resolve_passes(Some(5), 4).is_err());
+        assert!(resolve_passes(Some(2), 1).is_err());
+    }
+}

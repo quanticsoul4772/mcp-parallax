@@ -15,7 +15,7 @@
 
 use mcp_parallax::client::AnthropicClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::deterministic::check::{run, CheckDeps};
+use mcp_parallax::deterministic::check::{run_with, CheckDeps};
 use mcp_parallax::deterministic::contract::CheckParams;
 use mcp_parallax::deterministic::translate::{register, TRANSLATE_MODE_ID};
 use mcp_parallax::deterministic::Verdict;
@@ -115,6 +115,7 @@ fn params(claim: &str) -> CheckParams {
     CheckParams {
         claim: claim.to_string(),
         context: None,
+        effort: None,
     }
 }
 
@@ -126,7 +127,7 @@ async fn main() {
 
     let (mut correct, mut audited, mut completed) = (0_u32, 0_u32, 0_u32);
     for (claim, expected) in GROUND_TRUTH {
-        match run(&deps, &params(claim)).await {
+        match run_with(&deps, &params(claim), deps.model_client.as_ref()).await {
             Ok((result, _, _)) => {
                 completed += 1;
                 let ok = result.verdict == *expected;
@@ -155,7 +156,7 @@ async fn main() {
 
     let mut declined = 0_u32;
     for claim in UNCHECKABLE {
-        match run(&deps, &params(claim)).await {
+        match run_with(&deps, &params(claim), deps.model_client.as_ref()).await {
             Ok((result, _, _)) => {
                 let ok = result.verdict == Verdict::NotCheckable;
                 if ok {
@@ -176,8 +177,12 @@ async fn main() {
     // engine result. (Engine-level determinism is unit-pinned; this repeats
     // one live claim and compares engine results when the forms agree.)
     let claim = "15% of 240 is 36.";
-    let (first, _, _) = run(&deps, &params(claim)).await.expect("repeat 1");
-    let (second, _, _) = run(&deps, &params(claim)).await.expect("repeat 2");
+    let (first, _, _) = run_with(&deps, &params(claim), deps.model_client.as_ref())
+        .await
+        .expect("repeat 1");
+    let (second, _, _) = run_with(&deps, &params(claim), deps.model_client.as_ref())
+        .await
+        .expect("repeat 2");
     let deterministic =
         first.formal_form != second.formal_form || first.engine_result == second.engine_result;
     println!(

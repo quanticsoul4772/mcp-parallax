@@ -16,6 +16,15 @@ pub struct CheckParams {
     pub claim: String,
     /// Optional background the claim depends on (definitions, given values).
     pub context: Option<String>,
+    /// Reasoning effort for this call alone. Omit to use the deployment's
+    /// configured level. Not every model family accepts this; when one rejects
+    /// it the error names the model, the level, and the remedies.
+    ///
+    /// Typed rather than a free string so the accepted levels appear in the
+    /// published schema — the consumer of this server is a model reading that
+    /// schema, and a prose-only list is not something it can be constrained by.
+    #[serde(default)]
+    pub effort: Option<crate::routing::Effort>,
 }
 
 /// `check` output.

@@ -46,6 +46,7 @@ fn test_config(timeout_ms: u64) -> Config {
         log_level: "info".into(),
         request_timeout_ms: timeout_ms,
         max_retries: 1,
+        anthropic_api_base: "http://127.0.0.1:1".into(),
     }
 }
 
@@ -68,7 +69,11 @@ async fn serve(
     Arc<SqliteStorage>,
     rmcp::service::RunningService<rmcp::service::RoleServer, Parallax>,
 ) {
-    let config = test_config(timeout_ms);
+    let mut config = test_config(timeout_ms);
+    // 028: the whole pool — including the per-effort variants — resolves
+    // against the mock. Without this only the injected client was redirected,
+    // so any call carrying an effort left the seam for the live endpoint.
+    config.anthropic_api_base = mock.uri();
     let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
     let anthropic =
         Arc::new(AnthropicClient::with_base_url(&config, &mock.uri()).with_backoff_base_ms(1));
@@ -660,12 +665,25 @@ fn mount_embeddings(mock: &MockServer) -> impl std::future::Future<Output = ()> 
 
 // ---- T014: catalog gating (FR-007) ----------------------------------------
 
-/// 018 T013 (FR-003, FR-005a, FR-016): routing is an operator concern, not a
-/// caller one. No tool may expose a model as an input, and enabling routing
-/// must not add a tool. If a caller could name a model, routing would stop
-/// being a property of the deployment and start being negotiable per call —
-/// and the cost attribution on the record would no longer be predictable from
-/// configuration alone.
+/// 018 T013, re-grounded by 028 (FR-003, FR-005a, FR-016; 028 FR-008, FR-011):
+/// **model** selection is an operator concern. Effort is not.
+///
+/// 018 wrote this as "routing is an operator concern, not a caller one" and
+/// 028 narrowed it, so the comment is corrected rather than left to pass on a
+/// technicality — an `effort` property satisfies the original assertion by
+/// accident, since it names neither a model nor a tier.
+///
+/// The distinction that survives: which model runs a call site sets the rate
+/// the operator is billed at, so a caller naming one would make cost
+/// unpredictable from configuration *and* unattributable. How much reasoning
+/// one task deserves is a per-task judgment the caller is best placed to make,
+/// and its cost stays bounded by `MAX_TOKENS` and recorded per invocation.
+///
+/// So this now asserts both halves: no tool exposes a model or tier, and
+/// exactly the seven correctives expose `effort` — `research` (which has
+/// `depth` and `constraints`), the memory tools (whose model hop is `save`'s
+/// trust gate, not the caller's task), and the
+/// `checkpoint_*` tools (harness-triggered) must not.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn routing_is_invisible_to_callers_no_model_input_and_no_new_tool() {
     let mock = MockServer::start().await;
@@ -702,6 +720,47 @@ async fn routing_is_invisible_to_callers_no_model_input_and_no_new_tool() {
             tool.name
         );
     }
+
+    // 028 FR-011: effort is exposed on exactly the seven correctives — asserted
+    // as an exact set, not containment. A containment check would pass for a
+    // future tool that sprouts the argument, which is the drift this guards.
+    // `grounded_verify` needs its root configured to be in the catalog at all,
+    // so it is asserted in the sibling test below rather than silently omitted.
+    let with_effort: std::collections::BTreeSet<&str> = tools
+        .iter()
+        .filter(|t| {
+            t.input_schema
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .is_some_and(|p| p.contains_key("effort"))
+        })
+        .map(|t| t.name.as_ref())
+        .collect();
+    let expected: std::collections::BTreeSet<&str> =
+        ["verify", "unstick", "diverge", "decide", "elicit", "check"]
+            .into_iter()
+            .collect();
+    assert_eq!(
+        with_effort, expected,
+        "exactly the always-on correctives expose `effort`"
+    );
+
+    // The same exactness for the pass count, which is narrower still.
+    let with_passes: std::collections::BTreeSet<&str> = tools
+        .iter()
+        .filter(|t| {
+            t.input_schema
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .is_some_and(|p| p.contains_key("passes"))
+        })
+        .map(|t| t.name.as_ref())
+        .collect();
+    assert_eq!(
+        with_passes,
+        ["verify", "diverge"].into_iter().collect(),
+        "only the ensemble tools take a pass count"
+    );
 
     // The catalog is gated by capability keys alone; routing adds nothing.
     assert!(
@@ -3622,4 +3681,41 @@ async fn elicit_recalls_a_trusted_preference_into_the_prompt() {
     assert_eq!(s["memory_consulted"], true);
     assert_eq!(s["assumed_objective"], "Add a caching service");
     client.cancel().await.unwrap();
+}
+
+/// 028 FR-011: `grounded_verify` — the seventh corrective — exposes `effort`
+/// and `passes`.
+///
+/// Separate from the exact-set test above because this tool is catalog-gated
+/// on `GROUNDED_VERIFY_ROOT`: without a root it is not in the catalog at all,
+/// so the exactness assertion there would either have to omit it silently or
+/// be weakened to containment. Neither is acceptable, so it gets its own
+/// fixture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_gated_seventh_corrective_also_takes_effort_and_passes() {
+    let mock = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, &dir.path().to_string_lossy()).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let gv = tools
+        .iter()
+        .find(|t| t.name == "grounded_verify")
+        .expect("the root is configured, so the tool must be in the catalog");
+    let props = gv
+        .input_schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .expect("input schema has properties");
+
+    assert!(props.contains_key("effort"), "{:?}", props.keys());
+    assert!(props.contains_key("passes"), "{:?}", props.keys());
+
+    // And the accepted levels are in the schema, not only in prose — the
+    // consumer is a model reading it.
+    let rendered = serde_json::to_string(&gv.input_schema).unwrap();
+    for level in ["low", "medium", "high", "max", "xhigh"] {
+        assert!(rendered.contains(level), "schema must name `{level}`");
+    }
 }

@@ -11,6 +11,62 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+### Added
+
+* **Per-call reasoning effort, pass count, and research concurrency (028)** —
+  the calling model can now set these for a single invocation, with no file
+  edited and no session restarted. `effort` on the seven correctives (`verify`,
+  `unstick`, `diverge`, `decide`, `elicit`, `grounded_verify`, `check`),
+  `passes` on the three ensemble tools, and `constraints.concurrency` on
+  `research`. Every argument is optional; omit them all and outbound requests
+  are byte-identical to before.
+
+  **Why this was wrong before.** 022 put effort in `PARALLAX_EFFORT_*` by
+  mirroring 018's `PARALLAX_MODEL_*` shape — a copy, not a decision. The two
+  are not the same kind of knob: which model runs a call site sets the rate the
+  operator is billed at, while how much reasoning one task deserves is a
+  per-task judgment. The consumer of this server is a model, so a control
+  reachable only by editing JSON and restarting is unreachable in practice.
+  `research`'s `depth` and `recall`'s `limit` were already caller-facing in the
+  same codebase; the test that distinguishes them is now recorded in
+  `NEW_SERVER_DESIGN.md` §10. `MEMORY_RECALL_LIMIT` needed no work — `recall`
+  already took a per-call `limit`, and it is now cited as the prior art with a
+  confirming test.
+
+  **Lowering only, for anything that multiplies model calls.** `passes` and
+  `concurrency` may be reduced by a caller, never raised: each raise buys work
+  the operator did not authorise. They differ in how the ceiling is enforced,
+  deliberately — an over-large `passes` is **rejected**, because a silently
+  reduced count would make the returned confidence rest on a narrower basis
+  than the caller believes, and confidence is what the tool is read for. An
+  over-large `concurrency` is **clamped**, because it is advice about running
+  work already authorised and failing a valid run over a performance hint costs
+  more than it protects. Effort is exempt from the rule: it changes how one
+  call's budget is spent, and `MAX_TOKENS` already caps that.
+
+  **Spend stays explainable.** `invocation_records` gains nullable `effort` and
+  `passes` columns holding the caller's **overrides only** — never the configured level,
+  which is constant, already printed in the startup routing table, and not a
+  single value at all for an invocation spanning several call sites. Additive
+  migration on the `depth` pattern, and both are exported as
+  `parallax.effort`/`parallax.passes` spans attributes so the SQLite record and
+  the OTLP surface cannot disagree — the property the 007 contract exists to
+  guarantee.
+
+  `ANTHROPIC_API_BASE` is now configurable. It exists for the test suite: the
+  per-effort clients were previously built against a hard-coded production
+  endpoint, so a call carrying an effort left the `ModelClient` seam entirely
+  and a `cargo test` run opened real connections to the Anthropic API. Pointing
+  the whole pool at one base makes the suite hermetic, which Principle IV
+  requires and which is what let the wire-level test for this feature exist at
+  all.
+
+  Internally, the client pool now pre-builds every `(routed model, effort
+  level)` pair over one shared HTTP transport. The set is bounded at six effort
+  states by the routed model count, so a per-call effort is a lookup rather
+  than a construction — and the `ModelClient` seam is untouched, upholding 018
+  research D2 rather than reversing it.
+
 ### Changed
 
 * **An effort rejection names which setting caused it (027)** — when the

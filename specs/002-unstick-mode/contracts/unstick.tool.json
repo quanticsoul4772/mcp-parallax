@@ -7,7 +7,7 @@
     "properties": {
       "goal": {
         "type": "string",
-        "description": "What you are ultimately trying to accomplish. Arg-drop fallback: if your client cannot reliably serialize `blocked` (it arrives missing), append it here as `||BLOCKED|| <the blocker>` — the server recovers it and strips the block.",
+        "description": "What you are ultimately trying to accomplish. Arg-drop fallback: if your client cannot reliably serialize `blocked` (it arrives missing), append it here as `||BLOCKED|| <the blocker>` \u2014 the server recovers it and strips the block.",
         "minLength": 1
       },
       "blocked": {
@@ -17,11 +17,26 @@
       },
       "tried": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Approaches already attempted. The returned step will not restate any of these."
+      },
+      "effort": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "max",
+          "xhigh"
+        ],
+        "description": "Reasoning effort for this call alone. Omit to use the deployment's configured level. Not every model family accepts this; when one rejects it the error names the model, the level, and the remedies."
       }
     },
-    "required": ["goal"],
+    "required": [
+      "goal"
+    ],
     "additionalProperties": false
   },
   "outputSchema": {
@@ -37,11 +52,18 @@
         "description": "Why this step breaks the loop, in one or two sentences."
       },
       "watch_for": {
-        "type": ["string", "null"],
+        "type": [
+          "string",
+          "null"
+        ],
         "description": "One pitfall likely to derail the step, or null."
       }
     },
-    "required": ["next_step", "rationale", "watch_for"],
+    "required": [
+      "next_step",
+      "rationale",
+      "watch_for"
+    ],
     "additionalProperties": false
   }
 }

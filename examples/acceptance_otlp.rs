@@ -66,6 +66,7 @@ fn config() -> Config {
         log_level: "info".into(),
         request_timeout_ms: 5_000,
         max_retries: 1,
+        anthropic_api_base: "http://127.0.0.1:1".into(),
     }
 }
 
@@ -127,6 +128,8 @@ async fn main() {
         usage_by_model: mcp_parallax::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
         cost_estimated: false,
         depth: None,
+        effort: None,
+        passes: None,
         latency_ms: 1,
         outcome: mcp_parallax::error::Outcome::Success,
         created_at: chrono::Utc::now(),

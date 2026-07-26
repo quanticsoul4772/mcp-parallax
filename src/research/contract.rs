@@ -40,6 +40,15 @@ pub struct Constraints {
     /// Hard wall-clock ceiling; hitting it synthesizes early with
     /// stopped_early set.
     pub deadline_ms: Option<u64>,
+    /// Maximum concurrent fetch/extract/verify tasks for this run (028).
+    ///
+    /// **Lowering only.** A value above the deployment's configured ceiling is
+    /// reduced to it and the run proceeds — concurrency is advice about how to
+    /// run work the caller already authorised, not a correctness input, so
+    /// failing the whole run over it would cost more than it protects. It is
+    /// also not the caller's to raise: it governs the operator's egress rate
+    /// and the politeness budget owed to fetched hosts.
+    pub concurrency: Option<u32>,
 }
 
 /// `research` output.
@@ -251,4 +260,36 @@ mod tests {
             Value::String("unverified".into())
         );
     }
+}
+
+/// The concurrency a run actually uses (028 FR-015).
+///
+/// Lives here, not inline in the server, so the test exercises the production
+/// expression rather than a copy of it — a re-implemented clamp asserted
+/// against itself stays green when the real one is deleted.
+///
+/// Above the configured ceiling is **reduced**, not rejected: concurrency is
+/// advice about running work the caller already authorised, and failing an
+/// otherwise valid run over a scheduling hint costs more than it protects. A
+/// pass count is different in kind — it is the basis for the returned
+/// confidence — so that one errors instead.
+///
+/// # Errors
+///
+/// Returns [`crate::error::AppError::InvalidInput`] for zero. The published
+/// schema says `minimum: 1`; silently rewriting a value the contract calls
+/// invalid would be a swallowed input, not a specified ceiling.
+pub fn effective_concurrency(
+    requested: Option<u32>,
+    configured: usize,
+) -> Result<usize, crate::error::AppError> {
+    let Some(n) = requested else {
+        return Ok(configured);
+    };
+    if n == 0 {
+        return Err(crate::error::AppError::InvalidInput(
+            "concurrency must be at least 1".to_string(),
+        ));
+    }
+    Ok((n as usize).min(configured))
 }

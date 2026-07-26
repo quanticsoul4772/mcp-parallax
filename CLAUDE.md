@@ -176,6 +176,27 @@ production 2026-07-25. No capability table ships: it would go stale in the
 direction that refuses a working configuration. Instead the client appends the
 model, the level, and both remedies to the provider's rejection (027).
 
+### Caller-facing per-call arguments (028)
+
+The namespaces above are **defaults**; the calling model overrides the per-task
+ones per invocation, no restart. `effort` on the seven correctives; `passes` on
+`verify`/`diverge`/`grounded_verify`; `constraints.concurrency` on `research`.
+`recall`'s `limit` and `research`'s `depth` predate this and are the cited prior
+art. All optional — omit them and requests are byte-identical.
+
+**Lowering only for anything that multiplies model calls.** `passes` above the
+configured count is an **error** (a silently narrowed ensemble would make the
+returned confidence rest on a basis the caller does not know about);
+`concurrency` above the ceiling is **clamped** (advice about running authorised
+work, so failing the run costs more than it protects). Effort is exempt —
+`MAX_TOKENS` already caps one call.
+
+`invocation_records.effort` holds the **override only**, never the configured
+level: the latter is constant, printed at startup, and not single-valued for an
+invocation spanning several call sites. The operator-owned vs caller-owned test
+is in `NEW_SERVER_DESIGN.md` §10; the remaining config variables were not
+audited against it.
+
 ## Conventions (carried over from `mcp-reasoning`, compiler-enforced)
 
 - `#![forbid(unsafe_code)]`. No `unwrap`/`expect` in production paths — denied via
@@ -249,36 +270,47 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active: `021-research-confidence-aggregation` — plan complete, tasks not yet
-generated. Plan:
-[specs/021-research-confidence-aggregation/plan.md](specs/021-research-confidence-aggregation/plan.md)
-(spec, research, data-model, contracts/output-contract.md, and quickstart alongside
-it).
+Active: `028-per-call-effort-argument` — plan complete, tasks not yet generated.
+Plan:
+[specs/028-per-call-effort-argument/plan.md](specs/028-per-call-effort-argument/plan.md)
+(spec, research, data-model, contracts/tool-surface.md, and quickstart alongside it).
 
-`research` reports overall confidence as `mean(finding_confidences) * coverage`,
-where coverage subtracts the length of the model's free-form gap list from the count
-of scoped sub-questions. The two lists have no correspondence, and the gap cap (10)
-exceeds the sub-question cap (7), so the term reaches exactly zero by construction —
-observed twice on live runs whose answers were correct and whose per-claim support
-was ~0.78. A confidence of exactly 0 asserts certainty of falsehood, and a caller
-that learns the field reads 0 on correct answers stops reading it.
+Reasoning effort is unreachable by the caller. 022 put it in `PARALLAX_EFFORT_*`
+by mirroring 018's `PARALLAX_MODEL_*` shape — a copy, not a decision. The two are
+not the same kind of knob: which model runs a call site sets the rate the operator
+is billed at, while how much reasoning one invocation deserves is a per-task
+judgment the caller makes. The codebase already had the right pattern twice —
+`research`'s `depth`/`constraints` and `recall`'s `limit` — and 022 walked past
+both.
 
-The fix separates the quantities the number folded together. The synthesis hop gains
-an index-aligned `gap_targets` array (1-based sub-question, 0 = none) — parallel
-arrays because Principle II forbids nesting in a mode schema, following the idiom
-`decide` already uses. The server counts unclaimed sub-questions and publishes
-`coverage`, a per-sub-question `settled` status, and a `refutation_rate` as their own
-fields; `confidence` keeps the findings' mean support alone. `gaps` keeps its wire
-shape. Verification, support labelling, and per-claim confidence are untouched.
+Scope is four settings. **effort** becomes an optional argument on the seven
+correctives (`verify` `unstick` `diverge` `decide` `elicit` `grounded_verify`
+`check`); **`VERIFY_ENSEMBLE_K`** becomes per-call `passes` on the three ensemble
+tools, with `passes_used` always reported since confidence derives from cross-pass
+agreement; **`RESEARCH_CONCURRENCY`** joins `research`'s existing `constraints`;
+**`MEMORY_RECALL_LIMIT`** needs no work — `recall` already takes a per-call
+`limit`, so it becomes a confirming test and the cited precedent. Env stays the
+default layer; unset at every layer still sends no `effort` field at all.
 
-Four design questions were settled by a `decide` pass then a `verify` confirmation
-pass; **two of the four recommendations were overturned by their confirmation** —
-deriving the claim-to-sub-question association by deterministic text matching
-(refuted 3/3: lexical overlap is neither necessary nor sufficient for answerhood) and
-blending the coverage multiplier rather than splitting the field (refuted 3/3). Named
-residual: an in-range-but-wrong `gap_target` is indistinguishable from a correct one
-at the server, accepted knowingly because the status quo trusts the same pass for the
-same number with no bound at all. Next: `/speckit-tasks`.
+**Lowering-only is the rule for anything that multiplies spend.** `passes` and
+`concurrency` may be reduced by the caller, never raised — each raise buys model
+calls the operator did not authorise. Effort is deliberately exempt: it selects
+how one call's budget is spent, and `MAX_TOKENS` already caps that.
+
+The plan's central question — how a per-call effort reaches a client pool keyed on
+`(model, effort)` and built at startup — is settled by a third option the spec did
+not name (research D1): **eagerly pre-build the full (routed model × six effort
+states) cross product over one shared `reqwest::Client`**. At most 72 entries,
+realistically under 12. The `ModelClient` seam is untouched, so 018 D2 stands and
+every mock still compiles, and neither path allocates per call. Named residual:
+D3's concurrency clamp is the one place a caller value is altered rather than
+honoured or rejected — recorded on the invocation record so both values stay
+recoverable, with rejection named as the alternative if review disagrees.
+
+Effort lands on the invocation record (additive `effort TEXT` column, the `depth`
+pattern) rather than in any tool's output, because it changes what a call costs,
+not how its answer reads. That record is what keeps spend explainable once it stops
+being predictable from configuration. Next: `/speckit-tasks`.
 <!-- SPECKIT END -->
 
 ## Working style

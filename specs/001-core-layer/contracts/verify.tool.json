@@ -1,5 +1,5 @@
 {
-  "$comment": "MCP tool contract for `verify`. inputSchema/outputSchema are what the server advertises in its tool catalog. outputSchema is the AGGREGATED tool result; the per-pass model schema is the same shape minus `confidence`/`passes` (see data-model.md §3-4). The sanitized (Anthropic-grammar) form is derived from this by the schema sanitizer at startup; the constraints below that the grammar cannot enforce (minimum/maximum on confidence, minLength on claim) are enforced by the local validator.",
+  "$comment": "MCP tool contract for `verify`. inputSchema/outputSchema are what the server advertises in its tool catalog. outputSchema is the AGGREGATED tool result; the per-pass model schema is the same shape minus `confidence`/`passes` (see data-model.md \u00a73-4). The sanitized (Anthropic-grammar) form is derived from this by the schema sanitizer at startup; the constraints below that the grammar cannot enforce (minimum/maximum on confidence, minLength on claim) are enforced by the local validator.",
   "name": "verify",
   "description": "Independently verify a claim. Runs multiple parallel verification passes that see only the claim and optional context - never the requester's stance or conversation. Returns a structured verdict: supported or refuted, specific concrete findings (every refutation names the exact error), and a confidence score derived from cross-pass agreement. Use when an assertion matters and being confidently wrong is costly.",
   "inputSchema": {
@@ -13,9 +13,27 @@
       "context": {
         "type": "string",
         "description": "Optional supporting context the verifier may consult. This is the only extra information a verification pass receives."
+      },
+      "effort": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "max",
+          "xhigh"
+        ],
+        "description": "Reasoning effort for this call alone. Omit to use the deployment's configured level. Not every model family accepts this; when one rejects it the error names the model, the level, and the remedies."
+      },
+      "passes": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Independent passes to run for this call alone. May be lower than the configured count, never higher - each pass is a whole model call. Omit to use the configured count. Confidence is derived from cross-pass agreement, so fewer passes means a narrower basis; the result reports the count it actually used."
       }
     },
-    "required": ["claim"],
+    "required": [
+      "claim"
+    ],
     "additionalProperties": false
   },
   "outputSchema": {
@@ -23,12 +41,17 @@
     "properties": {
       "verdict": {
         "type": "string",
-        "enum": ["supported", "refuted"],
+        "enum": [
+          "supported",
+          "refuted"
+        ],
         "description": "Majority verdict across passes; ties resolve to refuted."
       },
       "findings": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Deduplicated specific findings from the majority-side passes. Non-empty whenever verdict is refuted."
       },
       "confidence": {
@@ -43,7 +66,12 @@
         "description": "Number of verification passes that completed."
       }
     },
-    "required": ["verdict", "findings", "confidence", "passes"],
+    "required": [
+      "verdict",
+      "findings",
+      "confidence",
+      "passes"
+    ],
     "additionalProperties": false
   }
 }

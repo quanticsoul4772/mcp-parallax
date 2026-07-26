@@ -36,6 +36,15 @@ pub struct Config {
     /// [`DEFAULT_MODEL`]. The fall-through for every call site that no
     /// `PARALLAX_MODEL_*` setting routes elsewhere.
     pub anthropic_model: String,
+    /// Anthropic API base URL. `ANTHROPIC_API_BASE`, default
+    /// `https://api.anthropic.com`.
+    ///
+    /// Exists so the whole client pool — including the per-effort variants 028
+    /// builds — can be pointed at a test double. Before this, only the single
+    /// injected client could be redirected, so any call carrying an effort
+    /// left the `ModelClient` seam and reached the live endpoint from inside
+    /// the test suite (Principle IV).
+    pub anthropic_api_base: String,
     /// Per-call-site model routing (018). Resolved from the reserved
     /// `PARALLAX_MODEL_*` namespace over [`Self::anthropic_model`]; with
     /// nothing set every call site resolves to that default.
@@ -115,6 +124,8 @@ impl Config {
             return Err(ConfigError::MissingRequired("ANTHROPIC_API_KEY"));
         }
 
+        let anthropic_api_base = std::env::var("ANTHROPIC_API_BASE")
+            .unwrap_or_else(|_| crate::client::anthropic::ANTHROPIC_API_BASE.to_string());
         let anthropic_model =
             std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
         // Routing resolves over the default model. A bad `PARALLAX_MODEL_*`
@@ -167,6 +178,7 @@ impl Config {
         Ok(Self {
             anthropic_api_key,
             anthropic_model,
+            anthropic_api_base,
             routing,
             verify_ensemble_k,
             input_max_chars,

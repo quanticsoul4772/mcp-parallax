@@ -5,6 +5,29 @@
 //! most-specific-first: the call site's own setting, else its tier's setting,
 //! else the server-wide default.
 //!
+//! **Effort resolves across four layers, not two (028).** A caller may supply
+//! an effort on the invocation itself, which beats everything here:
+//!
+//! ```text
+//! per-call argument                     <- 028, resolved in `server`
+//!   else PARALLAX_EFFORT_<SITE>         <- 022, resolved here
+//!     else PARALLAX_EFFORT_<TIER>       <- 022, resolved here
+//!       else absent -> no effort field on the wire
+//! ```
+//!
+//! Only the lower three are this module's; the top layer never reaches it,
+//! because a per-call value is not part of the *table* — the table is what the
+//! deployment resolved to, and it stays true even while a call overrides it.
+//! That split is why [`RoutingTable::effort_for`] remains the right answer to
+//! "what did configuration decide" and is not the right answer to "what did
+//! this invocation send". The record answers the second (028 FR-007).
+//!
+//! Model selection has no fourth layer and must not grow one: which model runs
+//! a call site sets the rate the operator is billed at, which is theirs to
+//! decide. How much reasoning one task deserves is the caller's. The two were
+//! conflated by 022 because the machinery was shared; they are not the same
+//! kind of setting.
+//!
 //! This module is deliberately **pure** — it resolves and validates strings and
 //! knows nothing about clients, networks, or providers. Building the clients a
 //! resolved table implies is [`crate::client::pool`]'s job (018 D10), which is
@@ -32,7 +55,20 @@ pub const EFFORT_PREFIX: &str = "PARALLAX_EFFORT_";
 /// the request body is byte-identical to before this feature. The provider's
 /// own default is `high`, so unset and `High` behave the same, but only unset
 /// is provably unchanged on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+#[schemars(inline)] // flat + closed: no $ref/$defs in a tool input schema
 pub enum Effort {
     /// Minimal reasoning; thinking skipped on simple tasks.
     Low,
@@ -543,6 +579,57 @@ mod tests {
         }
         // One model, one effort (none) — still exactly one client.
         assert_eq!(table.distinct_clients().len(), 1);
+    }
+
+    /// 028 T020 / FR-002: the per-call layer sits above both configured ones,
+    /// and the table below it is unchanged by an override.
+    ///
+    /// The table answers "what did configuration decide" and must keep
+    /// answering that truthfully while a call overrides it — an override is
+    /// not a mutation. This pins the composition the server performs
+    /// (`override.or(configured)`) at the level where both halves are visible,
+    /// because the server-side test can only observe the result.
+    #[test]
+    fn a_per_call_effort_outranks_both_configured_layers() {
+        let table = RoutingTable::resolve(
+            vars(&[
+                ("PARALLAX_MODEL_BULK", "claude-haiku-4-5"),
+                ("PARALLAX_EFFORT_JUDGMENT", "medium"),
+                ("PARALLAX_EFFORT_VERIFY", "high"),
+            ]),
+            "claude-opus-5",
+        )
+        .unwrap();
+
+        // Configured: site beats tier, tier covers the rest, bulk has neither.
+        assert_eq!(table.effort_for(CallSite::Verify), Some(Effort::High));
+        assert_eq!(table.effort_for(CallSite::Decide), Some(Effort::Medium));
+        assert_eq!(table.effort_for(CallSite::ResearchExtract), None);
+
+        // The server composes `override.or(configured)`. Each layer wins in
+        // turn, and absent at every layer stays absent.
+        let resolve = |site, over: Option<Effort>| over.or(table.effort_for(site));
+        assert_eq!(
+            resolve(CallSite::Verify, Some(Effort::Low)),
+            Some(Effort::Low),
+            "per-call beats a site setting"
+        );
+        assert_eq!(
+            resolve(CallSite::Decide, Some(Effort::Low)),
+            Some(Effort::Low),
+            "per-call beats a tier setting"
+        );
+        assert_eq!(
+            resolve(CallSite::ResearchExtract, Some(Effort::Max)),
+            Some(Effort::Max),
+            "per-call needs no configuration to take effect"
+        );
+        assert_eq!(resolve(CallSite::Verify, None), Some(Effort::High));
+        assert_eq!(resolve(CallSite::ResearchExtract, None), None);
+
+        // An override changes nothing about what the table reports, which is
+        // what keeps the startup report true for the deployment's lifetime.
+        assert_eq!(table.effort_for(CallSite::Verify), Some(Effort::High));
     }
 
     /// Model and effort resolve independently: a call site may take its model

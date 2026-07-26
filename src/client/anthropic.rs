@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
+pub(crate) const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Output budget per model call.
 ///
@@ -69,7 +69,8 @@ impl AnthropicClient {
     /// Build a client from configuration, targeting the production endpoint.
     #[must_use]
     pub fn new(config: &Config) -> Self {
-        Self::with_base_url(config, ANTHROPIC_API_BASE)
+        // 028: honour the configured base so no construction path bypasses it.
+        Self::with_base_url(config, &config.anthropic_api_base)
     }
 
     /// Build a client for an explicitly named model, overriding
@@ -96,20 +97,53 @@ impl AnthropicClient {
         }
     }
 
-    /// Build a client against a custom endpoint (tests point this at a local
-    /// wiremock server; nothing else should override it).
+    /// Build a client for a named model and effort over an **existing**
+    /// `reqwest::Client` (028 T001).
+    ///
+    /// 028 pre-builds one client per `(routed model, effort level)` pair so a
+    /// per-call effort resolves to a lookup rather than a construction. That
+    /// cross product is small — at most twelve models by six effort states —
+    /// but [`Self::with_base_url`] calls `reqwest::Client::new()` each time,
+    /// and every one of those owns a separate connection pool. Sharing the
+    /// transport makes each additional entry cost a `String` and an
+    /// `Option<Effort>` instead.
+    ///
+    /// `reqwest::Client` is explicitly documented as cheap to clone and
+    /// intended to be reused; the clone shares the underlying pool.
+    ///
+    /// This is the base constructor — every other one delegates here — so no
+    /// path builds a transport it then discards.
     #[must_use]
-    pub fn with_base_url(config: &Config, base_url: &str) -> Self {
+    pub fn with_http_client(
+        config: &Config,
+        http: &reqwest::Client,
+        base_url: &str,
+        model: &str,
+        effort: Option<crate::routing::Effort>,
+    ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: http.clone(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: config.anthropic_api_key.clone(),
-            model: config.anthropic_model.clone(),
-            effort: None,
+            model: model.to_string(),
+            effort,
             timeout_ms: config.request_timeout_ms,
             max_retries: config.max_retries,
             backoff_base_ms: 200,
         }
+    }
+
+    /// Build a client against a custom endpoint (tests point this at a local
+    /// wiremock server; nothing else should override it).
+    #[must_use]
+    pub fn with_base_url(config: &Config, base_url: &str) -> Self {
+        Self::with_http_client(
+            config,
+            &reqwest::Client::new(),
+            base_url,
+            &config.anthropic_model,
+            None,
+        )
     }
 
     /// Shrink the retry backoff base (test-only speedup).
@@ -347,6 +381,7 @@ mod tests {
         Config {
             anthropic_api_key: "test-key".into(),
             anthropic_model: "claude-opus-4-8".into(),
+            anthropic_api_base: "http://127.0.0.1:1".into(),
             routing: crate::routing::RoutingTable::single("claude-opus-4-8"),
             verify_ensemble_k: 3,
             input_max_chars: 50_000,
@@ -370,6 +405,43 @@ mod tests {
 
     fn client_for(mock: &MockServer) -> AnthropicClient {
         AnthropicClient::with_base_url(&test_config(), &mock.uri()).with_backoff_base_ms(1)
+    }
+
+    /// 028 T002 / D1: the eager `(model, effort)` cross product shares one
+    /// transport. Each entry must still be independently configured — if the
+    /// shared client leaked model or effort between entries, a per-call effort
+    /// would silently ride on the next call.
+    #[tokio::test]
+    async fn clients_sharing_one_transport_stay_independently_configured() {
+        let config = test_config();
+        let http = reqwest::Client::new();
+        let mock = MockServer::start().await;
+
+        let low = AnthropicClient::with_http_client(
+            &config,
+            &http,
+            &mock.uri(),
+            "claude-haiku-4-5",
+            Some(crate::routing::Effort::Low),
+        );
+        let none =
+            AnthropicClient::with_http_client(&config, &http, &mock.uri(), "claude-opus-5", None);
+
+        assert_eq!(low.model, "claude-haiku-4-5");
+        assert_eq!(low.effort, Some(crate::routing::Effort::Low));
+        assert_eq!(none.model, "claude-opus-5");
+        assert_eq!(
+            none.effort, None,
+            "absent must stay absent, not inherit the sibling's level"
+        );
+
+        // Both reach the same endpoint over the shared transport.
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(end_turn_body(r#"{"ok":true}"#)))
+            .mount(&mock)
+            .await;
+        assert!(low.complete("p", &json!({})).await.is_ok());
+        assert!(none.complete("p", &json!({})).await.is_ok());
     }
 
     fn end_turn_body(json_text: &str) -> serde_json::Value {
@@ -442,6 +514,36 @@ mod tests {
             ..client_for(&mock)
         };
         client.complete("p", &json!({})).await.unwrap();
+    }
+
+    /// 028 T016 / FR-003, SC-002: silence stays byte-identical.
+    ///
+    /// 022 proved an unset *namespace* sends no `effort` key. 028 adds a layer
+    /// above it, so the guarantee now has to survive a caller that also said
+    /// nothing — the case that is by far the most common and the one a
+    /// regression would hide in. Asserting on the whole serialized body rather
+    /// than on `output_config.effort` alone is deliberate: a key appearing
+    /// anywhere else would pass the narrower check.
+    #[tokio::test]
+    async fn neither_configuration_nor_caller_means_no_effort_key_anywhere() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = req.body_json().unwrap();
+                assert!(
+                    !serde_json::to_string(&body).unwrap().contains("effort"),
+                    "no layer set an effort, so the word must not appear: {body}"
+                );
+                assert!(body["output_config"].get("effort").is_none());
+                // The constrained-output contract is untouched by its absence.
+                assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+                ResponseTemplate::new(200).set_body_json(end_turn_body("{}"))
+            })
+            .mount(&mock)
+            .await;
+
+        // `client_for` carries no effort, standing in for both layers unset.
+        client_for(&mock).complete("p", &json!({})).await.unwrap();
     }
 
     /// 027 / FR-001, FR-002, FR-003: the provider says *this model*; the

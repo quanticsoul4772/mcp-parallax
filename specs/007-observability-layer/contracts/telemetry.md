@@ -60,6 +60,8 @@ Outcomes that genuinely cost nothing — `timeout`, `retries_exhausted`,
 | `parallax.models` | string[] | **added 018** — every model that actually ran, sorted. One entry when nothing is routed |
 | `parallax.cost_estimated` | bool | **added 018** — true when a participating model had no price row and was costed at the conservative fallback; the figure is an over-estimate, not a measurement |
 | `parallax.depth` | string | **added 019** — the research rigor tier (`quick`/`standard`/`deep`) the invocation ran under. Emitted **only** when the tool has a tier, so tiered runs stay separable from untiered ones; every non-`research` span omits it |
+| `parallax.effort` | string | **added 028** — the reasoning-effort level the *caller* supplied for this invocation (`low`..`xhigh`). Emitted **only** when a caller overrode it; absent means the configured layers applied, which is already knowable from the deployment's routing table. The configured level is deliberately not exported: it is constant, and not single-valued for an invocation spanning several call sites |
+| `parallax.passes` | int | **added 028** — the ensemble pass count the *caller* supplied. Emitted **only** when a caller overrode it; absent means the configured count ran. Recorded on the same criterion as `parallax.effort`: a caller asking for one pass against a configured three moves spend further than any effort level does |
 
 > **Amendment (2026-07-24, feature 018 — per-call-site model routing).** Call
 > sites can now run on different models, so one invocation may span several.

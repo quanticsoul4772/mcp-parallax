@@ -126,6 +126,7 @@ async fn main() {
             goal: (*goal).to_string(),
             blocked: (*blocked).to_string(),
             tried: Some(tried.iter().map(|s| (*s).to_string()).collect()),
+            effort: None,
         };
         let start = Instant::now();
         let result = unstick::run(&client, &mode, &params, config.input_max_chars).await;

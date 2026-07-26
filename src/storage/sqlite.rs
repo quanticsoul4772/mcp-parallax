@@ -139,7 +139,7 @@ impl SqliteStorage {
         let rows = sqlx::query(
             "SELECT id, session_id, tool, model, input_tokens, output_tokens,
                     cost_usd, latency_ms, outcome, created_at,
-                    models, usage_by_model, depth
+                    models, usage_by_model, depth, effort, passes
              FROM invocation_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -194,6 +194,14 @@ impl SqliteStorage {
                     // NULL for every non-research tool and for every research
                     // row written before the 019 migration (D-019a).
                     depth: row.get::<Option<String>, _>("depth"),
+                    // NULL when the caller supplied no override — the
+                    // configured layers applied (028 FR-007a). Also NULL for
+                    // every row written before the 028 migration, which is the
+                    // truthful answer: no override could have been supplied.
+                    effort: row.get::<Option<String>, _>("effort"),
+                    passes: row
+                        .get::<Option<i64>, _>("passes")
+                        .and_then(|n| u32::try_from(n).ok()),
                     latency_ms,
                     outcome,
                     created_at,
@@ -262,7 +270,7 @@ impl SqliteStorage {
             .await
             .map_err(|e| AppError::Storage(format!("pragma table_info failed: {e}")))?;
         let existing: Vec<String> = rows.iter().map(|r| r.get::<String, _>("name")).collect();
-        let additions: [(&str, &str); 3] = [
+        let additions: [(&str, &str); 5] = [
             (
                 "models",
                 "ALTER TABLE invocation_records ADD COLUMN models TEXT",
@@ -274,6 +282,16 @@ impl SqliteStorage {
             (
                 "depth",
                 "ALTER TABLE invocation_records ADD COLUMN depth TEXT",
+            ),
+            // 028: the caller's effort override. Nullable like the rest — a
+            // row written before this column had no override to record.
+            (
+                "effort",
+                "ALTER TABLE invocation_records ADD COLUMN effort TEXT",
+            ),
+            (
+                "passes",
+                "ALTER TABLE invocation_records ADD COLUMN passes INTEGER",
             ),
         ];
         for (column, ddl) in additions {
@@ -764,8 +782,8 @@ impl Storage for SqliteStorage {
             "INSERT INTO invocation_records
                 (id, session_id, tool, model, input_tokens, output_tokens,
                  cost_usd, latency_ms, outcome, created_at,
-                 models, usage_by_model, depth)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 models, usage_by_model, depth, effort, passes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -780,6 +798,8 @@ impl Storage for SqliteStorage {
         .bind(encode_models(&record.models))
         .bind(encode_usage_by_model(&record.usage_by_model))
         .bind(record.depth.clone())
+        .bind(record.effort.clone())
+        .bind(record.passes.map(i64::from))
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
@@ -878,6 +898,8 @@ mod tests {
             usage_by_model: ModelUsage::single("claude-opus-4-8", 300, 30),
             cost_estimated: false,
             depth: None,
+            effort: None,
+            passes: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
@@ -930,6 +952,73 @@ mod tests {
         };
         assert_eq!(by_id("r-deep"), Some("deep".to_string()));
         assert_eq!(by_id("r-verify"), None);
+    }
+
+    // 028 T008 / FR-007a: NULL in `effort` means *no override was supplied*,
+    // not "some default level". The distinction matters because the whole
+    // point of the column is to explain spend that configuration cannot
+    // predict — a NULL that could mean either would explain nothing. A row
+    // written before the column reads back the same way, which is the truthful
+    // answer for it: no override could have been supplied.
+    #[tokio::test]
+    async fn a_record_without_an_override_reads_back_as_no_override() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        use crate::traits::clock::TimeProvider;
+        let clock = crate::traits::clock::SystemClock;
+        let started = clock.now();
+
+        let plain = InvocationRecord::create(
+            &clock,
+            "s",
+            "verify",
+            "claude-opus-4-8",
+            &ModelUsage::default(),
+            Outcome::Success,
+            started,
+        );
+        let overridden = InvocationRecord::create(
+            &clock,
+            "s",
+            "decide",
+            "claude-opus-4-8",
+            &ModelUsage::default(),
+            Outcome::Success,
+            started,
+        )
+        .with_effort(Some(crate::routing::Effort::Low));
+
+        storage.record_invocation(&plain).await.unwrap();
+        storage.record_invocation(&overridden).await.unwrap();
+
+        let records = storage.list_invocations().await.unwrap();
+        let effort_of = |tool: &str| {
+            records
+                .iter()
+                .find(|r| r.tool == tool)
+                .map(|r| r.effort.clone())
+                .unwrap()
+        };
+        assert_eq!(effort_of("decide"), Some("low".to_string()));
+        assert_eq!(
+            effort_of("verify"),
+            None,
+            "no override must read back as None, never as a level"
+        );
+
+        // A row written before the 028 column exists reads back identically.
+        sqlx::query(
+            "INSERT INTO invocation_records
+                (id, session_id, tool, model, input_tokens, output_tokens,
+                 cost_usd, latency_ms, outcome, created_at)
+             VALUES ('pre028', 's', 'unstick', 'claude-opus-4-8', 10, 5,
+                     0.0, 5, 'success', '2026-06-11T12:00:00+00:00')",
+        )
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+        let records = storage.list_invocations().await.unwrap();
+        let old = records.iter().find(|r| r.id == "pre028").unwrap();
+        assert_eq!(old.effort, None);
     }
 
     // T023 / 018 D4: the additive columns survive re-running the migration,

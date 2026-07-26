@@ -189,6 +189,20 @@ level; both must be startup errors naming the variable.
   family that rejects one surfaces the provider's error rather than the server
   second-guessing it.
 
+  *(028, 2026-07-26: **the environment namespace was the wrong surface for this
+  control, and 028 corrects it** — not by removing it, but by adding a per-call
+  argument above it. The reasoning 022 never examined: which model runs a call
+  site sets the rate the operator is billed at, so it is theirs; how much
+  reasoning one invocation deserves is a per-task judgment the caller makes. 022
+  mirrored 018's `PARALLAX_MODEL_*` shape because the machinery existed, while
+  `research`'s `depth` and `recall`'s `limit` were already caller-facing in the
+  same codebase. The consumer here is a model, so a setting reachable only by
+  editing a file and restarting the session is unreachable in practice —
+  changing it destroys the context that motivated the change. What 022 shipped
+  stays correct as the **default layer**; see `specs/028-per-call-effort-argument/`
+  and the operator-owned vs caller-owned test now in
+  `docs/design/NEW_SERVER_DESIGN.md` §10.)*
+
   *(027, 2026-07-25: this statement was right and two other 022 artifacts
   contradicted it — `SDK_LANDSCAPE.md:285` and `018/research.md:169` both
   claimed every routed family accepts the parameter. They were the error and

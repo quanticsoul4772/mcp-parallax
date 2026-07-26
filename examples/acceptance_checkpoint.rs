@@ -59,6 +59,7 @@ fn config() -> Config {
         log_level: "info".into(),
         request_timeout_ms: 30_000,
         max_retries: 2,
+        anthropic_api_base: "http://127.0.0.1:1".into(),
     }
 }
 
