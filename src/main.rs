@@ -314,19 +314,85 @@ mod tests {
         }
     }
 
-    /// Defaults stated in `--help` must be the defaults the code applies. The
-    /// timeout is pinned by name because it is the one that drifted: 018
-    /// raised it to 120000 and this text said 30000 for two releases.
+    /// Every numeric default `config.rs` applies must be the one `--help`
+    /// states, **read out of the source rather than listed here**.
+    ///
+    /// 034 pinned five values by hand and called the loop closed. It was not:
+    /// changing `MEMORY_RECALL_LIMIT` from 5 to 7 and `RESEARCH_CONCURRENCY`
+    /// from 8 to 12 in `config.rs` left all three help tests green, because
+    /// neither number was on the hand-written list. That is the same class as
+    /// the defect 034 existed to fix — help saying 30000 while the code read
+    /// 120000 — so half the class had been left open.
+    ///
+    /// Deriving the pairs means a default that changes without its help entry
+    /// fails, including for variables nobody thought to pin.
     #[test]
-    fn help_states_the_defaults_the_code_actually_uses() {
+    fn help_states_every_numeric_default_the_config_applies() {
+        let config = include_str!("config.rs");
         let help = help_text();
-        assert!(help.contains("120000"), "timeout default drifted: {help}");
-        assert!(!help.contains("30000"), "the stale 30000 timeout is back");
-        for expected in ["claude-opus-4-8", "voyage-4", "262144", "50000"] {
+        let lines: Vec<&str> = help.lines().collect();
+        let marker = "parse_env(\"";
+
+        let mut checked = 0;
+        let mut wrong = Vec::new();
+        let mut rest = config;
+        while let Some(at) = rest.find(marker) {
+            rest = &rest[at + marker.len()..];
+            let Some(close) = rest.find('"') else { break };
+            let name = &rest[..close];
+            let after = &rest[close + 1..];
+            let Some(comma) = after.find(',') else {
+                continue;
+            };
+            let Some(end) = after[comma + 1..].find(')') else {
+                continue;
+            };
+            let literal: String = after[comma + 1..comma + 1 + end]
+                .trim()
+                .chars()
+                .filter(char::is_ascii_digit)
+                .collect();
+            if literal.is_empty() {
+                continue;
+            }
+
+            // An entry is its own line plus its continuation lines. The
+            // window reaches backwards too, because a name can appear ON a
+            // continuation line while its default sits on the entry above —
+            // VERIFY_MAX_CLAIM_CHARS is exactly that, an alias documented
+            // under INPUT_MAX_CHARS and sharing its default.
+            let Some(hit) = lines.iter().position(|l| l.contains(name)) else {
+                continue;
+            };
+            let start = hit.saturating_sub(2);
+            let block = lines[start..(hit + 4).min(lines.len())].join(" ");
+            checked += 1;
+            if !block.contains(&literal) {
+                wrong.push(format!("{name} applies {literal}, help says: {block:?}"));
+            }
+        }
+
+        assert!(
+            checked >= 8,
+            "expected to read most numeric defaults out of config.rs, saw {checked}"
+        );
+        assert!(
+            wrong.is_empty(),
+            "`--help` contradicts config.rs: {wrong:#?}"
+        );
+    }
+
+    /// Non-numeric defaults, which the scan above cannot read out of a
+    /// `parse_env` literal. Small and explicit on purpose.
+    #[test]
+    fn help_states_the_string_defaults() {
+        let help = help_text();
+        for expected in ["claude-opus-4-8", "voyage-4", "https://api.anthropic.com"] {
             assert!(
                 help.contains(expected),
                 "`--help` omits the {expected} default"
             );
         }
+        assert!(!help.contains("30000"), "the stale 30000 timeout is back");
     }
 }
