@@ -532,13 +532,43 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
   record must explain**: a caller override is recorded, so an unexplained cost
   stays attributable.
 
-  This was learned by getting it wrong. 022 put reasoning effort in an
-  environment namespace by mirroring 018's model-routing shape — a copy, not a
+  022 put reasoning effort in an environment namespace by mirroring 018's model-routing shape — a copy, not a
   decision — while `research`'s `depth`/`constraints` and `recall`'s `limit`
   were already caller-facing in the same codebase. 028 corrected effort, pass
-  count, and research concurrency. **The remaining configuration variables were
-  not audited against this test**; the rule's presence here is not evidence it
-  has been applied everywhere.
+  count, and research concurrency.
+
+  **Every configuration variable has now been classified** (031). The result
+  below is the applied rule, not a restatement of it.
+
+  | Setting | Owner | Why |
+  | --- | --- | --- |
+  | `ANTHROPIC_API_KEY` `VOYAGE_API_KEY` `BRAVE_API_KEY` | operator | credentials |
+  | `ANTHROPIC_MODEL` `ANTHROPIC_API_BASE` `VOYAGE_MODEL` | operator | set the rate billed and the endpoint reached; `VOYAGE_MODEL` additionally fixes the embedding space, so changing it per call would make stored vectors incomparable |
+  | `DATABASE_PATH` `LOG_LEVEL` | operator | deployment identity |
+  | `GROUNDED_VERIFY_ROOT` `FETCH_ALLOW_PRIVATE` | operator | **security boundaries.** A caller-settable confinement root or SSRF guard is the hole it exists to close |
+  | `CHECKPOINT_GATE_PATTERNS` | operator | the watchdog fires what the model *cannot* self-diagnose; letting the caller tune its triggers inverts the layer |
+  | `INPUT_MAX_CHARS` (`VERIFY_MAX_CLAIM_CHARS`) `GROUNDED_VERIFY_MAX_LOCATORS` | operator | server-protection guards. A caller may not raise one, and lowering buys the caller nothing it cannot get by sending less |
+  | `MAX_RETRIES` `FETCH_TIMEOUT_MS` | operator | resilience against transport failure, about which the caller has no information |
+  | `VERIFY_ENSEMBLE_K` | **caller** | per-call `passes` (028), lowering-only |
+  | `MEMORY_RECALL_LIMIT` | **caller** | per-call `limit` (predates 028) |
+  | `RESEARCH_CONCURRENCY` | **caller** | `constraints.concurrency` (028), lowering-only |
+
+  **Two genuine candidates were found and deliberately not built**, because
+  neither earns its surface yet:
+
+  - `REQUEST_TIMEOUT_MS` — a caller could reasonably want a shorter wait on a
+    trivial check. `research` already has per-call `deadline_ms`, which is the
+    tool where the need was concrete; elsewhere the value is speculative.
+  - `GROUNDED_VERIFY_MAX_BYTES` — bounds how much source text is assembled into
+    a prompt, so lowering it is a genuine per-task cost judgment. Lowering-only
+    if ever exposed, since raising it is the guard.
+
+  Recording them here rather than building them is the point: the rule tells
+  you which way a setting leans, and *leaning* is not the same as *worth a tool
+  argument*.
+
+  This was learned by getting it wrong, and the audit above is what keeps the
+  rule from being an assertion nobody checked.
 
 ---
 

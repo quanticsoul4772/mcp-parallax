@@ -11,7 +11,29 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
-Nothing yet.
+### Changed
+
+* **Every configuration variable is now classified against the operator-owned
+  vs caller-owned test (031)** — `NEW_SERVER_DESIGN.md` §10 previously stated
+  outright that the remaining variables had never been checked against the rule
+  it records. They have been, and the section now carries the result rather
+  than the disclaimer.
+
+  All 21 settings land: credentials, deployment identity, and the two security
+  boundaries (`GROUNDED_VERIFY_ROOT`, `FETCH_ALLOW_PRIVATE`) are operator-owned
+  by construction — a caller-settable confinement root is the hole it exists to
+  close. `CHECKPOINT_GATE_PATTERNS` is operator-owned on the layer argument:
+  the watchdog fires what the model cannot self-diagnose, so letting the caller
+  tune its triggers inverts the layer. The three already-caller-facing settings
+  are unchanged.
+
+  **Two genuine candidates were found and deliberately not built** —
+  `REQUEST_TIMEOUT_MS` and `GROUNDED_VERIFY_MAX_BYTES`, both recorded with the
+  reason. The rule says which way a setting leans; leaning is not the same as
+  earning a tool argument, and writing that distinction down is the point of
+  auditing rather than expanding.
+
+  No code changes.
 
 ## [0.3.0] - 2026-07-26
 
