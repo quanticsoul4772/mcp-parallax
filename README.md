@@ -5,17 +5,17 @@ Parallax is an MCP server that gives a language model tools to check its own wor
 [![CI](https://github.com/quanticsoul4772/mcp-parallax/actions/workflows/ci.yml/badge.svg)](https://github.com/quanticsoul4772/mcp-parallax/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
-The server exposes fourteen tools in four groups:
+The server exposes fifteen tools in four groups:
 
 - **Cognitive correctives**, called by the model: `verify` judges whether a claim holds, `unstick` returns one next step when looping, `diverge` returns alternative framings of a problem, `decide` selects among supplied options and reports the scoring, `elicit` surfaces the objective and governing preferences a request implies before the model commits.
 - **Deterministic checks**: `check` settles arithmetic, logic, and constraint claims by executing a formal translation rather than judging it; `grounded_verify` checks a claim against verbatim files the caller names, settling computable properties (e.g. a line count) on the engine and abstaining otherwise.
-- **Memory**: `save`, `recall`, and `forget` — cross-session storage, verified before it is trusted.
+- **Memory**: `save`, `recall`, and `forget` — cross-session storage, verified before it is trusted; `surface` pushes the relevant trusted ones into a turn without a model pass.
 - **Research**: `research` runs a web query on a separate budget and returns a cited, per-claim-verified answer.
 - **Trajectory checkpoints**: `checkpoint_action`, `checkpoint_batch`, and `checkpoint_turn`, called by the harness's hooks for failures the model does not self-diagnose.
 
 See [Tools](#tools) for per-tool detail.
 
-Status: experimental, v0.1.0. Network egress and code execution are gated and off by default; with only `ANTHROPIC_API_KEY` set, the always-on correctives are available and the only outbound traffic is to the Anthropic API. Built from source; not published to a registry.
+Status: experimental, v0.3.0. Network egress and code execution are gated and off by default; with only `ANTHROPIC_API_KEY` set, the always-on correctives are available and the only outbound traffic is to the Anthropic API. Built from source; not published to a registry.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ Verify the binary independently of any client:
 
 ```bash
 ./target/release/mcp-parallax --version
-# => mcp-parallax 0.1.0
+# => mcp-parallax 0.3.0
 ```
 
 ## Tools
@@ -77,6 +77,7 @@ Transport is **stdio**. The catalog is gated by configuration: the six always-on
 | `save` | Store a skill, lesson, or fact for future sessions with provenance; external memories are untrusted unless verification is requested. | `VOYAGE_API_KEY` |
 | `recall` | Retrieve memories relevant to the current work, ranked by semantic relevance and labeled with trust standing. | `VOYAGE_API_KEY` |
 | `forget` | Permanently delete a memory by id. Irreversible. | `VOYAGE_API_KEY` |
+| `surface` | Prompt-time memory push: ranks stored memories against the turn's opening prompt and surfaces the few relevant trusted ones as advisory context — verbatim content, id, and trust standing. Pure ranking, no model pass, hard 500 ms budget, fail-open. Each memory surfaces at most once per session. | `VOYAGE_API_KEY` |
 | `research` | Run a web query and return a short, cited, per-claim-verified answer: scoped parallel searches, hygiene-enforced fetching, refute-biased per-claim verification, and a grounding gate that drops unsupported citations. | `BRAVE_API_KEY` |
 | `grounded_verify` | Verify a claim against verbatim source the caller names (file paths, line ranges, or glob patterns within a configured root): the server reads the exact text. Returns supported/refuted; for a computable property of a single source (a line/byte/match count vs a threshold) the server counts over the read bytes and the deterministic engine settles it, returning the executed form (e.g. `1224 > 1000`); anything broader or compound returns `inconclusive`. Also returns findings, an audit manifest of what was read, and a completeness signal naming omitted evidence. | `GROUNDED_VERIFY_ROOT` |
 | `checkpoint_action` | Pre-action gate: evaluate one risk-matched pending action against verified stored constraints; returns `hold` (quoting the conflicting memory) or silence. Fails open; does not modify the action. | hooks (off by default) |

@@ -11,6 +11,28 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+Nothing yet.
+
+## [0.3.0] - 2026-07-26
+
+Makes the server's cost-and-rigor controls reachable by the thing that actually
+makes the calls. Every addition is backward-compatible: each new tool argument
+is optional, both new record columns are nullable and additive, and a caller
+that supplies none of them produces requests byte-identical to 0.2.0.
+
+**Two features documented in the 0.2.0 notes are first tagged here.** The
+`[0.2.0]` block below describes per-call-site reasoning effort (022) and the
+silent-phase-failure fix (023), but both merged after the `v0.2.0` tag was
+placed — `git show v0.2.0:src/routing.rs` contains no `EFFORT_PREFIX`. A reader
+comparing that tag against its own notes would find features the code does not
+have. Released history is not rewritten and the tag is not moved, on the same
+reasoning 027 used when correcting a false claim in those notes: the record of
+what was published stays as published, and the correction lives in the block
+that follows. So 022 and 023 ship for the first time in this tag.
+
+**Everything in this release was verified against live infrastructure**, not
+only against tests. That mattered: verifying 027 is what surfaced 030.
+
 ### Added
 
 * **Per-call reasoning effort, pass count, and research concurrency (028)** —
