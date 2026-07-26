@@ -1013,8 +1013,15 @@ mod tests {
         for (position, site) in CallSite::ALL.iter().enumerate() {
             assert_eq!(site.index(), position, "{}", site.id());
         }
-        // Every site is present exactly once: a duplicate would give two sites
-        // the same index and leave a slot unreachable.
+        // A duplicate in ALL is already caught by the loop above — the second
+        // copy sits at a position its own index does not match. Verified by
+        // mutation: duplicating a site fails with "research_extract, left: 8,
+        // right: 9" from the loop, with these assertions removed.
+        //
+        // Kept for the message, not for the coverage. "ALL contains a
+        // duplicate" names the actual mistake, where the loop's output makes
+        // a reader work out that two entries collided. Claiming it as extra
+        // detection would be wrong.
         let mut seen: Vec<usize> = CallSite::ALL.iter().map(|s| s.index()).collect();
         seen.sort_unstable();
         seen.dedup();

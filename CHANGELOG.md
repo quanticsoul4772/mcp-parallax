@@ -13,6 +13,25 @@ arc.
 
 ### Fixed
 
+* **`--help` defaults are derived from `config.rs`, not pinned by hand (036)**
+  — 034 tied the help text to the config for *presence* and called the loop
+  closed. It was half closed. Changing `MEMORY_RECALL_LIMIT` from 5 to 7 and
+  `RESEARCH_CONCURRENCY` from 8 to 12 in `config.rs` left every help test
+  green, because neither number was on 034's hand-written list of five.
+
+  That is the same class as the defect 034 existed to fix — the help saying
+  30000 while the code read 120000 — so the instance was fixed and half the
+  class left open. The test now reads `parse_env("NAME", DEFAULT)` pairs out of
+  the source and checks each against the help entry for that name, so a default
+  that moves without its documentation fails, including for variables nobody
+  thought to pin. Mutation-verified with the exact change that was previously
+  silent: `MEMORY_RECALL_LIMIT applies 7, help says: … (default: 5)`.
+
+  Writing it derived immediately found an edge a hand-written list would not
+  have: `VERIFY_MAX_CLAIM_CHARS` is documented as a continuation line under
+  `INPUT_MAX_CHARS` and shares its default, so the entry window has to reach
+  backwards as well as forwards.
+
 * **`--help` matches the runtime, and a test now keeps it that way (034)** —
   the help body advertised `REQUEST_TIMEOUT_MS` at 30000 while the code has
   read 120000 since 018, listed 7 of 20 environment variables, omitted both
