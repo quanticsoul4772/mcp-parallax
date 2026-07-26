@@ -67,25 +67,6 @@ arc.
   than a construction — and the `ModelClient` seam is untouched, upholding 018
   research D2 rather than reversing it.
 
-### Fixed
-
-* **The published schema no longer contradicts the server (029)** — `passes`
-  derives from a Rust `u8`, so the schema shown to the calling model advertised
-  `minimum: 0, maximum: 255` while the server rejects `0` and rejects anything
-  above the configured count. A model reading the schema was told values were
-  valid that the server refuses. The derived schema now states `minimum: 1`,
-  and the contract records that the effective maximum is the deployment's
-  configured count rather than a fixed number, so it cannot appear in a schema
-  at all — a request above it is rejected with an error naming the ceiling.
-
-  **The larger half is the test gap that let it ship.** The contract tests
-  compared property *names* and the `required` list, never constraints. Two
-  defects passed through: this one, and `effort` shipping as an untyped string
-  in 028 while its contract claimed an enum. All five contract tests now compare
-  declared constraints, following `$ref` into `$defs` so a referenced enum
-  neither hides a mismatch nor manufactures one. Mutation-verified: removing the
-  bound fails the test naming the property and both values.
-
 ### Changed
 
 * **An effort rejection names which setting caused it (027)** — when the
@@ -108,6 +89,39 @@ arc.
   that would have worked is prevented from starting.
 
 ### Fixed
+
+* **The effort rejection names the per-call source too (030)** — 027's message
+  offered two remedies: unset the `PARALLAX_EFFORT_*` variable, or route the
+  call site to a model that accepts effort. 028 then added a third way to set
+  an effort — the per-call argument — and did not update the message.
+
+  Found by verifying 027 live, which is the case that had never been exercised:
+  a caller-supplied `effort` with **no variable set anywhere**, told to unset a
+  variable that did not exist, while the remedy that actually applied went
+  unmentioned. The message now names all three, with the per-call argument
+  first because dropping it is the only one needing no restart.
+
+  All three are listed rather than the applicable one selected, because the
+  client genuinely cannot tell them apart: the pool serves the *same* client
+  for a configured `low` and a caller-supplied `low`, and that sharing is the
+  point of keying on `(model, effort)`.
+
+* **The published schema no longer contradicts the server (029)** — `passes`
+  derives from a Rust `u8`, so the schema shown to the calling model advertised
+  `minimum: 0, maximum: 255` while the server rejects `0` and rejects anything
+  above the configured count. A model reading the schema was told values were
+  valid that the server refuses. The derived schema now states `minimum: 1`,
+  and the contract records that the effective maximum is the deployment's
+  configured count rather than a fixed number, so it cannot appear in a schema
+  at all — a request above it is rejected with an error naming the ceiling.
+
+  **The larger half is the test gap that let it ship.** The contract tests
+  compared property *names* and the `required` list, never constraints. Two
+  defects passed through: this one, and `effort` shipping as an untyped string
+  in 028 while its contract claimed an enum. All five contract tests now compare
+  declared constraints, following `$ref` into `$defs` so a referenced enum
+  neither hides a mismatch nor manufactures one. Mutation-verified: removing the
+  bound fails the test naming the property and both values.
 
 * **A false claim in the 0.2.0 notes, corrected here rather than rewritten
   (027)** — the 022 entry below states that `output_config.effort` is "the

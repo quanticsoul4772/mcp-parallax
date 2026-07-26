@@ -175,8 +175,20 @@ impl AnthropicClient {
     ///
     /// Naming the *variable* rather than the model would need one client per
     /// call site, discarding the pooling that keys on `(model, effort)`. Given
-    /// the model and the level, the responsible `PARALLAX_EFFORT_*` setting is
-    /// immediate.
+    /// the model and the level, the responsible setting is immediate.
+    ///
+    /// **All three sources are named because this client cannot tell which one
+    /// applied** (030). 027 wrote this message when the environment namespace
+    /// was the only way to set an effort; 028 added a per-call argument, and
+    /// the pool serves the *same* client for a configured `low` and a
+    /// caller-supplied `low` — that sharing is the point of keying on
+    /// `(model, effort)`, so provenance is genuinely not recoverable here.
+    ///
+    /// Listing beats guessing, and the live verification of 027 landed on
+    /// exactly the case the old text got wrong: a per-call `effort` with no
+    /// variable set anywhere, told to unset a variable that did not exist while
+    /// the remedy that applied went unmentioned. The per-call argument is named
+    /// first because dropping it is the only remedy needing no restart.
     fn effort_rejection_hint(&self, status: reqwest::StatusCode, body: &str) -> String {
         let Some(effort) = self.effort else {
             return String::new();
@@ -186,8 +198,9 @@ impl AnthropicClient {
         }
         format!(
             " — parallax sent effort=`{}` to `{}`, which does not accept it. \
-             Unset the PARALLAX_EFFORT_* variable covering this call site, or \
-             route the site to a model that accepts effort.",
+             Remove the `effort` argument from this call, unset the \
+             PARALLAX_EFFORT_* variable covering this call site, or route the \
+             site to a model that accepts effort.",
             effort.as_str(),
             self.model
         )
@@ -573,7 +586,16 @@ mod tests {
         // FR-001: both facts the provider's message omits.
         assert!(message.contains("claude-haiku-4-5"), "{message}");
         assert!(message.contains("effort=`low`"), "{message}");
-        // FR-002: both remedies.
+        // FR-002, amended by 030: **all three** remedies, because the client
+        // cannot tell which source set the effort. The per-call argument was
+        // missing until the live verification of 027 hit precisely that case —
+        // a caller-supplied level with no variable set anywhere, told to unset
+        // a variable that did not exist. It is asserted first because dropping
+        // the argument is the only remedy that needs no restart.
+        assert!(
+            message.contains("Remove the `effort` argument"),
+            "the per-call source is a remedy too (028 added it): {message}"
+        );
         assert!(message.contains("PARALLAX_EFFORT_"), "{message}");
         assert!(message.contains("route the site"), "{message}");
         // FR-003: the provider's own text survives beside the diagnosis.
