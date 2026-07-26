@@ -13,6 +13,26 @@ arc.
 
 ### Changed
 
+* **The five single-shape corrective handlers moved to
+  `src/server/correctives.rs` (032)** — `verify`, `unstick`, `decide`, `elicit`
+  and `diverge` are structurally identical and sat in `server.rs` with
+  everything else. Both reviewers of 028 named this the split seam; it was
+  deferred from that feature so its diff would show only the move, which is
+  what it does — the moved bodies are content-identical apart from the
+  visibility keyword, and `server.rs` shows deletions plus one `mod` line.
+
+  `check` and `grounded_verify` stay put deliberately. Each holds its client in
+  a startup-built deps struct and needs a different entry point, so moving them
+  would fold a reshape into a relocation.
+
+  Effect is smaller than the file size suggests, and worth stating plainly:
+  `server.rs` goes 2108 → 1956 lines, but 908 of those are its test module.
+  Production drops 1201 → 1048. The remainder is dominated by fifteen
+  `#[tool(...)]` declarations whose description strings rmcp requires in a
+  single impl block — not further splittable without fighting the macro.
+
+  No behaviour change.
+
 * **Every configuration variable is now classified against the operator-owned
   vs caller-owned test (031)** — `NEW_SERVER_DESIGN.md` §10 previously stated
   outright that the remaining variables had never been checked against the rule
