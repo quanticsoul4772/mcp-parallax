@@ -40,6 +40,31 @@ arc.
 
 ### Changed
 
+* **`CallSite::index` is derived from the discriminant instead of hand-written
+  (035)** — it was a twelve-arm `match` mapping each variant to a literal,
+  which meant two orderings (`index` and `ALL`) that had to agree. `ClientPool`
+  keys its per-site array on the result, so disagreement would not fail loudly:
+  one call site would receive another's client, and the invocation record would
+  attribute cost to a model that never ran.
+
+  **This is not a bug fix, and the distinction matters.** Both drift directions
+  were already caught — reordering `ALL` failed `index_matches_all_order`
+  naming the site, and adding a variant was a compile error at two
+  exhaustiveness sites. Verified by mutation before changing anything. What the
+  change buys is removing the class rather than guarding it: a fieldless enum
+  casts to its declaration order, so there is no second ordering left that
+  *can* disagree.
+
+  A linear `ALL.iter().position(..)` was rejected — it returns an `Option`
+  whose `None` arm is unreachable, and Principle III's ban on `unwrap` in
+  production would make that arm either a silent fallback or a panic. The cast
+  has neither problem. `strum::EnumCount` was rejected as a dependency for
+  something a cast already gives.
+
+  The guarding test is kept, narrowed to the one invariant that survives —
+  `ALL` written in declaration order — and extended to catch a duplicate entry,
+  which would give two sites the same index and leave a slot unreachable.
+
 * **Research tier budgets sized from measured history (033)** — `standard`
   450_000 → 1_600_000 and `deep` 1_000_000 → 5_500_000, each the tier's own
   declared caps multiplied by one measured figure (2 508 tokens per claim per
