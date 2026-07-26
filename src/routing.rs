@@ -141,7 +141,13 @@ impl Tier {
 
 /// One named place in the server that asks a model for a schema-constrained
 /// answer — the routable unit.
+///
+/// **Declaration order is load-bearing** (035): [`Self::index`] is the
+/// discriminant, and `ClientPool` keys its per-site array on it. Reordering
+/// these variants reorders that array; `ALL` must be reordered to match, and
+/// `index_matches_all_order` fails if it is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(usize)]
 pub enum CallSite {
     /// The `verify` corrective.
     Verify,
@@ -190,24 +196,31 @@ impl CallSite {
     /// Position in [`Self::ALL`].
     ///
     /// Lets a caller key a fixed-size array by call site, so lookup is total —
-    /// no `Option`, no unreachable fallback branch. Kept in lockstep with
-    /// `ALL` by `index_matches_all_order`.
+    /// no `Option`, no unreachable fallback branch. `ClientPool` keys
+    /// `by_site` on it, so a wrong answer here does not fail loudly: it hands
+    /// one call site another's client, and the invocation record attributes
+    /// the cost to the model that did not run.
+    ///
+    /// **Derived from the discriminant, not hand-written** (035). This was a
+    /// twelve-arm `match` mapping each variant to a literal, which meant two
+    /// orderings — this one and `ALL` — that had to agree and could only be
+    /// kept agreeing by a test. Both drift directions were in fact caught
+    /// (reordering by `index_matches_all_order`, adding a variant by
+    /// exhaustiveness), so this is not a bug fix. It removes the class instead
+    /// of guarding it: a fieldless enum casts to its declaration order, so
+    /// there is no longer a second ordering that *can* disagree.
+    ///
+    /// The remaining invariant is narrower — `ALL` must be written in
+    /// declaration order — and `index_matches_all_order` now guards exactly
+    /// that, which is why the test is kept rather than retired.
+    ///
+    /// A linear `ALL.iter().position(..)` would also work and was rejected:
+    /// it returns an `Option` whose `None` arm is unreachable, and Principle
+    /// III's ban on `unwrap` in production paths would make that arm either a
+    /// silent fallback or a panic. The cast has neither problem and is free.
     #[must_use]
     pub const fn index(self) -> usize {
-        match self {
-            Self::Verify => 0,
-            Self::Unstick => 1,
-            Self::Diverge => 2,
-            Self::Decide => 3,
-            Self::Elicit => 4,
-            Self::GroundedVerify => 5,
-            Self::CheckTranslate => 6,
-            Self::ResearchScope => 7,
-            Self::ResearchExtract => 8,
-            Self::ResearchVerify => 9,
-            Self::ResearchSynthesize => 10,
-            Self::CheckpointReview => 11,
-        }
+        self as usize
     }
 
     /// Stable lowercase id, used in the startup routing table and in tests.
@@ -986,10 +999,31 @@ mod tests {
     // `index` keys a fixed-size array in the client pool; if it drifts from
     // ALL, a call site silently gets another site's client.
     #[test]
-    fn index_matches_all_order() {
+    /// `ALL` must be written in declaration order, because [`CallSite::index`]
+    /// is the discriminant and `ClientPool` keys its per-site array on it.
+    ///
+    /// Narrower than it used to be, and deliberately kept. Before 035 this
+    /// guarded two hand-written orderings against each other; now the index is
+    /// derived, so the only thing left that *can* disagree is `ALL` itself.
+    /// A failure here means a call site would receive another site's client —
+    /// silent, since both are valid clients, and visible only as an invocation
+    /// record attributing cost to a model that never ran.
+    #[test]
+    fn all_is_in_declaration_order_so_index_keys_it_correctly() {
         for (position, site) in CallSite::ALL.iter().enumerate() {
             assert_eq!(site.index(), position, "{}", site.id());
         }
+        // Every site is present exactly once: a duplicate would give two sites
+        // the same index and leave a slot unreachable.
+        let mut seen: Vec<usize> = CallSite::ALL.iter().map(|s| s.index()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), CallSite::ALL.len(), "ALL contains a duplicate");
+        assert_eq!(
+            seen.last(),
+            Some(&(CallSite::ALL.len() - 1)),
+            "index escapes ALL"
+        );
     }
 
     #[test]
