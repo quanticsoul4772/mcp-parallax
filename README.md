@@ -94,6 +94,7 @@ All configuration is environment variables, read once at startup by `Config::fro
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | yes | — | Anthropic API key (empty or unset fails startup) |
 | `ANTHROPIC_MODEL` | no | `claude-opus-4-8` | Model for the verification/judgment passes |
+| `ANTHROPIC_API_BASE` | no | `https://api.anthropic.com` | API endpoint. Exists so the whole client pool — including the per-effort variants 028 builds — can be pointed at a test double or a proxy; before it, a call carrying an effort bypassed the injected client and reached the live endpoint |
 | `VERIFY_ENSEMBLE_K` | no | `3` | Parallel passes per `verify` (≥ 1) |
 | `INPUT_MAX_CHARS` | no | `50000` | Max input length; `VERIFY_MAX_CLAIM_CHARS` honored as a fallback alias |
 | `VOYAGE_API_KEY` | no | unset | Presence enables the memory tools; absent, they are not in the catalog |

@@ -61,7 +61,9 @@ note: `z3` (bundled) needs cmake — first clean build ~5 min; on Windows set
 memory + research + deterministic + checkpoint + observability, then
 grounded-verify 008 / glob-locators 009 / verification-reliability 010 /
 grounded-compute-settle 011 / diverge 012 / decide 013 / elicit 014 — the
-four-corrective cognitive set plus preference elicitation now complete).
+four-corrective cognitive set plus preference elicitation now complete, then
+016–022 and 027–028 for memory push, routing, budgets, metered failures,
+research confidence, per-call-site effort, and the per-call arguments).
 
 ## The design is the source of truth
 
@@ -127,6 +129,10 @@ advisories. `pre-commit` hooks mirror the gate — `pre-commit install`.
 
 All config is environment variables: `ANTHROPIC_API_KEY` (required — the binary
 errors at startup without it), `ANTHROPIC_MODEL` (default `claude-opus-4-8`),
+`ANTHROPIC_API_BASE` (default `https://api.anthropic.com` — added by 028 so the
+whole client pool, including the per-effort variants, can be pointed at a test
+double; before it, any call carrying an effort left the `ModelClient` seam and
+reached the live endpoint from inside the suite),
 `VERIFY_ENSEMBLE_K` (default `3`), `INPUT_MAX_CHARS` (default `50000`;
 `VERIFY_MAX_CLAIM_CHARS` honored as alias), `VOYAGE_API_KEY` (optional —
 presence enables the memory tools; absent, they are not in the catalog),
@@ -227,7 +233,10 @@ src/
 ├── lib.rs            # crate docs + lint preamble
 ├── error.rs          # AppError, ConfigError, the outcome taxonomy (thiserror)
 ├── config.rs         # Config::from_env()
-├── server.rs         # rmcp handler: tools, catalog gating, run_recorded (one record per call)
+├── server.rs         # rmcp handler: tool declarations, catalog gating, run_recorded (one record per call)
+├── server/
+│   ├── correctives.rs  # the five single-shape corrective handlers (032)
+│   └── record.rs       # RecordGuard: one invocation record per call, on every exit path
 ├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
 ├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / decide (scored single pass → argmax + margin confidence, 013) / elicit (wrong-objective: surface objective + preferences, optional memory recall, 014) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
@@ -270,47 +279,39 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active: `028-per-call-effort-argument` — plan complete, tasks not yet generated.
-Plan:
-[specs/028-per-call-effort-argument/plan.md](specs/028-per-call-effort-argument/plan.md)
-(spec, research, data-model, contracts/tool-surface.md, and quickstart alongside it).
+**No active feature.** `main` is at **v0.3.0** (tagged 2026-07-26) with a clean
+tree and no open PRs.
 
-Reasoning effort is unreachable by the caller. 022 put it in `PARALLAX_EFFORT_*`
-by mirroring 018's `PARALLAX_MODEL_*` shape — a copy, not a decision. The two are
-not the same kind of knob: which model runs a call site sets the rate the operator
-is billed at, while how much reasoning one invocation deserves is a per-task
-judgment the caller makes. The codebase already had the right pattern twice —
-`research`'s `depth`/`constraints` and `recall`'s `limit` — and 022 walked past
-both.
+The 022→032 arc is closed: per-call-site effort (022), a wholly failed phase is
+an error (023), the rejection names the setting that caused it (027), effort /
+pass count / concurrency reachable per call (028), the published schema stops
+contradicting the server (029), the rejection names the per-call source too
+(030), every config variable classified against the ownership test (031), and
+the five single-shape correctives moved out of `server.rs` (032).
 
-Scope is four settings. **effort** becomes an optional argument on the seven
-correctives (`verify` `unstick` `diverge` `decide` `elicit` `grounded_verify`
-`check`); **`VERIFY_ENSEMBLE_K`** becomes per-call `passes` on the three ensemble
-tools, with `passes_used` always reported since confidence derives from cross-pass
-agreement; **`RESEARCH_CONCURRENCY`** joins `research`'s existing `constraints`;
-**`MEMORY_RECALL_LIMIT`** needs no work — `recall` already takes a per-call
-`limit`, so it becomes a confirming test and the cited precedent. Env stays the
-default layer; unset at every layer still sends no `effort` field at all.
+**Two things that arc established, worth carrying forward:**
 
-**Lowering-only is the rule for anything that multiplies spend.** `passes` and
-`concurrency` may be reduced by the caller, never raised — each raise buys model
-calls the operator did not authorise. Effort is deliberately exempt: it selects
-how one call's budget is spent, and `MAX_TOKENS` already caps that.
+- **The operator-owned vs caller-owned test** (`NEW_SERVER_DESIGN.md` §10) —
+  a setting is the operator's when it sets the terms the account is billed on
+  or governs resources beyond the call; the caller's when it is a judgment
+  about *this task*. Anything multiplying model calls is lowering-only.
+  All 21 variables are now classified against it (031), so a new setting has a
+  rule to be placed by rather than a shape to be copied. 022 was a copy.
+- **Live verification finds what tests cannot.** Verifying 027 produced 030,
+  and verifying 028 exposed that `cargo test` was opening real connections to
+  the Anthropic API with the fixture key. Both were invisible to a green suite.
 
-The plan's central question — how a per-call effort reaches a client pool keyed on
-`(model, effort)` and built at startup — is settled by a third option the spec did
-not name (research D1): **eagerly pre-build the full (routed model × six effort
-states) cross product over one shared `reqwest::Client`**. At most 72 entries,
-realistically under 12. The `ModelClient` seam is untouched, so 018 D2 stands and
-every mock still compiles, and neither path allocates per call. Named residual:
-D3's concurrency clamp is the one place a caller value is altered rather than
-honoured or rejected — recorded on the invocation record so both values stay
-recoverable, with rejection named as the alternative if review disagrees.
+**Parked, deliberately:** `research/tier-budgets-from-structure` (57fe9cf) —
+standard 450k→1.6M and deep 1M→5.5M, derived from each tier's declared caps ×
+one measured figure. Not merged: raising a default budget raises what an
+unspecified run may spend, which wants a spec and an owner's decision. Routed
+through `decide` (68 v 66) then refuted 3/3 by the confirmation `verify`.
 
-Effort lands on the invocation record (additive `effort TEXT` column, the `depth`
-pattern) rather than in any tool's output, because it changes what a call costs,
-not how its answer reads. That record is what keeps spend explainable once it stops
-being predictable from configuration. Next: `/speckit-tasks`.
+**Process note:** 029, 030, 031 and 032 shipped without Spec Kit artifacts.
+029 and 030 changed behaviour, so that is a deviation from the constitution's
+spec-driven workflow, named here rather than left implicit — the same way 022
+recorded being retrofitted. Each carries its reasoning in its commit message
+and PR body instead.
 <!-- SPECKIT END -->
 
 ## Working style
