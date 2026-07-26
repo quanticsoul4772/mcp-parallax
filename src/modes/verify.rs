@@ -114,13 +114,18 @@ pub struct VerifyParams {
     /// schema, and a prose-only list is not something it can be constrained by.
     #[serde(default)]
     pub effort: Option<crate::routing::Effort>,
-    /// Independent passes to run for this call alone. May be **lower** than
-    /// the configured count, never higher — each pass is a whole model call,
-    /// so raising it would buy work the operator did not authorise. Omit to
-    /// use the configured count. Confidence is derived from cross-pass
-    /// agreement, so fewer passes means a narrower basis; the result reports
-    /// the count it actually used.
+    /// Independent passes to run for this call alone. **Minimum 1.** The
+    /// effective maximum is the deployment's configured count, not a fixed
+    /// number, so it cannot appear in the schema — a request above it is
+    /// rejected with an error naming the ceiling.
+    ///
+    /// May be **lower** than the configured count, never higher: each pass is
+    /// a whole model call, so raising it would buy work the operator did not
+    /// authorise. Omit to use the configured count. Confidence is derived from
+    /// cross-pass agreement, so fewer passes means a narrower basis; the
+    /// result reports the count it actually used.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub passes: Option<u8>,
 }
 
@@ -550,6 +555,10 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(contract_props, derived_props);
+        // 029: names alone are not the contract. Two defects shipped past a
+        // name-only comparison — `effort` as an untyped string, and `passes`
+        // publishing `minimum: 0` while the server rejects zero.
+        crate::schema::assert_constraints_agree(&contract["inputSchema"], &input, "verify");
         assert_eq!(contract["inputSchema"]["required"], json!(["claim"]));
 
         // Output (aggregated Verdict): property set, required, verdict enum.

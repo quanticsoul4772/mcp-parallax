@@ -230,6 +230,10 @@ mod tests {
 
         let input = serde_json::to_value(schemars::schema_for!(ResearchParams)).unwrap();
         assert_eq!(props(&input), props(&contract["inputSchema"]));
+        // 029: names alone are not the contract. Two defects shipped past a
+        // name-only comparison — `effort` as an untyped string, and `passes`
+        // publishing `minimum: 0` while the server rejects zero.
+        crate::schema::assert_constraints_agree(&contract["inputSchema"], &input, "research");
         // Constraints sub-object property set.
         let derived_constraints = serde_json::to_value(schemars::schema_for!(Constraints)).unwrap();
         assert_eq!(

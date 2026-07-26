@@ -67,6 +67,25 @@ arc.
   than a construction — and the `ModelClient` seam is untouched, upholding 018
   research D2 rather than reversing it.
 
+### Fixed
+
+* **The published schema no longer contradicts the server (029)** — `passes`
+  derives from a Rust `u8`, so the schema shown to the calling model advertised
+  `minimum: 0, maximum: 255` while the server rejects `0` and rejects anything
+  above the configured count. A model reading the schema was told values were
+  valid that the server refuses. The derived schema now states `minimum: 1`,
+  and the contract records that the effective maximum is the deployment's
+  configured count rather than a fixed number, so it cannot appear in a schema
+  at all — a request above it is rejected with an error naming the ceiling.
+
+  **The larger half is the test gap that let it ship.** The contract tests
+  compared property *names* and the `required` list, never constraints. Two
+  defects passed through: this one, and `effort` shipping as an untyped string
+  in 028 while its contract claimed an enum. All five contract tests now compare
+  declared constraints, following `$ref` into `$defs` so a referenced enum
+  neither hides a mismatch nor manufactures one. Mutation-verified: removing the
+  bound fails the test naming the property and both values.
+
 ### Changed
 
 * **An effort rejection names which setting caused it (027)** — when the

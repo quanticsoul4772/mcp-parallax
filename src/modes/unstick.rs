@@ -308,6 +308,10 @@ mod tests {
 
         let input = serde_json::to_value(schemars::schema_for!(UnstickParams)).unwrap();
         assert_eq!(props(&input), props(&contract["inputSchema"]));
+        // 029: names alone are not the contract. Two defects shipped past a
+        // name-only comparison — `effort` as an untyped string, and `passes`
+        // publishing `minimum: 0` while the server rejects zero.
+        crate::schema::assert_constraints_agree(&contract["inputSchema"], &input, "unstick");
         assert_eq!(contract["inputSchema"]["required"], json!(["goal"]));
         // `blocked` carries #[serde(default)] for arg-drop tolerance, so it is advertised OPTIONAL
         // (not in `required`); `normalize()` recovers it from `goal` and `check_input` still rejects a

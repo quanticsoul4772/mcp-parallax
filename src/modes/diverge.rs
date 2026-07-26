@@ -120,13 +120,18 @@ pub struct DivergeParams {
     /// schema, and a prose-only list is not something it can be constrained by.
     #[serde(default)]
     pub effort: Option<crate::routing::Effort>,
-    /// Independent passes to run for this call alone. May be **lower** than
-    /// the configured count, never higher — each pass is a whole model call,
-    /// so raising it would buy work the operator did not authorise. Omit to
-    /// use the configured count. Each pass applies a distinct generative lens,
-    /// so fewer passes means fewer distinct framings returned; the result
-    /// reports the count it actually used.
+    /// Independent passes to run for this call alone. **Minimum 1.** The
+    /// effective maximum is the deployment's configured count, not a fixed
+    /// number, so it cannot appear in the schema — a request above it is
+    /// rejected with an error naming the ceiling.
+    ///
+    /// May be **lower** than the configured count, never higher: each pass is
+    /// a whole model call, so raising it would buy work the operator did not
+    /// authorise. Omit to use the configured count. Each pass applies a distinct
+    /// generative lens, so fewer passes means fewer distinct framings; the
+    /// result reports the count it actually used.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub passes: Option<u8>,
 }
 
