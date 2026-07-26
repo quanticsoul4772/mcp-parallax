@@ -62,7 +62,48 @@ pub struct DepthTier {
     pub default_budget_tokens: u64,
 }
 
+/// Tokens one claim costs per verification pass, measured across three live
+/// standard-tier runs (2 678 / 2 565 / 2 280; mean 2 508).
+///
+/// This is the one empirical input to the tier budgets. Everything else in the
+/// derivation is a cap the tier already declares.
+const TOKENS_PER_CLAIM_PASS: u64 = 2_508;
+
 impl Depth {
+    /// The token budget this tier's own caps imply: every source fetched, every
+    /// source yielding the maximum claims, every claim verified by the full
+    /// ensemble.
+    ///
+    /// **The budget is sized to this, not below it (024).** A default below the
+    /// structural maximum is not a safety net — it is a silent quality cap. The
+    /// three standard runs that produced [`TOKENS_PER_CLAIM_PASS`] each tripped
+    /// their ceiling and dropped 20–45% of the claims they had already paid to
+    /// extract, reporting only `stopped_early`. Sizing from the caps means the
+    /// ceiling fires on genuine anomaly rather than on the tier working as
+    /// specified.
+    ///
+    /// A caller who wants to spend less passes `budget_tokens` explicitly; the
+    /// contract has always supported that, and it is the honest place for a
+    /// cost decision because the caller sees the trade it is making.
+    ///
+    /// **The ceiling is soft, and sizing it depends on knowing that** (033).
+    /// The budget is probed before and inside each unit of work, so exhaustion
+    /// stops *new* tasks while in-flight ones finish. The three standard runs
+    /// recorded 503k, 643k and 949k against a 450_000 cap — 1.1x to 2.1x over
+    /// it. A nominal budget is therefore an instruction to stop starting, not
+    /// a hard spend limit, and any figure here should be read as the point at
+    /// which the run begins winding down rather than the most it can cost.
+    ///
+    /// That cuts both ways and is why the raise is defensible: the old 450_000
+    /// was already yielding 949k runs, so the gap between nominal and actual
+    /// was doing the work a larger nominal value does honestly.
+    #[must_use]
+    pub const fn structural_max_tokens(self) -> u64 {
+        let tier = self.tier();
+        let claims = tier.max_sources as u64 * MAX_CLAIMS_PER_SOURCE as u64;
+        claims * tier.verify_k as u64 * TOKENS_PER_CLAIM_PASS
+    }
+
     /// The wire spelling, matching the contract's `depth` enum. Used to stamp
     /// the invocation record so a recorded run can be attributed to its tier
     /// (019 — without this, no historical run tells you which ceiling it ran
@@ -105,11 +146,17 @@ impl Depth {
                 // Sizing a ceiling from a run that hit that ceiling is
                 // circular; the number it produces is always too low.
                 //
-                // Standard and deep are deliberately NOT raised by inference.
-                // The invocation record does not yet carry the depth (fixed in
-                // this change), so no recorded run can be attributed to a tier
-                // and their consumption is unmeasured. Raising them on a guess
-                // is the failure mode 018's SC-001 already demonstrated.
+                // 024 replaced that method entirely for standard and deep, and
+                // this value is left alone because it already clears the same
+                // bar: quick's structural maximum is 8 x 12 x 1 x 2_508 =
+                // ~241_000, and 350_000 sits above it.
+                //
+                // That reasoning held until the record carried the depth.
+                // 019 added it; 033 then read the history back and found
+                // standard tripping 3 of 3 while quick trips 0 of 7 with a
+                // median of 239k. Both were raised in 033 — standard on that
+                // evidence, deep on the ordering invariant. Quick is the tier
+                // this method was proven on and needs no change.
                 default_budget_tokens: 350_000,
             },
             Self::Standard => DepthTier {
@@ -117,14 +164,53 @@ impl Depth {
                 max_sources: 25,
                 verify_k: 2,
                 default_deadline_ms: 240_000,
-                default_budget_tokens: 450_000,
+                // 450_000 -> 1_600_000 (033). The tier's own structural
+                // maximum: 25 sources x 12 claims x 2 passes x 2_508 tokens
+                // per claim per pass — the caps this tier already declares,
+                // multiplied out.
+                //
+                // **Measured, then derived.** Every standard run on record
+                // hit the old ceiling — 3 of 3, spending 503k, 643k and 949k
+                // against a 450k cap. That is the base rate, not an anecdote:
+                // there is no standard run that finished inside 450_000.
+                //
+                // The number is still structural rather than fitted to those
+                // three, deliberately. Fitting to runs that *stopped early*
+                // is how the quick tier got 250_000 — derived from a run that
+                // had itself been truncated, and corrected to 350_000 once
+                // that circularity was noticed. Quick now sits at 0 of 7
+                // trips with a median of 239k, which is what a budget with
+                // real headroom looks like.
+                default_budget_tokens: 1_600_000,
             },
             Self::Deep => DepthTier {
                 angles: 8,
                 max_sources: 60,
                 verify_k: 3,
                 default_deadline_ms: 480_000,
-                default_budget_tokens: 1_000_000,
+                // 1_000_000 -> 5_500_000 (033): 60 x 12 x 3 x 2_508 =
+                // 5_417_000, rounded up. The same formula as standard, over
+                // caps this tier already declares.
+                //
+                // **This is the weaker of the two raises and should be read
+                // that way.** No deep run has ever executed — zero rows in
+                // `invocation_records` carry `depth='deep'` — so unlike
+                // standard, which tripped 3 of 3, there is no observation
+                // here at all. It was nearly held back for exactly that
+                // reason.
+                //
+                // What forces it is the tier ordering. Deep declares strictly
+                // more than standard in every dimension (60 sources vs 25,
+                // verify_k 3 vs 2), so its structural maximum is necessarily
+                // larger, and a deep budget *below* standard's would make the
+                // more thorough tier truncate harder — incoherent, and caught
+                // by `tier_table_matches_the_design` when this was first
+                // written the other way. Accepting the formula for standard,
+                // which the trip data justifies, means accepting it here.
+                //
+                // Revisit when a deep run exists to measure against. Until
+                // then this is arithmetic over declared caps, not evidence.
+                default_budget_tokens: 5_500_000,
             },
         }
     }

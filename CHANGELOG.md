@@ -13,6 +13,35 @@ arc.
 
 ### Changed
 
+* **Research tier budgets sized from measured history (033)** — `standard`
+  450_000 → 1_600_000 and `deep` 1_000_000 → 5_500_000, each the tier's own
+  declared caps multiplied by one measured figure (2 508 tokens per claim per
+  pass).
+
+  **The base rate decided this, not the derivation.** A `decide` pass
+  recommended leaving the budgets alone and making truncation louder instead;
+  its confirmation `verify` refuted that 3/3, on the ground that three observed
+  trips against an *unknown* total supports no conclusion either way. That
+  total turned out to be queryable — 019 put the tier on the invocation record
+  — and the history says: **standard tripped 3 of 3**, spending 503k, 643k and
+  949k against a 450_000 cap, while **quick trips 0 of 7** with a median of
+  239k. The old standard default was not an occasional edge case; no standard
+  run has ever finished inside it.
+
+  Deep is the weaker half and is labelled as such in the code: **no deep run
+  has ever executed.** It was nearly held back for that reason, until the tier
+  ordering forced it — deep declares strictly more than standard in every
+  dimension, so a smaller budget would make the more thorough tier truncate
+  harder. `tier_table_matches_the_design` caught that when it was first written
+  the other way.
+
+  Also records that **the ceiling is soft**: the budget is probed before and
+  inside each unit of work, so it stops new tasks while in-flight ones finish.
+  Those standard runs recorded 1.1× to 2.1× over their nominal cap. A budget is
+  the point a run starts winding down, not the most it can cost — which is both
+  why the old 450_000 was already yielding 949k runs and why a larger nominal
+  value is the honest way to say what was happening anyway.
+
 * **The five single-shape corrective handlers moved to
   `src/server/correctives.rs` (032)** — `verify`, `unstick`, `decide`, `elicit`
   and `diverge` are structurally identical and sat in `server.rs` with
