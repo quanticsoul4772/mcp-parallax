@@ -126,7 +126,9 @@ level; both must be startup errors naming the variable.
   silently treated as unset.
 - A level accepted by the provider for some model families but not others: out
   of scope here — the server passes the level through and surfaces the
-  provider's error.
+  provider's error. *(027: this happened, on the model this project's own
+  quickstart recommends for bulk. The pass-through decision stands; 027 makes
+  the surfaced error name which setting caused it.)*
 
 ## Requirements *(mandatory)*
 
@@ -186,3 +188,11 @@ level; both must be startup errors naming the variable.
 - Level support varies by model family. The server passes the level through; a
   family that rejects one surfaces the provider's error rather than the server
   second-guessing it.
+
+  *(027, 2026-07-25: this statement was right and two other 022 artifacts
+  contradicted it — `SDK_LANDSCAPE.md:285` and `018/research.md:169` both
+  claimed every routed family accepts the parameter. They were the error and
+  have been corrected. What "surfaces the provider's error" was always supposed
+  to mean is now implemented: the client appends the model it sent, the level it
+  sent, and both remedies. No capability table, no startup refusal — the fact
+  comes from the provider at the moment it is true.)*

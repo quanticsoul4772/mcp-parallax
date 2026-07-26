@@ -142,12 +142,39 @@ absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
 (default `262144`), `GROUNDED_VERIFY_MAX_LOCATORS` (default `64`),
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
-`REQUEST_TIMEOUT_MS` (default `30000`), `MAX_RETRIES` (default `3`).
+`REQUEST_TIMEOUT_MS` (default `120000` — raised from 30 s by 018 D7 in step with
+the output budget), `MAX_RETRIES` (default `3`).
 A present-but-unparseable value is an error, never a silent fallback to the
 default. Telemetry is enabled solely by the standard OTel variables
 (`OTEL_EXPORTER_OTLP_ENDPOINT` et al.; `OTEL_SDK_DISABLED=true` honored
 app-side, OTel-spec lenient semantics — the one named exception to the
 loud-malformed convention).
+
+### Per-call-site routing (`src/routing.rs`)
+
+Twelve named call sites are independently routable to a **model** (018,
+`PARALLAX_MODEL_*`) and a provider **reasoning effort** (022,
+`PARALLAX_EFFORT_*`). Both namespaces are off by default and resolve
+most-specific-first and independently: `PARALLAX_<NS>_<SITE>`, else
+`PARALLAX_<NS>_<TIER>`, else the default — so a site can take its model from a
+tier and its effort from its own variable. Unset effort sends no `effort` field
+at all, leaving the request byte-identical to pre-022.
+
+Sites: `VERIFY` `UNSTICK` `DIVERGE` `DECIDE` `ELICIT` `GROUNDED_VERIFY`
+`CHECK_TRANSLATE` `RESEARCH_SCOPE` `RESEARCH_EXTRACT` `RESEARCH_VERIFY`
+`RESEARCH_SYNTHESIZE` `CHECKPOINT_REVIEW`. Tiers: `BULK` (research extraction
+alone — the one site whose volume scales with sources fetched) and `JUDGMENT`
+(everything else). Effort levels: `low` `medium` `high` `max` `xhigh`. An
+unknown suffix in either reserved namespace, or an unparseable level, is a
+startup error naming the variable.
+
+**Effort support varies by model family and is not checked at startup.**
+`claude-haiku-4-5` rejects the parameter and is also the model
+`018/quickstart.md` recommends for bulk, so `PARALLAX_MODEL_BULK` +
+`PARALLAX_EFFORT_BULK` together fail every extraction call — observed in
+production 2026-07-25. No capability table ships: it would go stale in the
+direction that refuses a working configuration. Instead the client appends the
+model, the level, and both remedies to the provider's rejection (027).
 
 ## Conventions (carried over from `mcp-reasoning`, compiler-enforced)
 

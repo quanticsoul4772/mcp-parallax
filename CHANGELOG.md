@@ -11,7 +11,47 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
-Nothing yet.
+### Changed
+
+* **An effort rejection names which setting caused it (027)** — when the
+  provider rejects a request for the reasoning-effort parameter, the error now
+  appends the model it was sent to, the level that was sent, and both remedies
+  (unset the `PARALLAX_EFFORT_*` variable covering the call site, or route the
+  site to a model that accepts effort). The provider's own message is kept
+  beside it, never replaced.
+
+  The guard is narrow on purpose — a client-error status, an effort actually
+  configured, and a body naming the parameter. A rejection with any other cause
+  reads exactly as it did before, because a confident wrong diagnosis in front
+  of an operator is worse than a bare message. If the provider rewords its
+  rejection the hint stops appearing and the message degrades to today's
+  behaviour, which is the safe direction.
+
+  No model-capability table and no startup refusal: the fact comes from the
+  provider at the moment it is true, so a family released after this binary was
+  built behaves identically to one known at build time, and no configuration
+  that would have worked is prevented from starting.
+
+### Fixed
+
+* **A false claim in the 0.2.0 notes, corrected here rather than rewritten
+  (027)** — the 022 entry below states that `output_config.effort` is "the
+  control that every routed family accepts". **That is false.**
+  `claude-haiku-4-5` rejects it with a 400, and that is the model
+  `018/quickstart.md` recommends for the bulk tier — so the project's two
+  standing recommendations were jointly a failing run, observed in production on
+  2026-07-25. Released history is not edited; the sentence stands below as
+  shipped, and this is its correction. The same false claim in
+  `docs/design/SDK_LANDSCAPE.md` and `specs/018-model-routing/research.md` — not
+  released history — has been fixed in place. 022's own
+  `spec.md:186` said support varies by family and was right; the other two
+  artifacts were the error.
+
+* **`PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*` are documented (027)** — features
+  018 and 022 shipped both namespaces without adding them to `README.md` or
+  `CLAUDE.md`, whose configuration sections enumerate every other environment
+  variable. Also corrects `REQUEST_TIMEOUT_MS`'s documented default, which read
+  `30000` in three places after 018 raised the code to `120000`.
 
 ## [0.2.0] - 2026-07-25
 

@@ -89,7 +89,10 @@ pub struct Config {
     pub database_path: String,
     /// Log-level filter. `LOG_LEVEL`, default `info`.
     pub log_level: String,
-    /// Per-request timeout in milliseconds. `REQUEST_TIMEOUT_MS`, default `30000`.
+    /// Per-request timeout in milliseconds. `REQUEST_TIMEOUT_MS`, default
+    /// `120000` — raised from 30 s by 018 D7 in step with the output budget,
+    /// since a model that reasons before answering can exceed 30 s on a large
+    /// ceiling, converting a truncation into a timeout rather than fixing it.
     pub request_timeout_ms: u64,
     /// Maximum API retry attempts. `MAX_RETRIES`, default `3`.
     pub max_retries: u32,

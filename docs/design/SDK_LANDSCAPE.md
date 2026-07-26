@@ -282,7 +282,15 @@ traits are already the seams these slot behind):
    The `thinking` route stayed closed, and suppression is not what shipped. The
    provider's supported control is `output_config.effort` (`low`/`medium`/`high`/
    `max`/`xhigh`, no beta header), which governs *all* output tokens including
-   thinking and is accepted by every routed family. 022 exposes it per call site
+   thinking. **Support for it varies by family** — `claude-haiku-4-5` rejects it
+   with a 400, and it is the model `018/quickstart.md` recommends for the bulk
+   tier, so the two standing recommendations collide by default. (This sentence
+   read "accepted by every routed family" from 022 until 027 corrected it; that
+   was false when written, and setting `PARALLAX_EFFORT_BULK` on the recommended
+   bulk model failed every call in the phase. The correct statement was already
+   in `022/spec.md:186`.) The server sends the level and lets the provider
+   answer; when the provider rejects it the error names the model, the level, and
+   the remedy — 027. 022 exposes it per call site
    over a `PARALLAX_EFFORT_*` namespace mirroring `PARALLAX_MODEL_*`, off by default:
    unset sends no field, so the request stays byte-identical. What D7 wanted — spend
    less reasoning where reasoning is not the value — is delivered; the "measured

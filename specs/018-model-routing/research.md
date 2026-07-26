@@ -166,8 +166,16 @@ by removing the dimension, losing per-model invocation counts operators have tod
 > cost". Suppression is still not sent: `thinking: {"type": "disabled"}` remains
 > rejected by Fable 5, so omitting the field is still the one universally
 > accepted shape. The supported control turned out to be
-> `output_config.effort`, which governs all output tokens including thinking and
-> which every routed family accepts. 022 exposes it per call site, off by
+> `output_config.effort`, which governs all output tokens including thinking.
+> **Support for it varies by family** — `claude-haiku-4-5` rejects it, and this
+> feature's own `quickstart.md:9-17` recommends that model for the bulk tier, so
+> the two recommendations collide. (This note read "which every routed family
+> accepts" from 022 until 027 corrected it; it was false when written.) So D7's
+> premise survives in a narrower form: there is still no single request shape
+> every family accepts, and effort did not change that — it moved the
+> disagreement from `thinking` to `effort`, where a rejection is at least
+> per-call-site configurable and, since 027, self-diagnosing. 022 exposes it per
+> call site, off by
 > default. The "measured cost" condition now applies to choosing levels, which
 > 022 deliberately leaves to the operator rather than shipping a recommended
 > default on evidence nobody has. See `specs/022-per-call-site-effort/`.

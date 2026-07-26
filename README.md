@@ -108,10 +108,35 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `GROUNDED_VERIFY_MAX_LOCATORS` | no | `64` | Maximum locators accepted per `grounded_verify` call |
 | `DATABASE_PATH` | no | `./data/parallax.db` | SQLite path (sessions, memories, invocation + checkpoint records) |
 | `LOG_LEVEL` | no | `info` | `error\|warn\|info\|debug\|trace` |
-| `REQUEST_TIMEOUT_MS` | no | `30000` | Per-request timeout (ms) |
+| `REQUEST_TIMEOUT_MS` | no | `120000` | Per-request timeout (ms). Raised from 30 s by 018 D7 in step with the output budget — a model that reasons before answering can exceed 30 s on a large ceiling, turning a truncation into a timeout rather than fixing it |
 | `MAX_RETRIES` | no | `3` | Maximum API retry attempts |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | unset | Presence enables OTLP telemetry export (traces + metrics, GenAI semantic conventions); the standard `OTEL_*` family is honored. Schemeless endpoints default to `https` — use an explicit `http://localhost:4318` for local collectors. Exported data is record metadata only (tool, model, tokens, cost, latency, outcome) — never input text, memory/transcript content, or credentials |
 | `OTEL_SDK_DISABLED` | no | unset | `true` (case-insensitive) force-disables telemetry regardless of endpoint |
+
+### Per-call-site routing: `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*`
+
+The server asks a model for a schema-constrained answer in twelve named places. Each is independently routable to a model (018) and to a provider reasoning-effort level (022), over two parallel namespaces. Both are **off by default**: with neither set, every site uses `ANTHROPIC_MODEL` and the request carries no `effort` field at all — byte-identical to a server without the feature.
+
+Resolution is **most-specific-first and independent per namespace**: the call site's own variable, else its tier's, else the default. A site can take its model from a tier and its effort from its own variable.
+
+| Suffix | Call site | Tier |
+|---|---|---|
+| `VERIFY` `UNSTICK` `DIVERGE` `DECIDE` `ELICIT` `GROUNDED_VERIFY` | the correctives | `JUDGMENT` |
+| `CHECK_TRANSLATE` | claim → formal target | `JUDGMENT` |
+| `RESEARCH_SCOPE` `RESEARCH_VERIFY` `RESEARCH_SYNTHESIZE` | research phases 1, 4, 5 | `JUDGMENT` |
+| `RESEARCH_EXTRACT` | research phase 3 — the one site whose volume scales with sources fetched | `BULK` |
+| `CHECKPOINT_REVIEW` | end-of-turn review hop | `JUDGMENT` |
+
+```sh
+PARALLAX_MODEL_BULK=claude-haiku-4-5      # every bulk site
+PARALLAX_MODEL_VERIFY=claude-opus-4-8     # one site, overriding its tier
+PARALLAX_EFFORT_JUDGMENT=high             # every judgment site
+PARALLAX_EFFORT_RESEARCH_SCOPE=low        # one site, overriding its tier
+```
+
+Effort levels are `low`, `medium`, `high`, `max`, `xhigh`. An unrecognised suffix or an unparseable level is a **startup error naming the variable** — a setting that silently does nothing would leave you believing a call site changed when it did not.
+
+**Effort support varies by model family, and the pairing is not checked at startup.** `claude-haiku-4-5` rejects the parameter, and it is also the natural choice for `PARALLAX_MODEL_BULK` — so `PARALLAX_MODEL_BULK=claude-haiku-4-5` with `PARALLAX_EFFORT_BULK` set will fail every extraction call in a research run. The server does not carry a capability table (it would go stale in the direction that refuses a configuration which would have worked); instead the provider's rejection is surfaced with the model, the level, and both remedies named. The startup routing table prints the resolved model and effort for all twelve sites.
 
 Every invocation is recorded in SQLite (tool, model, tokens, cost, latency, outcome). When an OTLP endpoint is set, spans and metrics are derived from the same records, so the two surfaces cannot disagree; telemetry failures never affect the server. Research cost note: records carry summed LLM tokens, but Brave bills per request, so its fee is not in `cost_usd` — a named inexactness.
 
