@@ -11,6 +11,33 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+### Fixed
+
+* **`--help` matches the runtime, and a test now keeps it that way (034)** —
+  the help body advertised `REQUEST_TIMEOUT_MS` at 30000 while the code has
+  read 120000 since 018, listed 7 of 20 environment variables, omitted both
+  routing namespaces entirely, and named `VERIFY_MAX_CLAIM_CHARS` as though it
+  were canonical rather than the deprecated 002-era alias `config.rs` honours
+  only when `INPUT_MAX_CHARS` is unset.
+
+  It now covers every variable, grouped by whether it is always read, gates a
+  capability, or belongs to a subsystem, plus the `PARALLAX_MODEL_*` /
+  `PARALLAX_EFFORT_*` namespaces with their call sites, tiers and levels.
+
+  **The reason it drifted is the part worth fixing.** 027 corrected that same
+  timeout in `README.md` and `CLAUDE.md` and never touched this block; a later
+  loose-ends sweep re-checked those same two files. Both passes looked for
+  documentation where documentation *looks* like it lives, and `--help` is the
+  only pre-runtime contract a caller sees — an operator who runs `--help` and
+  then starts the server was getting two different mental models.
+
+  So the help body is now a testable `help_text()` string, and three tests
+  compare it against `config.rs` itself: every variable the config reads must
+  appear, both routing namespaces and their vocabulary must appear, and stated
+  defaults must be the ones the code applies. Mutation-verified — restoring the
+  stale timeout and dropping one variable fails with `timeout default drifted`
+  and `--help omits variables that config.rs reads: ["RESEARCH_CONCURRENCY"]`.
+
 ### Changed
 
 * **Research tier budgets sized from measured history (033)** — `standard`
