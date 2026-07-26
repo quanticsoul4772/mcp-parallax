@@ -141,24 +141,192 @@ fn print_version() {
 
 #[allow(clippy::print_stdout)]
 fn print_help() {
-    println!("Parallax MCP server v{}", env!("CARGO_PKG_VERSION"));
-    println!();
-    println!("USAGE:");
-    println!("    mcp-parallax [OPTIONS]");
-    println!();
-    println!("OPTIONS:");
-    println!("    --version, -v    Print version information and exit");
-    println!("    --help, -h       Print this help message and exit");
-    println!();
-    println!("    (no arguments)   Start the MCP server on stdio");
-    println!();
-    println!("ENVIRONMENT VARIABLES:");
-    println!("    ANTHROPIC_API_KEY       Anthropic API key (required)");
-    println!("    ANTHROPIC_MODEL         Model id (default: claude-opus-4-8)");
-    println!("    VERIFY_ENSEMBLE_K       Verification passes, >= 1 (default: 3)");
-    println!("    VERIFY_MAX_CLAIM_CHARS  Max claim length (default: 50000)");
-    println!("    DATABASE_PATH           SQLite database path (default: ./data/parallax.db)");
-    println!("    LOG_LEVEL               error|warn|info|debug|trace (default: info)");
-    println!("    REQUEST_TIMEOUT_MS      Per-request timeout in ms (default: 30000)");
-    println!("    MAX_RETRIES             Maximum API retry attempts (default: 3)");
+    println!("{}", help_text());
+}
+
+/// The `--help` body, built as a string so a test can check it against the
+/// variables [`mcp_parallax::config`] actually reads.
+///
+/// This is the **only pre-runtime contract** a caller sees: someone who runs
+/// `--help` and then starts the server should not end up with two different
+/// mental models. It drifted badly before this was testable — the timeout
+/// default said 30000 when the code had read 120000 since 018, and thirteen
+/// variables plus both routing namespaces were missing entirely. 027 corrected
+/// that same timeout in `README.md` and `CLAUDE.md` and did not touch this
+/// block, because nothing connected them.
+fn help_text() -> String {
+    format!(
+        "\
+Parallax MCP server v{version}
+
+USAGE:
+    mcp-parallax [OPTIONS]
+
+OPTIONS:
+    --version, -v    Print version information and exit
+    --help, -h       Print this help message and exit
+
+    (no arguments)   Start the MCP server on stdio
+
+CORE (always read):
+    ANTHROPIC_API_KEY             Anthropic API key. REQUIRED; startup fails without it
+    ANTHROPIC_MODEL               Default model id (default: claude-opus-4-8)
+    ANTHROPIC_API_BASE            API endpoint (default: https://api.anthropic.com)
+    INPUT_MAX_CHARS               Max input length (default: 50000)
+                                  VERIFY_MAX_CLAIM_CHARS is honoured as a
+                                  deprecated 002-era alias when this is unset
+    VERIFY_ENSEMBLE_K             Verification passes, >= 1 (default: 3).
+                                  A call may request fewer via `passes`, never more
+    DATABASE_PATH                 SQLite path (default: ./data/parallax.db)
+    LOG_LEVEL                     error|warn|info|debug|trace (default: info)
+    REQUEST_TIMEOUT_MS            Per-request timeout in ms (default: 120000)
+    MAX_RETRIES                   Maximum API retry attempts (default: 3)
+
+CAPABILITY GATES (absent = the tools are not in the catalog at all):
+    VOYAGE_API_KEY                Enables the memory tools (save/recall/forget/surface)
+    VOYAGE_MODEL                  Embedding model (default: voyage-4). Stay within one
+                                  family — changing it makes stored vectors incomparable
+    MEMORY_RECALL_LIMIT           Default recall top-k, 1..=20 (default: 5).
+                                  `recall` takes a per-call `limit`
+    BRAVE_API_KEY                 Enables `research`
+    GROUNDED_VERIFY_ROOT          Enables `grounded_verify`; the single root that
+                                  locators resolve within, canonicalized at startup
+
+RESEARCH:
+    FETCH_TIMEOUT_MS              Per-source fetch timeout in ms (default: 10000)
+    RESEARCH_CONCURRENCY          Concurrent fetch/extract/verify cap, 1..=32
+                                  (default: 8). A call may lower it, never raise it
+    FETCH_ALLOW_PRIVATE           SSRF guard (default: false). When false, fetches to
+                                  loopback/private/link-local targets are blocked
+
+GROUNDED VERIFY:
+    GROUNDED_VERIFY_MAX_BYTES     Assembled-evidence byte ceiling (default: 262144)
+    GROUNDED_VERIFY_MAX_LOCATORS  Max locators per call (default: 64)
+
+CHECKPOINTS:
+    CHECKPOINT_GATE_PATTERNS      Comma-separated substrings extending the pre-action
+                                  gate's built-in risk patterns (default: empty).
+                                  An empty entry (\"a,,b\") is an error, not a skip
+
+PER-CALL-SITE ROUTING (both off by default; unset changes nothing):
+    PARALLAX_MODEL_<SITE>         Route one call site to a model
+    PARALLAX_MODEL_<TIER>         Route a whole tier
+    PARALLAX_EFFORT_<SITE>        Reasoning effort for one call site
+    PARALLAX_EFFORT_<TIER>        Reasoning effort for a whole tier
+
+    SITES:  VERIFY UNSTICK DIVERGE DECIDE ELICIT GROUNDED_VERIFY CHECK_TRANSLATE
+            RESEARCH_SCOPE RESEARCH_EXTRACT RESEARCH_VERIFY RESEARCH_SYNTHESIZE
+            CHECKPOINT_REVIEW
+    TIERS:  BULK (research extraction only) JUDGMENT (everything else)
+    LEVELS: low medium high max xhigh
+
+    Model and effort resolve independently, most-specific-first: site, then tier,
+    then the default. An unknown suffix or level is a startup error naming the
+    variable. Effort support varies by model family and is NOT checked at startup —
+    claude-haiku-4-5 rejects it; when a provider does, the error names the model,
+    the level, and the remedies.
+
+TELEMETRY:
+    OTEL_EXPORTER_OTLP_ENDPOINT   Presence enables OTLP export (traces + metrics).
+                                  The standard OTEL_* family is honoured
+    OTEL_SDK_DISABLED             true (case-insensitive) force-disables telemetry
+
+A present-but-unparseable value is an error, never a silent fallback to the default.
+",
+        version = env!("CARGO_PKG_VERSION")
+    )
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::help_text;
+
+    /// Every environment variable `config.rs` reads must appear in `--help`.
+    ///
+    /// The drift this catches is not hypothetical: before this test the help
+    /// text advertised a 30000 ms timeout against a 120000 ms default, omitted
+    /// thirteen variables and both routing namespaces, and still named a
+    /// deprecated alias as though it were canonical. 027 fixed that same
+    /// timeout in two markdown files and missed this one, and a later
+    /// loose-ends sweep re-checked those same two files — because both were
+    /// looking for documentation where documentation *looks* like it lives.
+    ///
+    /// Comparing against the source that does the reading is what makes the
+    /// next omission fail rather than ship.
+    #[test]
+    fn help_lists_every_variable_the_config_reads() {
+        let config = include_str!("config.rs");
+        let help = help_text();
+
+        // Fixtures that exist only to prove absent/invalid handling, and the
+        // alias the help mentions by name but does not advertise as canonical.
+        let fixtures = [
+            "PARALLAX_TEST_DEFINITELY_UNSET_KEY",
+            "PARALLAX_MODEL_NOT_A_CALL_SITE",
+        ];
+
+        let mut missing = Vec::new();
+        let mut rest = config;
+        while let Some(open) = rest.find('"') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('"') else { break };
+            let token = &rest[..close];
+            rest = &rest[close + 1..];
+            let looks_like_env = token.len() >= 4
+                && token
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                && token.contains('_');
+            if looks_like_env && !fixtures.contains(&token) && !help.contains(token) {
+                missing.push(token.to_string());
+            }
+        }
+        missing.sort_unstable();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "`--help` omits variables that config.rs reads: {missing:?}"
+        );
+    }
+
+    /// The routing namespaces are prefixes rather than whole names, so the
+    /// scan above cannot see them. 018 and 022 both shipped a namespace with
+    /// no operator-facing documentation anywhere; 027 added it to the markdown
+    /// and not here.
+    #[test]
+    fn help_documents_both_routing_namespaces_and_their_vocabulary() {
+        let help = help_text();
+        for prefix in ["PARALLAX_MODEL_", "PARALLAX_EFFORT_"] {
+            assert!(help.contains(prefix), "`--help` omits {prefix}*");
+        }
+        for site in ["RESEARCH_EXTRACT", "CHECKPOINT_REVIEW", "GROUNDED_VERIFY"] {
+            assert!(help.contains(site), "`--help` omits the {site} call site");
+        }
+        for tier in ["BULK", "JUDGMENT"] {
+            assert!(help.contains(tier), "`--help` omits the {tier} tier");
+        }
+        for level in ["low", "medium", "high", "max", "xhigh"] {
+            assert!(
+                help.contains(level),
+                "`--help` omits the `{level}` effort level"
+            );
+        }
+    }
+
+    /// Defaults stated in `--help` must be the defaults the code applies. The
+    /// timeout is pinned by name because it is the one that drifted: 018
+    /// raised it to 120000 and this text said 30000 for two releases.
+    #[test]
+    fn help_states_the_defaults_the_code_actually_uses() {
+        let help = help_text();
+        assert!(help.contains("120000"), "timeout default drifted: {help}");
+        assert!(!help.contains("30000"), "the stale 30000 timeout is back");
+        for expected in ["claude-opus-4-8", "voyage-4", "262144", "50000"] {
+            assert!(
+                help.contains(expected),
+                "`--help` omits the {expected} default"
+            );
+        }
+    }
 }
