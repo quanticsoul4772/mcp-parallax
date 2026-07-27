@@ -321,7 +321,7 @@ mod tests {
         let memories: Vec<Memory> = (0..PUSH_CAP + 2)
             .map(|i| {
                 #[allow(clippy::cast_precision_loss)]
-                let x = 1.0 - (i as f32) * 0.02;
+                let x = (i as f32).mul_add(-0.02, 1.0);
                 memory(
                     &format!("m{i}"),
                     Trust::FirstHand,

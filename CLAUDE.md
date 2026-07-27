@@ -107,17 +107,17 @@ GA and supported on Opus 4.8. No `tool_choice` hack, no free-text parsing, no
 cargo build                       # debug build
 cargo test                        # all tests
 cargo fmt --check                 # formatting
-cargo clippy -- -D warnings       # lint (gating)
+cargo clippy --all-features --all-targets -- -D warnings   # lint (gating)
 cargo test <module>               # e.g. cargo test config
 cargo test <name> -- --exact      # single test by full path
 
 # Aliases from .cargo/config.toml:
 cargo ci                          # check --all-features
-cargo lint                        # clippy -- -D warnings
+cargo lint                        # clippy --all-features --all-targets -- -D warnings
 cargo cov                         # llvm-cov coverage report (no gate yet)
 
 # Full gate before every commit (also the /validate command):
-cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test
+cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
 ```
 
 Toolchain is pinned (`rust-toolchain.toml`: stable + clippy/rustfmt/llvm-tools).

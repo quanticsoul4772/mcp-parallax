@@ -128,7 +128,7 @@ mod tests {
         let recall: Vec<(f32, Memory)> = (0..REVIEW_CANDIDATES_MAX + 3)
             .map(|i| {
                 #[allow(clippy::cast_precision_loss)]
-                let score = 0.9 - (i as f32) * 0.01;
+                let score = (i as f32).mul_add(-0.01, 0.9);
                 (
                     score,
                     memory(&format!("m{i}"), Kind::Fact, Trust::FirstHand),

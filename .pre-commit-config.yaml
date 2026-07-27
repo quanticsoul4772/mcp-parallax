@@ -17,7 +17,7 @@ repos:
       - id: clippy
         name: cargo clippy
         description: Lint Rust code with clippy
-        entry: bash -c 'cargo clippy -- -D warnings'
+        entry: bash -c 'cargo clippy --all-features --all-targets -- -D warnings'
         language: system
         types: [rust]
         pass_filenames: false

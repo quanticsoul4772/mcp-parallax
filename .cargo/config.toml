@@ -1,7 +1,7 @@
 [alias]
 # Quick gates — run before every commit
 ci = "check --all-features"
-lint = "clippy -- -D warnings"
+lint = "clippy --all-features --all-targets -- -D warnings"
 # Coverage gate. --tests (not examples — linking the z3/aws-lc/OTel examples
 # under instrumentation exhausts the linker, same reason ci.yml uses --tests).
 # main.rs is the binary shell (arg parsing, tracing/telemetry wiring) and is
