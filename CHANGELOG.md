@@ -13,6 +13,23 @@ arc.
 
 ### Fixed
 
+* **A default model with no price row now fails the build (041)** —
+  `config.rs`'s `DEFAULT_MODEL` and `telemetry.rs`'s `PRICING_PER_MTOK` both
+  name model ids and nothing linked them. Renaming a default to an id absent
+  from the table costed every run at the conservative fallback with
+  `pricing_known = false`: an over-estimate reported as though it were a price,
+  with no test failing.
+
+  The check reads both constants rather than restating either — a test spelling
+  out `"claude-opus-4-8"` would pass while the code moved underneath it, which
+  is the defect and not the check. `DEFAULT_VOYAGE_MODEL` is covered too:
+  naming only the constant that prompted this would be the hand-written list of
+  one that 040 found *inside* the feature written to abolish hand-written
+  lists.
+
+  Verified by mutation — renaming `DEFAULT_MODEL` to an unpriced id fails
+  naming the constant, the id, and both remedies.
+
 * **Every configuration default is now resolved or the build fails (040)** —
   three features built checks binding an operator-facing document to
   `config.rs`, and each closed part of the loop while reporting it closed. 034
