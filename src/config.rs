@@ -265,6 +265,56 @@ where
     )
 }
 
+/// A `Config` for unit tests: no network reachable, no capability gated on.
+///
+/// Four modules hand-rolled this same 21-field literal and it had already
+/// drifted — `server.rs` used `max_retries: 1` where the three client modules
+/// used `2`, for no recorded reason. Each copy was one more place a new field
+/// gets a value nobody chose. Override what a test needs with struct update
+/// syntax, so the difference is the only thing written down:
+///
+/// ```ignore
+/// Config { brave_api_key: Some("k".into()), ..crate::config::test_config() }
+/// ```
+///
+/// **`tests/integration.rs` cannot use this**, and keeps its own copy. An
+/// integration test is a separate crate linking the library compiled *without*
+/// `cfg(test)`, so this item does not exist for it — the same linkage that
+/// forced `config_facts` into the binary crate (040). Making it visible would
+/// mean shipping test scaffolding in the public API, which is a worse trade
+/// than one duplicated fixture.
+///
+/// The endpoint is `127.0.0.1:1` so a test that escapes its mock fails by
+/// connection refusal rather than reaching the live API on a fixture key —
+/// the failure 028's review found the suite had been doing.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn test_config() -> Config {
+    Config {
+        anthropic_api_key: "test-key".into(),
+        anthropic_model: DEFAULT_MODEL.into(),
+        anthropic_api_base: "http://127.0.0.1:1".into(),
+        routing: crate::routing::RoutingTable::single(DEFAULT_MODEL),
+        verify_ensemble_k: 3,
+        input_max_chars: 50_000,
+        voyage_api_key: None,
+        voyage_model: DEFAULT_VOYAGE_MODEL.into(),
+        memory_recall_limit: 5,
+        brave_api_key: None,
+        fetch_timeout_ms: 10_000,
+        research_concurrency: 8,
+        fetch_allow_private: false,
+        checkpoint_gate_patterns: vec![],
+        grounded_verify_root: None,
+        grounded_verify_max_bytes: DEFAULT_GROUNDED_VERIFY_MAX_BYTES,
+        grounded_verify_max_locators: DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS,
+        database_path: ":memory:".into(),
+        log_level: DEFAULT_LOG_LEVEL.into(),
+        request_timeout_ms: 2_000,
+        max_retries: 2,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
