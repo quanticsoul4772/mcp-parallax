@@ -15,7 +15,7 @@ The server exposes fifteen tools in four groups:
 
 See [Tools](#tools) for per-tool detail.
 
-Status: experimental, v0.3.0. Network egress and code execution are gated and off by default; with only `ANTHROPIC_API_KEY` set, the always-on correctives are available and the only outbound traffic is to the Anthropic API. Built from source; not published to a registry.
+Status: experimental; see [`CHANGELOG.md`](CHANGELOG.md) for the current release. Network egress and code execution are gated and off by default; with only `ANTHROPIC_API_KEY` set, the always-on correctives are available and the only outbound traffic is to the Anthropic API. Built from source; not published to a registry.
 
 ## Requirements
 
@@ -59,7 +59,7 @@ Verify the binary independently of any client:
 
 ```bash
 ./target/release/mcp-parallax --version
-# => mcp-parallax 0.3.0
+# => mcp-parallax <version>   (matches Cargo.toml)
 ```
 
 ## Tools
