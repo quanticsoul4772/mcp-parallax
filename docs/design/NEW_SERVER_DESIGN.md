@@ -570,6 +570,74 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
   This was learned by getting it wrong, and the audit above is what keeps the
   rule from being an assertion nobody checked.
 
+- **Move a check closer to what it checks; at the top, make the class
+  unrepresentable** (037). Verification is not one thing that gets stronger —
+  it is a ladder of positions relative to the subject, and each rung fails
+  differently:
+
+  | Rung | Catches | Blind to |
+  | --- | --- | --- |
+  | Nothing | — | everything |
+  | Hand-listed cases | what the author enumerated | what they did not |
+  | Presence derived from the source | omissions | wrong values |
+  | Values derived from the source | divergence between the two | a value that is wrong in both |
+  | Class made unrepresentable | — | nothing; there is no failure to catch |
+
+  A test that lists what to check inherits whoever wrote the list. Deriving
+  expectations from the same source production reads collapses the test's blind
+  spot into the editor's — they are now the *same* blind spot, so either both
+  have it or neither does, and the drift where one is edited and the other is
+  not stops existing.
+
+  **This is a trade, not a free upgrade, and the cost tells you when not to
+  climb.** A derived check can no longer tell you a value is *wrong* — only
+  that the two agree. A hand-written `120000` is a human assertion that the
+  number is right; a derived one merely tracks. Collapse the blind spots when
+  the failure you fear is **divergence**; keep the check independent when you
+  need a **second opinion**.
+
+  Both directions were run in one arc and both were right. `--help`'s defaults
+  are derived, because the failure was documentation drifting from code. The
+  research tier budgets are deliberately *not* derived from observed runs,
+  because a run that stopped early encodes the ceiling that truncated it —
+  deriving from it is the circularity that produced the quick tier's 250 000
+  and forced its correction to 350 000. There the observation had to stay
+  independent so it could contradict the number.
+
+  The top rung is what `deny(clippy::unwrap_used)` does at the type level, and
+  Principle III already states it. What the audits found is that the project
+  was applying it only where a lint happened to exist. `CallSite::index` became
+  `self as usize` for the same reason the lint exists — a fieldless enum cannot
+  disagree with its own declaration order — and nothing was going to prompt
+  that. **The interesting cases are the ones no tool will flag for you.**
+
+- **Derive the facts, hand-write the reasons; a document may never restate a
+  fact it could derive** (037). The caller-visible surface is canonical for
+  facts: `--help` and the tool schemas are what an operator and a calling model
+  actually see, and `README.md`/`CLAUDE.md` are downstream of them. A sweep
+  that searches the *documents* for an inconsistency is one refactor from being
+  wrong, because the canonical surface has moved and the documents have not.
+
+  It inverts for reasons. `--help` cannot carry why `deep` is 5 500 000 with
+  zero observations behind it, or why concurrency clamps while pass count
+  rejects. Those are judgments with no source to derive from and belong in
+  prose. Nearly every documentation defect in the 027–036 arc was a document
+  restating a *fact* — a default, a variable list, an enum — that it could have
+  derived.
+
+- **Ask what fails silently, not what is currently wrong** (037). The backward
+  question — did someone miss something? — is what most sweeps run, and it
+  re-reads the places documentation is expected to live. The forward question —
+  when someone edits this without seeing the test, what fails? — finds a
+  different set.
+
+  Two silences, and telling them apart predicts where to look. `CallSite::index`
+  would fail silently because *the system keeps working*: a valid client, a real
+  model, a plausible bill, with only the invocation record quietly attributing
+  cost to a model that never ran. `--help` failed silently because *nobody
+  re-reads it*. The first is found by asking what a wrong answer looks like; the
+  second by asking who would ever notice.
+
 ---
 
 ## 11. What we carry over, and what stops existing
