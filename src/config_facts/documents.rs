@@ -49,24 +49,6 @@ pub fn stated_in_table(table: &str) -> Vec<StatedDefault> {
     out
 }
 
-/// Defaults `--help` states, read from its `(default: X)` marker only.
-///
-/// The same discipline as [`stated_in_table`] applied to the other document:
-/// one structured marker, never the surrounding description.
-///
-/// An entry's description wraps, and the marker may land on a continuation
-/// line — `RESEARCH_CONCURRENCY` states its default that way. So the marker is
-/// attached to the entry it belongs to rather than required to share a line
-/// with the name. A blank line or a `SECTION:` header ends the entry, so a
-/// marker can never attach across the gap to an unrelated variable.
-/// Every variable `source` reads that carries **no** default.
-///
-/// The complement of [`resolve_from`]: absence gates a capability or fails
-/// startup rather than selecting a value, so there is nothing to compare — but
-/// both documents must still list them, and that list has to be derived or a
-/// new gate is checked by nothing.
-#[must_use]
-
 /// Whether a stated default is really a statement that there is none.
 ///
 /// Shared by both documents: one wrote `—`, the other `empty`, and a filter
@@ -79,6 +61,16 @@ pub(super) fn is_absence_sentinel(value: &str) -> bool {
 /// are indented past it.
 pub(super) const ENTRY_COLUMN: usize = 4;
 
+/// Defaults `--help` states, read from its `(default: X)` marker only.
+///
+/// The same discipline as [`stated_in_table`] applied to the other document:
+/// one structured marker, never the surrounding description.
+///
+/// An entry's description wraps, and the marker may land on a continuation
+/// line — `RESEARCH_CONCURRENCY` states its default that way. So the marker is
+/// attached to the entry it belongs to rather than required to share a line
+/// with the name. A blank line or a `SECTION:` header ends the entry, so a
+/// marker can never attach across the gap to an unrelated variable.
 #[must_use]
 pub fn stated_in_help(help: &str) -> Vec<StatedDefault> {
     let mut out: Vec<StatedDefault> = Vec::new();

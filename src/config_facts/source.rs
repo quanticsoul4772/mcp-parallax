@@ -438,16 +438,6 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
 
 /// A default stated in a document, read from its structured marker.
 
-/// Defaults `--help` states, read from its `(default: X)` marker only.
-///
-/// The same discipline as [`stated_in_table`] applied to the other document:
-/// one structured marker, never the surrounding description.
-///
-/// An entry's description wraps, and the marker may land on a continuation
-/// line — `RESEARCH_CONCURRENCY` states its default that way. So the marker is
-/// attached to the entry it belongs to rather than required to share a line
-/// with the name. A blank line or a `SECTION:` header ends the entry, so a
-/// marker can never attach across the gap to an unrelated variable.
 /// Every variable `source` reads that carries **no** default.
 ///
 /// The complement of [`resolve_from`]: absence gates a capability or fails

@@ -13,6 +13,29 @@ arc.
 
 ### Fixed
 
+* **One `Config` fixture for the library's unit tests (042)** — four modules
+  hand-rolled the same 21-field literal, and it had already drifted:
+  `server.rs` used `max_retries: 1` where the three client modules used `2`,
+  for no recorded reason and with no test depending on it. Each copy was one
+  more place a newly added field silently gets a value nobody chose. A shared
+  `config::test_config()` replaces them; the three that need a capability gate
+  override that one field with struct update syntax, so the difference is the
+  only thing written down.
+
+  `tests/integration.rs` keeps its own copy and that is deliberate: an
+  integration test is a separate crate linking the library compiled *without*
+  `cfg(test)`, so a `#[cfg(test)]` item does not exist for it — the same
+  linkage that forced `config_facts` into the binary crate. Making it reachable
+  would mean shipping test scaffolding in the public API, a worse trade than
+  one duplicated fixture. The `examples/` fixtures are untouched.
+
+  **Two doc blocks were attached to the wrong functions**, introduced by 040's
+  module split and found while auditing this: `stated_in_help`'s documentation
+  sat above `is_absence_sentinel`, and a stranded copy of it above
+  `variables_without_defaults`. Misattached documentation compiles, passes
+  every test, and leaves the gate green — so it was found by walking each item
+  and asking whether its doc block describes it, not by any check.
+
 * **A default model with no price row now fails the build (041)** —
   `config.rs`'s `DEFAULT_MODEL` and `telemetry.rs`'s `PRICING_PER_MTOK` both
   name model ids and nothing linked them. Renaming a default to an id absent
