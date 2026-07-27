@@ -279,39 +279,53 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**No active feature.** `main` is at **v0.4.0** (tagged 2026-07-26) with a clean
-tree and no open PRs.
+Active: `040-unresolvable-default-fails` — **complete**, full Spec Kit run, all
+34 tasks closed. Plan:
+[specs/040-unresolvable-default-fails/plan.md](specs/040-unresolvable-default-fails/plan.md).
+Branch is `029-` because the hook numbers from `specs/`, which lags — 029
+through 039 shipped without spec directories.
 
-The 022→032 arc is closed: per-call-site effort (022), a wholly failed phase is
-an error (023), the rejection names the setting that caused it (027), effort /
-pass count / concurrency reachable per call (028), the published schema stops
-contradicting the server (029), the rejection names the per-call source too
-(030), every config variable classified against the ownership test (031), and
-the five single-shape correctives moved out of `server.rs` (032).
+Three features built checks binding an operator-facing document to `config.rs`:
+034 pinned five defaults by hand, 036 replaced them with a scan reading defaults
+out of source, 039 applied that scan to the README table. The scan reduced a
+default to its digits and, finding none, moved on **without recording that it
+skipped one**. Setting both documents to a wrong `GROUNDED_VERIFY_MAX_BYTES` of
+999999 left every test green.
 
-**Two things that arc established, worth carrying forward:**
+**The silent skip was the defect, not the missing coverage.** One shared
+resolver (`src/config_facts/`, test-only) replaces the two near-duplicate scans
+that had already drifted — that duplication is how 039 inherited 036's blind
+spot. A default that cannot be read fails naming the variable; a constant absent
+from the enumerated file set is a *separate* state, because its remedy is the
+opposite one. Constants resolve from an enumerated set, never a crate search:
+one name may be declared in several modules.
 
-- **The operator-owned vs caller-owned test** (`NEW_SERVER_DESIGN.md` §10) —
-  a setting is the operator's when it sets the terms the account is billed on
-  or governs resources beyond the call; the caller's when it is a judgment
-  about *this task*. Anything multiplying model calls is lowering-only.
-  All 21 variables are now classified against it (031), so a new setting has a
-  rule to be placed by rather than a shape to be copied. 022 was a copy.
-- **Live verification finds what tests cannot.** Verifying 027 produced 030,
-  and verifying 028 exposed that `cargo test` was opening real connections to
-  the Anthropic API with the fixture key. Both were invisible to a green suite.
+**What the feature taught, worth carrying forward — a check can pass for reasons
+unrelated to what it verifies, and only firing it proves otherwise.** Mutating
+all eight documented failure messages into firing found two that could not:
 
-**Parked, deliberately:** `research/tier-budgets-from-structure` (57fe9cf) —
-standard 450k→1.6M and deep 1M→5.5M, derived from each tier's declared caps ×
-one measured figure. Not merged: raising a default budget raises what an
-unspecified run may spend, which wants a spec and an owner's decision. Routed
-through `decide` (68 v 66) then refuted 3/3 by the confirmation `verify`.
+- The document comparison joined a **six-line window** and asked whether the
+  value appeared *somewhere nearby*. A wrong single-digit default matched a
+  neighbouring row; `999999` had failed only because six digits rarely collide.
+  Sensitivity that depends on how unusual the value is, is not a check.
+- The coverage equation compared `facts.len()` against itself, so a dropped
+  variable shrank both sides and stayed balanced.
 
-**Process note:** 029, 030, 031 and 032 shipped without Spec Kit artifacts.
-029 and 030 changed behaviour, so that is a deviation from the constitution's
-spec-driven workflow, named here rather than left implicit — the same way 022
-recorded being retrofitted. Each carries its reasoning in its commit message
-and PR body instead.
+The pre-merge review then found four shapes returning **wrong values**, all one
+root cause: resolution succeeded on a *prefix* of the expression rather than
+requiring it consumed the whole thing. `RESEARCH_CONCURRENCY_MAX / 4` → `32`,
+`3u32` → `332`, a doc comment quoting a superseded `const` beating the real
+declaration. Each balanced every invariant, then failed accusing two **correct**
+documents — whose cheapest green is to copy the fabricated value into both. A
+confidently wrong answer is strictly worse than the silent skip it replaced;
+that asymmetry is the reason to attack a checker's parsing assumptions rather
+than only its coverage.
+
+Both `decide` calls settled the clarifications and **both were improved by what
+came back**: the reverse direction reads structured markers only, never prose
+(85 v 62); and `decide`'s preferred constant-lookup variant was refuted 3/3 by
+its confirmation `verify`, which observed that a resolver reading only its
+declared set cannot name the file a missing constant lives in.
 <!-- SPECKIT END -->
 
 ## Working style

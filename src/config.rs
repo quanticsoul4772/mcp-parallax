@@ -12,6 +12,14 @@ pub const DEFAULT_MODEL: &str = "claude-opus-4-8";
 /// re-index.
 pub const DEFAULT_VOYAGE_MODEL: &str = "voyage-4";
 
+/// Default tracing filter when `LOG_LEVEL` is unset.
+///
+/// Named rather than written twice: `main.rs` installs the subscriber before
+/// this module's `Config` exists, so it needs the same default independently.
+/// Two literals would drift with every test still green — the defect 040 was
+/// written to remove, between two code sites rather than code and a document.
+pub const DEFAULT_LOG_LEVEL: &str = "info";
+
 /// Server-side ceiling on recall result counts.
 pub const MEMORY_RECALL_LIMIT_MAX: u8 = 20;
 
@@ -167,7 +175,8 @@ impl Config {
         )?;
         let database_path =
             std::env::var("DATABASE_PATH").unwrap_or_else(|_| "./data/parallax.db".to_string());
-        let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let log_level =
+            std::env::var("LOG_LEVEL").unwrap_or_else(|_| DEFAULT_LOG_LEVEL.to_string());
         // 018 D7 step 3: raised with the output budget. A ceiling four times
         // larger on a family that reasons before answering can outrun 30 s,
         // which would convert a truncation into a timeout rather than fixing

@@ -8,6 +8,9 @@
 // The binary entry point is a production path too — no panics via unwrap/expect.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(test)]
+mod config_facts;
+
 use mcp_parallax::client::AnthropicClient;
 use mcp_parallax::config::Config;
 use mcp_parallax::server::Parallax;
@@ -48,7 +51,8 @@ async fn main() {
     // these (review finding 1).
     let filter = tracing_subscriber::EnvFilter::new(format!(
         "opentelemetry=warn,opentelemetry_sdk=warn,opentelemetry-otlp=warn,{}",
-        std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string())
+        std::env::var("LOG_LEVEL")
+            .unwrap_or_else(|_| mcp_parallax::config::DEFAULT_LOG_LEVEL.to_string())
     ));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -314,172 +318,138 @@ mod tests {
         }
     }
 
-    /// Every numeric default `config.rs` applies must be the one `--help`
-    /// states, **read out of the source rather than listed here**.
+    /// 040 / FR-001, FR-006, FR-007: every default `config.rs` applies is
+    /// resolved — not merely the ones written as a bare numeric literal — and
+    /// every document states the resolved value.
     ///
-    /// 034 pinned five values by hand and called the loop closed. It was not:
-    /// changing `MEMORY_RECALL_LIMIT` from 5 to 7 and `RESEARCH_CONCURRENCY`
-    /// from 8 to 12 in `config.rs` left all three help tests green, because
-    /// neither number was on the hand-written list. That is the same class as
-    /// the defect 034 existed to fix — help saying 30000 while the code read
-    /// 120000 — so half the class had been left open.
-    ///
-    /// Deriving the pairs means a default that changes without its help entry
-    /// fails, including for variables nobody thought to pin.
+    /// Replaces three tests: a numeric scan that skipped any default with no
+    /// digits, a hand-written list of three strings, and a second copy of the
+    /// numeric scan for the README that had already drifted from the first.
+    /// Those two copies are how 039 inherited 036's blind spot.
     #[test]
-    fn help_states_every_numeric_default_the_config_applies() {
-        let config = include_str!("config.rs");
+    fn every_default_resolves_and_every_document_states_it() {
+        let facts = crate::config_facts::resolve();
+
+        crate::config_facts::assert_all_resolved(&facts);
+        crate::config_facts::assert_exclusions_are_live(&facts);
+        crate::config_facts::assert_coverage_balances(&facts);
+        crate::config_facts::assert_extraction_is_complete(
+            crate::config_facts::SOURCES[0].1,
+            &facts,
+        );
+
         let help = help_text();
-        let lines: Vec<&str> = help.lines().collect();
-        let marker = "parse_env(\"";
+        let readme = include_str!("../README.md").replace("\r\n", "\n");
+        let table = readme_table(&readme);
 
-        let mut checked = 0;
+        let help_defaults = crate::config_facts::stated_in_help(&help);
+        let readme_defaults = crate::config_facts::stated_in_table(table);
+
         let mut wrong = Vec::new();
-        let mut rest = config;
-        while let Some(at) = rest.find(marker) {
-            rest = &rest[at + marker.len()..];
-            let Some(close) = rest.find('"') else { break };
-            let name = &rest[..close];
-            let after = &rest[close + 1..];
-            let Some(comma) = after.find(',') else {
+        for fact in &facts {
+            let crate::config_facts::Resolution::Resolved(value) = &fact.resolution else {
                 continue;
             };
-            let Some(end) = after[comma + 1..].find(')') else {
-                continue;
-            };
-            let literal: String = after[comma + 1..comma + 1 + end]
-                .trim()
-                .chars()
-                .filter(char::is_ascii_digit)
-                .collect();
-            if literal.is_empty() {
-                continue;
-            }
-
-            // An entry is its own line plus its continuation lines. The
-            // window reaches backwards too, because a name can appear ON a
-            // continuation line while its default sits on the entry above —
-            // VERIFY_MAX_CLAIM_CHARS is exactly that, an alias documented
-            // under INPUT_MAX_CHARS and sharing its default.
-            let Some(hit) = lines.iter().position(|l| l.contains(name)) else {
-                continue;
-            };
-            let start = hit.saturating_sub(2);
-            let block = lines[start..(hit + 4).min(lines.len())].join(" ");
-            checked += 1;
-            if !block.contains(&literal) {
-                wrong.push(format!("{name} applies {literal}, help says: {block:?}"));
+            // Compared against each document's own structured default marker —
+            // the README's Default column, `--help`'s `(default: X)` — and
+            // never against a window of surrounding lines. A window search
+            // asks only whether the value appears *somewhere nearby*, so a
+            // single-digit default matches any neighbouring row containing
+            // that digit. Setting `MAX_RETRIES` to a wrong `99` passed under
+            // the window; `999999` failed only because six digits are rare
+            // enough not to collide. That is a check whose sensitivity depends
+            // on how unusual the value is, which is not a check.
+            for (doc, stated) in [("--help", &help_defaults), ("README.md", &readme_defaults)] {
+                let Some(claim) = stated.iter().find(|s| s.name == fact.name) else {
+                    wrong.push(format!(
+                        "DEFAULT_UNDOCUMENTED: `{}` carries a default that {doc} does not state",
+                        fact.name
+                    ));
+                    continue;
+                };
+                if &claim.value != value {
+                    wrong.push(format!(
+                        "DEFAULT_MISMATCH: `{}` applies {value}; {doc} says {}",
+                        fact.name, claim.value
+                    ));
+                }
             }
         }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 
-        assert!(
-            checked >= 8,
-            "expected to read most numeric defaults out of config.rs, saw {checked}"
-        );
-        assert!(
-            wrong.is_empty(),
-            "`--help` contradicts config.rs: {wrong:#?}"
-        );
+        // Reverse direction (FR-009): every default a document states must
+        // belong to a variable that has one. The forward pass above iterates
+        // variables the source still contains, so a row left behind after a
+        // variable was removed is invisible to it.
+        //
+        // Both documents, not just the README. A `(default: ...)` in `--help`
+        // for a removed variable, or one bound to the wrong name, was invisible
+        // while only one side was checked. There is no count floor here: a
+        // `stated.len() >= 10` threshold is the `checked >= 8` shape this
+        // feature exists to abolish, reinstated one file over. Extraction
+        // failing is already reported by EXTRACTION_EMPTY and by every variable
+        // turning up undocumented at once.
+        for (doc, stated) in [("--help", &help_defaults), ("README.md", &readme_defaults)] {
+            crate::config_facts::assert_no_contradictory_defaults(doc, stated);
+            crate::config_facts::assert_no_phantom_defaults(&facts, doc, stated);
+        }
     }
 
-    /// The README's configuration table must list every variable `config.rs`
-    /// reads, with the defaults it applies.
-    ///
-    /// The same guard 034 and 036 put on `--help`, one file over. That pair
-    /// fixed the binary's surface and left the README's identical 22-row table
-    /// hand-written and unchecked — the §10 rule (a document may never restate
-    /// a fact it could derive) broken in the file next to where it was applied.
-    ///
-    /// The table is kept hand-written rather than generated, because its
-    /// *Purpose* column is reasons and reasons have no source to derive from.
-    /// The rule is derive the facts, hand-write the reasons; this checks the
-    /// facts and leaves the prose alone.
+    /// 040 / FR-008: variables with **no** default are invisible to the
+    /// resolver by design, which makes them the silent casualty of deleting the
+    /// old scans. They must still be required to appear in both documents.
     #[test]
-    fn the_readme_config_table_matches_the_config() {
-        let config = include_str!("config.rs");
-        // `include_str!` reads the file as it sits on disk, which is CRLF
-        // here. Searching for a blank-line boundary without normalising first
-        // matches nothing, the table comes out empty, and the test reports
-        // every variable missing — which is what it did before this line.
+    fn variables_without_a_default_are_still_required_to_be_listed() {
+        let help = help_text();
         let readme = include_str!("../README.md").replace("\r\n", "\n");
+        let table = readme_table(&readme);
+        let facts = crate::config_facts::resolve();
 
+        // Derived, not listed. A hand-written list here is 034's defect kept
+        // alive inside the feature that exists to abolish hand-written lists:
+        // a new capability gate would be checked against `--help` by the
+        // generic scan and against the README by nothing at all.
+        let names = crate::config_facts::variables_without_defaults(
+            crate::config_facts::SOURCES[0].1,
+            &facts,
+        );
+        assert!(
+            names.len() >= 5,
+            "expected the known capability gates and the required key; got {names:?}"
+        );
+        for name in &names {
+            assert!(
+                !facts.iter().any(|f| &f.name == name),
+                "{name} has no default, so the resolver must not report one"
+            );
+            assert!(help.contains(name.as_str()), "--help omits {name}");
+            assert!(
+                table.contains(name.as_str()),
+                "README config table omits {name}"
+            );
+        }
+    }
+
+    /// The README's configuration table, bounded and sanity-checked.
+    ///
+    /// 039 shipped a boundary search over a CRLF file that matched nothing,
+    /// extracted an empty table, and reported every variable missing — blaming
+    /// the document for its own parsing bug. The row-count assertion is what
+    /// makes the next boundary break say which side is wrong.
+    fn readme_table(readme: &str) -> &str {
         let start = readme
             .find("| Variable | Required | Default | Purpose |")
             .expect("README has no configuration table");
-        let table_end = readme[start..]
+        let end = readme[start..]
             .find("\n\n")
             .expect("the configuration table is not followed by a blank line");
-        let table = &readme[start..start + table_end];
+        let table = &readme[start..start + end];
         assert!(
             table.lines().count() > 15,
-            "extracted {} table lines; the boundary search is wrong, not the table",
+            "EXTRACTION_EMPTY: found {} table rows, expected more than 15. The boundary search is wrong, not the document.",
             table.lines().count()
         );
-
-        let mut missing = Vec::new();
-        let mut wrong = Vec::new();
-        let mut rest = config;
-        let marker = "parse_env(";
-        while let Some(at) = rest.find(marker) {
-            rest = &rest[at + marker.len()..];
-            if !rest.starts_with('"') {
-                continue;
-            }
-            rest = &rest[1..];
-            let Some(close) = rest.find('"') else { break };
-            let name = &rest[..close];
-            let after = &rest[close + 1..];
-
-            // A fixture that exists only to prove absent-variable handling.
-            if name == "PARALLAX_TEST_DEFINITELY_UNSET_KEY" {
-                continue;
-            }
-            if !table.contains(name) {
-                missing.push(name.to_string());
-                continue;
-            }
-
-            let Some(comma) = after.find(',') else {
-                continue;
-            };
-            let Some(end) = after[comma + 1..].find(')') else {
-                continue;
-            };
-            let literal: String = after[comma + 1..comma + 1 + end]
-                .trim()
-                .chars()
-                .filter(char::is_ascii_digit)
-                .collect();
-            if literal.is_empty() {
-                continue;
-            }
-            let Some(row) = table.lines().find(|l| l.contains(name)) else {
-                continue;
-            };
-            if !row.contains(&literal) {
-                wrong.push(format!("{name} applies {literal}; README row: {row}"));
-            }
-        }
-
-        assert!(missing.is_empty(), "README config table omits: {missing:?}");
-        assert!(wrong.is_empty(), "README contradicts config.rs: {wrong:#?}");
-
-        // Variables read through `env::var` carry no numeric default for the
-        // scan above to compare, but must still be listed.
-        for name in [
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_MODEL",
-            "ANTHROPIC_API_BASE",
-            "VOYAGE_API_KEY",
-            "VOYAGE_MODEL",
-            "BRAVE_API_KEY",
-            "GROUNDED_VERIFY_ROOT",
-            "CHECKPOINT_GATE_PATTERNS",
-            "DATABASE_PATH",
-            "LOG_LEVEL",
-        ] {
-            assert!(table.contains(name), "README config table omits {name}");
-        }
+        table
     }
 
     /// The changelog must carry a dated section for the version being built,
@@ -497,7 +467,7 @@ mod tests {
         let changelog = include_str!("../CHANGELOG.md");
         assert!(
             changelog.contains(&format!("## [{version}] - ")),
-            "CHANGELOG.md has no dated section for {version}; either the cut              was not made or Cargo.toml moved without it"
+            "CHANGELOG.md has no dated section for {version}; either the cut was not made or Cargo.toml moved without it"
         );
 
         // A released section must not sit above `[Unreleased]`, which would
@@ -520,19 +490,5 @@ mod tests {
             !readme.contains(&format!("v{version}.")),
             "README.md restates the version; point it at CHANGELOG.md instead"
         );
-    }
-
-    /// Non-numeric defaults, which the scan above cannot read out of a
-    /// `parse_env` literal. Small and explicit on purpose.
-    #[test]
-    fn help_states_the_string_defaults() {
-        let help = help_text();
-        for expected in ["claude-opus-4-8", "voyage-4", "https://api.anthropic.com"] {
-            assert!(
-                help.contains(expected),
-                "`--help` omits the {expected} default"
-            );
-        }
-        assert!(!help.contains("30000"), "the stale 30000 timeout is back");
     }
 }
