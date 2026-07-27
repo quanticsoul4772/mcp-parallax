@@ -356,6 +356,37 @@ mod tests {
             .with_timezone(&Utc)
     }
 
+    /// Every model this crate defaults to must have a price row.
+    ///
+    /// `DEFAULT_MODEL` and `PRICING_PER_MTOK` both name model ids and nothing
+    /// links them. Renaming a default to an id absent from the table costs the
+    /// run at [`FALLBACK_PRICING`] with `pricing_known = false` — a figure that
+    /// is an over-estimate rather than a measurement, reported as though it
+    /// were a price. Nothing failed.
+    ///
+    /// The constants are read, never restated here: a test spelling out
+    /// `"claude-opus-4-8"` would pass while the code moved underneath it, which
+    /// is the defect rather than the check (040 §the verification ladder). Both
+    /// defaults are covered rather than only the one that prompted this —
+    /// naming a single constant would be the hand-written list of one that 040
+    /// found inside the feature written to abolish hand-written lists.
+    #[test]
+    fn every_default_model_has_a_price_row() {
+        for (constant, model) in [
+            ("DEFAULT_MODEL", crate::config::DEFAULT_MODEL),
+            ("DEFAULT_VOYAGE_MODEL", crate::config::DEFAULT_VOYAGE_MODEL),
+        ] {
+            assert!(
+                pricing_known(model),
+                "PRICING_UNLINKED: {constant} is `{model}`, which has no row in \
+                 PRICING_PER_MTOK. Every run on the default would be costed at the \
+                 fallback rate and reported with pricing_known = false — an \
+                 over-estimate presented as a price, with nothing failing. Add the row, \
+                 or change the default to an id that has one."
+            );
+        }
+    }
+
     #[test]
     fn cost_uses_the_per_model_table() {
         // 1M input + 1M output on Opus 4.8 = $5 + $25.
