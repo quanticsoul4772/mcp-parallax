@@ -962,8 +962,9 @@ mod tests {
     // answer for it: no override could have been supplied.
     #[tokio::test]
     async fn a_record_without_an_override_reads_back_as_no_override() {
-        let storage = SqliteStorage::connect(":memory:").await.unwrap();
         use crate::traits::clock::TimeProvider;
+
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
         let clock = crate::traits::clock::SystemClock;
         let started = clock.now();
 

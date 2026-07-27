@@ -135,7 +135,7 @@ impl ClientPool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::error::AppError;
@@ -163,9 +163,9 @@ mod tests {
     /// id appears once, so two call sites routed alike cannot end up on
     /// separate clients. Counting distinct models states that guarantee
     /// directly instead of via a proxy the cross product invalidates.
-    fn pool_for(routing: RoutingTable) -> (ClientPool, Vec<String>) {
+    fn pool_for(routing: &RoutingTable) -> (ClientPool, Vec<String>) {
         let built = Mutex::new(Vec::new());
-        let pool = ClientPool::from_factory(&routing, |model, _effort| {
+        let pool = ClientPool::from_factory(routing, |model, _effort| {
             built.lock().unwrap().push(model.to_string());
             Arc::new(Tagged(model.to_string())) as Arc<dyn ModelClient>
         });
@@ -186,7 +186,7 @@ mod tests {
     // T011 / FR-002: unrouted means one model everywhere and one client.
     #[tokio::test]
     async fn unrouted_builds_exactly_one_client() {
-        let (pool, built) = pool_for(RoutingTable::single("claude-opus-4-8"));
+        let (pool, built) = pool_for(&RoutingTable::single("claude-opus-4-8"));
         assert_eq!(pool.distinct(), 1);
         assert_eq!(built, vec!["claude-opus-4-8".to_string()]);
         for site in CallSite::ALL {
@@ -206,7 +206,7 @@ mod tests {
             "claude-opus-5",
         )
         .unwrap();
-        let (pool, built) = pool_for(routing);
+        let (pool, built) = pool_for(&routing);
 
         // Two models in the table, so exactly two clients — not twelve.
         assert_eq!(pool.distinct(), 2);
@@ -239,7 +239,7 @@ mod tests {
             "claude-opus-5",
         )
         .unwrap();
-        let (pool, models) = pool_for(routing);
+        let (pool, models) = pool_for(&routing);
 
         // Still two models, whatever the effort states.
         assert_eq!(models.len(), 2);
@@ -286,7 +286,7 @@ mod tests {
     #[tokio::test]
     async fn the_default_path_returns_the_very_same_client_as_before() {
         let routing = RoutingTable::single("claude-opus-4-8");
-        let (pool, models) = pool_for(routing);
+        let (pool, models) = pool_for(&routing);
 
         assert_eq!(models.len(), 1, "one model, however many effort states");
         assert_eq!(
@@ -391,7 +391,7 @@ mod tests {
             "claude-opus-5",
         )
         .unwrap();
-        let (pool, _) = pool_for(routing);
+        let (pool, _) = pool_for(&routing);
 
         assert_eq!(
             model_of(&pool, CallSite::ResearchExtract).await,

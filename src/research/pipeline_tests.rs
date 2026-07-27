@@ -1011,7 +1011,7 @@ async fn coverage_reconciles_with_the_published_statuses_and_preserves_the_old_f
         // unconditionally true and would test nothing.
         let legacy = result.confidence * result.coverage;
         assert!(
-            (legacy - result.confidence * expected).abs() < 1e-6,
+            result.confidence.mul_add(-expected, legacy).abs() < 1e-6,
             "the pre-change value must stay derivable"
         );
     }
@@ -1216,12 +1216,6 @@ async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
 /// know", which was false.
 #[tokio::test]
 async fn every_extraction_failing_is_an_error_not_an_empty_answer() {
-    let client = scripted(
-        scope_value(),
-        |_| panic!("extraction is stubbed by the failing client below"),
-        |_, _| supported(),
-        |_| panic!("synthesis must not run when nothing was extracted"),
-    );
     // A client whose extraction calls all fail, as a rejected request would.
     struct FailingExtract(Arc<ScriptedClient>);
     #[async_trait::async_trait]
@@ -1235,6 +1229,13 @@ async fn every_extraction_failing_is_an_error_not_an_empty_answer() {
             self.0.complete(prompt, schema).await
         }
     }
+
+    let client = scripted(
+        scope_value(),
+        |_| panic!("extraction is stubbed by the failing client below"),
+        |_, _| supported(),
+        |_| panic!("synthesis must not run when nothing was extracted"),
+    );
 
     let mut deps = deps_with(
         Arc::clone(&client),
@@ -1337,12 +1338,6 @@ async fn unreadable_pages_still_produce_the_honest_empty_answer() {
 /// anything" rather than "nothing was checked".
 #[tokio::test]
 async fn every_verification_failing_is_an_error_not_a_silent_empty_answer() {
-    let client = scripted(
-        scope_value(),
-        |_| json!({ "claims": ["a claim that will never be checked"] }),
-        |_, _| panic!("verification is stubbed by the failing client below"),
-        |_| panic!("synthesis must not run when nothing was verified"),
-    );
     struct FailingVerify(Arc<ScriptedClient>);
     #[async_trait::async_trait]
     impl crate::traits::client::ModelClient for FailingVerify {
@@ -1353,6 +1348,13 @@ async fn every_verification_failing_is_an_error_not_a_silent_empty_answer() {
             self.0.complete(prompt, schema).await
         }
     }
+
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["a claim that will never be checked"] }),
+        |_, _| panic!("verification is stubbed by the failing client below"),
+        |_| panic!("synthesis must not run when nothing was verified"),
+    );
 
     let mut deps = deps_with(
         Arc::clone(&client),

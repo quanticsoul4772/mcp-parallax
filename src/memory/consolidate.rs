@@ -333,9 +333,9 @@ mod tests {
                 Status::Active,
             ),
         ];
-        let (score, best) = screen(&new, &store).unwrap();
+        let (similarity, best) = screen(&new, &store).unwrap();
         assert_eq!(best.id, "closer");
-        assert!(score > 0.98);
+        assert!(similarity > 0.98);
     }
 
     #[test]

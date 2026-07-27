@@ -574,12 +574,6 @@ mod tests {
             .collect()
     }
 
-    /// 018 T012: the startup report must name every call site with the model
-    /// it resolved to and the setting that decided it. A misrouted site is
-    /// only visible before the bill arrives if the report is complete — a
-    /// report that silently omits sites is worse than none, because it reads
-    /// as confirmation.
-
     /// 022: unset means unset. The whole feature is off by default, and the
     /// proof is that no route carries an effort when the namespace is empty —
     /// which is what keeps the request body byte-identical to pre-022.
@@ -621,7 +615,7 @@ mod tests {
 
         // The server composes `override.or(configured)`. Each layer wins in
         // turn, and absent at every layer stays absent.
-        let resolve = |site, over: Option<Effort>| over.or(table.effort_for(site));
+        let resolve = |site, over: Option<Effort>| over.or_else(|| table.effort_for(site));
         assert_eq!(
             resolve(CallSite::Verify, Some(Effort::Low)),
             Some(Effort::Low),
@@ -791,6 +785,11 @@ mod tests {
         }
     }
 
+    /// 018 T012: the startup report must name every call site with the model
+    /// it resolved to and the setting that decided it. A misrouted site is
+    /// only visible before the bill arrives if the report is complete — a
+    /// report that silently omits sites is worse than none, because it reads
+    /// as confirmation.
     #[test]
     fn the_startup_report_names_every_call_site_with_its_model_and_source() {
         let table = RoutingTable::resolve(
@@ -998,7 +997,6 @@ mod tests {
 
     // `index` keys a fixed-size array in the client pool; if it drifts from
     // ALL, a call site silently gets another site's client.
-    #[test]
     /// `ALL` must be written in declaration order, because [`CallSite::index`]
     /// is the discriminant and `ClientPool` keys its per-site array on it.
     ///

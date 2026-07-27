@@ -13,6 +13,32 @@ arc.
 
 ### Fixed
 
+* **The lint gate now covers tests and examples (044)** — CI ran
+  `cargo clippy --all-features -- -D warnings`, which lints the library and
+  binary production paths and nothing else. It reported zero while 39 errors
+  stood in `#[cfg(test)]` modules and one example. All are fixed and the gate
+  is widened to `--all-targets` in every place it is declared: `ci.yml`, the
+  pre-commit hook, the `cargo lint` alias, and CLAUDE.md.
+
+  **A duplicated `#[test]` attribute was inflating the suite count.**
+  `routing.rs` carried `#[test]` twice on one function, so the harness
+  registered and ran it twice. The reported figure has been one higher than the
+  number of distinct tests; 593 was really **592**. Nothing was lost in this
+  change — the count fell because the double-count stopped.
+
+  **Three more pieces of 040's file split surfaced**, none visible to any check
+  the project had. `#[cfg(test)]` and the test module's `#[allow]` attributes
+  were carried into `source.rs`, where they silently attached to
+  `classify_call_sites` while `mod.rs`'s own `mod tests` lost both; and two doc
+  blocks were left duplicated or stranded above the wrong item. That split has
+  now produced five separate attribute or doc misattachments, every one of
+  which compiled, passed the suite, and left the declared gate green. Moving
+  line ranges between files orphans whatever sits at a boundary, and only
+  reading each item against its own docs and attributes finds it.
+
+  Five files declare the gate command by hand and nothing binds them to each
+  other. They were updated together here; the duplication remains.
+
 * **`--help`'s routing vocabularies are derived from the enums (043)** — the
   body lists twelve call sites, two tiers and five effort levels, and the test
   pinned **three** of the twelve by hand. A thirteenth call site would be

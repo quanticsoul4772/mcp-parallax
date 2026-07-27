@@ -6,7 +6,7 @@
 //! Verifies the research-flagged uncertainties:
 //!   (a) requests arrive at /v1/traces and /v1/metrics when the endpoint
 //!       env is set; ZERO requests when absent;
-//!   (b) the canonical GenAI semconv attribute names compile and attach
+//!   (b) the canonical `GenAI` semconv attribute names compile and attach
 //!       to a span (the upstream `opentelemetry_semantic_conventions` crate
 //!       deprecated its `GEN_AI_*` constants in 0.32, so we inline the
 //!       strings here);

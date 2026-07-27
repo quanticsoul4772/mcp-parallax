@@ -205,6 +205,38 @@ pub enum StopReason {
     MalformedSynthesis,
 }
 
+/// The concurrency a run actually uses (028 FR-015).
+///
+/// Lives here, not inline in the server, so the test exercises the production
+/// expression rather than a copy of it — a re-implemented clamp asserted
+/// against itself stays green when the real one is deleted.
+///
+/// Above the configured ceiling is **reduced**, not rejected: concurrency is
+/// advice about running work the caller already authorised, and failing an
+/// otherwise valid run over a scheduling hint costs more than it protects. A
+/// pass count is different in kind — it is the basis for the returned
+/// confidence — so that one errors instead.
+///
+/// # Errors
+///
+/// Returns [`crate::error::AppError::InvalidInput`] for zero. The published
+/// schema says `minimum: 1`; silently rewriting a value the contract calls
+/// invalid would be a swallowed input, not a specified ceiling.
+pub fn effective_concurrency(
+    requested: Option<u32>,
+    configured: usize,
+) -> Result<usize, crate::error::AppError> {
+    let Some(n) = requested else {
+        return Ok(configured);
+    };
+    if n == 0 {
+        return Err(crate::error::AppError::InvalidInput(
+            "concurrency must be at least 1".to_string(),
+        ));
+    }
+    Ok((n as usize).min(configured))
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -264,36 +296,4 @@ mod tests {
             Value::String("unverified".into())
         );
     }
-}
-
-/// The concurrency a run actually uses (028 FR-015).
-///
-/// Lives here, not inline in the server, so the test exercises the production
-/// expression rather than a copy of it — a re-implemented clamp asserted
-/// against itself stays green when the real one is deleted.
-///
-/// Above the configured ceiling is **reduced**, not rejected: concurrency is
-/// advice about running work the caller already authorised, and failing an
-/// otherwise valid run over a scheduling hint costs more than it protects. A
-/// pass count is different in kind — it is the basis for the returned
-/// confidence — so that one errors instead.
-///
-/// # Errors
-///
-/// Returns [`crate::error::AppError::InvalidInput`] for zero. The published
-/// schema says `minimum: 1`; silently rewriting a value the contract calls
-/// invalid would be a swallowed input, not a specified ceiling.
-pub fn effective_concurrency(
-    requested: Option<u32>,
-    configured: usize,
-) -> Result<usize, crate::error::AppError> {
-    let Some(n) = requested else {
-        return Ok(configured);
-    };
-    if n == 0 {
-        return Err(crate::error::AppError::InvalidInput(
-            "concurrency must be at least 1".to_string(),
-        ));
-    }
-    Ok((n as usize).min(configured))
 }

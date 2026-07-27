@@ -99,8 +99,8 @@ pub fn stated_in_help(help: &str) -> Vec<StatedDefault> {
         // text is already one word from this — `VERIFY_MAX_CLAIM_CHARS is
         // honoured as a` sits on a continuation line today and survives only
         // because it carries no marker.
-        let indent = line.len() - trimmed.len();
-        if ident.len() >= 3 && after.starts_with(' ') && indent == ENTRY_COLUMN {
+        let column = line.len() - trimmed.len();
+        if ident.len() >= 3 && after.starts_with(' ') && column == ENTRY_COLUMN {
             current = Some(ident);
         }
         let Some(name) = current.clone() else {

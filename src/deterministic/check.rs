@@ -341,12 +341,7 @@ mod tests {
         ));
         let (result, inp, out) = {
             let d = &deps_with(client);
-            run_with(
-                &d,
-                &params("63% of 1840 is 1159.2"),
-                d.model_client.as_ref(),
-            )
-            .await
+            run_with(d, &params("63% of 1840 is 1159.2"), d.model_client.as_ref()).await
         }
         .unwrap();
         assert_eq!(result.verdict, Verdict::Supported);
@@ -364,7 +359,7 @@ mod tests {
         let (result, _, _) = {
             let d = &deps_with(client);
             run_with(
-                &d,
+                d,
                 &params("i32::MAX is at least 2^31"),
                 d.model_client.as_ref(),
             )
@@ -386,7 +381,7 @@ mod tests {
         let (result, _, _) = {
             let d = &deps_with(client);
             run_with(
-                &d,
+                d,
                 &params("no x is both >2 and <10"),
                 d.model_client.as_ref(),
             )
@@ -410,7 +405,7 @@ mod tests {
         let (result, _, _) = {
             let d = &deps_with(client);
             run_with(
-                &d,
+                d,
                 &params("a and not-a cannot both hold"),
                 d.model_client.as_ref(),
             )
@@ -431,7 +426,7 @@ mod tests {
         let (result, _, _) = {
             let d = &deps_with(client);
             run_with(
-                &d,
+                d,
                 &params("x+y=11 with x>2 is solvable"),
                 d.model_client.as_ref(),
             )
@@ -454,7 +449,7 @@ mod tests {
         let (result, _, _) = {
             let d = &deps_with(client);
             run_with(
-                &d,
+                d,
                 &params("Rust is more elegant than C++"),
                 d.model_client.as_ref(),
             )
@@ -503,7 +498,7 @@ mod tests {
         let (result, inp, _) = {
             let d = &deps_with(client);
             run_with(
-                &d,
+                d,
                 &params("63% of 1840 is about 1159"),
                 d.model_client.as_ref(),
             )
@@ -527,7 +522,7 @@ mod tests {
         });
         let err = {
             let d = &deps_with(client);
-            run_with(&d, &params("c"), d.model_client.as_ref()).await
+            run_with(d, &params("c"), d.model_client.as_ref()).await
         }
         .unwrap_err();
         assert!(

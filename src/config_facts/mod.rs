@@ -259,6 +259,8 @@ pub fn assert_extraction_is_complete(source: &str, facts: &[Fact]) {
     );
 }
 
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::documents::*;
     use super::source::*;

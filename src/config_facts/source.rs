@@ -65,13 +65,6 @@ pub fn resolve() -> Vec<Fact> {
 /// Returns the raw expression rather than a filtered value, so classification
 /// happens in exactly one place. 036 filtered at extraction time, which is why
 /// an expression with no digits vanished before anything could notice.
-
-/// Every `(variable, default-expression)` pair in `source`, for both the
-/// `parse_env` and `unwrap_or_else` shapes.
-///
-/// Returns the raw expression rather than a filtered value, so classification
-/// happens in exactly one place. 036 filtered at extraction time, which is why
-/// an expression with no digits vanished before anything could notice.
 pub(super) fn extract_pairs(source: &str) -> Vec<(String, String)> {
     let source = &strip_line_comments(source);
     let mut pairs = Vec::new();
@@ -168,9 +161,6 @@ pub(super) fn matching_paren(s: &str) -> Option<usize> {
     }
     None
 }
-
-/// Turn a default expression into a comparable value, or record that it cannot
-/// be read.
 
 /// Turn a default expression into a comparable value, or record that it cannot
 /// be read.
@@ -298,15 +288,10 @@ pub(super) fn literal_value(expr: &str) -> Option<String> {
     // Integer literal: optional radix prefix, `_` separators, optional type
     // suffix. Parsed, then re-formatted from the parsed value.
     let body = expr.replace('_', "");
-    let (radix, digits) = if let Some(hex) = body.strip_prefix("0x") {
-        (16, hex)
-    } else if let Some(bin) = body.strip_prefix("0b") {
-        (2, bin)
-    } else if let Some(oct) = body.strip_prefix("0o") {
-        (8, oct)
-    } else {
-        (10, body.as_str())
-    };
+    let (radix, digits) = [("0x", 16), ("0b", 2), ("0o", 8)]
+        .iter()
+        .find_map(|(prefix, radix)| body.strip_prefix(prefix).map(|rest| (*radix, rest)))
+        .unwrap_or((10, body.as_str()));
     let digits = [
         "usize", "isize", "u128", "i128", "u64", "i64", "u32", "i32", "u16", "i16", "u8", "i8",
     ]
@@ -384,9 +369,6 @@ pub(super) fn lookup_constant(
     unreadable.map_or(ConstantLookup::NotFound, ConstantLookup::Unreadable)
 }
 
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
 /// Classify every environment read in `source` as default-bearing or not.
 ///
 /// Returns `(default-bearing count, statements matching no known shape)`.
@@ -435,8 +417,6 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
         .min(1);
     (bearing + parse_env_calls - skipped, unrecognised)
 }
-
-/// A default stated in a document, read from its structured marker.
 
 /// Every variable `source` reads that carries **no** default.
 ///
