@@ -11,7 +11,27 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
-Nothing yet.
+### Added
+
+* **Contract files and tests for the four tools that shipped without them
+  (038)** — `decide`, `diverge`, `elicit` and `grounded_verify` had no
+  `.tool.json`, so four of fifteen tools had nothing for the constraint
+  comparison 029 added to run against. Contract coverage goes 12 files / 5
+  testing modules to 16 / 9.
+
+  **These tools were not unguarded in the usual sense** — their schemas are
+  derived from Rust types and validated at registration. What was missing is a
+  checked-in statement of intent to diff against, so a change to the input or
+  output surface passed silently. 029 exists because two defects walked through
+  a contract test that compared names only; these four could not run that check
+  at all.
+
+  The files are **baselines captured from today's schemas**, not specifications
+  authored ahead of the code, and say so in their `$comment`. Nobody reviewed
+  whether the current surface is the intended one; what starts now is that
+  changing it fails until the contract is updated deliberately.
+  Mutation-verified — adding an input property to `DecideParams` fails with
+  `decide input properties drifted from the contract`, listing both sets.
 
 ## [0.4.0] - 2026-07-26
 

@@ -1,0 +1,245 @@
+{
+  "$comment": "MCP tool contract for `grounded_verify`. inputSchema/outputSchema are what the server advertises in its tool catalog. Verifies a claim against verbatim source the caller names; the server reads the exact text, so the caller cannot paraphrase its own evidence. BASELINE, captured from the derived schemas at 038 rather than authored ahead of the code - this tool shipped without a contract, so there is no earlier statement of intent to restore. Its value starts now: any change to the Rust types fails the contract test until this file is updated deliberately.",
+  "name": "grounded_verify",
+  "inputSchema": {
+    "$defs": {
+      "SourceLocator": {
+        "description": "A caller-supplied reference to evidence.\n\nInterpreted within the configured source root: a locator is *either* an\nexact `path` (optionally with a line range, 008) *or* a `glob` pattern (009)\n\u2014 never both.",
+        "properties": {
+          "end_line": {
+            "description": "1-based inclusive end line (only with `path`). Must be paired with\n`start_line`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "glob": {
+            "description": "Extended-glob pattern (009), expanded within the root. Mutually\nexclusive with `path`; may not carry a line range.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "description": "Exact relative path within the configured source root. Mutually\nexclusive with `glob`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_line": {
+            "description": "1-based inclusive start line (only with `path`). With `end_line`,\nrestricts to a range; both omitted reads the whole file.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Tool input: the claim plus the locators to read.",
+    "properties": {
+      "claim": {
+        "description": "The claim to verify, stated neutrally \u2014 the only caller prose the passes\never see.",
+        "type": "string"
+      },
+      "effort": {
+        "anyOf": [
+          {
+            "description": "How much reasoning a call site should spend (022).\n\nMaps to the provider's `output_config.effort`. It governs *all* output\ntokens, thinking included, and is a behavioural signal rather than a hard\ntoken budget \u2014 `MAX_TOKENS` remains the ceiling.\n\nUnset is not `High`: an unset call site sends no `effort` field at all, so\nthe request body is byte-identical to before this feature. The provider's\nown default is `high`, so unset and `High` behave the same, but only unset\nis provably unchanged on the wire.",
+            "oneOf": [
+              {
+                "const": "low",
+                "description": "Minimal reasoning; thinking skipped on simple tasks.",
+                "type": "string"
+              },
+              {
+                "const": "medium",
+                "description": "Moderate reasoning; thinking may be skipped on simple queries.",
+                "type": "string"
+              },
+              {
+                "const": "high",
+                "description": "Deep reasoning on complex tasks. The provider's default.",
+                "type": "string"
+              },
+              {
+                "const": "max",
+                "description": "Always thinks, no constraint on depth.",
+                "type": "string"
+              },
+              {
+                "const": "xhigh",
+                "description": "Always thinks deeply, with extended exploration.",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Reasoning effort for this call alone. Omit to use the deployment's\nconfigured level. Not every model family accepts this; when one rejects\nit the error names the model, the level, and the remedies.\n\nTyped rather than a free string so the accepted levels appear in the\npublished schema \u2014 the consumer of this server is a model reading that\nschema, and a prose-only list is not something it can be constrained by."
+      },
+      "locators": {
+        "description": "Source locators to read verbatim as the evidence (non-empty).",
+        "items": {
+          "$ref": "#/$defs/SourceLocator"
+        },
+        "type": "array"
+      },
+      "passes": {
+        "default": null,
+        "description": "Independent passes to run for this call alone. **Minimum 1.** The\neffective maximum is the deployment's configured count, not a fixed\nnumber, so it cannot appear in the schema \u2014 a request above it is\nrejected with an error naming the ceiling.\n\nMay be **lower** than the configured count, never higher: each pass is\na whole model call, so raising it would buy work the operator did not\nauthorise. Omit to use the configured count. Confidence is derived from\ncross-pass agreement, so fewer passes means a narrower basis; the\nresult reports the count it actually used.",
+        "format": "uint8",
+        "maximum": 255,
+        "minimum": 1,
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "claim",
+      "locators"
+    ],
+    "title": "GroundedVerifyParams",
+    "type": "object"
+  },
+  "outputSchema": {
+    "$defs": {
+      "ManifestEntry": {
+        "description": "One entry of the evidence manifest \u2014 the auditable record of exactly what\nwas read for one resolved locator (008 FR-008). Server-assembled, never\nmodel-authored.",
+        "properties": {
+          "bytes": {
+            "description": "Byte length of the text read for this locator.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "end_line": {
+            "description": "The inclusive end line read (absent for a whole-file read).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "description": "The locator's path, as given.",
+            "type": "string"
+          },
+          "start_line": {
+            "description": "The inclusive start line read (absent for a whole-file read).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "bytes"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The aggregated tool output (data-model.md). `confidence` and `manifest` are\nserver-assembled \u2014 never model self-report (FR-012).",
+    "properties": {
+      "confidence": {
+        "description": "Agreement ratio (majority count / passes completed).",
+        "format": "double",
+        "type": "number"
+      },
+      "engine_result": {
+        "description": "The engine's raw result text for a settled compute verdict (011); absent\notherwise. Mirrors `check`'s auditable output.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "executed_form": {
+        "description": "The comparison the engine decided (e.g. `1224 > 1000`), present only on a\nsettled compute verdict (011); absent on judgment and abstain paths.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "findings": {
+        "description": "Deduplicated findings from the majority-side passes.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "manifest": {
+        "description": "The audit manifest of exactly what was read.",
+        "items": {
+          "$ref": "#/$defs/ManifestEntry"
+        },
+        "type": "array"
+      },
+      "missing_evidence": {
+        "description": "Union of the passes' `missing_evidence` \u2014 empty when nothing material\nwas omitted. Advisory only; never forces `inconclusive`.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "passes": {
+        "description": "Number of verification passes that completed.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "reason": {
+        "description": "Why the verdict is `inconclusive` (route-to-`check`); absent otherwise.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "verdict": {
+        "description": "Majority verdict across passes; ties resolve to refuted; or\n`inconclusive` when a majority of passes set `needs_computation`.",
+        "oneOf": [
+          {
+            "const": "supported",
+            "description": "The evidence supports the claim under its strongest reading.",
+            "type": "string"
+          },
+          {
+            "const": "refuted",
+            "description": "The evidence contradicts the claim with a named concrete error.",
+            "type": "string"
+          },
+          {
+            "const": "inconclusive",
+            "description": "The passes self-report (`needs_computation`) that the decisive fact is a\ncomputation they cannot perform \u2014 route to `check`.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "required": [
+      "verdict",
+      "findings",
+      "confidence",
+      "passes",
+      "missing_evidence",
+      "manifest"
+    ],
+    "title": "GroundedVerdict",
+    "type": "object"
+  }
+}

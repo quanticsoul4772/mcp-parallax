@@ -1,0 +1,164 @@
+{
+  "$comment": "MCP tool contract for `elicit`. inputSchema/outputSchema are what the server advertises in its tool catalog. Single stance-blind pass surfacing the assumed objective and the governing preferences traced to their signals. Surfaces only - no enforcement. BASELINE, captured from the derived schemas at 038 rather than authored ahead of the code - this tool shipped without a contract, so there is no earlier statement of intent to restore. Its value starts now: any change to the Rust types fails the contract test until this file is updated deliberately.",
+  "name": "elicit",
+  "inputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Tool input: the task plus optional neutral context.",
+    "properties": {
+      "context": {
+        "description": "Optional neutral context \u2014 the only extra caller-prose input.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "effort": {
+        "anyOf": [
+          {
+            "description": "How much reasoning a call site should spend (022).\n\nMaps to the provider's `output_config.effort`. It governs *all* output\ntokens, thinking included, and is a behavioural signal rather than a hard\ntoken budget \u2014 `MAX_TOKENS` remains the ceiling.\n\nUnset is not `High`: an unset call site sends no `effort` field at all, so\nthe request body is byte-identical to before this feature. The provider's\nown default is `high`, so unset and `High` behave the same, but only unset\nis provably unchanged on the wire.",
+            "oneOf": [
+              {
+                "const": "low",
+                "description": "Minimal reasoning; thinking skipped on simple tasks.",
+                "type": "string"
+              },
+              {
+                "const": "medium",
+                "description": "Moderate reasoning; thinking may be skipped on simple queries.",
+                "type": "string"
+              },
+              {
+                "const": "high",
+                "description": "Deep reasoning on complex tasks. The provider's default.",
+                "type": "string"
+              },
+              {
+                "const": "max",
+                "description": "Always thinks, no constraint on depth.",
+                "type": "string"
+              },
+              {
+                "const": "xhigh",
+                "description": "Always thinks deeply, with extended exploration.",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Reasoning effort for this call alone. Omit to use the deployment's\nconfigured level. Not every model family accepts this; when one rejects\nit the error names the model, the level, and the remedies.\n\nTyped rather than a free string so the accepted levels appear in the\npublished schema \u2014 the consumer of this server is a model reading that\nschema, and a prose-only list is not something it can be constrained by."
+      },
+      "task": {
+        "description": "What the caller is about to do, stated neutrally.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task"
+    ],
+    "title": "ElicitParams",
+    "type": "object"
+  },
+  "outputSchema": {
+    "$defs": {
+      "DivergencePoint": {
+        "description": "One divergence point \u2014 server-zipped from the parallel arrays.",
+        "properties": {
+          "question": {
+            "description": "The assumption worth resolving, as a question.",
+            "type": "string"
+          },
+          "signal": {
+            "description": "The conflicting signal it cites.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "signal"
+        ],
+        "type": "object"
+      },
+      "GoverningPreference": {
+        "description": "One governing preference \u2014 server-zipped from the parallel arrays.",
+        "properties": {
+          "preference": {
+            "description": "The preference/constraint.",
+            "type": "string"
+          },
+          "signal": {
+            "description": "Where it was inferred from.",
+            "type": "string"
+          },
+          "strength": {
+            "description": "`revealed` | `stated`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "preference",
+          "signal",
+          "strength"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The aggregated tool output (data-model.md) \u2014 surfacing only, no enforcement.",
+    "properties": {
+      "assumed_objective": {
+        "description": "The surfaced assumed objective.",
+        "type": "string"
+      },
+      "divergence_points": {
+        "description": "The divergence points (empty when signals are consistent).",
+        "items": {
+          "$ref": "#/$defs/DivergencePoint"
+        },
+        "type": "array"
+      },
+      "governing_preferences": {
+        "description": "The governing preferences (may be empty \u2014 low signal).",
+        "items": {
+          "$ref": "#/$defs/GoverningPreference"
+        },
+        "type": "array"
+      },
+      "memory_consulted": {
+        "description": "Whether stored preferences were consulted (memory configured).",
+        "type": "boolean"
+      },
+      "signal_level": {
+        "description": "The surfaced signal level.",
+        "oneOf": [
+          {
+            "const": "low",
+            "description": "Little/no preference signal \u2014 return few or none, fabricate nothing.",
+            "type": "string"
+          },
+          {
+            "const": "medium",
+            "description": "Some preference signal.",
+            "type": "string"
+          },
+          {
+            "const": "high",
+            "description": "Strong preference signal.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "required": [
+      "assumed_objective",
+      "governing_preferences",
+      "divergence_points",
+      "signal_level",
+      "memory_consulted"
+    ],
+    "title": "ElicitResult",
+    "type": "object"
+  }
+}

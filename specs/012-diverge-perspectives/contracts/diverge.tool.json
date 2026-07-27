@@ -1,0 +1,125 @@
+{
+  "$comment": "MCP tool contract for `diverge`. inputSchema/outputSchema are what the server advertises in its tool catalog. k stance-blind passes under distinct generative lenses; the server deduplicates deterministically and labels each framing with its lens. BASELINE, captured from the derived schemas at 038 rather than authored ahead of the code - this tool shipped without a contract, so there is no earlier statement of intent to restore. Its value starts now: any change to the Rust types fails the contract test until this file is updated deliberately.",
+  "name": "diverge",
+  "inputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Tool input: the problem the caller is anchored on, plus optional neutral context.",
+    "properties": {
+      "context": {
+        "description": "Optional neutral context a pass may consult \u2014 the only extra information a\npass receives. There is no slot for the caller's stance or preferred answer.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "effort": {
+        "anyOf": [
+          {
+            "description": "How much reasoning a call site should spend (022).\n\nMaps to the provider's `output_config.effort`. It governs *all* output\ntokens, thinking included, and is a behavioural signal rather than a hard\ntoken budget \u2014 `MAX_TOKENS` remains the ceiling.\n\nUnset is not `High`: an unset call site sends no `effort` field at all, so\nthe request body is byte-identical to before this feature. The provider's\nown default is `high`, so unset and `High` behave the same, but only unset\nis provably unchanged on the wire.",
+            "oneOf": [
+              {
+                "const": "low",
+                "description": "Minimal reasoning; thinking skipped on simple tasks.",
+                "type": "string"
+              },
+              {
+                "const": "medium",
+                "description": "Moderate reasoning; thinking may be skipped on simple queries.",
+                "type": "string"
+              },
+              {
+                "const": "high",
+                "description": "Deep reasoning on complex tasks. The provider's default.",
+                "type": "string"
+              },
+              {
+                "const": "max",
+                "description": "Always thinks, no constraint on depth.",
+                "type": "string"
+              },
+              {
+                "const": "xhigh",
+                "description": "Always thinks deeply, with extended exploration.",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Reasoning effort for this call alone. Omit to use the deployment's\nconfigured level. Not every model family accepts this; when one rejects\nit the error names the model, the level, and the remedies.\n\nTyped rather than a free string so the accepted levels appear in the\npublished schema \u2014 the consumer of this server is a model reading that\nschema, and a prose-only list is not something it can be constrained by."
+      },
+      "passes": {
+        "default": null,
+        "description": "Independent passes to run for this call alone. **Minimum 1.** The\neffective maximum is the deployment's configured count, not a fixed\nnumber, so it cannot appear in the schema \u2014 a request above it is\nrejected with an error naming the ceiling.\n\nMay be **lower** than the configured count, never higher: each pass is\na whole model call, so raising it would buy work the operator did not\nauthorise. Omit to use the configured count. Each pass applies a distinct\ngenerative lens, so fewer passes means fewer distinct framings; the\nresult reports the count it actually used.",
+        "format": "uint8",
+        "maximum": 255,
+        "minimum": 1,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "problem": {
+        "description": "The framing the caller is anchored on, stated neutrally.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "problem"
+    ],
+    "title": "DivergeParams",
+    "type": "object"
+  },
+  "outputSchema": {
+    "$defs": {
+      "Perspective": {
+        "description": "One returned framing \u2014 a [`DivergePass`] labeled with the lens that produced\nit (server-assembled).",
+        "properties": {
+          "framing": {
+            "description": "The reframing.",
+            "type": "string"
+          },
+          "implication": {
+            "description": "What it changes.",
+            "type": "string"
+          },
+          "lens": {
+            "description": "The assigned lens name (server-labeled).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lens",
+          "framing",
+          "implication"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The aggregated tool output (data-model.md) \u2014 the deduplicated set of distinct\nframings. No verdict, no confidence: `diverge` scatters, it does not converge.",
+    "properties": {
+      "passes": {
+        "description": "Number of passes that completed.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "perspectives": {
+        "description": "The deduplicated perspectives, in pass order (\u2264 k distinct).",
+        "items": {
+          "$ref": "#/$defs/Perspective"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "perspectives",
+      "passes"
+    ],
+    "title": "DivergeResult",
+    "type": "object"
+  }
+}
