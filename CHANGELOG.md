@@ -11,7 +11,40 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
-Nothing yet.
+### Fixed
+
+* **`--help`'s routing vocabularies are derived from the enums (043)** — the
+  body lists twelve call sites, two tiers and five effort levels, and the test
+  pinned **three** of the twelve by hand. A thirteenth call site would be
+  settable through `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*` while absent from
+  `--help`, with nothing failing. That is 034's defect, still live in the one
+  block 034 did not reach.
+
+  All three vocabularies now derive from `CallSite::ALL`, `Tier::ALL` and
+  `Effort::ALL`. No new constant list was introduced: each type already
+  exposes `suffix()` or `as_str()`, and a fresh table of names would have been
+  a fourth hand-written list reproducing the defect.
+
+  **The check matches whole tokens, never `contains`.** `VERIFY` is a substring
+  of both `GROUNDED_VERIFY` and `RESEARCH_VERIFY`, and `high` of `xhigh` — so
+  the previous substring check passed on a help body listing only the longer
+  name. Verified: removing the standalone `high` from the `LEVELS:` line left
+  the old check green and fails the new one. Same collision class as the
+  six-line window 040 removed.
+
+* **`Config::from_env` documents what adding a variable commits you to** — that
+  every default must be stated in both `--help` and the README, and that a
+  named constant used as a default has to live in a file
+  `config_facts::SOURCES` reads. Both were enforced already and both were
+  learned by hitting the failure; the note moves that to before the build.
+
+  The list itself is **not** copied into the doc. Restating a derivable fact is
+  the defect this whole run has been removing, and the failure already prints
+  the current contents. Widening `SOURCES` to every file was considered and
+  rejected: `lookup_constant` returns the first match for a bare unqualified
+  name, so an enumerated-everything list restores the whichever-came-first
+  ambiguity FR-004a exists to make unrepresentable. Path-qualifying the
+  constant is the route that scales, and it selects the file to read.
 
 ## [0.5.0] - 2026-07-27
 
