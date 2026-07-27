@@ -717,4 +717,53 @@ mod tests {
         assert!(err.to_string().contains("divergence arrays"));
         assert!(err.to_string().contains("after the retry"), "{err}");
     }
+    /// 038: the contract file and the derived schemas must agree.
+    ///
+    /// `elicit` shipped without a contract, so for four of fifteen tools the
+    /// constraint comparison 029 added had nothing to run against. That is the
+    /// gap this closes: not that the schema is currently wrong — it is derived
+    /// from the Rust types and validated at registration — but that a change to
+    /// those types had no checked-in statement of intent to diff against.
+    ///
+    /// The file is a **baseline** captured from today's schemas, not a
+    /// specification written ahead of the code. Its value starts here: the next
+    /// change to the input or output surface fails until someone updates the
+    /// contract deliberately.
+    #[test]
+    fn derived_schemas_match_the_contract_file() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../specs/014-preference-elicitation/contracts/elicit.tool.json"
+        ))
+        .unwrap();
+
+        let input = serde_json::to_value(schemars::schema_for!(ElicitParams)).unwrap();
+        let props = |v: &Value| -> Vec<String> {
+            v["properties"]
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            props(&contract["inputSchema"]),
+            props(&input),
+            "elicit input properties drifted from the contract"
+        );
+        assert_eq!(
+            contract["inputSchema"]["required"], input["required"],
+            "elicit required inputs drifted"
+        );
+        crate::schema::assert_constraints_agree(&contract["inputSchema"], &input, "elicit");
+
+        let output = serde_json::to_value(schemars::schema_for!(ElicitResult)).unwrap();
+        assert_eq!(
+            props(&contract["outputSchema"]),
+            props(&output),
+            "elicit output properties drifted from the contract"
+        );
+        crate::schema::assert_constraints_agree(
+            &contract["outputSchema"],
+            &output,
+            "elicit output",
+        );
+    }
 }

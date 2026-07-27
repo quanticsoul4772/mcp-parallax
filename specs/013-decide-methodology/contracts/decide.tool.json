@@ -1,0 +1,174 @@
+{
+  "$comment": "MCP tool contract for `decide`. inputSchema/outputSchema are what the server advertises in its tool catalog. Scored single pass over >=2 options; the server argmax-picks the winner and derives confidence from the score margin. The model never asserts the choice. BASELINE, captured from the derived schemas at 038 rather than authored ahead of the code - this tool shipped without a contract, so there is no earlier statement of intent to restore. Its value starts now: any change to the Rust types fails the contract test until this file is updated deliberately.",
+  "name": "decide",
+  "inputSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Tool input: the decision, the candidate options (\u22652), and optional context.",
+    "properties": {
+      "context": {
+        "description": "Optional neutral context/criteria \u2014 the only extra subject input.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "decision": {
+        "description": "The question to settle, stated neutrally.",
+        "type": "string"
+      },
+      "effort": {
+        "anyOf": [
+          {
+            "description": "How much reasoning a call site should spend (022).\n\nMaps to the provider's `output_config.effort`. It governs *all* output\ntokens, thinking included, and is a behavioural signal rather than a hard\ntoken budget \u2014 `MAX_TOKENS` remains the ceiling.\n\nUnset is not `High`: an unset call site sends no `effort` field at all, so\nthe request body is byte-identical to before this feature. The provider's\nown default is `high`, so unset and `High` behave the same, but only unset\nis provably unchanged on the wire.",
+            "oneOf": [
+              {
+                "const": "low",
+                "description": "Minimal reasoning; thinking skipped on simple tasks.",
+                "type": "string"
+              },
+              {
+                "const": "medium",
+                "description": "Moderate reasoning; thinking may be skipped on simple queries.",
+                "type": "string"
+              },
+              {
+                "const": "high",
+                "description": "Deep reasoning on complex tasks. The provider's default.",
+                "type": "string"
+              },
+              {
+                "const": "max",
+                "description": "Always thinks, no constraint on depth.",
+                "type": "string"
+              },
+              {
+                "const": "xhigh",
+                "description": "Always thinks deeply, with extended exploration.",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Reasoning effort for this call alone. Omit to use the deployment's\nconfigured level. Not every model family accepts this; when one rejects\nit the error names the model, the level, and the remedies.\n\nTyped rather than a free string so the accepted levels appear in the\npublished schema \u2014 the consumer of this server is a model reading that\nschema, and a prose-only list is not something it can be constrained by."
+      },
+      "options": {
+        "default": [],
+        "description": "The candidate options \u2014 at least two. Order is the index basis for the\nper-option score arrays. May be omitted when `options_text` is supplied.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "options_text": {
+        "default": null,
+        "description": "Options as a single newline-delimited string (one per line) \u2014 an alternative to the `options`\narray for clients that cannot reliably serialize a multi-element array argument. Used when\n`options` is empty.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "decision"
+    ],
+    "title": "DecideParams",
+    "type": "object"
+  },
+  "outputSchema": {
+    "$defs": {
+      "OptionAssessment": {
+        "description": "One option's server-assembled assessment \u2014 the model's score and rationale\npaired with the option label.",
+        "properties": {
+          "option": {
+            "description": "The option label (from the input).",
+            "type": "string"
+          },
+          "rationale": {
+            "description": "The model's one-sentence rationale.",
+            "type": "string"
+          },
+          "score": {
+            "description": "The model's score (0\u2013100, validated).",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "option",
+          "score",
+          "rationale"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The aggregated tool output (data-model.md) \u2014 the server-derived recommendation\nwith its scored rationale. No verdict, no next step.",
+    "properties": {
+      "assessments": {
+        "description": "The full per-option breakdown, in input order (for audit).",
+        "items": {
+          "$ref": "#/$defs/OptionAssessment"
+        },
+        "type": "array"
+      },
+      "confidence": {
+        "description": "Confidence, server-derived from the score margin (`[0.5, 1.0]`).",
+        "format": "double",
+        "type": "number"
+      },
+      "deciding_factors": {
+        "description": "The factors the methodology used.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "methodology": {
+        "description": "The surfaced methodology.",
+        "oneOf": [
+          {
+            "const": "weigh",
+            "description": "The decision turns on several named criteria.",
+            "type": "string"
+          },
+          {
+            "const": "causal",
+            "description": "The decision turns on what each option causes or prevents.",
+            "type": "string"
+          },
+          {
+            "const": "probabilistic",
+            "description": "The decision turns on uncertainty about which outcome obtains.",
+            "type": "string"
+          }
+        ]
+      },
+      "recommended": {
+        "description": "The top-scored option.",
+        "type": "string"
+      },
+      "runner_up": {
+        "description": "The second-scored option.",
+        "type": "string"
+      },
+      "runner_up_reason": {
+        "description": "Why the runner-up lost (server-composed: margin + its rationale).",
+        "type": "string"
+      }
+    },
+    "required": [
+      "recommended",
+      "runner_up",
+      "runner_up_reason",
+      "confidence",
+      "methodology",
+      "deciding_factors",
+      "assessments"
+    ],
+    "title": "DecideResult",
+    "type": "object"
+  }
+}

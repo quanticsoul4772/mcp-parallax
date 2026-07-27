@@ -1041,4 +1041,57 @@ mod tests {
         assert!(out.executed_form.is_none());
         assert!(out.engine_result.is_none());
     }
+    /// 038: the contract file and the derived schemas must agree.
+    ///
+    /// `grounded_verify` shipped without a contract, so for four of fifteen tools the
+    /// constraint comparison 029 added had nothing to run against. That is the
+    /// gap this closes: not that the schema is currently wrong — it is derived
+    /// from the Rust types and validated at registration — but that a change to
+    /// those types had no checked-in statement of intent to diff against.
+    ///
+    /// The file is a **baseline** captured from today's schemas, not a
+    /// specification written ahead of the code. Its value starts here: the next
+    /// change to the input or output surface fails until someone updates the
+    /// contract deliberately.
+    #[test]
+    fn derived_schemas_match_the_contract_file() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../specs/008-grounded-verify/contracts/grounded_verify.tool.json"
+        ))
+        .unwrap();
+
+        let input = serde_json::to_value(schemars::schema_for!(GroundedVerifyParams)).unwrap();
+        let props = |v: &Value| -> Vec<String> {
+            v["properties"]
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            props(&contract["inputSchema"]),
+            props(&input),
+            "grounded_verify input properties drifted from the contract"
+        );
+        assert_eq!(
+            contract["inputSchema"]["required"], input["required"],
+            "grounded_verify required inputs drifted"
+        );
+        crate::schema::assert_constraints_agree(
+            &contract["inputSchema"],
+            &input,
+            "grounded_verify",
+        );
+
+        let output = serde_json::to_value(schemars::schema_for!(GroundedVerdict)).unwrap();
+        assert_eq!(
+            props(&contract["outputSchema"]),
+            props(&output),
+            "grounded_verify output properties drifted from the contract"
+        );
+        crate::schema::assert_constraints_agree(
+            &contract["outputSchema"],
+            &output,
+            "grounded_verify output",
+        );
+    }
 }
