@@ -11,6 +11,34 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+### Fixed
+
+* **The README's configuration table is checked against `config.rs` (039)** —
+  22 rows restating a variable name and its default, hand-written with nothing
+  binding them to the code. 034 and 036 fixed exactly this for `--help`, first
+  for presence and then for values, and left the identical table one file over
+  unguarded. That is the §10 rule broken in the file next to where it was
+  applied.
+
+  The test derives the pairs from `config.rs` the same way, so both drift modes
+  fail. Mutation-verified: changing a README default gives
+  `RESEARCH_CONCURRENCY applies 8; README row: … 16`, and deleting a row gives
+  `README config table omits: ["MAX_RETRIES"]`.
+
+  The table stays hand-written rather than generated, because its *Purpose*
+  column is reasons and reasons have no source to derive from. Derive the
+  facts, hand-write the reasons — this checks the facts and leaves the prose
+  alone.
+
+  **The first version of this test reported every variable missing, and the
+  test was wrong, not the README.** `include_str!` reads the file as it sits on
+  disk, which is CRLF here, so a blank-line boundary search on `
+
+` matched
+  nothing and the extracted table came out empty. It now normalises line
+  endings and asserts the extraction found more than fifteen rows, so a
+  boundary search that breaks again says so instead of blaming the document.
+
 ### Added
 
 * **Contract files and tests for the four tools that shipped without them

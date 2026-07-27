@@ -382,6 +382,106 @@ mod tests {
         );
     }
 
+    /// The README's configuration table must list every variable `config.rs`
+    /// reads, with the defaults it applies.
+    ///
+    /// The same guard 034 and 036 put on `--help`, one file over. That pair
+    /// fixed the binary's surface and left the README's identical 22-row table
+    /// hand-written and unchecked — the §10 rule (a document may never restate
+    /// a fact it could derive) broken in the file next to where it was applied.
+    ///
+    /// The table is kept hand-written rather than generated, because its
+    /// *Purpose* column is reasons and reasons have no source to derive from.
+    /// The rule is derive the facts, hand-write the reasons; this checks the
+    /// facts and leaves the prose alone.
+    #[test]
+    fn the_readme_config_table_matches_the_config() {
+        let config = include_str!("config.rs");
+        // `include_str!` reads the file as it sits on disk, which is CRLF
+        // here. Searching for a blank-line boundary without normalising first
+        // matches nothing, the table comes out empty, and the test reports
+        // every variable missing — which is what it did before this line.
+        let readme = include_str!("../README.md").replace("\r\n", "\n");
+
+        let start = readme
+            .find("| Variable | Required | Default | Purpose |")
+            .expect("README has no configuration table");
+        let table_end = readme[start..]
+            .find("\n\n")
+            .expect("the configuration table is not followed by a blank line");
+        let table = &readme[start..start + table_end];
+        assert!(
+            table.lines().count() > 15,
+            "extracted {} table lines; the boundary search is wrong, not the table",
+            table.lines().count()
+        );
+
+        let mut missing = Vec::new();
+        let mut wrong = Vec::new();
+        let mut rest = config;
+        let marker = "parse_env(";
+        while let Some(at) = rest.find(marker) {
+            rest = &rest[at + marker.len()..];
+            if !rest.starts_with('"') {
+                continue;
+            }
+            rest = &rest[1..];
+            let Some(close) = rest.find('"') else { break };
+            let name = &rest[..close];
+            let after = &rest[close + 1..];
+
+            // A fixture that exists only to prove absent-variable handling.
+            if name == "PARALLAX_TEST_DEFINITELY_UNSET_KEY" {
+                continue;
+            }
+            if !table.contains(name) {
+                missing.push(name.to_string());
+                continue;
+            }
+
+            let Some(comma) = after.find(',') else {
+                continue;
+            };
+            let Some(end) = after[comma + 1..].find(')') else {
+                continue;
+            };
+            let literal: String = after[comma + 1..comma + 1 + end]
+                .trim()
+                .chars()
+                .filter(char::is_ascii_digit)
+                .collect();
+            if literal.is_empty() {
+                continue;
+            }
+            let Some(row) = table.lines().find(|l| l.contains(name)) else {
+                continue;
+            };
+            if !row.contains(&literal) {
+                wrong.push(format!("{name} applies {literal}; README row: {row}"));
+            }
+        }
+
+        assert!(missing.is_empty(), "README config table omits: {missing:?}");
+        assert!(wrong.is_empty(), "README contradicts config.rs: {wrong:#?}");
+
+        // Variables read through `env::var` carry no numeric default for the
+        // scan above to compare, but must still be listed.
+        for name in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_API_BASE",
+            "VOYAGE_API_KEY",
+            "VOYAGE_MODEL",
+            "BRAVE_API_KEY",
+            "GROUNDED_VERIFY_ROOT",
+            "CHECKPOINT_GATE_PATTERNS",
+            "DATABASE_PATH",
+            "LOG_LEVEL",
+        ] {
+            assert!(table.contains(name), "README config table omits {name}");
+        }
+    }
+
     /// The changelog must carry a dated section for the version being built,
     /// and no document may restate that version as a literal.
     ///
