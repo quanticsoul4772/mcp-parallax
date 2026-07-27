@@ -11,6 +11,10 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+Nothing yet.
+
+## [0.5.0] - 2026-07-27
+
 ### Fixed
 
 * **One `Config` fixture for the library's unit tests (042)** — four modules
