@@ -13,6 +13,75 @@ arc.
 
 ### Fixed
 
+* **Every configuration default is now resolved or the build fails (040)** —
+  three features built checks binding an operator-facing document to
+  `config.rs`, and each closed part of the loop while reporting it closed. 034
+  pinned five defaults by hand; 036 replaced them with a scan that read defaults
+  out of source, but only those written as a bare numeric literal; 039 copied
+  that scan for the README and inherited its blind spot. When the scan's digit
+  filter came up empty it moved on **without recording that it had skipped one**.
+
+  Demonstrated before the fix: setting both documents to a wrong
+  `GROUNDED_VERIFY_MAX_BYTES` of `999999` left every test green. It now fails in
+  both documents at once, naming the variable and quoting each.
+
+  **The silent skip was the defect, not the missing coverage.** A default that
+  cannot be read is `Unresolvable`, which fails naming the variable, the
+  expression found, the shapes handled, and both remedies — there is no state
+  meaning *skipped*. A default naming a constant that is not in any file the
+  check reads is a separate state with the opposite remedy, because "teach the
+  resolver this shape" is wrong advice when the shape was read fine and the
+  missing thing is an entry in `SOURCES`. Coverage is now an equation replacing
+  a `checked >= 8` floor that the literal-valued variables cleared on their own
+  while three of four shapes went unexamined.
+
+  One resolver in `src/config_facts.rs` replaces two near-duplicate scans that
+  had already drifted — one guarded a quote the other did not, one excluded the
+  test fixture, only one had a coverage floor. That duplication is how 039
+  inherited 036's blind spot, so both copies are gone rather than both patched.
+  Constants resolve from an **enumerated file set**, never a crate search: Rust
+  permits one name in several modules, and an unrestricted search would compare
+  a document against whichever declaration it reached first.
+
+  **Three checks that passed for reasons unrelated to what they verified.** The
+  document comparison joined a six-line window and asked whether the value
+  appeared anywhere in it, so a wrong single-digit default matched a
+  neighbouring row and passed — `999999` had failed only because six digits
+  rarely collide. It now compares against each document's structured default
+  marker exactly, which immediately surfaced that `--help` stated no default for
+  `RESEARCH_CONCURRENCY`. The coverage equation compared the fact vector against
+  itself, so a dropped variable shrank both sides and stayed balanced; it now
+  compares against a count taken from the call markers alone, sharing no code
+  with extraction. And the first extractor reported *confidently wrong values* —
+  `ANTHROPIC_API_KEY`, which has no default, resolved to the API base URL —
+  because its window ran past the end of its own statement.
+
+  All eight documented failure messages were mutated into firing one at a time
+  and the message each produced recorded, in
+  `specs/040-unresolvable-default-fails/contracts/failure-modes.md`. Two of the
+  three defects above were found that way; a failure surface nobody has seen
+  fire is a claim, not a check.
+
+  The pre-merge review then found four more shapes returning wrong values, all
+  one root cause: **resolution succeeded on a prefix of what it read instead of
+  requiring it consumed the whole expression.** `RESEARCH_CONCURRENCY_MAX / 4`
+  resolved to `32` for a default of 8; `3u32` to `332`; a doc comment quoting a
+  superseded `const` beat the real declaration; a path-qualified constant
+  resolved to whichever file declared the name first. Each balanced every
+  invariant and then failed naming the *documents* as wrong, whose cheapest
+  green is to copy the fabricated value into both — a corruption cycle 036's
+  skip never had. Literals are now parsed and re-formatted rather than built by
+  deleting characters, a path qualifier selects which source is searched,
+  comments are stripped before scanning, and an expression with anything left
+  over is `Unresolvable`.
+
+  Two duplications were removed rather than documented: `main.rs` carried a
+  second `LOG_LEVEL` default duplicating `config.rs` (both now read one named
+  `DEFAULT_LOG_LEVEL`), and the no-default variable list was five hand-written
+  names inside the feature that exists to abolish hand-written lists. The module
+  was split at the seam the review named — `config_facts/{mod,source,documents}.rs`
+  at 247/476/185 lines — after the single file reached 853.
+
 * **The README's configuration table is checked against `config.rs` (039)** —
   22 rows restating a variable name and its default, hand-written with nothing
   binding them to the code. 034 and 036 fixed exactly this for `--help`, first
