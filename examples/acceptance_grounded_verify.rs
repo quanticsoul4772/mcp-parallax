@@ -103,14 +103,16 @@ async fn main() {
     {
         let mock = MockServer::start().await;
         let (client, _s, _srv) = serve(&mock, None).await;
-        let names: Vec<String> = client
+        let absent = !client
             .list_all_tools()
             .await
             .unwrap()
-            .into_iter()
-            .map(|t| t.name.to_string())
-            .collect();
-        assert!(!names.contains(&"grounded_verify".to_string()));
+            .iter()
+            .any(|t| t.name == "grounded_verify");
+        assert!(
+            absent,
+            "unconfigured, grounded_verify must not be in the catalog"
+        );
         client.cancel().await.unwrap();
         println!("SC-005 gating (unconfigured ⇒ absent): PASS");
     }
