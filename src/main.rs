@@ -382,6 +382,46 @@ mod tests {
         );
     }
 
+    /// The changelog must carry a dated section for the version being built,
+    /// and no document may restate that version as a literal.
+    ///
+    /// §10: a document may never restate a fact it could derive. The README
+    /// said `v0.3.0` in two places, kept in step by whoever remembered — the
+    /// same shape as `--help` claiming a 30 000 ms timeout the code had not
+    /// used since 018. Those references now point at the changelog instead,
+    /// and this pins the one place a version literal still has to be written
+    /// by hand.
+    #[test]
+    fn the_changelog_documents_the_version_being_built() {
+        let version = env!("CARGO_PKG_VERSION");
+        let changelog = include_str!("../CHANGELOG.md");
+        assert!(
+            changelog.contains(&format!("## [{version}] - ")),
+            "CHANGELOG.md has no dated section for {version}; either the cut              was not made or Cargo.toml moved without it"
+        );
+
+        // A released section must not sit above `[Unreleased]`, which would
+        // mean the cut was written into the wrong place.
+        let unreleased = changelog
+            .find("## [Unreleased]")
+            .expect("CHANGELOG.md has no [Unreleased] block");
+        let released = changelog
+            .find(&format!("## [{version}] - "))
+            .expect("checked above");
+        assert!(
+            unreleased < released,
+            "the {version} section is above [Unreleased]"
+        );
+
+        // The README should point at the changelog rather than name a version
+        // it would then have to be reminded to update.
+        let readme = include_str!("../README.md");
+        assert!(
+            !readme.contains(&format!("v{version}.")),
+            "README.md restates the version; point it at CHANGELOG.md instead"
+        );
+    }
+
     /// Non-numeric defaults, which the scan above cannot read out of a
     /// `parse_env` literal. Small and explicit on purpose.
     #[test]

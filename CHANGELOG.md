@@ -11,6 +11,27 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+Nothing yet.
+
+## [0.4.0] - 2026-07-26
+
+An audit release. Nothing here was a feature request — every entry came from
+asking what the code says about itself and finding it disagreed.
+
+**The one behaviour change is 033**, sizing the research tier budgets from
+measured history: `standard` 450 000 → 1 600 000 and `deep` 1 000 000 →
+5 500 000. That raises what a run with no explicit `budget_tokens` may spend,
+which is why this is a minor bump rather than a patch. Everything else is
+documentation the binary now enforces, a refactor with no behaviour change, and
+three principles recorded in the design corpus.
+
+**What the audits kept finding was documents restating facts they could have
+derived** — `--help` claiming a 30 000 ms timeout the code has not used since
+018, a tool list of fourteen where the server exposes fifteen, five defaults
+pinned by hand while fifteen more drifted freely. 037 records the rule that
+falls out of it, and this release is the first where the checks enforcing it
+exist.
+
 ### Fixed
 
 * **`--help` defaults are derived from `config.rs`, not pinned by hand (036)**

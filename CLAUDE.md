@@ -279,7 +279,7 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**No active feature.** `main` is at **v0.3.0** (tagged 2026-07-26) with a clean
+**No active feature.** `main` is at **v0.4.0** (tagged 2026-07-26) with a clean
 tree and no open PRs.
 
 The 022→032 arc is closed: per-call-site effort (022), a wholly failed phase is
