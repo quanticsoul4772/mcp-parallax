@@ -125,6 +125,27 @@ impl Config {
     /// but fails to parse or violates its bounds (`VERIFY_ENSEMBLE_K` ≥ 1,
     /// `MEMORY_RECALL_LIMIT` in 1..=20). A present-but-invalid value is an
     /// error, never a silent default.
+    ///
+    /// # Adding a variable
+    ///
+    /// Every default written here is read back out of this file's source and
+    /// compared against `--help` and the README table (040). Two consequences
+    /// worth knowing before the build tells you:
+    ///
+    /// - **Both documents must state the new default**, or the suite fails
+    ///   naming the variable.
+    /// - **A named constant used as a default must live in a file
+    ///   `config_facts::SOURCES` reads.** A `const` declared anywhere else
+    ///   fails as `CONSTANT_NOT_FOUND` until that file is added there. That
+    ///   list is deliberately not copied here — it is the authority, and the
+    ///   failure prints its current contents.
+    ///
+    /// That list is enumerated rather than a crate-wide search on purpose: one
+    /// constant name may be declared in several modules, and a search would
+    /// silently compare a document against whichever declaration it reached
+    /// first. Prefer declaring the constant in this file over widening the
+    /// list; qualify the path (`crate::client::anthropic::NAME`) when it must
+    /// live elsewhere, which is what selects the file to read.
     pub fn from_env() -> Result<Self, ConfigError> {
         let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| ConfigError::MissingRequired("ANTHROPIC_API_KEY"))?;

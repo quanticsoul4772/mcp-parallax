@@ -300,20 +300,47 @@ mod tests {
     /// and not here.
     #[test]
     fn help_documents_both_routing_namespaces_and_their_vocabulary() {
+        use mcp_parallax::routing::{CallSite, Effort, Tier};
+
         let help = help_text();
         for prefix in ["PARALLAX_MODEL_", "PARALLAX_EFFORT_"] {
             assert!(help.contains(prefix), "`--help` omits {prefix}*");
         }
-        for site in ["RESEARCH_EXTRACT", "CHECKPOINT_REVIEW", "GROUNDED_VERIFY"] {
-            assert!(help.contains(site), "`--help` omits the {site} call site");
-        }
-        for tier in ["BULK", "JUDGMENT"] {
-            assert!(help.contains(tier), "`--help` omits the {tier} tier");
-        }
-        for level in ["low", "medium", "high", "max", "xhigh"] {
+
+        // Whole tokens, never `contains`. `VERIFY` is a substring of both
+        // `GROUNDED_VERIFY` and `RESEARCH_VERIFY`, and `high` of `xhigh`, so a
+        // substring check passes on a help body that lists only the longer
+        // name — the collision that made 040's window comparison useless.
+        let tokens: std::collections::HashSet<&str> = help
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Derived from the enums, not listed here. The three vocabularies were
+        // pinned by hand -- three of twelve call sites -- so a thirteenth site
+        // would ship invisible to `--help`, which is 034's defect exactly.
+        for site in CallSite::ALL {
             assert!(
-                help.contains(level),
-                "`--help` omits the `{level}` effort level"
+                tokens.contains(site.suffix()),
+                "`--help` omits the {} call site; PARALLAX_MODEL_{} and PARALLAX_EFFORT_{} are \
+                 settable but undocumented",
+                site.suffix(),
+                site.suffix(),
+                site.suffix()
+            );
+        }
+        for tier in Tier::ALL {
+            assert!(
+                tokens.contains(tier.suffix()),
+                "`--help` omits the {} tier",
+                tier.suffix()
+            );
+        }
+        for level in Effort::ALL {
+            assert!(
+                tokens.contains(level.as_str()),
+                "`--help` omits the `{}` effort level",
+                level.as_str()
             );
         }
     }
