@@ -269,10 +269,7 @@ mod tests {
 
         // Fixtures that exist only to prove absent/invalid handling, and the
         // alias the help mentions by name but does not advertise as canonical.
-        let fixtures = [
-            "PARALLAX_TEST_DEFINITELY_UNSET_KEY",
-            "PARALLAX_MODEL_NOT_A_CALL_SITE",
-        ];
+        let fixtures = crate::config_facts::TEST_ONLY_KEYS;
 
         let mut missing = Vec::new();
         let mut rest = config.as_str();
@@ -363,6 +360,7 @@ mod tests {
 
         crate::config_facts::assert_all_resolved(&facts);
         crate::config_facts::assert_exclusions_are_live(&facts);
+        crate::config_facts::assert_test_keys_are_live(crate::config_facts::SOURCES);
         crate::config_facts::assert_coverage_balances(&facts);
         crate::config_facts::assert_extraction_is_complete(
             crate::config_facts::SOURCES[0].1,

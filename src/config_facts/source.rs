@@ -40,7 +40,7 @@ pub const FIXTURE: &str = r#"
 pub fn resolve_from(source: &str, constant_sources: &[(&str, &str)]) -> Vec<Fact> {
     let mut facts = Vec::new();
     for (name, expr) in extract_pairs(source) {
-        if name == "PARALLAX_TEST_DEFINITELY_UNSET_KEY" {
+        if super::TEST_ONLY_KEYS.contains(&name.as_str()) {
             continue;
         }
         let resolution = if let Some((_, reason)) = EXCLUSIONS.iter().find(|(n, _)| *n == name) {
@@ -457,10 +457,12 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     // population.
     let parse_env_calls =
         source.matches("parse_env(").count() - source.matches("fn parse_env(").count();
-    let skipped = source
-        .matches("PARALLAX_TEST_DEFINITELY_UNSET_KEY")
-        .count()
-        .min(1);
+    // Which fixture keys are `parse_env` calls is derived, not listed again:
+    // a second list would have to agree with the first, which is the defect.
+    let skipped = super::TEST_ONLY_KEYS
+        .iter()
+        .filter(|k| source.contains(&format!("parse_env(\"{k}\"")))
+        .count();
     (bearing + parse_env_calls - skipped, unrecognised)
 }
 
