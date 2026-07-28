@@ -42,7 +42,13 @@ async fn main() {
     latencies_ms.sort_unstable();
     // Integer percentile index: idx = len * pct / 100 (len is 50 - no overflow).
     let p = |pct: usize| latencies_ms[(latencies_ms.len() * pct / 100).min(SAMPLES - 1)];
-    println!("samples : {SAMPLES} sequential query embeds (voyage-4)");
+    // Read from the config that was actually used, not restated: these lines are
+    // pasted into research.md as findings, and a hardcoded name would attribute
+    // the measurement to the wrong model the moment the default moves.
+    println!(
+        "samples : {SAMPLES} sequential query embeds ({})",
+        config.voyage_model
+    );
     println!("min     : {} ms", latencies_ms[0]);
     println!("p50     : {} ms", p(50));
     println!("p90     : {} ms", p(90));
