@@ -13,6 +13,40 @@ arc.
 
 ### Fixed
 
+* **`config_facts`'s tests move to their own file, and 0.5.0's line counts for
+  that split were wrong (049)** — `src/config_facts/mod.rs` stood at 848 lines
+  against the 500-line target: 301 of production and 546 of tests. The test
+  module is now `src/config_facts/tests.rs`, leaving mod.rs at 304. The same
+  split `src/research/pipeline.rs` already uses, without its `#[path]`
+  attribute — `config_facts` is a directory module, so `mod tests;` finds the
+  file unaided.
+
+  **The 0.5.0 entry describing the original split reported `247/476/185 lines`.
+  Two of those three were right, and the wrong one was wrong the day it was
+  written.** At that commit `source.rs` was 476 lines and `documents.rs` 185 —
+  exact, and both are total counts. `mod.rs` was **765**, not 247. It had also
+  reached 260 lines of production, so 247 matched neither measure. Presenting
+  one production-ish figure and two totals under a single label read as
+  consistent precisely because the two files where the measures differ are the
+  two with no tests in them.
+
+  Released sections are not rewritten, so the 0.5.0 text stands and this entry
+  is the correction. **The replacement is to stop stating the numbers**, not to
+  restate them correctly: line counts are the one fact in that sentence nothing
+  binds, and they were stale within a commit of being written. That the split
+  happened is the durable claim; `wc -l` answers the rest.
+
+  **This does not reduce how many files exceed the target — it moves which
+  one does.** `tests.rs` lands at 554, still over; the count of files above 500
+  under `src/` is 23 before and after. What changed is that the production
+  module is now readable in one screenful and the overage sits in a test file,
+  next to `src/research/pipeline_tests.rs` at 1410 — the standing precedent
+  that the target is not applied to test files.
+
+  No check is added, and one would fail on contact against those 23 files. This
+  is one module brought under a target the repository states and does not
+  enforce, not enforcement of it.
+
 * **One list of test-only variable names (048)** — `PARALLAX_TEST_DEFINITELY_UNSET_KEY`
   and `PARALLAX_MODEL_NOT_A_CALL_SITE` were spread across four files, and
   **two of those were skip rules that had to agree**: `resolve_from` skipped one
