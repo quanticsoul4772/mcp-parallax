@@ -260,7 +260,11 @@ mod tests {
     /// next omission fail rather than ship.
     #[test]
     fn help_lists_every_variable_the_config_reads() {
-        let config = include_str!("config.rs");
+        // Stripped, like the other two scans. A variable name quoted inside
+        // any comment — `// RETRY_BACKOFF_MS was removed in 041` — otherwise
+        // becomes a variable `--help` is required to document, and the failure
+        // blames a correct document for omitting something that does not exist.
+        let config = crate::config_facts::strip_comments(include_str!("config.rs"));
         let help = help_text();
 
         // Fixtures that exist only to prove absent/invalid handling, and the
@@ -271,7 +275,7 @@ mod tests {
         ];
 
         let mut missing = Vec::new();
-        let mut rest = config;
+        let mut rest = config.as_str();
         while let Some(open) = rest.find('"') {
             rest = &rest[open + 1..];
             let Some(close) = rest.find('"') else { break };

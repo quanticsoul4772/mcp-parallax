@@ -52,7 +52,7 @@ pub mod source;
 pub use documents::{
     assert_no_contradictory_defaults, assert_no_phantom_defaults, stated_in_help, stated_in_table,
 };
-pub use source::{resolve, variables_without_defaults};
+pub use source::{resolve, strip_comments, variables_without_defaults};
 
 /// Source files this module reads to resolve a named constant.
 ///
@@ -449,6 +449,46 @@ mod tests {
             find(&resolve_from(with_url, &[("f", "")]), "U"),
             &Resolution::Resolved("https://x/y".into())
         );
+    }
+
+    /// Block comments, which the line-only stripper let through.
+    ///
+    /// The symptom was not the predictable one. Extraction and the call-site
+    /// counter strip identically, so both *agreed* on the phantom and the
+    /// coverage equation stayed balanced — what failed was
+    /// `DEFAULT_UNDOCUMENTED`, accusing two correct documents of omitting a
+    /// variable nobody declared, whose cheapest fix is adding a row for it to
+    /// both.
+    #[test]
+    fn a_call_quoted_in_a_block_comment_is_not_a_call() {
+        let source = r#"
+            /* was parse_env("RETRY_BACKOFF_MS", 250) until 041 */
+            /* outer /* nested parse_env("GHOST", 1) */ still a comment */
+            let max_retries = parse_env("MAX_RETRIES", 3)?;
+        "#;
+        let facts = resolve_from(source, &[("fixture", "")]);
+        let names: Vec<&str> = facts.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["MAX_RETRIES"], "{facts:?}");
+
+        // Both sides must agree, or the counter reports a balance failure for
+        // a phantom rather than the scan reporting nothing at all.
+        let (count, unknown) = classify_call_sites(source);
+        assert_eq!(count, 1, "{unknown:?}");
+    }
+
+    /// A comment delimiter inside a string literal is not a delimiter. An
+    /// unterminated `/*` mis-read as one swallows the rest of the file, which
+    /// would drop every variable declared after it without a word.
+    #[test]
+    fn a_comment_delimiter_inside_a_string_is_not_a_comment() {
+        let source = r#"
+            let probe = "/* unterminated";
+            let max_retries = parse_env("MAX_RETRIES", 3)?;
+            let level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        "#;
+        let facts = resolve_from(source, &[("fixture", "")]);
+        let names: Vec<&str> = facts.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["MAX_RETRIES", "LOG_LEVEL"], "{facts:?}");
     }
 
     /// An environment read in a shape the classifier does not know must fail,
