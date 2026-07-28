@@ -74,10 +74,11 @@ arc.
   presence scan all follow, where it previously took three edits; and adding one
   without listing it anywhere still fails loudly, naming the key.
 
-* **One `Config` fixture for the acceptance examples (047)** — seven examples
-  hand-rolled the same 20-field literal. **Fifteen fields were identical in all
-  seven**; the five that differed each did so for a reason: a live key rather
-  than a placeholder, a longer timeout for the examples that reach the network,
+* **One `Config` fixture for the examples that build one (047)** — seven
+  examples hand-rolled the same 20-field literal, six `acceptance_*` and
+  `spike_embed_latency`. **Fifteen fields were identical in all seven**; the
+  five that differed each did so for a reason: a live key rather than a
+  placeholder, a longer timeout for the examples that reach the network,
   the one confinement root, the two that need embeddings. Those five are now
   the only thing each example writes down, via `..common::config()`.
 

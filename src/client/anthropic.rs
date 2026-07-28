@@ -44,11 +44,37 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 ///
 /// This value is **not** derived from measurement, and saying so matters: the
 /// largest successful thinking-inclusive output on record is 3 135 tokens,
-/// while the failing call exceeded 16 000, and how far past it went is unknown
-/// because truncated invocations currently record zero usage (see the
-/// follow-up note in the branch description). 32 000 is ~9× the schema floor
-/// and 2× the value that failed. It should be re-derived once truncation
-/// records its real usage.
+/// while the failing call exceeded 16 000, and how far past it went was
+/// unknown at the time. 32 000 is ~9× the schema floor and 2× the value that
+/// failed — a doubling, not a measurement.
+///
+/// **The blocker that sentence named is gone.** 019 wrote it at 15:56 on
+/// 2026-07-24; 020 landed at 20:27 the same day and made every billed failure
+/// carry its tokens, so `Outcome::Truncation` now records a real
+/// `output_tokens` and [`interpret`] puts the figure in the error text.
+///
+/// What is missing is a sample, and the one truncation on record cannot be it.
+/// It is `decide` on `claude-sonnet-5` at 2026-07-24T22:38:32Z — eighteen
+/// minutes before the raise, about five hours before 020 — so it reads zero
+/// tokens for precisely the reason above.
+///
+/// **A future re-derivation cannot read `invocation_records.output_tokens` as
+/// a per-call figure.** One record covers a whole tool call summed over every
+/// model hop, so it bounds this constant only for single-pass tools like
+/// `decide`, the tool that truncated. The counts below rot; the query is what
+/// to re-run, against the operator's own `DATABASE_PATH`:
+///
+/// ```sql
+/// SELECT count(*) FROM invocation_records WHERE outcome = 'truncation';
+/// SELECT max(output_tokens) FROM invocation_records
+///   WHERE tool = 'decide' AND outcome = 'success';
+/// ```
+///
+/// As of 2026-07-28 that read one truncation (the one above) and 2 183 tokens
+/// — the ceiling untested from below in the four days since the raise, which is
+/// it working and also why it stays underived: sizing it down needs the
+/// failures it now prevents. Whether any of those successes carried a context
+/// as long as the call that failed is not something the records say.
 const MAX_TOKENS: u32 = 32_000;
 
 /// Thin `reqwest` client implementing [`ModelClient`] via structured outputs.
