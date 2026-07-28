@@ -492,6 +492,81 @@ mod tests {
     /// used since 018. Those references now point at the changelog instead,
     /// and this pins the one place a version literal still has to be written
     /// by hand.
+    /// CLAUDE.md's active-feature block was the last operator-facing document
+    /// with nothing checking it, and it went stale exactly as `--help` and the
+    /// README did before 034 and 039.
+    ///
+    /// **Only the derivable parts are bound, and the limit is the point.**
+    /// "Which feature is active" is a statement of intent — no source of truth
+    /// exists for it, so no check can catch the block naming an old feature
+    /// while newer ones ship. What *is* derivable is checked: every
+    /// `specs/<dir>` the block links must exist, and any claim of the form
+    /// "all N tasks closed" must match that feature's `tasks.md`.
+    ///
+    /// Claiming otherwise would be worse than the gap. A check that appears to
+    /// cover staleness while covering only link validity is the shape 036 and
+    /// 039 shipped — partial derivation reported as derivation.
+    #[test]
+    fn the_active_feature_block_links_and_task_counts_are_real() {
+        let claude_md = include_str!("../CLAUDE.md").replace("\r\n", "\n");
+        let start = claude_md
+            .find("<!-- SPECKIT START -->")
+            .expect("CLAUDE.md has no active-feature block");
+        let end = claude_md
+            .find("<!-- SPECKIT END -->")
+            .expect("the active-feature block is unterminated");
+        let block = &claude_md[start..end];
+
+        // Every specs/<dir> path the block names must exist on disk.
+        let mut checked = 0;
+        let mut rest = block;
+        while let Some(at) = rest.find("specs/") {
+            rest = &rest[at..];
+            let name: String = rest["specs/".len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            rest = &rest["specs/".len()..];
+            if name.is_empty() {
+                continue;
+            }
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("specs")
+                .join(&name);
+            assert!(
+                dir.is_dir(),
+                "the active-feature block links `specs/{name}`, which does not exist"
+            );
+            checked += 1;
+
+            // "all N tasks closed" is derivable from that feature's tasks.md.
+            if let Some(marker) = block.find("tasks closed") {
+                let head = &block[..marker];
+                let count: String = head
+                    .chars()
+                    .rev()
+                    .skip_while(|c| !c.is_ascii_digit())
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                let claimed: usize = count.chars().rev().collect::<String>().parse().unwrap_or(0);
+                let tasks = std::fs::read_to_string(dir.join("tasks.md")).unwrap_or_default();
+                if claimed > 0 && !tasks.is_empty() {
+                    let closed = tasks.matches("- [X] ").count();
+                    let open = tasks.matches("- [ ] ").count();
+                    assert_eq!(
+                        closed, claimed,
+                        "the block claims {claimed} tasks closed for {name}; tasks.md has {closed}"
+                    );
+                    assert_eq!(open, 0, "{name} has {open} tasks still open");
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "no specs/ link found in the active-feature block; the search is wrong, not the block"
+        );
+    }
+
     #[test]
     fn the_changelog_documents_the_version_being_built() {
         let version = env!("CARGO_PKG_VERSION");

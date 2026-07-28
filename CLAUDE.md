@@ -279,53 +279,51 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-Active: `040-unresolvable-default-fails` — **complete**, full Spec Kit run, all
-34 tasks closed. Plan:
-[specs/040-unresolvable-default-fails/plan.md](specs/040-unresolvable-default-fails/plan.md).
-Branch is `029-` because the hook numbers from `specs/`, which lags — 029
-through 039 shipped without spec directories.
+**No active Spec Kit feature.** `main` is at **v0.5.0** (tagged 2026-07-27),
+clean, no open PRs.
 
-Three features built checks binding an operator-facing document to `config.rs`:
-034 pinned five defaults by hand, 036 replaced them with a scan reading defaults
-out of source, 039 applied that scan to the README table. The scan reduced a
-default to its digits and, finding none, moved on **without recording that it
-skipped one**. Setting both documents to a wrong `GROUNDED_VERIFY_MAX_BYTES` of
-999999 left every test green.
+The last full Spec Kit run was `040-unresolvable-default-fails` — complete, all
+34 tasks closed
+([plan](specs/040-unresolvable-default-fails/plan.md)). Its branch is `029-`
+because the hook numbers from `specs/`, which lags: 029–039 and 041–045 shipped
+without spec directories.
 
-**The silent skip was the defect, not the missing coverage.** One shared
-resolver (`src/config_facts/`, test-only) replaces the two near-duplicate scans
-that had already drifted — that duplication is how 039 inherited 036's blind
-spot. A default that cannot be read fails naming the variable; a constant absent
-from the enumerated file set is a *separate* state, because its remedy is the
-opposite one. Constants resolve from an enumerated set, never a crate search:
-one name may be declared in several modules.
+**041–045 shipped after it**, each from a defect report rather than a spec: a
+default model with no price row now fails the build (041); one `Config` fixture
+for the library's unit tests (042); `--help`'s routing vocabularies derive from
+the enums (043); tests and examples brought under the lint gate (044); block
+comments no longer mint configuration variables (045).
 
-**What the feature taught, worth carrying forward — a check can pass for reasons
-unrelated to what it verifies, and only firing it proves otherwise.** Mutating
-all eight documented failure messages into firing found two that could not:
+**The through-line of 040–045, worth carrying forward.** Every one of them was
+a check that passed for a reason unrelated to what it claimed to verify:
 
-- The document comparison joined a **six-line window** and asked whether the
-  value appeared *somewhere nearby*. A wrong single-digit default matched a
-  neighbouring row; `999999` had failed only because six digits rarely collide.
-  Sensitivity that depends on how unusual the value is, is not a check.
-- The coverage equation compared `facts.len()` against itself, so a dropped
-  variable shrank both sides and stayed balanced.
+- A scan that reduced a default to its digits and, finding none, **moved on
+  without recording that it had skipped one** (040).
+- A comparison that joined a six-line window and asked whether the value
+  appeared *anywhere in it*, so a wrong single-digit default matched a
+  neighbouring row (040). `999999` had failed only because six digits rarely
+  collide — sensitivity that depends on how unusual the value is.
+- A coverage equation comparing the fact vector **against itself**, so a
+  dropped variable shrank both sides and stayed balanced (040).
+- A resolver succeeding on a **prefix** of the expression, so
+  `RESEARCH_CONCURRENCY_MAX / 4` resolved to `32` (040 review).
+- A vocabulary test pinning **three of twelve** call sites by hand, and
+  `contains("high")` passing on `xhigh` (043).
+- A lint gate that never looked at test or example targets, reporting zero while
+  39 errors stood (044).
+- A comment stripper that handled `//` only (045).
 
-The pre-merge review then found four shapes returning **wrong values**, all one
-root cause: resolution succeeded on a *prefix* of the expression rather than
-requiring it consumed the whole thing. `RESEARCH_CONCURRENCY_MAX / 4` → `32`,
-`3u32` → `332`, a doc comment quoting a superseded `const` beating the real
-declaration. Each balanced every invariant, then failed accusing two **correct**
-documents — whose cheapest green is to copy the fabricated value into both. A
-confidently wrong answer is strictly worse than the silent skip it replaced;
-that asymmetry is the reason to attack a checker's parsing assumptions rather
-than only its coverage.
+**A wrongly-read value is worse than a skipped one.** It balances every
+invariant, then fails accusing two *correct* documents — and the cheapest path
+to green is to copy the fabricated value into both. A skip leaves documents
+merely unchecked; this leaves them actively wrong with a green suite. That
+asymmetry is the argument for attacking a checker's parsing assumptions, not
+just its coverage.
 
-Both `decide` calls settled the clarifications and **both were improved by what
-came back**: the reverse direction reads structured markers only, never prose
-(85 v 62); and `decide`'s preferred constant-lookup variant was refuted 3/3 by
-its confirmation `verify`, which observed that a resolver reading only its
-declared set cannot name the file a missing constant lives in.
+**What is still hand-written, in rough order of risk:** 034's variable-presence
+scan carries a fixture-exclusion list; five files declare the gate command with
+nothing binding them; `rust-toolchain.toml` pins a floating `stable`, which is
+what let CI fail on code that was clean locally.
 <!-- SPECKIT END -->
 
 ## Working style
