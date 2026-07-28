@@ -13,6 +13,26 @@ arc.
 
 ### Fixed
 
+* **CLAUDE.md's active-feature block is no longer unchecked (046)** — it named
+  040 as the last Spec Kit run while 041–045 had shipped since. The same shape
+  as `--help` before 034 and the README before 039: a hand-written document
+  that the conversation moved past.
+
+  **Only the derivable parts are bound, and that limit is stated rather than
+  papered over.** "Which feature is active" is intent — no source of truth
+  exists for it, so no check can catch the block naming an old feature while
+  newer ones ship. What is derivable is now checked: every `specs/<dir>` the
+  block links must exist, and any "all N tasks closed" claim must match that
+  feature's `tasks.md`, open tasks included.
+
+  Claiming more would be worse than the gap. A check that looks like it covers
+  staleness while covering only link validity is exactly what 036 and 039
+  shipped — partial derivation reported as derivation, which is the defect 040
+  was written to end.
+
+  Mutation-verified three ways: a link to a nonexistent spec directory, a wrong
+  task count, and a reopened task each fail, naming what disagrees.
+
 * **Block comments no longer mint configuration variables (045)** — the
   comment stripper handled `//` only, so a block comment quoting a removed call
   (`/* was parse_env("RETRY_BACKOFF_MS", 250) until 041 */`) was read as a live
