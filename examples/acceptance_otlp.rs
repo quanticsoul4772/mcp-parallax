@@ -24,6 +24,8 @@
     clippy::type_complexity
 )]
 
+mod common;
+
 use mcp_parallax::client::AnthropicClient;
 use mcp_parallax::config::Config;
 use mcp_parallax::server::Parallax;
@@ -45,29 +47,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const CLAIM: &str = "the acceptance claim text that must never appear in telemetry";
 
 fn config() -> Config {
-    Config {
-        anthropic_api_key: "dummy-acceptance-key".into(),
-        anthropic_model: "claude-opus-4-8".into(),
-        routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
-        verify_ensemble_k: 3,
-        input_max_chars: 50_000,
-        voyage_api_key: None,
-        voyage_model: "voyage-4".into(),
-        memory_recall_limit: 5,
-        brave_api_key: None,
-        fetch_timeout_ms: 10_000,
-        research_concurrency: 8,
-        fetch_allow_private: false,
-        checkpoint_gate_patterns: vec![],
-        grounded_verify_root: None,
-        grounded_verify_max_bytes: 262_144,
-        grounded_verify_max_locators: 64,
-        database_path: ":memory:".into(),
-        log_level: "info".into(),
-        request_timeout_ms: 5_000,
-        max_retries: 1,
-        anthropic_api_base: "http://127.0.0.1:1".into(),
-    }
+    common::config()
 }
 
 fn end_turn(value: &Value) -> Value {
@@ -116,16 +96,19 @@ fn write_transcript(dir: &std::path::Path, session: &str, commands: &[(&str, boo
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // ---- SC-003 (overhead half): disabled emission is the fast path ------
+    // The model is arbitrary for an overhead probe, but taking it from the
+    // constant keeps it one that 041 guarantees has a price row.
+    let model = mcp_parallax::config::DEFAULT_MODEL;
     let probe = mcp_parallax::telemetry::InvocationRecord {
         id: "overhead".into(),
         session_id: "overhead".into(),
         tool: "verify".into(),
-        model: "claude-opus-4-8".into(),
+        model: model.into(),
         input_tokens: 1,
         output_tokens: 1,
         cost_usd: 0.0,
-        models: vec!["claude-opus-4-8".into()],
-        usage_by_model: mcp_parallax::telemetry::ModelUsage::single("claude-opus-4-8", 300, 30),
+        models: vec![model.into()],
+        usage_by_model: mcp_parallax::telemetry::ModelUsage::single(model, 300, 30),
         cost_estimated: false,
         depth: None,
         effort: None,

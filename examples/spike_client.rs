@@ -17,7 +17,8 @@ use serde_json::{json, Value};
 #[tokio::main]
 async fn main() {
     let api_key = std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY required");
-    let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-opus-4-8".to_string());
+    let model = std::env::var("ANTHROPIC_MODEL")
+        .unwrap_or_else(|_| mcp_parallax::config::DEFAULT_MODEL.to_string());
 
     // Tiny schema with a value constraint the grammar drops (confidence range).
     let unsanitized = json!({

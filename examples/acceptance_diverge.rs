@@ -10,6 +10,8 @@
 #![allow(clippy::print_stdout)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod common;
+
 use mcp_parallax::client::AnthropicClient;
 use mcp_parallax::config::Config;
 use mcp_parallax::server::Parallax;
@@ -23,29 +25,7 @@ use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn config() -> Config {
-    Config {
-        anthropic_api_key: "test-key".into(),
-        anthropic_model: "claude-opus-4-8".into(),
-        routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
-        verify_ensemble_k: 3,
-        input_max_chars: 50_000,
-        voyage_api_key: None,
-        voyage_model: "voyage-4".into(),
-        memory_recall_limit: 5,
-        brave_api_key: None,
-        fetch_timeout_ms: 10_000,
-        research_concurrency: 8,
-        fetch_allow_private: false,
-        checkpoint_gate_patterns: vec![],
-        grounded_verify_root: None,
-        grounded_verify_max_bytes: 262_144,
-        grounded_verify_max_locators: 64,
-        database_path: ":memory:".into(),
-        log_level: "info".into(),
-        request_timeout_ms: 5_000,
-        max_retries: 1,
-        anthropic_api_base: "http://127.0.0.1:1".into(),
-    }
+    common::config()
 }
 
 fn end_turn(value: &Value) -> Value {

@@ -13,6 +13,39 @@ arc.
 
 ### Fixed
 
+* **One `Config` fixture for the acceptance examples (047)** — seven examples
+  hand-rolled the same 20-field literal. **Fifteen fields were identical in all
+  seven**; the five that differed each did so for a reason: a live key rather
+  than a placeholder, a longer timeout for the examples that reach the network,
+  the one confinement root, the two that need embeddings. Those five are now
+  the only thing each example writes down, via `..common::config()`.
+
+  **Bendability was the objection, and struct update syntax answers it.** Every
+  field stays overridable; what changes is that bending one no longer means
+  restating nineteen the example did not mean to choose. The placeholder key
+  had been written three ways across the seven (`test-key`,
+  `dummy-acceptance`, `unused`) for a field none of them reads — variance with
+  no intent behind it.
+
+  `examples/common/mod.rs` is not an example target: Cargo discovers
+  `examples/*.rs` and `examples/*/main.rs`, and that directory has neither.
+
+  The model and log level come from `DEFAULT_MODEL`, `DEFAULT_VOYAGE_MODEL` and
+  `DEFAULT_LOG_LEVEL` rather than repeating their values. `spike_client` and
+  `spike_thinking` were restating `config.rs`'s model default by hand in their
+  own `unwrap_or_else`, which is the drift class exactly; they now read the
+  constant. `spike_otlp` keeps its literal — it is an arbitrary span-attribute
+  value in a telemetry spike, not a restated default, and deriving it would
+  claim a relationship that does not exist.
+
+  Occurrences of the model literal across the crate: **97 → 78**.
+
+  **These examples are not run by `cargo test`.** They are acceptance scripts
+  driven by hand against a mock or the live API, so `cargo build --examples`
+  and the lint gate — which reaches them only since 044 — are the whole of
+  their automated coverage. That is the limit of what this change was verified
+  against.
+
 * **CLAUDE.md's active-feature block is no longer unchecked (046)** — it named
   040 as the last Spec Kit run while 041–045 had shipped since. The same shape
   as `--help` before 034 and the README before 039: a hand-written document

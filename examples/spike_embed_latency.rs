@@ -6,6 +6,8 @@
 //! Run: `VOYAGE_API_KEY=... cargo run --release --example spike_embed_latency`
 //! Findings are recorded in specs/006-checkpoint-layer/research.md D4.
 
+mod common;
+
 use mcp_parallax::client::VoyageClient;
 use mcp_parallax::config::Config;
 use mcp_parallax::traits::embedder::Embedder;
@@ -18,27 +20,9 @@ const SAMPLES: usize = 50;
 async fn main() {
     let voyage_api_key = std::env::var("VOYAGE_API_KEY").expect("VOYAGE_API_KEY required");
     let config = Config {
-        anthropic_api_key: "unused".into(),
-        anthropic_model: "claude-opus-4-8".into(),
-        routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
-        verify_ensemble_k: 3,
-        input_max_chars: 50_000,
         voyage_api_key: Some(voyage_api_key),
-        voyage_model: "voyage-4".into(),
-        memory_recall_limit: 5,
-        brave_api_key: None,
-        fetch_timeout_ms: 10_000,
-        research_concurrency: 8,
-        fetch_allow_private: false,
-        checkpoint_gate_patterns: vec![],
-        grounded_verify_root: None,
-        grounded_verify_max_bytes: 262_144,
-        grounded_verify_max_locators: 64,
-        database_path: ":memory:".into(),
-        log_level: "info".into(),
         request_timeout_ms: 30_000,
-        max_retries: 1,
-        anthropic_api_base: "http://127.0.0.1:1".into(),
+        ..common::config()
     };
     let client = VoyageClient::new(&config).expect("client");
 
