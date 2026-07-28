@@ -13,6 +13,33 @@ arc.
 
 ### Fixed
 
+* **One list of test-only variable names (048)** — `PARALLAX_TEST_DEFINITELY_UNSET_KEY`
+  and `PARALLAX_MODEL_NOT_A_CALL_SITE` were spread across four files, and
+  **two of those were skip rules that had to agree**: `resolve_from` skipped one
+  name, and the call-site counter subtracted the same name in a different
+  function.
+
+  Adding a second fixture key and updating only one of those would have made the
+  resolver and the counter disagree, firing `COVERAGE_UNBALANCED` about a count
+  mismatch rather than the fixture nobody excluded — a failure pointing away
+  from its cause, inside the module written to stop exactly that. Both now read
+  `config_facts::TEST_ONLY_KEYS`, so disagreement is unrepresentable rather than
+  merely detectable.
+
+  **Which keys are `parse_env` calls is derived, not listed again.** A second
+  list would have to agree with the first, which is the defect one level up.
+  `config.rs` keeps its literals: that is where the fixtures are declared and
+  used, not a rule restating them.
+
+  `assert_test_keys_are_live` fails if an entry outlives its fixture — without
+  it, a real variable could later take an excused name and be dropped from every
+  document silently.
+
+  Verified by mutation: a stale entry fails naming it; adding a second
+  `parse_env` fixture to the one list makes the resolver, the counter and the
+  presence scan all follow, where it previously took three edits; and adding one
+  without listing it anywhere still fails loudly, naming the key.
+
 * **One `Config` fixture for the acceptance examples (047)** — seven examples
   hand-rolled the same 20-field literal. **Fifteen fields were identical in all
   seven**; the five that differed each did so for a reason: a live key rather
