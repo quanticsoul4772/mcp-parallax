@@ -66,7 +66,7 @@ pub fn resolve() -> Vec<Fact> {
 /// happens in exactly one place. 036 filtered at extraction time, which is why
 /// an expression with no digits vanished before anything could notice.
 pub(super) fn extract_pairs(source: &str) -> Vec<(String, String)> {
-    let source = &strip_line_comments(source);
+    let source = &strip_comments(source);
     let mut pairs = Vec::new();
 
     // parse_env("NAME", <expr>) — the name may sit on its own line.
@@ -224,40 +224,86 @@ pub(super) fn classify(expr: &str, constant_sources: &[(&str, &str)]) -> Resolut
     Resolution::Unresolvable(expr.to_string())
 }
 
-/// Blank out `//`-to-end-of-line comments, preserving line structure.
+/// Blank out comments — line **and** block — preserving line structure.
 ///
 /// A comment quoting a call — `// Was parse_env("MAX_RETRIES", 5) until 018.` —
-/// otherwise mints a second fact for a real variable, or a whole fact for a
-/// variable that does not exist. Both then fail naming the *documents* as
-/// wrong. A `//` inside a string literal is left alone.
-pub(super) fn strip_line_comments(source: &str) -> String {
+/// otherwise mints a fact for a variable that does not exist.
+///
+/// The block-comment case is worth spelling out, because its symptom is not the
+/// one you would predict. The resolver and the call-site counter strip
+/// identically, so both *agree* on the phantom and the coverage equation stays
+/// balanced. What fails is `DEFAULT_UNDOCUMENTED`, accusing two correct
+/// documents of omitting a variable nobody declared — and the cheapest way to
+/// green is to add a row for it to both. That is the corruption cycle this
+/// module exists to prevent, reached from the opposite direction.
+///
+/// Both forms are handled in **one pass**, never in sequence. Sequential
+/// stripping breaks whichever order you pick: lines first, and a `//` inside a
+/// block comment can take that block's `*/` with it, leaving the block
+/// unterminated so the rest of the file vanishes; blocks first, and a `/*`
+/// inside a line comment opens a block that was never there. Rust's block
+/// comments nest, and a `/*`, `*/` or `//` inside a string literal is not a
+/// comment at all.
+pub fn strip_comments(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
-    for line in source.lines() {
-        let mut in_string = false;
-        let mut escaped = false;
-        let mut cut = line.len();
-        let bytes: Vec<char> = line.chars().collect();
-        for i in 0..bytes.len() {
-            let c = bytes[i];
-            if escaped {
-                escaped = false;
+    let mut i = 0;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if depth > 0 {
+            // Newlines survive, so line-oriented callers keep their structure.
+            if c == '\n' {
+                out.push('\n');
+            } else if c == '/' && next == Some('*') {
+                depth += 1;
+                i += 1;
+            } else if c == '*' && next == Some('/') {
+                depth -= 1;
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if c == '\\' {
+                out.push(c);
+                if let Some(n) = next {
+                    out.push(n);
+                    i += 1;
+                }
+                i += 1;
                 continue;
             }
-            match c {
-                '\\' if in_string => escaped = true,
-                '"' => in_string = !in_string,
-                '/' if !in_string && bytes.get(i + 1) == Some(&'/') => {
-                    cut = line
-                        .char_indices()
-                        .nth(i)
-                        .map_or(line.len(), |(byte_index, _)| byte_index);
-                    break;
+            if c == '"' {
+                in_string = false;
+            }
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        match (c, next) {
+            ('"', _) => {
+                in_string = true;
+                out.push(c);
+                i += 1;
+            }
+            ('/', Some('/')) => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
                 }
-                _ => {}
+            }
+            ('/', Some('*')) => {
+                depth = 1;
+                i += 2;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
             }
         }
-        out.push_str(&line[..cut]);
-        out.push('\n');
     }
     out
 }
@@ -382,7 +428,7 @@ pub(super) fn lookup_constant(
 /// to extraction and to its own cross-check at once, which is the 036 defect
 /// rebuilt one level up.
 pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
-    let source = strip_line_comments(source);
+    let source = strip_comments(source);
     let mut bearing = 0;
     let mut unrecognised = Vec::new();
 
@@ -426,7 +472,7 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
 /// new gate is checked by nothing.
 #[must_use]
 pub fn variables_without_defaults(source: &str, facts: &[Fact]) -> Vec<String> {
-    let source = strip_line_comments(source);
+    let source = strip_comments(source);
     let mut out: Vec<String> = Vec::new();
     let mut rest = source.as_str();
     while let Some(at) = rest.find("env::var(") {

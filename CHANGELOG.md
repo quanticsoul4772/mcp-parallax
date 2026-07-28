@@ -13,6 +13,37 @@ arc.
 
 ### Fixed
 
+* **Block comments no longer mint configuration variables (045)** — the
+  comment stripper handled `//` only, so a block comment quoting a removed call
+  (`/* was parse_env("RETRY_BACKOFF_MS", 250) until 041 */`) was read as a live
+  one.
+
+  **The symptom was not the predictable one.** Extraction and the call-site
+  counter strip identically, so both *agreed* on the phantom and the coverage
+  equation stayed balanced. What failed was `DEFAULT_UNDOCUMENTED`, accusing
+  `--help` and the README of omitting a variable nobody declared — and the
+  cheapest way to green is to add a row for it to both. That is the corruption
+  cycle 040 removed from the resolver, reached from the opposite direction.
+
+  Both comment forms are now handled in **one pass**, never in sequence.
+  Sequential stripping fails whichever order you pick: lines first, and a `//`
+  inside a block comment can take that block's `*/` with it, leaving it
+  unterminated so the rest of the file vanishes; blocks first, and a `/*`
+  inside a line comment opens a block that was never there. Nested block
+  comments and delimiters inside string literals are both handled — an
+  unterminated `/*` in a string, mis-read, would silently drop every variable
+  declared after it.
+
+  **Fixing it surfaced a third scan.** `help_lists_every_variable_the_config_reads`
+  (from 034) reads `config.rs` independently and stripped nothing at all, so a
+  variable *name* mentioned in any comment became one `--help` was required to
+  document. It now shares the stripper. 040 unified two scans; this was the one
+  it did not reach, and it still carries a hand-written fixture-exclusion list.
+
+  Verified by mutation in both directions: four comment shapes plus a string
+  containing an unterminated delimiter all pass, and disabling the block-comment
+  branch fails the new test.
+
 * **The lint gate now covers tests and examples (044)** — CI ran
   `cargo clippy --all-features -- -D warnings`, which lints the library and
   binary production paths and nothing else. It reported zero while 39 errors
