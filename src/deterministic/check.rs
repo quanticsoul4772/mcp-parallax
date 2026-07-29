@@ -67,9 +67,31 @@ async fn run_spent(
     client: &dyn ModelClient,
     spent: &mut (u64, u64),
 ) -> Result<(CheckResult, u64, u64), AppError> {
+    // Both fields build one prompt (`translate.rs`: `Claim: <<claim>>\nContext:
+    // <<context>>`), so the bound is on their sum. Per-field admitted twice the
+    // configured maximum, and the violation-fed retry sends it again.
+    //
+    // **Bound the artifact at its build point, and count artifacts — not
+    // fields.** The typed formal target this check produces is per-field-ish
+    // and downstream, which is what makes per-field validation look defensible
+    // here; it is the wrong end of the dependency arrow. `save` is the genuine
+    // exception, and not because its consumer treats the fields separately:
+    // `content` builds an embedding, `origin` builds a stored metadata row, and
+    // two independent artifacts are two independent bounds.
     check_text("claim", &params.claim, deps.input_max_chars)?;
-    if let Some(context) = &params.context {
-        check_text("context", context, deps.input_max_chars)?;
+    let total = params.claim.chars().count()
+        + params
+            .context
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .count();
+    if total > deps.input_max_chars {
+        return Err(AppError::InvalidInput(format!(
+            "combined input is {total} characters; the configured maximum is {} \
+             (INPUT_MAX_CHARS); it was not trimmed",
+            deps.input_max_chars
+        )));
     }
 
     let (mut input_tokens, mut output_tokens) = (0_u64, 0_u64);
@@ -537,6 +559,39 @@ mod tests {
     }
 
     // ---- FR-008: input validation before any model call ---------------------
+
+    /// The bound is on `claim + context`, not on each alone.
+    ///
+    /// Both build one prompt (`translate.rs`: `Claim: <<claim>>\nContext:
+    /// <<context>>`), so validating them separately admitted two fields of
+    /// `INPUT_MAX_CHARS` each and sent twice the configured maximum — again on
+    /// every violation-fed retry. `verify` and `diverge` had the same shape and
+    /// were fixed alongside this.
+    ///
+    /// `save` keeps its per-field checks and is right to — not because its
+    /// consumer separates the fields, but because they build two artifacts:
+    /// `content` becomes an embedding, `origin` becomes a stored metadata row.
+    /// Two artifacts, two bounds.
+    #[tokio::test]
+    async fn claim_and_context_are_bounded_together_not_separately() {
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(0);
+        let deps = deps_with(client);
+
+        // Each field is under the 50 000 cap; together they exceed it.
+        let p = CheckParams {
+            context: Some("x".repeat(30_000)),
+            ..params(&"y".repeat(30_000))
+        };
+        let err = run_with(&deps, &p, deps.model_client.as_ref())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
+        assert!(
+            err.to_string().contains("60000") && err.to_string().contains("50000"),
+            "{err}"
+        );
+    }
 
     #[tokio::test]
     async fn invalid_inputs_are_rejected_before_any_model_call() {
