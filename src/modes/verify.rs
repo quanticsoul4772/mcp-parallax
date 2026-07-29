@@ -216,10 +216,21 @@ fn check_input(params: &VerifyParams, max_claim_chars: usize) -> Result<(), AppE
             "claim is empty or whitespace-only".to_string(),
         ));
     }
-    let len = params.claim.chars().count();
-    if len > max_claim_chars {
+    // Context counts. It is substituted into the prompt unconditionally, so a
+    // per-field bound would pass two 40 000-character fields and send 80 000 —
+    // and before this it did not bound `context` at all. Combined, matching
+    // `elicit`, `unstick` and `decide`, which have always summed every field
+    // that reaches the model.
+    let total = params.claim.chars().count()
+        + params
+            .context
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .count();
+    if total > max_claim_chars {
         return Err(AppError::InvalidInput(format!(
-            "claim is {len} characters; the configured maximum is {max_claim_chars} \
+            "combined input is {total} characters; the configured maximum is {max_claim_chars} \
              (INPUT_MAX_CHARS); it was not trimmed"
         )));
     }
@@ -701,6 +712,34 @@ mod tests {
         let err = run(&mock, &mode, &params(&big), 50).await.unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
         assert!(err.to_string().contains("51") && err.to_string().contains("50"));
+    }
+
+    /// `context` counts toward the bound, and a claim that fits cannot smuggle
+    /// an unbounded one past it.
+    ///
+    /// `context` reaches `build_prompt` unconditionally, so leaving it out of
+    /// the check meant `INPUT_MAX_CHARS` bounded the claim while the prompt
+    /// itself was unbounded — a caller could send a 200 MB context behind a
+    /// one-word claim. Every sibling corrective that takes an optional field
+    /// (`elicit`, `unstick`, `decide`) already summed it; `verify` and
+    /// `diverge` were the two that did not.
+    #[tokio::test]
+    async fn oversized_context_is_rejected_not_trimmed() {
+        let mode = test_mode(3);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(0);
+
+        let p = VerifyParams {
+            context: Some("x".repeat(51)),
+            ..params("a short claim")
+        };
+        let err = run(&mock, &mode, &p, 50).await.unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
+        // The reported total is claim + context, not either alone.
+        assert!(
+            err.to_string().contains("64") && err.to_string().contains("50"),
+            "{err}"
+        );
     }
 
     // ---- T014: aggregation --------------------------------------------------

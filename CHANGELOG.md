@@ -13,6 +13,45 @@ arc.
 
 ### Fixed
 
+* **`INPUT_MAX_CHARS` is bounded against the built prompt, not each field
+  (052)** — `verify` and `diverge` validated their required field and ignored
+  `context` entirely, which reaches the prompt unconditionally: a one-word
+  claim carrying a 200 MB context passed validation and built a 200 MB prompt.
+  `check` bounded both fields but separately, admitting twice the configured
+  maximum — and sending it again on the violation-fed retry.
+
+  **The rule this settles: bound the artifact at its build point, and count
+  artifacts rather than fields.** Two fields merging into one artifact are
+  bounded as a sum; two fields building two artifacts are bounded
+  independently. Two 40 000-character fields each clear a 50 000 per-field
+  check and produce an 80 000-character prompt. `elicit`, `unstick` and
+  `decide` have always summed; `verify`, `diverge` and `check` now do too.
+
+  **What the rule is not.** It is not "does the downstream consumer treat the
+  fields separately". `check` produces a typed formal target that is per-field
+  in shape, which is exactly what made per-field validation look right here —
+  and it is the wrong end of the dependency arrow. `translate.rs` merges both
+  into one template (`Claim: <<claim>>\nContext: <<context>>`) at
+  `translate_once`, before any formal target exists.
+
+  **The exception, and it is real.** `save` keeps per-field checks on `content`
+  and `origin` — not because a consumer separates them, but because they build
+  two artifacts: `content` becomes an embedding, `origin` becomes a stored
+  metadata row, and neither passes through the other. Two artifacts, two
+  bounds. The seam is written into `check.rs` so the next editor does not have
+  to re-derive it.
+
+  **This rejects input the server previously accepted**, which is why it is
+  recorded in `verify.tool.json` and `diverge.tool.json` rather than only here.
+  Neither contract carries a `maxLength` on any field — the bound is a
+  deployment setting, and a schema cannot state a number the operator chooses —
+  so their `$comment` now says what the runtime enforces and over which fields.
+
+  Mutation-verified: dropping the context term from either sum fails that
+  mode's new `oversized_context_is_rejected_not_trimmed`. The existing
+  oversized-claim tests assert on the reported numbers rather than the field
+  name, so they stayed green across the message change.
+
 * **A wholly failed research phase billed every failed call twice (051)** — a
   run whose extraction or verification phase failed outright recorded
   `prior_phases + 2 × failure_tokens`. Two token disciplines meet on that path,

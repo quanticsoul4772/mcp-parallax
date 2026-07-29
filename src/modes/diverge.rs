@@ -218,10 +218,18 @@ fn check_input(params: &DivergeParams, max_chars: usize) -> Result<(), AppError>
             "problem is empty or whitespace-only".to_string(),
         ));
     }
-    let len = params.problem.chars().count();
-    if len > max_chars {
+    // `context` counts, for the reason given in `verify::check_input`: it
+    // reaches the prompt unconditionally and was previously unbounded.
+    let total = params.problem.chars().count()
+        + params
+            .context
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .count();
+    if total > max_chars {
         return Err(AppError::InvalidInput(format!(
-            "problem is {len} characters; the configured maximum is {max_chars} \
+            "combined input is {total} characters; the configured maximum is {max_chars} \
              (INPUT_MAX_CHARS); it was not trimmed"
         )));
     }
@@ -600,6 +608,27 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    /// `context` counts toward the bound — see `verify::check_input`. It
+    /// reaches the prompt unconditionally, so bounding `problem` alone left the
+    /// prompt itself unbounded behind a short problem statement.
+    #[tokio::test]
+    async fn oversized_context_is_rejected_not_trimmed() {
+        let mode = test_mode(3);
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(0);
+
+        let big = "x".repeat(51);
+        let err = run(&client, &mode, &params("short", Some(&big)), 50)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
+        // The reported total is problem + context, not either alone.
+        assert!(
+            err.to_string().contains("56") && err.to_string().contains("50"),
+            "{err}"
+        );
     }
 
     // ---- T008: stance-blindness is structural ------------------------------
