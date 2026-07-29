@@ -13,6 +13,42 @@ arc.
 
 ### Fixed
 
+* **A wholly failed research phase billed every failed call twice (051)** — a
+  run whose extraction or verification phase failed outright recorded
+  `prior_phases + 2 × failure_tokens`. Two token disciplines meet on that path,
+  each correct alone, neither aware of the other:
+
+  * The per-source and per-claim `Err` arms add the failed call's tokens to the
+    run meter, because a truncation or refusal is a 200 the provider charged
+    for (020).
+  * `dominant_failure_metered` sums `billed()` across the failure set, so the
+    class vote cannot decide how much spend gets reported (also 020).
+
+  `run_at` then closes with `error.metered(meter…)`, and **`AppError::metered`
+  adds** — it does not replace. The failure tokens were in both terms.
+
+  Both pipeline sites now call a new `verify::dominant_failure_unmetered`,
+  which picks the dominant class and strips usage, leaving the run meter as the
+  single authority. `dominant_failure_metered` keeps its summing and delegates
+  the rooting to the new function: it remains correct for `verify` and
+  `diverge`, whose ensemble passes have no meter outside their own errors.
+  Changing `metered` to replace would have broken those.
+
+  **The existing test on this path asserted `input_tokens > 0`.** A doubled
+  bill is greater than zero, and that test exercises the search-phase failure,
+  which never reaches this aggregation at all. The two new tests assert exact
+  totals — `(24, 11)` for extraction, `(41, 19)` for verification — and are
+  mutation-verified against the reintroduced defect, which produces `(38, 17)`
+  and `(62, 28)`.
+
+  The verification test runs at `Depth::Deep` deliberately: `verify_k` is
+  depth-derived and `Quick` is 1, where summing and not summing agree, leaving
+  the ensemble's own aggregation unexercised.
+
+  Symptom while it stood: a research run that failed a whole phase reported
+  roughly twice its true cost, in the invocation record and in the OTLP metrics
+  derived from it.
+
 * **`config_facts`'s tests move to their own file, and 0.5.0's line counts for
   that split were wrong (049)** — `src/config_facts/mod.rs` stood at 848 lines
   against the 500-line target: 301 of production and 546 of tests. The test

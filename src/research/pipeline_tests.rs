@@ -104,6 +104,16 @@ fn deps_with(
     search: MockSearchProvider,
     clock: Arc<dyn TimeProvider>,
 ) -> ResearchDeps {
+    deps_with_client(client, search, clock)
+}
+
+/// [`deps_with`] for a client that is not the shared `ScriptedClient` — the
+/// billed-failure fixtures need to return `Err`, which the scripted one cannot.
+fn deps_with_client(
+    client: Arc<dyn ModelClient>,
+    search: MockSearchProvider,
+    clock: Arc<dyn TimeProvider>,
+) -> ResearchDeps {
     let mut registry = ModeRegistry::new();
     crate::modes::verify::register(&mut registry, 3).unwrap();
     register(&mut registry).unwrap();
@@ -113,9 +123,9 @@ fn deps_with(
         // fixtures share one scripted client, so every existing assertion's
         // expected value is unchanged — the split is structural here, and the
         // per-site routing behavior is asserted in `client::pool`.
-        scope_client: Arc::clone(&client) as Arc<dyn ModelClient>,
-        extract_client: Arc::clone(&client) as Arc<dyn ModelClient>,
-        verify_client: Arc::clone(&client) as Arc<dyn ModelClient>,
+        scope_client: Arc::clone(&client),
+        extract_client: Arc::clone(&client),
+        verify_client: Arc::clone(&client),
         synth_client: client,
         search: Arc::new(search),
         clock,
@@ -713,6 +723,122 @@ async fn deadline_ceiling_stops_new_work_with_the_reason_named() {
     assert!(result.stats.stopped_early);
     assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
     assert!(!result.answer.is_empty());
+}
+
+// ---- billed failures are counted once ----------------------------------------
+
+/// Succeeds up to a named phase, then fails every call with a **billed**
+/// error — the 020 shape: a 200 the provider ran the model for and charged.
+///
+/// `extract` carries the claims when extraction is meant to survive; `None`
+/// makes extraction the failing phase.
+struct BilledFailureAt {
+    ok_usage: (u64, u64),
+    failure_usage: (u64, u64),
+    extract: Option<Value>,
+}
+
+#[async_trait::async_trait]
+impl ModelClient for BilledFailureAt {
+    async fn complete(&self, prompt: &str, _schema: &Value) -> Result<Completion, AppError> {
+        let ok = |value| {
+            Ok(Completion {
+                value,
+                input_tokens: self.ok_usage.0,
+                output_tokens: self.ok_usage.1,
+            })
+        };
+        if prompt.contains("scoping a web research run") {
+            return ok(scope_value());
+        }
+        if prompt.contains("extract falsifiable claims") {
+            if let Some(claims) = self.extract.clone() {
+                return ok(claims);
+            }
+        }
+        Err(
+            AppError::Truncation("output budget exhausted after 3 output tokens".into())
+                .metered(self.failure_usage.0, self.failure_usage.1),
+        )
+    }
+}
+
+/// A wholly failed extraction phase must bill each call exactly once.
+///
+/// Two disciplines meet on this path and each is correct alone. The per-source
+/// `Err` arm adds the failed call's tokens to the run meter (020), and
+/// `dominant_failure_metered` sums `billed()` across the failure set so the
+/// class vote cannot decide how much spend is reported (also 020). Applied
+/// together the failure tokens land in both, and `run_at` closes with
+/// `error.metered(meter…)`, which **adds** rather than replaces — so every
+/// failed extraction was counted twice.
+///
+/// Exact equality, not `> 0`: a doubled bill is greater than zero, and the
+/// existing search-phase test asserts only that, on a path that never reaches
+/// this aggregation.
+#[tokio::test]
+async fn a_wholly_failed_extraction_phase_bills_each_call_once() {
+    let client = Arc::new(BilledFailureAt {
+        ok_usage: (10, 5),
+        failure_usage: (7, 3),
+        extract: None,
+    });
+    let deps = deps_with_client(
+        client,
+        search_returning(&["https://example.com/a", "https://example.com/b"]),
+        Arc::new(SystemClock),
+    );
+
+    let err = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err.root(), AppError::Truncation(_)), "{err}");
+    // scope (10, 5) + two billed extraction failures at (7, 3) each.
+    assert_eq!(
+        err.billed(),
+        (24, 11),
+        "each billed call must appear once: scope 10/5 plus two failures at 7/3"
+    );
+}
+
+/// The same, one phase later — verification is the run's dominant cost, so a
+/// doubled bill here is the largest over-report of the three phases.
+///
+/// This path carries an extra aggregation the extraction one does not: each
+/// claim's failure is already `verify::run`'s ensemble aggregate, summed across
+/// its passes by `dominant_failure_metered`. That sum is correct — the passes
+/// have no meter but their own errors — and it is what the pipeline meters and
+/// must not sum a second time.
+///
+/// Runs at [`Depth::Deep`] deliberately. `verify_k` is depth-derived
+/// (`pipeline.rs`), and `Quick` is 1 — which would leave the ensemble's own
+/// summation untested, since one pass makes summing and not summing agree.
+#[tokio::test]
+async fn a_wholly_failed_verification_phase_bills_each_call_once() {
+    let client = Arc::new(BilledFailureAt {
+        ok_usage: (10, 5),
+        failure_usage: (7, 3),
+        extract: Some(json!({ "claims": ["the one claim"] })),
+    });
+    let deps = deps_with_client(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+
+    let err = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Deep)))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err.root(), AppError::Truncation(_)), "{err}");
+    // scope (10, 5) + one extraction (10, 5) + one claim whose three-pass
+    // ensemble failed at (7, 3) a pass, aggregated by `verify::run` to (21, 9).
+    assert_eq!(
+        err.billed(),
+        (41, 19),
+        "each billed call must appear once: 10/5 scope, 10/5 extract, 21/9 ensemble"
+    );
 }
 
 // ---- search-phase failure classes --------------------------------------------
