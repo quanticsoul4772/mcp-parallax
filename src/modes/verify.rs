@@ -379,14 +379,27 @@ pub(crate) fn dominant_failure_metered(failures: Vec<AppError>, completed: (u64,
         input_tokens = input_tokens.saturating_add(inp);
         output_tokens = output_tokens.saturating_add(out);
     }
-    // The chosen error's own tokens are already in the sum above; take its
-    // root so they are not counted a second time when it is re-metered.
-    let chosen = dominant_failure(failures);
-    let chosen = match chosen {
+    // The chosen error's own tokens are already in the sum above; strip them so
+    // they are not counted a second time when it is re-metered.
+    dominant_failure_unmetered(failures).metered(input_tokens, output_tokens)
+}
+
+/// Pick the most frequent failure class carrying **no** usage.
+///
+/// For callers that already meter the failed calls themselves.
+/// [`dominant_failure_metered`] is the right choice when the failure set is the
+/// only record of what was spent — `verify`'s ensemble and `diverge`'s, where
+/// the passes have no meter outside their own errors. It is the wrong choice
+/// when the caller has one: `AppError::metered` **adds**, so a caller that
+/// meters each failure and then re-attaches its cumulative total bills every
+/// failed call twice. `research`'s pipeline meters each dropped source and
+/// claim as it goes (020) and closes with `error.metered(meter…)`, so it takes
+/// this.
+pub(crate) fn dominant_failure_unmetered(failures: Vec<AppError>) -> AppError {
+    match dominant_failure(failures) {
         AppError::Metered { source, .. } => *source,
         other => other,
-    };
-    chosen.metered(input_tokens, output_tokens)
+    }
 }
 
 /// Pick the most frequent failure class, ignoring usage. Prefer

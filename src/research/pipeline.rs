@@ -320,8 +320,13 @@ async fn run_metered_at(
         // (FR-013), and a page that simply held no readable text is `Empty`,
         // not a failure — a run where every candidate is unreadable genuinely
         // has no findings, and saying so is truthful.
+        //
+        // Unmetered: each failed extraction already added its tokens to
+        // `meter` above, and `run_at` attaches the cumulative meter on the way
+        // out. Summing them into the error here as well would bill every
+        // dropped source twice, because `AppError::metered` adds.
         if sources.is_empty() && !failures.is_empty() {
-            return Err(verify::dominant_failure_metered(failures, (0, 0)));
+            return Err(verify::dominant_failure_unmetered(failures));
         }
     }
     stats.sources_fetched = u32::try_from(sources.len()).unwrap_or(u32::MAX);
@@ -389,8 +394,11 @@ async fn run_metered_at(
         // most misleading — the answer would assert nothing while reporting
         // success, which reads as "the evidence did not support anything"
         // rather than "nothing was checked".
+        //
+        // Unmetered for the same reason as extraction: the per-claim `Err` arm
+        // meters the failed call, and `run_at` adds the cumulative total.
         if attempted > 0 && verified.is_empty() && !failures.is_empty() {
-            return Err(verify::dominant_failure_metered(failures, (0, 0)));
+            return Err(verify::dominant_failure_unmetered(failures));
         }
     }
     stats.claims_verified = u32::try_from(verified.len()).unwrap_or(u32::MAX);
