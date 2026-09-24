@@ -43,7 +43,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # structured_content (T005/T006). Re-run the spike before any major bump.
 rmcp = { version = "3.0.1", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.1"
-jsonschema = "0.55.0"
+jsonschema = "0.56.0"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "stream"] }
@@ -66,19 +66,19 @@ walkdir = "2"
 # (the ecosystem breaks API across minors; research.md 007 D1). http-proto +
 # blocking reqwest is the documented pairing for the SDK's background-thread
 # batch processors; rustls rides the in-tree stack; no tonic, no protoc.
-opentelemetry = "0.32"
-opentelemetry_sdk = { version = "0.32.1", features = ["trace", "metrics"] }
+opentelemetry = "0.33"
+opentelemetry_sdk = { version = "0.33.0", features = ["trace", "metrics"] }
 # (the `reqwest-rustls-webpki-roots` feature is incompatible with reqwest
 # 0.13's renamed features — S1 finding; TLS comes from the workspace-unified
 # reqwest `rustls` feature instead)
-opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+opentelemetry-otlp = { version = "0.33", default-features = false, features = [
     "trace",
     "metrics",
     "http-proto",
     "reqwest-blocking-client",
     "internal-logs",
 ] }
-opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_experimental"] }
+opentelemetry-semantic-conventions = { version = "0.33", features = ["semconv_experimental"] }
 
 [dev-dependencies]
 # Trait mocking — the whole server tests without network or disk
@@ -88,9 +88,9 @@ wiremock = "0.6.5"
 # Transcript fixtures for FsTrajectoryReader tests (checkpoint layer)
 tempfile = "3"
 # In-memory span/metric exporters for observability tests (007) — no network
-opentelemetry_sdk = { version = "0.32.1", features = ["trace", "metrics", "testing"] }
+opentelemetry_sdk = { version = "0.33.0", features = ["trace", "metrics", "testing"] }
 # Decode OTLP protobuf payloads in the acceptance example (007 T009)
-opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace", "metrics"] }
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "trace", "metrics"] }
 prost = "0.14"
 
 [lints.rust]
