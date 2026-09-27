@@ -34,9 +34,11 @@ arc.
     record; an omitted usage block records zeros and warns per call.
   * `effort` is a documented no-op on `openai_compat` — dropped at the wire
     with a notice, never silently mistranslated. `ANTHROPIC_API_KEY` is now
-    required only on the anthropic backend, and `OPENAI_API_KEY` /
-    `OPENAI_MODEL` only on `openai_compat`; startup still fails fast, naming
-    the variable.
+    required only on the anthropic backend, and `OPENAI_MODEL` (plus
+    `OPENAI_API_KEY` for the default OpenAI endpoint) only on `openai_compat`;
+    startup still fails fast, naming the variable. A custom endpoint —
+    Ollama, LM Studio, vLLM, a proxy — may run **keyless**: with
+    `OPENAI_API_KEY` unset, the `Authorization` header is omitted entirely.
   * `cargo test` stays green fully offline (wiremock); a live smoke per tool
     group runs only under `cargo test -- --ignored`.
 

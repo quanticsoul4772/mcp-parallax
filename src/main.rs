@@ -185,7 +185,10 @@ MODEL BACKEND (one backend for every call site, chosen at startup):
     ANTHROPIC_API_BASE            Anthropic API endpoint
                                   (default: https://api.anthropic.com)
     OPENAI_API_KEY                OpenAI-compatible API key; REQUIRED when
-                                  PARALLAX_BACKEND is openai_compat
+                                  PARALLAX_BACKEND is openai_compat and the
+                                  endpoint is the default OpenAI one; keyless
+                                  local endpoints (Ollama, LM Studio, vLLM)
+                                  need none
     OPENAI_MODEL                  Model id on the openai_compat endpoint; REQUIRED
                                   when PARALLAX_BACKEND is openai_compat
     OPENAI_API_BASE               OpenAI-compatible API endpoint, /v1-suffixed

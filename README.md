@@ -96,7 +96,7 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `ANTHROPIC_MODEL` | no | `claude-opus-4-8` | Default model id for the anthropic backend |
 | `ANTHROPIC_API_BASE` | no | `https://api.anthropic.com` | API endpoint. Exists so the whole client pool — including the per-effort variants 028 builds — can be pointed at a test double or a proxy; before it, a call carrying an effort bypassed the injected client and reached the live endpoint |
 | `PARALLAX_BACKEND` | no | `anthropic` | Model backend for every call site: `anthropic` (native Messages) or `openai_compat` (Chat Completions — OpenAI, Azure's compat surface, Ollama, vLLM, LM Studio) |
-| `OPENAI_API_KEY` | when `PARALLAX_BACKEND=openai_compat` | — | OpenAI-compatible API key (empty or unset fails startup when that backend is selected; unused otherwise) |
+| `OPENAI_API_KEY` | when `PARALLAX_BACKEND=openai_compat` and the endpoint is the default OpenAI one | — | OpenAI-compatible API key. A custom endpoint may run keyless — Ollama, LM Studio, vLLM leave it unset, and the `Authorization` header is then omitted entirely |
 | `OPENAI_MODEL` | when `PARALLAX_BACKEND=openai_compat` | — | Model id on the openai_compat endpoint — model names are provider-specific, so there is no default and startup fails without one |
 | `OPENAI_API_BASE` | no | `https://api.openai.com/v1` | OpenAI-compatible API endpoint, `/v1`-suffixed by convention |
 | `OPENAI_STRUCTURED_OUTPUT` | no | `auto` | Structured-output ladder for `openai_compat`: `auto` walks `json_schema` → `json_object` → `tool_shim` → `prompt_only`, degrading one rung per capability rejection; a rung name pins exactly that rung |
@@ -144,6 +144,8 @@ both backends. Switching providers is a config change — no call-site edits.
   documented no-op on `openai_compat` — the level is dropped at the wire with
   a logged notice, never silently mistranslated.
 - **Credentials** stay in environment variables only, never in tool arguments.
+  `OPENAI_API_KEY` is required only for the default OpenAI endpoint; a custom
+  endpoint may run keyless, and the `Authorization` header is then omitted.
 
 ### Per-call-site routing: `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*`
 
