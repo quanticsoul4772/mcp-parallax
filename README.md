@@ -92,9 +92,14 @@ All configuration is environment variables, read once at startup by `Config::fro
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | yes | — | Anthropic API key (empty or unset fails startup) |
-| `ANTHROPIC_MODEL` | no | `claude-opus-4-8` | Model for the verification/judgment passes |
+| `ANTHROPIC_API_KEY` | when `PARALLAX_BACKEND=anthropic` (the default) | — | Anthropic API key (empty or unset fails startup when the anthropic backend is selected) |
+| `ANTHROPIC_MODEL` | no | `claude-opus-4-8` | Default model id for the anthropic backend |
 | `ANTHROPIC_API_BASE` | no | `https://api.anthropic.com` | API endpoint. Exists so the whole client pool — including the per-effort variants 028 builds — can be pointed at a test double or a proxy; before it, a call carrying an effort bypassed the injected client and reached the live endpoint |
+| `PARALLAX_BACKEND` | no | `anthropic` | Model backend for every call site: `anthropic` (native Messages) or `openai_compat` (Chat Completions — OpenAI, Azure's compat surface, Ollama, vLLM, LM Studio) |
+| `OPENAI_API_KEY` | when `PARALLAX_BACKEND=openai_compat` | — | OpenAI-compatible API key (empty or unset fails startup when that backend is selected; unused otherwise) |
+| `OPENAI_MODEL` | when `PARALLAX_BACKEND=openai_compat` | — | Model id on the openai_compat endpoint — model names are provider-specific, so there is no default and startup fails without one |
+| `OPENAI_API_BASE` | no | `https://api.openai.com/v1` | OpenAI-compatible API endpoint, `/v1`-suffixed by convention |
+| `OPENAI_STRUCTURED_OUTPUT` | no | `auto` | Structured-output ladder for `openai_compat`: `auto` walks `json_schema` → `json_object` → `tool_shim` → `prompt_only`, degrading one rung per capability rejection; a rung name pins exactly that rung |
 | `VERIFY_ENSEMBLE_K` | no | `3` | Parallel passes per `verify` (≥ 1) |
 | `INPUT_MAX_CHARS` | no | `50000` | Max input length; `VERIFY_MAX_CLAIM_CHARS` honored as a fallback alias |
 | `VOYAGE_API_KEY` | no | unset | Presence enables the memory tools; absent, they are not in the catalog |
@@ -114,6 +119,31 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `MAX_RETRIES` | no | `3` | Maximum API retry attempts |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | unset | Presence enables OTLP telemetry export (traces + metrics, GenAI semantic conventions); the standard `OTEL_*` family is honored. Schemeless endpoints default to `https` — use an explicit `http://localhost:4318` for local collectors. Exported data is record metadata only (tool, model, tokens, cost, latency, outcome) — never input text, memory/transcript content, or credentials |
 | `OTEL_SDK_DISABLED` | no | unset | `true` (case-insensitive) force-disables telemetry regardless of endpoint |
+
+### Model backend (BYOM)
+
+`PARALLAX_BACKEND` selects the wire format for **every** model call; the tool
+catalog, schemas, verdict semantics and per-call-site routing are identical on
+both backends. Switching providers is a config change — no call-site edits.
+
+- **Structured output** (`openai_compat`): the sanitized mode schema is the
+  single source of truth on all four ladder rungs — `json_schema` mode,
+  `json_object` mode with the schema in the prompt, a forced single-function
+  tool call, and prompt-only. `auto` degrades one rung per capability
+  rejection; every schema parse still fails loudly (`ValidationFailure`),
+  never silently accepted.
+- **Outcome taxonomy**: identical across backends — truncation bills as
+  `Truncation` (`stop_reason: max_tokens` / `finish_reason: length`), refusals
+  as `Refusal`, and any unexplained signal or empty body as an out-of-contract
+  `Client` error. A wrong answer is never mistaken for a truncated one.
+- **Token accounting**: `usage` maps onto every call's metered record; a
+  provider that omits usage records zeros **and** logs a warning per call, so a
+  mispriced record is never silent. Pricing for non-Anthropic model ids is
+  unknown — cost figures stay flagged as estimated.
+- **Effort**: `PARALLAX_EFFORT_*` and the per-call `effort` argument are a
+  documented no-op on `openai_compat` — the level is dropped at the wire with
+  a logged notice, never silently mistranslated.
+- **Credentials** stay in environment variables only, never in tool arguments.
 
 ### Per-call-site routing: `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*`
 
