@@ -15,6 +15,7 @@ use crate::config::{test_config, Config};
 use crate::error::AppError;
 use crate::traits::client::ModelClient;
 use serde_json::{json, Value};
+use std::time::Duration;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -269,6 +270,88 @@ async fn billed_usage_agrees_on_a_truncation_row() {
     };
     assert_eq!(anthropic.billed(), openai.billed());
     assert_eq!(anthropic.billed(), (100, 25));
+}
+
+/// One canned provider response through each adapter, at an explicit timeout
+/// and retry budget — the client-side taxonomy rows need to steer both.
+async fn anthropic_with(
+    template: ResponseTemplate,
+    timeout_ms: u64,
+    retries: u32,
+) -> Result<crate::traits::client::Completion, AppError> {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(template)
+        .mount(&mock)
+        .await;
+    let config = Config {
+        request_timeout_ms: timeout_ms,
+        max_retries: retries,
+        ..test_config()
+    };
+    AnthropicClient::with_base_url(&config, &mock.uri())
+        .with_backoff_base_ms(1)
+        .complete("p", &json!({ "type": "object" }))
+        .await
+}
+
+async fn openai_with(
+    template: ResponseTemplate,
+    timeout_ms: u64,
+    retries: u32,
+) -> Result<crate::traits::client::Completion, AppError> {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(template)
+        .mount(&mock)
+        .await;
+    let config = Config {
+        request_timeout_ms: timeout_ms,
+        max_retries: retries,
+        ..openai_test_config()
+    };
+    OpenAiCompatClient::with_base_url(&config, &mock.uri())
+        .with_backoff_base_ms(1)
+        .complete("p", &json!({ "type": "object" }))
+        .await
+}
+
+/// §3.3's `Timeout` row: a provider slower than the request budget is a
+/// terminal `Timeout` on both backends — it consumed the whole budget, so
+/// retrying it would be the wrong answer twice.
+#[tokio::test]
+async fn timeout_is_a_timeout_on_both_backends() {
+    let slow = ResponseTemplate::new(200)
+        .set_body_json(json!({
+            "content": [{ "type": "text", "text": "{}" }],
+            "stop_reason": "end_turn"
+        }))
+        .set_delay(Duration::from_millis(400));
+
+    let anthropic = anthropic_with(slow.clone(), 50, 2).await.unwrap_err();
+    let openai = openai_with(slow, 50, 2).await.unwrap_err();
+
+    assert_eq!(variant_name(anthropic.root()), "Timeout", "{anthropic:?}");
+    assert_eq!(variant_name(anthropic.root()), variant_name(openai.root()));
+    assert_eq!(anthropic.outcome(), openai.outcome());
+}
+
+/// §3.3's `RetriesExhausted` row: retry-policy exhaustion classifies the same
+/// on both backends, and never as a success.
+#[tokio::test]
+async fn retry_exhaustion_is_retries_exhausted_on_both_backends() {
+    let broken = ResponseTemplate::new(500);
+
+    let anthropic = anthropic_with(broken.clone(), 2_000, 2).await.unwrap_err();
+    let openai = openai_with(broken, 2_000, 2).await.unwrap_err();
+
+    assert_eq!(
+        variant_name(anthropic.root()),
+        "RetriesExhausted",
+        "{anthropic:?}"
+    );
+    assert_eq!(variant_name(anthropic.root()), variant_name(openai.root()));
+    assert_eq!(anthropic.outcome(), openai.outcome());
 }
 
 /// The config seam each harness row relies on — if the two test configs ever

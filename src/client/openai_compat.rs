@@ -685,6 +685,68 @@ mod tests {
         assert!(body.get("response_format").is_none(), "{body}");
     }
 
+    /// The tool-shim rung's documented leniency (§3.3): some compat servers
+    /// close even a forced tool call with `stop`. That is still a success —
+    /// when a tool call is actually present.
+    #[tokio::test]
+    async fn the_tool_shim_rung_accepts_a_stop_finish_with_a_tool_call() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{
+                    "message": {
+                        "content": null,
+                        "tool_calls": [{ "function": { "arguments": "{\"ok\":true}" } }]
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": { "prompt_tokens": 100, "completion_tokens": 25 }
+            })))
+            .mount(&mock)
+            .await;
+
+        let config = Config {
+            openai_structured_output: StructuredOutput::ToolShim,
+            ..openai_test_config()
+        };
+        let out = client_with(&config, &mock)
+            .complete("p", &json!({}))
+            .await
+            .unwrap();
+        assert_eq!(out.value, json!({ "ok": true }));
+    }
+
+    /// The guard on that leniency: a `stop` finish with **no** tool call is
+    /// out of contract — the rung's whole promise is a forced function call,
+    /// and quietly accepting the content instead would be a silent fallback
+    /// to a strategy nobody chose.
+    #[tokio::test]
+    async fn the_tool_shim_rung_rejects_a_stop_finish_without_a_tool_call() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{
+                    "message": { "content": "{\"ok\":true}" },
+                    "finish_reason": "stop"
+                }],
+                "usage": { "prompt_tokens": 100, "completion_tokens": 25 }
+            })))
+            .mount(&mock)
+            .await;
+
+        let config = Config {
+            openai_structured_output: StructuredOutput::ToolShim,
+            ..openai_test_config()
+        };
+        let err = client_with(&config, &mock)
+            .complete("p", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        assert!(err.to_string().contains("empty tool_calls"), "{err}");
+        assert_eq!(err.billed(), (100, 25));
+    }
+
     /// §3.2 rung 4: schema in the prompt only. This is the rung that must
     /// never silently accept garbage — see the parse-failure taxonomy test.
     #[tokio::test]
