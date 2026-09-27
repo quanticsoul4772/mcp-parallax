@@ -1218,8 +1218,12 @@ mod tests {
                 .returning(|_, _| Err(AppError::Refusal("declined".into())));
             let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
             let mut config = test_config();
-            config.routing =
-                crate::routing::RoutingTable::resolve(configured, &config.anthropic_model).unwrap();
+            config.routing = crate::routing::RoutingTable::resolve(
+                configured,
+                &config.anthropic_model,
+                crate::routing::DefaultVar::AnthropicModel,
+            )
+            .unwrap();
             let server = Parallax::with_capabilities(
                 Arc::new(client),
                 storage.clone(),
@@ -1496,6 +1500,7 @@ mod tests {
                 "claude-sonnet-5".to_string(),
             )],
             &config.anthropic_model,
+            crate::routing::DefaultVar::AnthropicModel,
         )
         .unwrap();
 

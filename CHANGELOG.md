@@ -44,6 +44,15 @@ arc.
 
 ### Fixed
 
+* **The routing startup table names the default variable the selected backend
+  actually uses** — on `PARALLAX_BACKEND=openai_compat`, a call site that fell
+  through to the default was reported as `source=ANTHROPIC_MODEL` even though
+  its model resolved from `OPENAI_MODEL`. The report is the operator's proof
+  that a route took effect, so naming a variable that did not supply the model
+  defeats it. `RouteSource::Default` now records the backend's default
+  (`ANTHROPIC_MODEL` or `OPENAI_MODEL`), chosen by config at resolution time;
+  anthropic-backend output is unchanged.
+
 * **`INPUT_MAX_CHARS` is bounded against the built prompt, not each field
   (052)** — `verify` and `diverge` validated their required field and ignored
   `context` entirely, which reaches the prompt unconditionally: a one-word

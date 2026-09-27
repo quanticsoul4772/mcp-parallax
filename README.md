@@ -149,7 +149,7 @@ both backends. Switching providers is a config change — no call-site edits.
 
 ### Per-call-site routing: `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*`
 
-The server asks a model for a schema-constrained answer in twelve named places. Each is independently routable to a model (018) and to a provider reasoning-effort level (022), over two parallel namespaces. Both are **off by default**: with neither set, every site uses `ANTHROPIC_MODEL` and the request carries no `effort` field at all — byte-identical to a server without the feature.
+The server asks a model for a schema-constrained answer in twelve named places. Each is independently routable to a model (018) and to a provider reasoning-effort level (022), over two parallel namespaces. Both are **off by default**: with neither set, every site uses the selected backend's default model — `ANTHROPIC_MODEL` on `anthropic`, `OPENAI_MODEL` on `openai_compat`, as the startup table's `source=` field reports — and the request carries no `effort` field at all, byte-identical to a server without the feature.
 
 Resolution is **most-specific-first and independent per namespace**: the call site's own variable, else its tier's, else the default. A site can take its model from a tier and its effort from its own variable.
 
