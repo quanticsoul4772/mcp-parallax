@@ -328,6 +328,11 @@ impl InvocationRecord {
     /// Emit the record as a structured tracing event with GenAI
     /// semantic-convention attribute names. Private: every exit point goes
     /// through [`Self::publish`] so tracing and telemetry cannot diverge.
+    ///
+    /// `cost.estimated` names the line self-describing: `false` means the
+    /// figure is priced from the catalog, `true` that it is the conservative
+    /// Opus-tier fallback — the same flag SQLite stores per record and OTel
+    /// exports as `parallax.cost_estimated`.
     fn emit(&self) {
         tracing::info!(
             invocation.id = %self.id,
@@ -338,6 +343,7 @@ impl InvocationRecord {
             gen_ai.usage.output_tokens = self.output_tokens,
             gen_ai.response.finish_reasons = %self.outcome.as_str(),
             cost.usd = self.cost_usd,
+            cost.estimated = self.cost_estimated,
             latency.ms = self.latency_ms,
             "invocation recorded"
         );
@@ -385,6 +391,75 @@ mod tests {
                  or change the default to an id that has one."
             );
         }
+    }
+
+    /// The console log line must be self-describing about pricing: a
+    /// fallback-costed figure carries `cost.estimated=true`, a catalog-priced
+    /// one `cost.estimated=false` — matching the flag SQLite stores and OTel
+    /// exports, so an operator can tell a known price from a guess on the
+    /// same line that shows the figure.
+    #[test]
+    fn the_invocation_log_line_reports_whether_the_cost_is_estimated() {
+        #[derive(Clone, Default)]
+        struct Buffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buffer {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        impl Buffer {
+            fn contents(&self) -> Vec<u8> {
+                self.0.lock().unwrap().clone()
+            }
+        }
+
+        let fixed = DateTime::parse_from_rfc3339("2026-06-11T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut clock = MockTimeProvider::new();
+        clock.expect_now().return_const(fixed);
+
+        let logged = |usage: &ModelUsage, attributed: &str| {
+            let record = InvocationRecord::create(
+                &clock,
+                "session",
+                "verify",
+                attributed,
+                usage,
+                Outcome::Success,
+                fixed,
+            );
+            let buffer = Buffer::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(buffer.clone())
+                .with_ansi(false)
+                .finish();
+            let _guard = tracing::subscriber::set_default(subscriber);
+            record.emit();
+            String::from_utf8_lossy(&buffer.contents()).to_string()
+        };
+
+        // An unknown model id prices off the fallback: estimated = true.
+        let mut fallback = ModelUsage::default();
+        fallback.add("qwen2.5:7b", 24, 0);
+        let line = logged(&fallback, "qwen2.5:7b");
+        assert!(line.contains("invocation recorded"), "{line}");
+        assert!(line.contains("cost.estimated=true"), "{line}");
+
+        // A catalog model prices off its row: estimated = false.
+        let known = ModelUsage::single("claude-opus-4-8", 300, 30);
+        let line = logged(&known, "claude-opus-4-8");
+        assert!(line.contains("cost.estimated=false"), "{line}");
     }
 
     #[test]
