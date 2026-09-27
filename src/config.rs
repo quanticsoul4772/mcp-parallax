@@ -1,7 +1,7 @@
 //! Runtime configuration, sourced entirely from the environment.
 
 use crate::error::ConfigError;
-use crate::routing::RoutingTable;
+use crate::routing::{DefaultVar, RoutingTable};
 
 /// Default model when `ANTHROPIC_MODEL` is unset — the design corpus's stated
 /// target (structured outputs GA).
@@ -307,13 +307,15 @@ impl Config {
             std::env::var("OPENAI_STRUCTURED_OUTPUT").unwrap_or_else(|_| "auto".to_string());
         let openai_structured_output = StructuredOutput::parse(&structured_raw)
             .ok_or(ConfigError::Invalid("OPENAI_STRUCTURED_OUTPUT"))?;
-        // Routing resolves over the selected backend's default model. A bad
-        // `PARALLAX_MODEL_*` variable stops startup here, before any client is
-        // built (SC-005).
-        let routing = RoutingTable::from_env(match backend {
-            Backend::Anthropic => &anthropic_model,
-            Backend::OpenAiCompat => &openai_model,
-        })?;
+        // Routing resolves over the selected backend's default model, and
+        // records which variable that default came from so the startup table
+        // names the real supplier. A bad `PARALLAX_MODEL_*` variable stops
+        // startup here, before any client is built (SC-005).
+        let (default_model, default_var) = match backend {
+            Backend::Anthropic => (&anthropic_model, DefaultVar::AnthropicModel),
+            Backend::OpenAiCompat => (&openai_model, DefaultVar::OpenAiModel),
+        };
+        let routing = RoutingTable::from_env(default_model, default_var)?;
         let verify_ensemble_k = validate_ensemble_k(parse_env("VERIFY_ENSEMBLE_K", 3)?)?;
         // INPUT_MAX_CHARS is canonical; VERIFY_MAX_CLAIM_CHARS is the 002-era
         // alias, honored only when the canonical variable is unset.
@@ -511,7 +513,7 @@ pub(crate) fn test_config() -> Config {
         anthropic_api_key: "test-key".into(),
         anthropic_model: DEFAULT_MODEL.into(),
         anthropic_api_base: "http://127.0.0.1:1".into(),
-        routing: crate::routing::RoutingTable::single(DEFAULT_MODEL),
+        routing: crate::routing::RoutingTable::single(DEFAULT_MODEL, DefaultVar::AnthropicModel),
         verify_ensemble_k: 3,
         input_max_chars: 50_000,
         voyage_api_key: None,
@@ -562,6 +564,7 @@ mod tests {
                 "claude-haiku-4-5".to_string(),
             )],
             DEFAULT_MODEL,
+            DefaultVar::AnthropicModel,
         )
         .unwrap_err();
         assert!(matches!(err, ConfigError::Routing(_)));
@@ -572,9 +575,30 @@ mod tests {
     // site on `ANTHROPIC_MODEL`, which is exactly the pre-018 shape.
     #[test]
     fn unrouted_resolution_equals_the_single_model_table() {
-        let resolved = RoutingTable::resolve(Vec::new(), DEFAULT_MODEL).unwrap();
-        assert_eq!(resolved, RoutingTable::single(DEFAULT_MODEL));
+        let resolved =
+            RoutingTable::resolve(Vec::new(), DEFAULT_MODEL, DefaultVar::AnthropicModel).unwrap();
+        assert_eq!(
+            resolved,
+            RoutingTable::single(DEFAULT_MODEL, DefaultVar::AnthropicModel)
+        );
         assert_eq!(resolved.distinct_models(), vec![DEFAULT_MODEL.to_string()]);
+    }
+
+    // The startup table must name the variable that actually supplied the
+    // default model — `OPENAI_MODEL` on openai_compat, not a hardcoded
+    // `ANTHROPIC_MODEL`.
+    #[test]
+    fn the_default_route_names_the_backend_default_variable() {
+        let openai =
+            RoutingTable::resolve(Vec::new(), "qwen2.5:7b", DefaultVar::OpenAiModel).unwrap();
+        assert_eq!(
+            openai.report()[0].3,
+            "OPENAI_MODEL",
+            "openai_compat fall-through must be reported as OPENAI_MODEL"
+        );
+        let anthropic =
+            RoutingTable::resolve(Vec::new(), DEFAULT_MODEL, DefaultVar::AnthropicModel).unwrap();
+        assert_eq!(anthropic.report()[0].3, "ANTHROPIC_MODEL");
     }
 
     #[test]

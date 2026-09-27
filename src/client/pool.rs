@@ -139,6 +139,7 @@ impl ClientPool {
 mod tests {
     use super::*;
     use crate::error::AppError;
+    use crate::routing::DefaultVar;
     use crate::traits::client::Completion;
     use serde_json::Value;
     use std::sync::Mutex;
@@ -186,7 +187,10 @@ mod tests {
     // T011 / FR-002: unrouted means one model everywhere and one client.
     #[tokio::test]
     async fn unrouted_builds_exactly_one_client() {
-        let (pool, built) = pool_for(&RoutingTable::single("claude-opus-4-8"));
+        let (pool, built) = pool_for(&RoutingTable::single(
+            "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
+        ));
         assert_eq!(pool.distinct(), 1);
         assert_eq!(built, vec!["claude-opus-4-8".to_string()]);
         for site in CallSite::ALL {
@@ -204,6 +208,7 @@ mod tests {
                 "claude-haiku-4-5".to_string(),
             )],
             "claude-opus-5",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         let (pool, built) = pool_for(&routing);
@@ -237,6 +242,7 @@ mod tests {
                 ("PARALLAX_EFFORT_VERIFY".to_string(), "high".to_string()),
             ],
             "claude-opus-5",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         let (pool, models) = pool_for(&routing);
@@ -285,7 +291,7 @@ mod tests {
     /// the number it prints.
     #[tokio::test]
     async fn the_default_path_returns_the_very_same_client_as_before() {
-        let routing = RoutingTable::single("claude-opus-4-8");
+        let routing = RoutingTable::single("claude-opus-4-8", DefaultVar::AnthropicModel);
         let (pool, models) = pool_for(&routing);
 
         assert_eq!(models.len(), 1, "one model, however many effort states");
@@ -337,6 +343,7 @@ mod tests {
                 "unreachable-model".to_string(),
             )],
             "claude-opus-5",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
 
@@ -389,6 +396,7 @@ mod tests {
                 ),
             ],
             "claude-opus-5",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         let (pool, _) = pool_for(&routing);

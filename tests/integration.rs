@@ -33,7 +33,10 @@ fn test_config(timeout_ms: u64) -> Config {
         openai_model: String::new(),
         openai_structured_output: mcp_parallax::config::StructuredOutput::Auto,
         anthropic_model: "claude-opus-4-8".into(),
-        routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
+        routing: mcp_parallax::routing::RoutingTable::single(
+            "claude-opus-4-8",
+            mcp_parallax::routing::DefaultVar::AnthropicModel,
+        ),
         verify_ensemble_k: 3,
         input_max_chars: 50_000,
         voyage_api_key: None,

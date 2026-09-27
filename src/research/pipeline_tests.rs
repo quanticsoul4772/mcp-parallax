@@ -137,7 +137,10 @@ fn deps_with_client(
         concurrency: 4,
         // These fixtures share one scripted client, so every call site reports
         // the same model and existing token assertions are unchanged.
-        routing: crate::routing::RoutingTable::single("claude-opus-4-8"),
+        routing: crate::routing::RoutingTable::single(
+            "claude-opus-4-8",
+            crate::routing::DefaultVar::AnthropicModel,
+        ),
     }
 }
 

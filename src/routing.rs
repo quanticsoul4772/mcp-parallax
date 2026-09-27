@@ -273,6 +273,28 @@ impl CallSite {
     }
 }
 
+/// Which process-level default variable a call site fell through to. The
+/// selected backend decides: the startup table must name the variable that
+/// actually supplied the model, never a hardcoded one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultVar {
+    /// `ANTHROPIC_MODEL` — the anthropic backend's default.
+    AnthropicModel,
+    /// `OPENAI_MODEL` — the openai_compat backend's default.
+    OpenAiModel,
+}
+
+impl DefaultVar {
+    /// The variable name, for the startup table.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::AnthropicModel => "ANTHROPIC_MODEL",
+            Self::OpenAiModel => "OPENAI_MODEL",
+        }
+    }
+}
+
 /// Which setting supplied a call site's model — reported in the startup table
 /// so an operator can tell a deliberate route from a fall-through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,8 +303,10 @@ pub enum RouteSource {
     Site,
     /// The call site's tier setting.
     Tier,
-    /// `ANTHROPIC_MODEL`.
-    Default,
+    /// The server-wide default: `ANTHROPIC_MODEL` on the anthropic backend,
+    /// `OPENAI_MODEL` on `openai_compat`. The variant records which, so the
+    /// table never names a variable that did not supply the model.
+    Default(DefaultVar),
 }
 
 impl RouteSource {
@@ -292,7 +316,7 @@ impl RouteSource {
         match self {
             Self::Site => format!("{PREFIX}{}", site.suffix()),
             Self::Tier => format!("{PREFIX}{}", site.tier().suffix()),
-            Self::Default => "ANTHROPIC_MODEL".to_string(),
+            Self::Default(var) => var.name().to_string(),
         }
     }
 }
@@ -360,17 +384,25 @@ impl RoutingTable {
     ///
     /// [`ConfigError::Routing`] when a `PARALLAX_MODEL_*` variable has an
     /// unrecognised suffix (FR-006a) or is present but empty (FR-006).
-    pub fn from_env(default_model: &str) -> Result<Self, ConfigError> {
-        Self::resolve(std::env::vars(), default_model)
+    pub fn from_env(default_model: &str, default_var: DefaultVar) -> Result<Self, ConfigError> {
+        Self::resolve(std::env::vars(), default_model, default_var)
     }
 
     /// Resolve from an arbitrary variable set — the testable form. Pure: no
     /// process environment, no I/O.
     ///
+    /// `default_var` names the variable `default_model` came from, so a
+    /// fall-through route reports its real supplier (`OPENAI_MODEL` on
+    /// `openai_compat`, `ANTHROPIC_MODEL` on `anthropic`).
+    ///
     /// # Errors
     ///
     /// As [`Self::from_env`].
-    pub fn resolve<I>(vars: I, default_model: &str) -> Result<Self, ConfigError>
+    pub fn resolve<I>(
+        vars: I,
+        default_model: &str,
+        default_var: DefaultVar,
+    ) -> Result<Self, ConfigError>
     where
         I: IntoIterator<Item = (String, String)>,
     {
@@ -441,7 +473,7 @@ impl RoutingTable {
                 let (model, source) = lookup(site.suffix()).map_or_else(
                     || {
                         lookup(site.tier().suffix()).map_or_else(
-                            || (default_model.to_string(), RouteSource::Default),
+                            || (default_model.to_string(), RouteSource::Default(default_var)),
                             |model| (model, RouteSource::Tier),
                         )
                     },
@@ -470,16 +502,17 @@ impl RoutingTable {
     /// A table with every call site on one model — the unrouted shape.
     ///
     /// Equivalent to resolving an empty environment, and the convenient form
-    /// for fixtures that do not exercise routing.
+    /// for fixtures that do not exercise routing. `default_var` names the
+    /// variable the model came from, exactly as in [`Self::resolve`].
     #[must_use]
-    pub fn single(model: &str) -> Self {
+    pub fn single(model: &str, default_var: DefaultVar) -> Self {
         Self {
             routes: CallSite::ALL
                 .iter()
                 .map(|&site| ResolvedRoute {
                     site,
                     model: model.to_string(),
-                    source: RouteSource::Default,
+                    source: RouteSource::Default(default_var),
                     effort: None,
                     effort_source: None,
                 })
@@ -579,7 +612,8 @@ mod tests {
     /// which is what keeps the request body byte-identical to pre-022.
     #[test]
     fn an_empty_effort_namespace_leaves_every_call_site_without_one() {
-        let table = RoutingTable::resolve(vars(&[]), "claude-opus-4-8").unwrap();
+        let table = RoutingTable::resolve(vars(&[]), "claude-opus-4-8", DefaultVar::AnthropicModel)
+            .unwrap();
         for route in table.routes() {
             assert_eq!(route.effort, None, "{}", route.site.id());
             assert_eq!(route.effort_source, None);
@@ -605,6 +639,7 @@ mod tests {
                 ("PARALLAX_EFFORT_VERIFY", "high"),
             ]),
             "claude-opus-5",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
 
@@ -652,6 +687,7 @@ mod tests {
                 ("PARALLAX_EFFORT_VERIFY", "max"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
 
@@ -673,7 +709,10 @@ mod tests {
         // Per-site effort on a default-model site: the two are independent.
         let verify = route("verify");
         assert_eq!(verify.model, "claude-opus-4-8");
-        assert_eq!(verify.source, RouteSource::Default);
+        assert_eq!(
+            verify.source,
+            RouteSource::Default(DefaultVar::AnthropicModel)
+        );
         assert_eq!(verify.effort, Some(Effort::Max));
         assert_eq!(verify.effort_source, Some(RouteSource::Site));
 
@@ -693,6 +732,7 @@ mod tests {
                 ("PARALLAX_EFFORT_DECIDE", "xhigh"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         let effort = |id: &str| {
@@ -717,6 +757,7 @@ mod tests {
         let unknown = RoutingTable::resolve(
             vars(&[("PARALLAX_EFFORT_VERFIY", "low")]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap_err();
         assert!(
@@ -727,6 +768,7 @@ mod tests {
         let bad_level = RoutingTable::resolve(
             vars(&[("PARALLAX_EFFORT_VERIFY", "cheap")]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap_err();
         let message = bad_level.to_string();
@@ -740,9 +782,12 @@ mod tests {
         // An empty value is caught by the model namespace's own rule; the
         // effort namespace rejects it as unparseable rather than silently
         // treating it as unset.
-        let empty =
-            RoutingTable::resolve(vars(&[("PARALLAX_EFFORT_VERIFY", "  ")]), "claude-opus-4-8")
-                .unwrap_err();
+        let empty = RoutingTable::resolve(
+            vars(&[("PARALLAX_EFFORT_VERIFY", "  ")]),
+            "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
+        )
+        .unwrap_err();
         assert!(empty.to_string().contains("PARALLAX_EFFORT_VERIFY"));
     }
 
@@ -757,6 +802,7 @@ mod tests {
                 ("PARALLAX_EFFORT_DECIDE", "low"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         // One model, three effort states (max, low, none) → three clients.
@@ -770,6 +816,7 @@ mod tests {
                 ("PARALLAX_EFFORT_DECIDE", "low"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         assert_eq!(shared.distinct_clients().len(), 2); // low, and none
@@ -798,6 +845,7 @@ mod tests {
                 ("PARALLAX_MODEL_VERIFY", "claude-opus-5"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         let report = table.report();
@@ -846,11 +894,15 @@ mod tests {
 
     #[test]
     fn unset_namespace_resolves_every_site_to_the_default() {
-        let table = RoutingTable::resolve(vars(&[]), "claude-opus-4-8").unwrap();
+        let table = RoutingTable::resolve(vars(&[]), "claude-opus-4-8", DefaultVar::AnthropicModel)
+            .unwrap();
         assert_eq!(table.routes().len(), CallSite::ALL.len());
         for route in table.routes() {
             assert_eq!(route.model, "claude-opus-4-8");
-            assert_eq!(route.source, RouteSource::Default);
+            assert_eq!(
+                route.source,
+                RouteSource::Default(DefaultVar::AnthropicModel)
+            );
         }
         // FR-002: one model everywhere means exactly one client.
         assert_eq!(table.distinct_models(), vec!["claude-opus-4-8".to_string()]);
@@ -861,6 +913,7 @@ mod tests {
         let table = RoutingTable::resolve(
             vars(&[("PARALLAX_MODEL_BULK", "claude-haiku-4-5")]),
             "claude-opus-5",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
 
@@ -885,6 +938,7 @@ mod tests {
                 ("PARALLAX_MODEL_VERIFY", "claude-opus-5"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
 
@@ -917,6 +971,7 @@ mod tests {
         let error = RoutingTable::resolve(
             vars(&[("PARALLAX_MODEL_EXTRCT", "claude-haiku-4-5")]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap_err();
         let message = error.to_string();
@@ -927,9 +982,12 @@ mod tests {
     #[test]
     fn empty_value_is_rejected_by_name_never_defaulted() {
         for value in ["", "   "] {
-            let error =
-                RoutingTable::resolve(vars(&[("PARALLAX_MODEL_BULK", value)]), "claude-opus-4-8")
-                    .unwrap_err();
+            let error = RoutingTable::resolve(
+                vars(&[("PARALLAX_MODEL_BULK", value)]),
+                "claude-opus-4-8",
+                DefaultVar::AnthropicModel,
+            )
+            .unwrap_err();
             let message = error.to_string();
             assert!(message.contains("PARALLAX_MODEL_BULK"), "{message}");
             assert!(message.contains("present but empty"), "{message}");
@@ -945,6 +1003,7 @@ mod tests {
                 ("PARALLAX_UNRELATED", "not-in-the-namespace"),
             ]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         assert_eq!(table.model_for(CallSite::Verify), "claude-opus-4-8");
@@ -955,6 +1014,7 @@ mod tests {
         let table = RoutingTable::resolve(
             vars(&[("PARALLAX_MODEL_BULK", "  claude-haiku-4-5  ")]),
             "claude-opus-4-8",
+            DefaultVar::AnthropicModel,
         )
         .unwrap();
         assert_eq!(
@@ -976,7 +1036,8 @@ mod tests {
             .collect();
         pairs.push(("PARALLAX_MODEL_BULK".into(), "claude-sonnet-5".into()));
 
-        let table = RoutingTable::resolve(pairs, "claude-opus-4-8").unwrap();
+        let table =
+            RoutingTable::resolve(pairs, "claude-opus-4-8", DefaultVar::AnthropicModel).unwrap();
         assert_eq!(table.distinct_models(), vec!["claude-sonnet-5".to_string()]);
     }
 

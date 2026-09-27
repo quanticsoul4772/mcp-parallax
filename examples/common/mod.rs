@@ -62,7 +62,10 @@ pub fn config() -> Config {
         openai_structured_output: mcp_parallax::config::StructuredOutput::Auto,
         anthropic_model: DEFAULT_MODEL.into(),
         anthropic_api_base: "http://127.0.0.1:1".into(),
-        routing: mcp_parallax::routing::RoutingTable::single(DEFAULT_MODEL),
+        routing: mcp_parallax::routing::RoutingTable::single(
+            DEFAULT_MODEL,
+            mcp_parallax::routing::DefaultVar::AnthropicModel,
+        ),
         verify_ensemble_k: 3,
         input_max_chars: 50_000,
         voyage_api_key: None,
