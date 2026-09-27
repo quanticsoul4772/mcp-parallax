@@ -45,7 +45,7 @@ use crate::traits::storage::Storage;
 use crate::traits::trajectory::FsTrajectoryReader;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{ErrorData, ServerCapabilities, ServerInfo};
+use rmcp::model::{ErrorData, ServerCapabilities, ServerConfig};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use std::sync::Arc;
 
@@ -1016,9 +1016,14 @@ impl Parallax {
 // The router expression must be the instance field — the macro default
 // (`Self::tool_router()`) would rebuild the full, ungated router per call and
 // silently undo the capability gating done at construction.
+//
+// The allow is for the macro's generated dispatch methods: clippy 1.98's
+// `unused_async_trait_impl` fires on code `tool_handler` emits, whose async
+// shape is rmcp's contract, not ours to rewrite.
+#[allow(clippy::unused_async_trait_impl)]
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Parallax {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut instructions = String::from(
             "Parallax: independent correctives for the calling model's blind spots. \
              Call `verify` when an assertion matters and being confidently wrong is costly. \
@@ -1052,7 +1057,7 @@ impl ServerHandler for Parallax {
              harness's hooks when the checkpoint integration is installed - they are \
              not for routine self-invocation.",
         );
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)
     }
 }

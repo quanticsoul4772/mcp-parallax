@@ -815,8 +815,13 @@ fn embedding_to_blob(vector: &[f32]) -> Vec<u8> {
 /// Little-endian BLOB → f32 vector. Callers must reject misaligned blobs
 /// first (`load_memories` does, loudly, with the row id).
 fn embedding_from_blob(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    // `as_chunks` over `chunks_exact` (clippy 1.98): the chunk size is a
+    // constant and the ignored tail is identical — callers must reject
+    // misaligned blobs first (see the doc comment).
+    blob.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
         .collect()
 }
 
