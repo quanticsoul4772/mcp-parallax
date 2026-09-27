@@ -127,8 +127,14 @@ advisories. `pre-commit` hooks mirror the gate — `pre-commit install`.
 
 ## Runtime configuration (`Config::from_env()`)
 
-All config is environment variables: `ANTHROPIC_API_KEY` (required — the binary
-errors at startup without it), `ANTHROPIC_MODEL` (default `claude-opus-4-8`),
+All config is environment variables: `PARALLAX_BACKEND` (default `anthropic`;
+`openai_compat` selects Chat Completions — BYOM, one backend for every call
+site, with `OPENAI_STRUCTURED_OUTPUT`, default `auto`, choosing or pinning the
+structured-output ladder rung), `ANTHROPIC_API_KEY` (required on the anthropic
+backend — the binary errors at startup without it), `OPENAI_API_KEY` and
+`OPENAI_MODEL` (required on the openai_compat backend), `OPENAI_API_BASE`
+(default `https://api.openai.com/v1`), `ANTHROPIC_MODEL` (default
+`claude-opus-4-8`),
 `ANTHROPIC_API_BASE` (default `https://api.anthropic.com` — added by 028 so the
 whole client pool, including the per-effort variants, can be pointed at a test
 double; before it, any call carrying an effort left the `ModelClient` seam and

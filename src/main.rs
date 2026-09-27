@@ -11,7 +11,7 @@
 #[cfg(test)]
 mod config_facts;
 
-use mcp_parallax::client::AnthropicClient;
+use mcp_parallax::client::default_model_client;
 use mcp_parallax::config::Config;
 use mcp_parallax::server::Parallax;
 use mcp_parallax::storage::SqliteStorage;
@@ -87,7 +87,9 @@ async fn main() {
         }
     };
 
-    let client = Arc::new(AnthropicClient::new(&config));
+    // BYOM (design §3.1): the backend is chosen by `PARALLAX_BACKEND`; the
+    // factory hands back the right adapter and the server never knows which.
+    let client = default_model_client(&config);
     let server = match Parallax::new(client, storage, Arc::new(SystemClock), &config) {
         Ok(server) => server,
         Err(e) => {
@@ -109,7 +111,8 @@ async fn main() {
 
     tracing::info!(
         database = %config.database_path,
-        model = %config.anthropic_model,
+        backend = config.backend.as_str(),
+        model = %config.default_model(),
         ensemble_k = config.verify_ensemble_k,
         timeout_ms = config.request_timeout_ms,
         max_retries = config.max_retries,
@@ -172,10 +175,26 @@ OPTIONS:
 
     (no arguments)   Start the MCP server on stdio
 
+MODEL BACKEND (one backend for every call site, chosen at startup):
+    PARALLAX_BACKEND              Model backend: anthropic or openai_compat
+                                  (default: anthropic)
+    ANTHROPIC_API_KEY             Anthropic API key; REQUIRED when PARALLAX_BACKEND
+                                  is anthropic (the default), unused otherwise
+    ANTHROPIC_MODEL               Default model id for the anthropic backend
+                                  (default: claude-opus-4-8)
+    ANTHROPIC_API_BASE            Anthropic API endpoint
+                                  (default: https://api.anthropic.com)
+    OPENAI_API_KEY                OpenAI-compatible API key; REQUIRED when
+                                  PARALLAX_BACKEND is openai_compat
+    OPENAI_MODEL                  Model id on the openai_compat endpoint; REQUIRED
+                                  when PARALLAX_BACKEND is openai_compat
+    OPENAI_API_BASE               OpenAI-compatible API endpoint, /v1-suffixed
+                                  (default: https://api.openai.com/v1)
+    OPENAI_STRUCTURED_OUTPUT      Structured-output ladder for openai_compat:
+                                  auto, json_schema, json_object, tool_shim,
+                                  prompt_only (default: auto)
+
 CORE (always read):
-    ANTHROPIC_API_KEY             Anthropic API key. REQUIRED; startup fails without it
-    ANTHROPIC_MODEL               Default model id (default: claude-opus-4-8)
-    ANTHROPIC_API_BASE            API endpoint (default: https://api.anthropic.com)
     INPUT_MAX_CHARS               Max input length (default: 50000)
                                   VERIFY_MAX_CLAIM_CHARS is honoured as a
                                   deprecated 002-era alias when this is unset
@@ -223,6 +242,8 @@ PER-CALL-SITE ROUTING (both off by default; unset changes nothing):
             CHECKPOINT_REVIEW
     TIERS:  BULK (research extraction only) JUDGMENT (everything else)
     LEVELS: low medium high max xhigh
+    On the openai_compat backend, effort is a documented no-op: the level is
+    dropped at the wire and a notice is logged, never silently mistranslated
 
     Model and effort resolve independently, most-specific-first: site, then tier,
     then the default. An unknown suffix or level is a startup error naming the

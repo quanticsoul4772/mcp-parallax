@@ -7,6 +7,12 @@ use crate::routing::RoutingTable;
 /// target (structured outputs GA).
 pub const DEFAULT_MODEL: &str = "claude-opus-4-8";
 
+/// Default OpenAI-compatible API base URL when `OPENAI_API_BASE` is unset.
+///
+/// `/v1`-suffixed by convention: OpenAI, Azure's OpenAI-compatible surface,
+/// Ollama, vLLM and LM Studio all serve `/chat/completions` under it.
+pub const DEFAULT_OPENAI_API_BASE: &str = "https://api.openai.com/v1";
+
 /// Default embedding model when `VOYAGE_MODEL` is unset. The voyage-4 family
 /// shares one embedding space, so switching within the family needs no
 /// re-index.
@@ -34,11 +40,98 @@ pub const DEFAULT_GROUNDED_VERIFY_MAX_BYTES: usize = 262_144;
 /// `GROUNDED_VERIFY_MAX_LOCATORS`.
 pub const DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS: usize = 64;
 
+/// The model-backend family a [`Config`] selects (`PARALLAX_BACKEND`).
+///
+/// BYOM (design §3.4): the backend is chosen once at startup; per-call-site
+/// model *routing* stays orthogonal to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    /// The native Anthropic Messages wire format — the default, and the only
+    /// backend before BYOM.
+    Anthropic,
+    /// OpenAI Chat Completions: OpenAI, Azure's OpenAI-compatible surface,
+    /// Ollama, vLLM, LM Studio.
+    OpenAiCompat,
+}
+
+impl Backend {
+    /// Every backend, for validation and reporting.
+    pub const ALL: [Self; 2] = [Self::Anthropic, Self::OpenAiCompat];
+
+    /// The operator-facing spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAiCompat => "openai_compat",
+        }
+    }
+
+    /// Parse an operator-supplied value, case-insensitively.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim().to_lowercase();
+        Self::ALL.into_iter().find(|b| b.as_str() == value)
+    }
+}
+
+/// The structured-output strategy for the `openai_compat` backend — the design
+/// §3.2 ladder, pin-able per deployment (`OPENAI_STRUCTURED_OUTPUT`).
+///
+/// `auto` walks the ladder, degrading one rung when the endpoint rejects the
+/// strategy parameter itself; a pin selects exactly one rung, which is the
+/// remedy when a server silently ignores a parameter instead of rejecting it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StructuredOutput {
+    /// The full ladder: `json_schema` → `json_object` → `tool_shim` →
+    /// `prompt_only`, degrading on a capability rejection.
+    Auto,
+    /// `response_format: {type: "json_schema", ...}` (structured outputs).
+    JsonSchema,
+    /// `response_format: {type: "json_object"}` with the schema in the prompt.
+    JsonObject,
+    /// A forced single-function tool call; `function.arguments` carries the
+    /// JSON.
+    ToolShim,
+    /// The schema in the prompt only. Strict parse; failures are loud.
+    PromptOnly,
+}
+
+impl StructuredOutput {
+    /// Parse an operator-supplied value, case-insensitively.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "json_schema" => Some(Self::JsonSchema),
+            "json_object" => Some(Self::JsonObject),
+            "tool_shim" => Some(Self::ToolShim),
+            "prompt_only" => Some(Self::PromptOnly),
+            _ => None,
+        }
+    }
+
+    /// The operator-facing spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::JsonSchema => "json_schema",
+            Self::JsonObject => "json_object",
+            Self::ToolShim => "tool_shim",
+            Self::PromptOnly => "prompt_only",
+        }
+    }
+}
+
 /// Server configuration. Every field is sourced from an environment variable so
 /// the binary is configured the same way in every host (Claude Code / Desktop).
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Anthropic API key (required). `ANTHROPIC_API_KEY`.
+    /// Model backend family. `PARALLAX_BACKEND`, default `anthropic`.
+    pub backend: Backend,
+    /// Anthropic API key — required iff `backend` is [`Backend::Anthropic`],
+    /// empty otherwise. `ANTHROPIC_API_KEY`.
     pub anthropic_api_key: String,
     /// Model id for verification passes. `ANTHROPIC_MODEL`, default
     /// [`DEFAULT_MODEL`]. The fall-through for every call site that no
@@ -53,6 +146,19 @@ pub struct Config {
     /// left the `ModelClient` seam and reached the live endpoint from inside
     /// the test suite (Principle IV).
     pub anthropic_api_base: String,
+    /// OpenAI-compatible API key — required iff `backend` is
+    /// [`Backend::OpenAiCompat`], empty otherwise. `OPENAI_API_KEY`.
+    pub openai_api_key: String,
+    /// OpenAI-compatible API base URL (`/v1`-suffixed by convention).
+    /// `OPENAI_API_BASE`, default [`DEFAULT_OPENAI_API_BASE`].
+    pub openai_api_base: String,
+    /// Model id for the `openai_compat` backend — required iff that backend is
+    /// selected, empty otherwise. Model names are provider-specific, so there
+    /// is no default worth guessing. `OPENAI_MODEL`.
+    pub openai_model: String,
+    /// Structured-output strategy for the `openai_compat` backend.
+    /// `OPENAI_STRUCTURED_OUTPUT`, default `auto`.
+    pub openai_structured_output: StructuredOutput,
     /// Per-call-site model routing (018). Resolved from the reserved
     /// `PARALLAX_MODEL_*` namespace over [`Self::anthropic_model`]; with
     /// nothing set every call site resolves to that default.
@@ -120,11 +226,13 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::MissingRequired`] if `ANTHROPIC_API_KEY` is unset
-    /// or empty, and [`ConfigError::Invalid`] if a numeric variable is present
-    /// but fails to parse or violates its bounds (`VERIFY_ENSEMBLE_K` ≥ 1,
-    /// `MEMORY_RECALL_LIMIT` in 1..=20). A present-but-invalid value is an
-    /// error, never a silent default.
+    /// Returns [`ConfigError::MissingRequired`] if a key the selected backend
+    /// requires is unset or empty (`ANTHROPIC_API_KEY` for `anthropic`;
+    /// `OPENAI_API_KEY` and `OPENAI_MODEL` for `openai_compat`), and
+    /// [`ConfigError::Invalid`] if a variable is present but fails to parse or
+    /// violates its bounds (`VERIFY_ENSEMBLE_K` ≥ 1, `MEMORY_RECALL_LIMIT` in
+    /// 1..=20). A present-but-invalid value is an error, never a silent
+    /// default.
     ///
     /// # Adding a variable
     ///
@@ -146,20 +254,62 @@ impl Config {
     /// first. Prefer declaring the constant in this file over widening the
     /// list; qualify the path (`crate::client::anthropic::NAME`) when it must
     /// live elsewhere, which is what selects the file to read.
+    #[allow(clippy::too_many_lines)] // the environment-reading composition root reads best unbroken
     pub fn from_env() -> Result<Self, ConfigError> {
-        let anthropic_api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| ConfigError::MissingRequired("ANTHROPIC_API_KEY"))?;
-        if anthropic_api_key.trim().is_empty() {
-            return Err(ConfigError::MissingRequired("ANTHROPIC_API_KEY"));
-        }
+        // BYOM (design §3.4): one backend for the whole server, selected at
+        // startup. An unknown spelling is a startup error naming the variable,
+        // never a silent fall-through to the default backend.
+        let backend_raw =
+            std::env::var("PARALLAX_BACKEND").unwrap_or_else(|_| "anthropic".to_string());
+        let backend =
+            Backend::parse(&backend_raw).ok_or(ConfigError::Invalid("PARALLAX_BACKEND"))?;
+
+        // Credentials are required per selected backend — never both:
+        // `ANTHROPIC_API_KEY` iff anthropic, `OPENAI_API_KEY` and `OPENAI_MODEL`
+        // iff openai_compat. The model id joins the key in being required
+        // because model names are provider-specific; guessing one would fail
+        // later and less clearly.
+        let (anthropic_api_key, openai_api_key, openai_model) = match backend {
+            Backend::Anthropic => {
+                let key = std::env::var("ANTHROPIC_API_KEY")
+                    .map_err(|_| ConfigError::MissingRequired("ANTHROPIC_API_KEY"))?;
+                if key.trim().is_empty() {
+                    return Err(ConfigError::MissingRequired("ANTHROPIC_API_KEY"));
+                }
+                (key, String::new(), String::new())
+            }
+            Backend::OpenAiCompat => {
+                let key = std::env::var("OPENAI_API_KEY")
+                    .map_err(|_| ConfigError::MissingRequired("OPENAI_API_KEY"))?;
+                if key.trim().is_empty() {
+                    return Err(ConfigError::MissingRequired("OPENAI_API_KEY"));
+                }
+                let model = std::env::var("OPENAI_MODEL")
+                    .map_err(|_| ConfigError::MissingRequired("OPENAI_MODEL"))?;
+                if model.trim().is_empty() {
+                    return Err(ConfigError::MissingRequired("OPENAI_MODEL"));
+                }
+                (String::new(), key, model)
+            }
+        };
 
         let anthropic_api_base = std::env::var("ANTHROPIC_API_BASE")
             .unwrap_or_else(|_| crate::client::anthropic::ANTHROPIC_API_BASE.to_string());
+        let openai_api_base = std::env::var("OPENAI_API_BASE")
+            .unwrap_or_else(|_| DEFAULT_OPENAI_API_BASE.to_string());
         let anthropic_model =
             std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
-        // Routing resolves over the default model. A bad `PARALLAX_MODEL_*`
-        // variable stops startup here, before any client is built (SC-005).
-        let routing = RoutingTable::from_env(&anthropic_model)?;
+        let structured_raw =
+            std::env::var("OPENAI_STRUCTURED_OUTPUT").unwrap_or_else(|_| "auto".to_string());
+        let openai_structured_output = StructuredOutput::parse(&structured_raw)
+            .ok_or(ConfigError::Invalid("OPENAI_STRUCTURED_OUTPUT"))?;
+        // Routing resolves over the selected backend's default model. A bad
+        // `PARALLAX_MODEL_*` variable stops startup here, before any client is
+        // built (SC-005).
+        let routing = RoutingTable::from_env(match backend {
+            Backend::Anthropic => &anthropic_model,
+            Backend::OpenAiCompat => &openai_model,
+        })?;
         let verify_ensemble_k = validate_ensemble_k(parse_env("VERIFY_ENSEMBLE_K", 3)?)?;
         // INPUT_MAX_CHARS is canonical; VERIFY_MAX_CLAIM_CHARS is the 002-era
         // alias, honored only when the canonical variable is unset.
@@ -206,9 +356,14 @@ impl Config {
         let max_retries = parse_env("MAX_RETRIES", 3)?;
 
         Ok(Self {
+            backend,
             anthropic_api_key,
             anthropic_model,
             anthropic_api_base,
+            openai_api_key,
+            openai_api_base,
+            openai_model,
+            openai_structured_output,
             routing,
             verify_ensemble_k,
             input_max_chars,
@@ -228,6 +383,16 @@ impl Config {
             request_timeout_ms,
             max_retries,
         })
+    }
+
+    /// The default model id every unrouted call site resolves to: the selected
+    /// backend's model (`ANTHROPIC_MODEL` or `OPENAI_MODEL`).
+    #[must_use]
+    pub fn default_model(&self) -> &str {
+        match self.backend {
+            Backend::Anthropic => &self.anthropic_model,
+            Backend::OpenAiCompat => &self.openai_model,
+        }
     }
 }
 
@@ -333,6 +498,11 @@ pub(crate) fn test_config() -> Config {
         log_level: DEFAULT_LOG_LEVEL.into(),
         request_timeout_ms: 2_000,
         max_retries: 2,
+        backend: Backend::Anthropic,
+        openai_api_key: String::new(),
+        openai_api_base: "http://127.0.0.1:1".into(),
+        openai_model: String::new(),
+        openai_structured_output: StructuredOutput::Auto,
     }
 }
 

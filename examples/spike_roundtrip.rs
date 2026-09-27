@@ -13,7 +13,7 @@
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{CallToolRequestParams, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolRequestParams, ServerCapabilities, ServerConfig};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use serde::{Deserialize, Serialize};
 
@@ -57,10 +57,14 @@ impl SpikeServer {
     }
 }
 
+// The allow is for the macro's generated dispatch methods — see the same
+// note in `src/server.rs`: clippy 1.98's `unused_async_trait_impl` fires on
+// code `tool_handler` emits, whose async shape is rmcp's contract.
+#[allow(clippy::unused_async_trait_impl)]
 #[tool_handler]
 impl ServerHandler for SpikeServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
     }
 }
 

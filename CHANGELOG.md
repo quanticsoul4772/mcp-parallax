@@ -11,6 +11,35 @@ verbatim until the project's next SemVer cut, at which point the entries move
 into a dated `## [X.Y.Z] - YYYY-MM-DD` section and this header starts the next
 arc.
 
+### Added
+
+* **BYOM: `PARALLAX_BACKEND=openai_compat` runs the full tool catalog on any
+  OpenAI-compatible endpoint** — a second `ModelClient` adapter (Chat
+  Completions: OpenAI, Azure's compat surface, Ollama, vLLM, LM Studio)
+  alongside the Anthropic one, selected by config. The trait seam, tool
+  catalog, schemas, verdict semantics and per-call-site routing are untouched;
+  switching providers is a config change, never a call-site edit.
+
+  * **Structured output** walks a capability ladder (`OPENAI_STRUCTURED_OUTPUT`,
+    default `auto`): `response_format` JSON-schema → JSON-object with the schema
+    in the prompt → forced single-function tool call → prompt-only. The mode's
+    sanitized schema is the single source of truth on every rung, and a body
+    that fails to parse is a loud out-of-contract error on all four — never a
+    silent acceptance.
+  * **Outcome taxonomy parity**: `finish_reason: length` bills as `Truncation`,
+    `content_filter`/`refusal` as `Refusal`, anything unexplained or empty as
+    `Client`. A shared harness asserts both adapters classify every signal
+    identically, billed usage included.
+  * **Token accounting** maps `prompt/completion_tokens` onto the metered
+    record; an omitted usage block records zeros and warns per call.
+  * `effort` is a documented no-op on `openai_compat` — dropped at the wire
+    with a notice, never silently mistranslated. `ANTHROPIC_API_KEY` is now
+    required only on the anthropic backend, and `OPENAI_API_KEY` /
+    `OPENAI_MODEL` only on `openai_compat`; startup still fails fast, naming
+    the variable.
+  * `cargo test` stays green fully offline (wiremock); a live smoke per tool
+    group runs only under `cargo test -- --ignored`.
+
 ### Fixed
 
 * **`INPUT_MAX_CHARS` is bounded against the built prompt, not each field

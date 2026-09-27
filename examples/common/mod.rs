@@ -54,7 +54,12 @@ use mcp_parallax::config::{Config, DEFAULT_LOG_LEVEL, DEFAULT_MODEL, DEFAULT_VOY
 /// `DEFAULT_MODEL` has a price row, so a costed example stays costed.
 pub fn config() -> Config {
     Config {
+        backend: mcp_parallax::config::Backend::Anthropic,
         anthropic_api_key: "test-key".into(),
+        openai_api_key: String::new(),
+        openai_api_base: "http://127.0.0.1:1".into(),
+        openai_model: String::new(),
+        openai_structured_output: mcp_parallax::config::StructuredOutput::Auto,
         anthropic_model: DEFAULT_MODEL.into(),
         anthropic_api_base: "http://127.0.0.1:1".into(),
         routing: mcp_parallax::routing::RoutingTable::single(DEFAULT_MODEL),

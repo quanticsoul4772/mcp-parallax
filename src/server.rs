@@ -45,7 +45,7 @@ use crate::traits::storage::Storage;
 use crate::traits::trajectory::FsTrajectoryReader;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use rmcp::model::{ErrorData, ServerCapabilities, ServerInfo};
+use rmcp::model::{ErrorData, ServerCapabilities, ServerConfig};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler};
 use std::sync::Arc;
 
@@ -276,20 +276,33 @@ impl Parallax {
                 // is both on the default model AND at no explicit effort —
                 // an effort setting changes the request body, so it needs its
                 // own client rather than the pre-built one.
-                if model == config.anthropic_model && effort.is_none() {
+                if model == config.default_model() && effort.is_none() {
                     Arc::clone(&client)
                 } else {
-                    Arc::new(crate::client::AnthropicClient::with_http_client(
-                        config,
-                        &http,
-                        &config.anthropic_api_base,
-                        model,
-                        effort,
-                    )) as Arc<dyn ModelClient>
+                    // BYOM (design §3.1): the backend is expressed once, in the
+                    // client factory, so every routed entry — anthropic or
+                    // openai_compat — arrives through the same seam and a
+                    // backend switch stays a config change.
+                    crate::client::build_model_client(config, &http, model, effort)
                 }
             },
         ));
         Self::log_routing_table(&config.routing, pool.distinct());
+        // BYOM §3.4: reasoning effort is a documented no-op on the
+        // openai_compat backend. Say so at startup when the operator routed
+        // one — silently dropping a routing decision is how "same effort"
+        // quietly stops meaning anything. Per-call effort gets the same notice
+        // from the adapter on first use.
+        if config.backend == crate::config::Backend::OpenAiCompat
+            && CallSite::ALL
+                .iter()
+                .any(|site| config.routing.effort_for(*site).is_some())
+        {
+            tracing::warn!(
+                "PARALLAX_EFFORT_* is set, but the openai_compat backend drops effort at \
+                 the wire — reasoning-effort routing is a documented no-op on this backend"
+            );
+        }
 
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
@@ -1003,9 +1016,14 @@ impl Parallax {
 // The router expression must be the instance field — the macro default
 // (`Self::tool_router()`) would rebuild the full, ungated router per call and
 // silently undo the capability gating done at construction.
+//
+// The allow is for the macro's generated dispatch methods: clippy 1.98's
+// `unused_async_trait_impl` fires on code `tool_handler` emits, whose async
+// shape is rmcp's contract, not ours to rewrite.
+#[allow(clippy::unused_async_trait_impl)]
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Parallax {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let mut instructions = String::from(
             "Parallax: independent correctives for the calling model's blind spots. \
              Call `verify` when an assertion matters and being confidently wrong is costly. \
@@ -1039,7 +1057,7 @@ impl ServerHandler for Parallax {
              harness's hooks when the checkpoint integration is installed - they are \
              not for routine self-invocation.",
         );
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(instructions)
     }
 }

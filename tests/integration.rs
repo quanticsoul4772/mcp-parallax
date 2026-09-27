@@ -26,7 +26,12 @@ const CONTRACT: &str = include_str!("../specs/001-core-layer/contracts/verify.to
 
 fn test_config(timeout_ms: u64) -> Config {
     Config {
+        backend: mcp_parallax::config::Backend::Anthropic,
         anthropic_api_key: "test-key".into(),
+        openai_api_key: String::new(),
+        openai_api_base: "http://127.0.0.1:1".into(),
+        openai_model: String::new(),
+        openai_structured_output: mcp_parallax::config::StructuredOutput::Auto,
         anthropic_model: "claude-opus-4-8".into(),
         routing: mcp_parallax::routing::RoutingTable::single("claude-opus-4-8"),
         verify_ensemble_k: 3,
