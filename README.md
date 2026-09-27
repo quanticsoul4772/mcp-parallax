@@ -178,7 +178,7 @@ The environment namespaces above set the **defaults**. A calling model can overr
 
 | Argument | Tools | Rule |
 |---|---|---|
-| `effort` | `verify` `unstick` `diverge` `decide` `elicit` `grounded_verify` `check` | Any level; unknown values are rejected |
+| `effort` | `verify` `unstick` `diverge` `decide` `elicit` `grounded_verify` `check` | Any level, case-insensitive (`"Medium"` works; the schema shows the lowercase canonical spellings); unknown values are rejected by name |
 | `passes` | `verify` `diverge` `grounded_verify` | **Lowering only** — above the configured count is an error naming the ceiling |
 | `constraints.concurrency` | `research` | **Lowering only** — above the ceiling is reduced to it, and the run proceeds |
 | `limit` | `recall` | Any value in range (predates this) |

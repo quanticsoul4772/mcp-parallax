@@ -55,18 +55,9 @@ pub const EFFORT_PREFIX: &str = "PARALLAX_EFFORT_";
 /// the request body is byte-identical to before this feature. The provider's
 /// own default is `high`, so unset and `High` behave the same, but only unset
 /// is provably unchanged on the wire.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
+// rename_all kept for schemars: the published schema names variants lowercase.
+// Deserialization itself is the manual impl below (case-insensitive, trim).
 #[serde(rename_all = "lowercase")]
 #[schemars(inline)] // flat + closed: no $ref/$defs in a tool input schema
 pub enum Effort {
@@ -103,6 +94,37 @@ impl Effort {
     pub fn parse(value: &str) -> Option<Self> {
         let value = value.trim().to_lowercase();
         Self::ALL.into_iter().find(|e| e.as_str() == value)
+    }
+}
+
+/// Wire spellings of [`Effort`], for serde's error messages. Kept in sync
+/// with [`Effort::ALL`] by `effort_names_match_the_enum` below.
+const EFFORT_NAMES: &[&str] = &["low", "medium", "high", "max", "xhigh"];
+
+impl<'de> serde::Deserialize<'de> for Effort {
+    /// Deserialize from tool arguments via [`Effort::parse`], so tool callers
+    /// get the same lenient contract as environment variables: case-insensitive
+    /// (`"Medium"`, `"MAX"`) and whitespace-tolerant. A derived
+    /// `#[serde(rename_all = "lowercase")]` impl matches exact spellings only
+    /// and rejects what a small model emits; the published schema stays
+    /// lowercase, so capable callers are still guided to the canonical form.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct EffortVisitor;
+        impl serde::de::Visitor<'_> for EffortVisitor {
+            type Value = Effort;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "one of {}", EFFORT_NAMES.join(", "))
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Effort::parse(v).ok_or_else(|| E::unknown_variant(v, EFFORT_NAMES))
+            }
+        }
+        deserializer.deserialize_any(EffortVisitor)
     }
 }
 
@@ -830,6 +852,45 @@ mod tests {
         for level in Effort::ALL {
             assert_eq!(Effort::parse(level.as_str()), Some(level));
         }
+    }
+
+    /// EFFORT_NAMES feeds serde's error messages; it must say what the enum
+    /// actually contains, in the canonical order.
+    #[test]
+    fn effort_names_match_the_enum() {
+        let names: Vec<&str> = Effort::ALL.iter().map(|e| e.as_str()).collect();
+        assert_eq!(EFFORT_NAMES, names.as_slice());
+    }
+
+    /// Tool-argument deserialization shares `Effort::parse` with the
+    /// environment-variable path: case-insensitive and whitespace-tolerant,
+    /// with errors that name the accepted spellings (the M4-demo failure —
+    /// `"effort":"Medium"` — now deserializes instead of rejecting).
+    #[test]
+    fn effort_deserializes_leniently_from_tool_arguments() {
+        assert_eq!(
+            serde_json::from_str::<Effort>("\"Medium\"").unwrap(),
+            Effort::Medium
+        );
+        assert_eq!(
+            serde_json::from_str::<Effort>("\"MAX\"").unwrap(),
+            Effort::Max
+        );
+        assert_eq!(
+            serde_json::from_str::<Effort>("\" xhigh \"").unwrap(),
+            Effort::XHigh
+        );
+        for level in Effort::ALL {
+            assert_eq!(
+                serde_json::from_str::<Effort>(format!("\"{}\"", level.as_str()).as_str()).unwrap(),
+                level
+            );
+        }
+        let err = serde_json::from_str::<Effort>("\"enormous\"")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("enormous"), "{err}");
+        assert!(err.contains("xhigh"), "error must name the variants: {err}");
     }
 
     /// 018 T012: the startup report must name every call site with the model
