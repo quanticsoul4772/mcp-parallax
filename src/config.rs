@@ -147,7 +147,9 @@ pub struct Config {
     /// the test suite (Principle IV).
     pub anthropic_api_base: String,
     /// OpenAI-compatible API key — required iff `backend` is
-    /// [`Backend::OpenAiCompat`], empty otherwise. `OPENAI_API_KEY`.
+    /// [`Backend::OpenAiCompat`] and `openai_api_base` is the default OpenAI
+    /// endpoint. A custom (keyless) endpoint leaves it empty and the client
+    /// sends no `Authorization` header. `OPENAI_API_KEY`.
     pub openai_api_key: String,
     /// OpenAI-compatible API base URL (`/v1`-suffixed by convention).
     /// `OPENAI_API_BASE`, default [`DEFAULT_OPENAI_API_BASE`].
@@ -228,7 +230,9 @@ impl Config {
     ///
     /// Returns [`ConfigError::MissingRequired`] if a key the selected backend
     /// requires is unset or empty (`ANTHROPIC_API_KEY` for `anthropic`;
-    /// `OPENAI_API_KEY` and `OPENAI_MODEL` for `openai_compat`), and
+    /// `OPENAI_MODEL`, plus `OPENAI_API_KEY` when the calls target the default
+    /// OpenAI endpoint (a custom endpoint may run keyless), for
+    /// `openai_compat`), and
     /// [`ConfigError::Invalid`] if a variable is present but fails to parse or
     /// violates its bounds (`VERIFY_ENSEMBLE_K` ≥ 1, `MEMORY_RECALL_LIMIT` in
     /// 1..=20). A present-but-invalid value is an error, never a silent
@@ -265,10 +269,15 @@ impl Config {
             Backend::parse(&backend_raw).ok_or(ConfigError::Invalid("PARALLAX_BACKEND"))?;
 
         // Credentials are required per selected backend — never both:
-        // `ANTHROPIC_API_KEY` iff anthropic, `OPENAI_API_KEY` and `OPENAI_MODEL`
-        // iff openai_compat. The model id joins the key in being required
-        // because model names are provider-specific; guessing one would fail
-        // later and less clearly.
+        // `ANTHROPIC_API_KEY` iff anthropic, `OPENAI_MODEL` (plus
+        // `OPENAI_API_KEY` on the default OpenAI endpoint) iff openai_compat.
+        // The model id is always required because model names are
+        // provider-specific; guessing one would fail later and less clearly.
+        // A custom endpoint may run keyless — see `resolve_openai_api_key`.
+        // Read before the credential check: `OPENAI_API_KEY`'s contract
+        // depends on which endpoint the calls will hit.
+        let openai_api_base = std::env::var("OPENAI_API_BASE")
+            .unwrap_or_else(|_| DEFAULT_OPENAI_API_BASE.to_string());
         let (anthropic_api_key, openai_api_key, openai_model) = match backend {
             Backend::Anthropic => {
                 let key = std::env::var("ANTHROPIC_API_KEY")
@@ -279,11 +288,8 @@ impl Config {
                 (key, String::new(), String::new())
             }
             Backend::OpenAiCompat => {
-                let key = std::env::var("OPENAI_API_KEY")
-                    .map_err(|_| ConfigError::MissingRequired("OPENAI_API_KEY"))?;
-                if key.trim().is_empty() {
-                    return Err(ConfigError::MissingRequired("OPENAI_API_KEY"));
-                }
+                let key =
+                    resolve_openai_api_key(&openai_api_base, std::env::var("OPENAI_API_KEY").ok())?;
                 let model = std::env::var("OPENAI_MODEL")
                     .map_err(|_| ConfigError::MissingRequired("OPENAI_MODEL"))?;
                 if model.trim().is_empty() {
@@ -295,8 +301,6 @@ impl Config {
 
         let anthropic_api_base = std::env::var("ANTHROPIC_API_BASE")
             .unwrap_or_else(|_| crate::client::anthropic::ANTHROPIC_API_BASE.to_string());
-        let openai_api_base = std::env::var("OPENAI_API_BASE")
-            .unwrap_or_else(|_| DEFAULT_OPENAI_API_BASE.to_string());
         let anthropic_model =
             std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
         let structured_raw =
@@ -394,6 +398,33 @@ impl Config {
             Backend::OpenAiCompat => &self.openai_model,
         }
     }
+}
+
+/// The `OPENAI_API_KEY` contract for the `openai_compat` backend (BYOM §3.4):
+/// the default OpenAI endpoint always authenticates, while a custom endpoint —
+/// Ollama, LM Studio, vLLM, a proxy — may run keyless, in which case the
+/// adapter sends no `Authorization` header at all.
+///
+/// A present-but-empty or whitespace-only value is normalized to empty so
+/// "keyless" has exactly one spelling and a blank never becomes a bearer
+/// token. Only the default endpoint's missing key fails startup; anywhere
+/// else, an endpoint that does need a key answers 401 loudly on the first
+/// call.
+fn resolve_openai_api_key(
+    openai_api_base: &str,
+    raw: Option<String>,
+) -> Result<String, ConfigError> {
+    let key = raw.unwrap_or_default();
+    let key = if key.trim().is_empty() {
+        String::new()
+    } else {
+        key
+    };
+    let hits_default_endpoint = openai_api_base.trim_end_matches('/') == DEFAULT_OPENAI_API_BASE;
+    if hits_default_endpoint && key.is_empty() {
+        return Err(ConfigError::MissingRequired("OPENAI_API_KEY"));
+    }
+    Ok(key)
 }
 
 /// `VERIFY_ENSEMBLE_K` must be at least 1 — zero passes cannot produce a
@@ -596,6 +627,43 @@ mod tests {
     fn default_models_are_the_corpus_targets() {
         assert_eq!(DEFAULT_MODEL, "claude-opus-4-8");
         assert_eq!(DEFAULT_VOYAGE_MODEL, "voyage-4");
+    }
+
+    #[test]
+    fn the_openai_key_is_required_only_on_the_default_endpoint() {
+        assert!(matches!(
+            resolve_openai_api_key(DEFAULT_OPENAI_API_BASE, None),
+            Err(ConfigError::MissingRequired("OPENAI_API_KEY"))
+        ));
+        assert!(matches!(
+            resolve_openai_api_key(DEFAULT_OPENAI_API_BASE, Some("   ".to_string())),
+            Err(ConfigError::MissingRequired("OPENAI_API_KEY"))
+        ));
+        assert_eq!(
+            resolve_openai_api_key(DEFAULT_OPENAI_API_BASE, Some("sk-test".to_string())).ok(),
+            Some("sk-test".to_string())
+        );
+    }
+
+    #[test]
+    fn a_custom_endpoint_may_run_keyless() {
+        assert_eq!(
+            resolve_openai_api_key("http://localhost:11434/v1", None).ok(),
+            Some(String::new())
+        );
+        assert_eq!(
+            resolve_openai_api_key("http://localhost:11434/v1", Some("  ".to_string())).ok(),
+            Some(String::new())
+        );
+        assert_eq!(
+            resolve_openai_api_key("http://localhost:11434/v1", Some("key".to_string())).ok(),
+            Some("key".to_string())
+        );
+        // A trailing slash on the default endpoint does not dodge the contract.
+        assert!(matches!(
+            resolve_openai_api_key("https://api.openai.com/v1/", None),
+            Err(ConfigError::MissingRequired("OPENAI_API_KEY"))
+        ));
     }
 
     #[test]

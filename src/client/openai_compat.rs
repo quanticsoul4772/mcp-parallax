@@ -231,24 +231,28 @@ impl OpenAiCompatClient {
     }
 
     async fn send_once(&self, body: &Value) -> Result<reqwest::Response, AppError> {
-        self.http
+        let mut request = self
+            .http
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
             .timeout(Duration::from_millis(self.timeout_ms))
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    AppError::Timeout {
-                        what: "request",
-                        ms: self.timeout_ms,
-                    }
-                } else {
-                    // Transport-level failure (connect refused, reset) — retryable.
-                    AppError::Client(format!("transport: {e}"))
+            .json(body);
+        // Keyless local endpoints (Ollama, LM Studio, vLLM) see no
+        // `Authorization` header at all — a bare "Bearer " would be noise
+        // some servers reject.
+        if !self.api_key.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+        request.send().await.map_err(|e| {
+            if e.is_timeout() {
+                AppError::Timeout {
+                    what: "request",
+                    ms: self.timeout_ms,
                 }
-            })
+            } else {
+                // Transport-level failure (connect refused, reset) — retryable.
+                AppError::Client(format!("transport: {e}"))
+            }
+        })
     }
 }
 
@@ -685,6 +689,59 @@ mod tests {
         assert!(body.get("response_format").is_none(), "{body}");
     }
 
+    /// Keyless local endpoints (Ollama, LM Studio, vLLM) are first-class
+    /// BYOM targets: the `Authorization` header exists iff a key is
+    /// configured, and a keyless request carries none at all.
+    #[tokio::test]
+    async fn the_authorization_header_is_sent_only_when_a_key_is_configured() {
+        let body = json!({
+            "choices": [{ "message": { "content": "{}" }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 1 }
+        });
+
+        let keyless = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body.clone()))
+            .mount(&keyless)
+            .await;
+        let config = Config {
+            openai_api_key: String::new(),
+            ..openai_test_config()
+        };
+        client_with(&config, &keyless)
+            .complete("p", &json!({}))
+            .await
+            .unwrap();
+        let requests = keyless.received_requests().await.unwrap();
+        assert!(
+            requests[0].headers.get("authorization").is_none(),
+            "{:?}",
+            requests[0].headers
+        );
+
+        let keyed = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&keyed)
+            .await;
+        let config = Config {
+            openai_api_key: "test-key".into(),
+            ..openai_test_config()
+        };
+        client_with(&config, &keyed)
+            .complete("p", &json!({}))
+            .await
+            .unwrap();
+        let requests = keyed.received_requests().await.unwrap();
+        assert_eq!(
+            requests[0]
+                .headers
+                .get("authorization")
+                .map(|v| v.to_str().unwrap()),
+            Some("Bearer test-key")
+        );
+    }
+
     /// The tool-shim rung's documented leniency (§3.3): some compat servers
     /// close even a forced tool call with `stop`. That is still a success —
     /// when a tool call is actually present.
@@ -1102,15 +1159,16 @@ mod tests {
     }
 
     /// Live smoke — opt-in, never part of the offline gate:
-    /// `cargo test -- --ignored live_smoke` with `OPENAI_API_KEY`,
-    /// `OPENAI_API_BASE` and `OPENAI_MODEL` set. One representative schema per
+    /// `cargo test -- --ignored live_smoke` with `OPENAI_MODEL` set (plus
+    /// `OPENAI_API_KEY` and `OPENAI_API_BASE` when the endpoint authenticates
+    /// or is not the default). One representative schema per
     /// tool group (verify, check, research, memory) is all it takes to prove
     /// the catalog's shapes round-trip on a real endpoint.
     #[tokio::test]
     #[ignore = "live smoke: hits a real endpoint; run with --ignored"]
     async fn live_smoke_openai_compat_returns_schema_shaped_json() {
         let config = Config {
-            openai_api_key: std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY"),
+            openai_api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
             openai_model: std::env::var("OPENAI_MODEL").expect("OPENAI_MODEL"),
             openai_api_base: std::env::var("OPENAI_API_BASE")
                 .unwrap_or_else(|_| crate::config::DEFAULT_OPENAI_API_BASE.to_string()),
