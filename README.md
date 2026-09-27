@@ -194,7 +194,7 @@ Omit them all and outbound requests are byte-identical to a server without the f
 SELECT tool, model, effort, cost_usd FROM invocation_records ORDER BY cost_usd DESC LIMIT 20;
 ```
 
-Every invocation is recorded in SQLite (tool, model, tokens, cost, latency, outcome). When an OTLP endpoint is set, spans and metrics are derived from the same records, so the two surfaces cannot disagree; telemetry failures never affect the server. Research cost note: records carry summed LLM tokens, but Brave bills per request, so its fee is not in `cost_usd` — a named inexactness.
+Every invocation is recorded in SQLite (tool, model, tokens, cost, latency, outcome). The console line carries the same facts plus `cost.estimated`: `false` means the figure is priced from the catalog, `true` that it is the conservative Opus-tier fallback for an unknown model id (local models such as Ollama's hit this fallback — their real spend is $0.00, the figure is an over-estimate, and tokens are the resource actually consumed). When an OTLP endpoint is set, spans and metrics are derived from the same records (the flag exports as `parallax.cost_estimated`), so the surfaces cannot disagree; telemetry failures never affect the server. Research cost note: records carry summed LLM tokens, but Brave bills per request, so its fee is not in `cost_usd` — a named inexactness.
 
 ## Architecture
 

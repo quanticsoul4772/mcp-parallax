@@ -13,6 +13,13 @@ arc.
 
 ### Added
 
+* **`cost.estimated` on the invocation log line** — the console record now
+  self-describes its cost figure: `false` when priced from the catalog,
+  `true` when a model id with no price row was costed at the conservative
+  Opus-tier fallback. The flag was already stored per record in SQLite and
+  exported by OTel as `parallax.cost_estimated`; the one surface an operator
+  greps was the one missing it.
+
 * **BYOM: `PARALLAX_BACKEND=openai_compat` runs the full tool catalog on any
   OpenAI-compatible endpoint** — a second `ModelClient` adapter (Chat
   Completions: OpenAI, Azure's compat surface, Ollama, vLLM, LM Studio)
