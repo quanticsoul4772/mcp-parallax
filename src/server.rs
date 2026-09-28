@@ -167,11 +167,15 @@ impl Parallax {
     /// route take effect" is exactly the person who needs the whole table.
     /// Adds no tool-catalog entry: the audience is the operator, not the
     /// calling model (FR-005a).
-    fn log_routing_table(routing: &RoutingTable, distinct: usize) {
+    fn log_routing_table(routing: &RoutingTable, distinct: usize, endpoint: &str) {
         // Rendered by `RoutingTable::report`, which is pure and directly
-        // tested (018 T012) — this loop only puts it on the wire.
+        // tested (018 T012) — this loop only puts it on the wire. `endpoint`
+        // rides every line so a reader never has to infer destination from
+        // variable names: `source=OPENAI_MODEL` says which setting supplied
+        // the model, `endpoint=` says where the bytes actually go (a local
+        // Ollama and the OpenAI cloud both live behind that variable).
         for (call_site, tier, model, source) in routing.report() {
-            tracing::info!(call_site, tier, %model, %source, "routing resolved");
+            tracing::info!(call_site, tier, %model, %source, %endpoint, "routing resolved");
         }
         tracing::info!(
             call_sites = routing.routes().len(),
@@ -183,6 +187,19 @@ impl Parallax {
             effort_overridable_per_call = true,
             "routing table complete"
         );
+    }
+
+    /// The endpoint the active backend will actually call, for the startup
+    /// table. Read from the same configuration the client was built against,
+    /// so the table can never name a destination the client disagrees with.
+    /// This is what makes a keyless local Ollama run self-describing: the
+    /// line shows `endpoint=http://localhost:11434/v1` rather than leaving
+    /// the operator to infer destination from a variable's spelling.
+    fn resolved_endpoint(config: &Config) -> &str {
+        match config.backend {
+            crate::config::Backend::OpenAiCompat => &config.openai_api_base,
+            crate::config::Backend::Anthropic => &config.anthropic_api_base,
+        }
     }
 
     /// The model a call site resolved to — the value its invocation record must
@@ -287,7 +304,11 @@ impl Parallax {
                 }
             },
         ));
-        Self::log_routing_table(&config.routing, pool.distinct());
+        Self::log_routing_table(
+            &config.routing,
+            pool.distinct(),
+            Self::resolved_endpoint(config),
+        );
         // BYOM §3.4: reasoning effort is a documented no-op on the
         // openai_compat backend. Say so at startup when the operator routed
         // one — silently dropping a routing decision is how "same effort"
@@ -1071,6 +1092,26 @@ mod tests {
     use crate::traits::clock::SystemClock;
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn the_endpoint_resolved_for_the_table_follows_the_backend() {
+        // Anthropic config: the table names the Anthropic base.
+        let mut cfg = crate::config::test_config();
+        cfg.anthropic_api_base = "https://api.anthropic.example".into();
+        cfg.openai_api_base = "http://localhost:11434/v1".into();
+        assert_eq!(
+            Parallax::resolved_endpoint(&cfg),
+            "https://api.anthropic.example"
+        );
+
+        // openai_compat config: the table names the OpenAI-compatible base
+        // (which on a BYOM local setup is Ollama, not the OpenAI cloud).
+        cfg.backend = crate::config::Backend::OpenAiCompat;
+        assert_eq!(
+            Parallax::resolved_endpoint(&cfg),
+            "http://localhost:11434/v1"
+        );
+    }
 
     use crate::config::test_config;
 
