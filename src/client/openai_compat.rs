@@ -359,29 +359,49 @@ impl ModelClient for OpenAiCompatClient {
 
 /// Whether a 4xx rejects the *strategy parameter* rather than the request.
 ///
-/// Conservative on purpose: the token set names only the parameters this
-/// adapter sends, so a rejection it cannot explain (wrong key, wrong model,
-/// malformed request) stays terminal and loud instead of silently degrading
-/// the ladder. Degrading a rung is safe; hiding a real failure behind one is
-/// not.
+/// Conservative on purpose, in two independent ways:
+///
+/// 1. **Status:** only `400 Bad Request` can be a strategy rejection.
+///    Providers signal parameter-unsupported with 400 in practice; anything
+///    else (401 auth, 403 forbidden, 404 model, 422 validation) is about the
+///    request as a whole, not one parameter we could remove. This stops an
+///    auth failure phrased as "unsupported auth scheme" from being read as a
+///    ladder signal.
+/// 2. **Body:** the body must both name one of the *parameters this adapter
+///    actually sends* and contain a rejection phrase. Either alone is too
+///    loose: "unknown tool: X" (a config mistake) contains no parameter
+///    name, and "unsupported auth scheme" contains no parameter name either;
+///    matching either single token degraded the ladder on failures that had
+///    nothing to do with the strategy.
+///
+/// A rejection it cannot explain (wrong key, wrong model, malformed request)
+/// stays terminal and loud instead of silently degrading the ladder.
+/// Degrading a rung is safe; hiding a real failure behind one is not.
+/// The parameters this adapter sends; a capability rejection must name one.
+const PARAMETER_TOKENS: [&str; 5] = [
+    "response_format",
+    "json_schema",
+    "json_object",
+    "tool_choice",
+    "tools",
+];
+
+/// Phrases providers use to say a parameter is rejected outright.
+const REJECTION_TOKENS: [&str; 5] = [
+    "not support",
+    "unsupported",
+    "unknown",
+    "unrecognized",
+    "unexpected",
+];
+
 fn is_capability_rejection(status: reqwest::StatusCode, detail: &str) -> bool {
-    if !status.is_client_error() {
+    if status.as_u16() != 400 {
         return false;
     }
     let body = detail.to_lowercase();
-    [
-        "response_format",
-        "json_schema",
-        "json_object",
-        "tool_choice",
-        "tools",
-        "not support",
-        "unsupported",
-        "unknown parameter",
-        "unrecognized",
-    ]
-    .iter()
-    .any(|token| body.contains(token))
+    PARAMETER_TOKENS.iter().any(|t| body.contains(t))
+        && REJECTION_TOKENS.iter().any(|t| body.contains(t))
 }
 
 /// Map a 2xx Chat Completions response to a [`Completion`] or its outcome
@@ -906,6 +926,103 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
         assert!(err.to_string().contains("Incorrect API key"), "{err}");
+    }
+
+    /// An auth failure phrased as "unsupported" must NOT be a ladder signal:
+    /// no parameter name in the body, and a 401 is not 400. Before the
+    /// tightening, the broad `unsupported` token degraded four rungs on a
+    /// dead key and the final error named the strategy, not the auth.
+    #[tokio::test]
+    async fn an_unsupported_auth_scheme_is_terminal_not_a_ladder_signal() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": { "message": "unsupported auth scheme" }
+            })))
+            .mount(&mock)
+            .await;
+
+        let err = client_for(&mock)
+            .complete("p", &json!({"type": "object"}))
+            .await
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("unsupported auth scheme"), "{message}");
+        assert!(!message.contains("structured-output strategy"), "{message}");
+        let requests = mock.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "terminal: no ladder retries");
+    }
+
+    /// A bad tool name is a config mistake, not a strategy rejection: the
+    /// body names `tools` but with no rejection phrase, and stays terminal.
+    #[tokio::test]
+    async fn an_unknown_tool_error_is_terminal_not_a_ladder_signal() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": { "message": "Error: unknown tool: web_search" }
+            })))
+            .mount(&mock)
+            .await;
+
+        let err = client_for(&mock)
+            .complete("p", &json!({"type": "object"}))
+            .await
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("unknown tool"), "{message}");
+        assert!(!message.contains("structured-output strategy"), "{message}");
+        let requests = mock.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "terminal: no ladder retries");
+    }
+
+    /// A parameter name WITHOUT a rejection phrase (plain validation error)
+    /// is not a capability signal either — both tokens must co-occur.
+    #[tokio::test]
+    async fn a_parameter_error_without_a_rejection_phrase_is_terminal() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": { "message": "response_format must be an object" }
+            })))
+            .mount(&mock)
+            .await;
+
+        let err = client_for(&mock)
+            .complete("p", &json!({"type": "object"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        let requests = mock.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "terminal: no ladder retries");
+    }
+
+    /// A loosely-phrased 400 that names the parameter and rejects it still
+    /// degrades the ladder — the tightening must not regress real signals.
+    #[tokio::test]
+    async fn a_loosely_phrased_400_rejection_still_degrades_the_ladder() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(move |req: &Request| {
+                let body: serde_json::Value = req.body_json().unwrap();
+                if body["response_format"]["type"] == "json_schema" {
+                    ResponseTemplate::new(400).set_body_json(json!({
+                        "error": { "message": "json_schema output is not supported by this model" }
+                    }))
+                } else {
+                    ResponseTemplate::new(200).set_body_json(stop_body(r#"{"ok":true}"#))
+                }
+            })
+            .mount(&mock)
+            .await;
+
+        let out = client_for(&mock)
+            .complete("p", &json!({"type": "object"}))
+            .await
+            .unwrap();
+        assert_eq!(out.value, json!({ "ok": true }));
+        let requests = mock.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2, "degraded exactly one rung");
     }
 
     /// §3.3 taxonomy, truncation: `finish_reason: "length"` is the
