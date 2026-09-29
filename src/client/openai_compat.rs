@@ -1284,11 +1284,16 @@ mod tests {
     #[tokio::test]
     #[ignore = "live smoke: hits a real endpoint; run with --ignored"]
     async fn live_smoke_openai_compat_returns_schema_shaped_json() {
+        // test_config pins a 2 s request timeout so an escaping offline test
+        // fails fast; a real model routinely exceeds it when reasoning before
+        // answering, turning the smoke pass into a spurious timeout on slow
+        // hardware. Live runs get the production default instead.
         let config = Config {
             openai_api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
             openai_model: std::env::var("OPENAI_MODEL").expect("OPENAI_MODEL"),
             openai_api_base: std::env::var("OPENAI_API_BASE")
                 .unwrap_or_else(|_| crate::config::DEFAULT_OPENAI_API_BASE.to_string()),
+            request_timeout_ms: 120_000, // production default (REQUEST_TIMEOUT_MS)
             ..openai_test_config()
         };
         let client = OpenAiCompatClient::new(&config);
