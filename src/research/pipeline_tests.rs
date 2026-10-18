@@ -1280,17 +1280,15 @@ async fn a_run_stopped_early_still_reports_defined_coverage_and_statuses() {
 /// independently, and the two published values agree with each other whatever
 /// the cap does to the explanatory text.
 ///
-/// Truncation is in fact unreachable today — the synthesis schema bounds gaps
-/// at `MAX_GAPS` (10) and the in-code gap paths build at most
-/// `MAX_SUB_QUESTIONS + 1` (8) — so this pins the invariant at the largest
-/// reachable gap count instead of a state the validator forbids.
+/// Truncation itself is pinned by
+/// `twelve_gaps_publish_ten_and_count_every_target` below.
 #[tokio::test]
 async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
     let client = scripted(
         scope_value(), // two sub-questions
         |_| json!({ "claims": ["the claim holds"] }),
         |_, _| supported(),
-        // Ten gaps — the schema maximum — nine of them piled on sub-question
+        // Ten gaps, nine of them piled on sub-question
         // 2, which under the old arithmetic would have driven `settled` to
         // zero and annihilated a well-supported answer.
         |_| {
@@ -1310,10 +1308,6 @@ async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
         .await
         .unwrap();
 
-    // `gaps.truncate(MAX_GAPS)` is unreachable here — the synthesis schema
-    // already bounds the list at 10 — so asserting the length would be
-    // unconditionally true and would test nothing.
-
     // FR-004: nine gaps on one sub-question leave it unsettled once, so the
     // other sub-question is still settled.
     assert!((result.coverage - 0.5).abs() < f32::EPSILON);
@@ -1331,6 +1325,118 @@ async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
 
     // And the answer is not annihilated by a long gap list.
     assert!(result.confidence > 0.0);
+}
+
+/// The production failure, reproduced: a synthesis returned 12 gaps and the
+/// run failed with `validation_failure` ("has more than 10 items at
+/// /gap_targets"). The item cap lived only in the local validator — the
+/// sanitizer strips `maxItems` from the grammar and the prompt never states
+/// it — so the model had no way to honour it. Now the run succeeds, publishes
+/// `MAX_GAPS` gap texts, and derives coverage from all twelve targets: the
+/// two gaps past the cap, both on sub-question 2, still leave it unsettled.
+#[tokio::test]
+async fn twelve_gaps_publish_ten_and_count_every_target() {
+    let client = scripted(
+        scope_value(), // two sub-questions
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        |_| {
+            json!({
+                "answer": "It holds [s1].",
+                "gaps": [
+                    "g1", "g2", "g3", "g4", "g5", "g6",
+                    "g7", "g8", "g9", "g10", "g11", "g12"
+                ],
+                "gap_targets": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2]
+            })
+        },
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.gaps.len(),
+        crate::research::MAX_GAPS,
+        "published text is capped"
+    );
+    assert_eq!(result.gaps.last().map(String::as_str), Some("g10"));
+    assert!((result.coverage - 0.5).abs() < f32::EPSILON);
+    assert!(result.sub_question_status[0].settled);
+    assert!(!result.sub_question_status[1].settled);
+}
+
+/// The same stripped-bound defect, for lengths: a gap phrase past
+/// `MAX_GAP_CHARS` is cut at publication, not a failed run.
+#[tokio::test]
+async fn an_over_long_gap_is_cut_not_fatal() {
+    let long = "x".repeat(crate::research::MAX_GAP_CHARS + 50);
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        move |_| {
+            json!({
+                "answer": "It holds [s1].",
+                "gaps": [long.clone()],
+                "gap_targets": [2]
+            })
+        },
+    );
+    let deps = deps_with(
+        client,
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.gaps[0].chars().count(),
+        crate::research::MAX_GAP_CHARS
+    );
+    assert_eq!(result.stats.stop_reason, None);
+}
+
+/// An answer past `MAX_ANSWER_CHARS` is fed back once, then demoted like a
+/// malformed gap list — never a failed run, and never cut mid-citation.
+#[tokio::test]
+async fn an_over_long_answer_is_retried_then_demoted() {
+    let long = format!("{} [s1].", "y".repeat(crate::research::MAX_ANSWER_CHARS));
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the claim holds"] }),
+        |_, _| supported(),
+        move |_| {
+            json!({
+                "answer": long.clone(),
+                "gaps": [],
+                "gap_targets": []
+            })
+        },
+    );
+    let deps = deps_with(
+        Arc::clone(&client),
+        search_returning(&["https://example.com/a"]),
+        Arc::new(SystemClock),
+    );
+    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    assert_eq!(client.count_containing("executive synthesis"), 2);
+    assert_eq!(client.count_containing("the answer was"), 1);
+    assert_eq!(
+        result.stats.stop_reason,
+        Some(StopReason::MalformedSynthesis)
+    );
+    assert!(result.answer.contains("over-long"), "{}", result.answer);
 }
 
 // ---- 023: a phase that wholly fails must say so ----------------------------

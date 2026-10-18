@@ -11,7 +11,7 @@
 
 use crate::research::contract::{ResearchResult, SourceRef, Stats, SubQuestionStatus};
 use crate::research::synthesis::{Assembled, Synthesized};
-use crate::research::{verdict, MAX_GAPS};
+use crate::research::{verdict, MAX_GAPS, MAX_GAP_CHARS};
 use crate::research::{ScopePlan, SourceRecord, VerifiedClaim};
 use std::collections::BTreeMap;
 
@@ -103,6 +103,14 @@ pub fn assemble_result(outcome: Outcome<'_>, stats: Stats) -> ResearchResult {
     // statuses, which always agree with it. Gap text is best-effort under the
     // cap.
     gaps.truncate(MAX_GAPS);
+    // Each entry's length is capped here too: the bound is stated in the
+    // prompt but not in the grammar, and a long phrase is not worth a failed
+    // run.
+    for gap in &mut gaps {
+        if let Some((cut, _)) = gap.char_indices().nth(MAX_GAP_CHARS) {
+            gap.truncate(cut);
+        }
+    }
 
     ResearchResult {
         answer,

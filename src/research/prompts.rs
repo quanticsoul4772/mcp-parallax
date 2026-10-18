@@ -46,7 +46,8 @@ You are writing the executive synthesis of a completed research run. Use \
 ONLY the verified findings below — cite them inline with their source \
 tokens exactly as given (for example [s3]). Never cite a source not listed. \
 Surface uncertainty honestly; never state refuted or unverified content as \
-fact. List what remains unanswered as gaps (short phrases). For EVERY gap, \
+fact. Keep the answer under 8000 characters. List what remains unanswered \
+as gaps (short phrases, each under 500 characters). For EVERY gap, \
 give the matching entry in gap_targets IN THE SAME ORDER: gap_targets[i] is \
 the 1-based number of the sub-question that gaps[i] concerns, counting the \
 sub-questions listed below from 1, or 0 when the gap concerns no single one \
@@ -65,15 +66,21 @@ pub(crate) struct ScopeOut {
     pub(crate) sub_questions: Vec<String>,
 }
 
-/// The synthesis call's constrained output (flat + closed; local validator
-/// enforces the length bounds the provider grammar drops).
+/// The synthesis call's constrained output (flat + closed).
+///
+/// It carries no length bounds: the sanitizer strips them from the grammar,
+/// so the model never sees them, and a bound enforced only by the local
+/// validator failed whole runs. The prompt states the bounds instead;
+/// synthesis retries an over-long answer, and assembly caps the gaps.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct SynthOut {
-    /// The answer prose with inline `[sN]` citations.
-    #[schemars(length(max = 8000))]
+    /// The answer prose with inline `[sN]` citations, under
+    /// [`MAX_ANSWER_CHARS`](crate::research::MAX_ANSWER_CHARS).
     pub(crate) answer: String,
-    /// Unanswered sub-questions / honest gaps.
-    #[schemars(length(max = 10), inner(length(max = 500)))]
+    /// Unanswered sub-questions / honest gaps. Assembly publishes the first
+    /// [`MAX_GAPS`](crate::research::MAX_GAPS), each cut to
+    /// [`MAX_GAP_CHARS`](crate::research::MAX_GAP_CHARS), after coverage has
+    /// been derived from every target (a run returning 12 gaps used to fail).
     pub(crate) gaps: Vec<String>,
     /// Index-aligned with [`Self::gaps`]: entry *i* is the 1-based
     /// sub-question that `gaps[i]` concerns, or `0` for none (021 FR-003).
@@ -83,7 +90,6 @@ pub(crate) struct SynthOut {
     /// `decide` uses between `option_scores` and `option_rationales`. Arity
     /// and range are checked at assembly, since JSON Schema cannot state a
     /// relation between two arrays.
-    #[schemars(length(max = 10))]
     pub(crate) gap_targets: Vec<u32>,
 }
 
