@@ -18,7 +18,9 @@ use crate::modes::CorrectiveMode;
 use crate::research::contract::{Disagreement, KeyFinding, Position, ResearchParams, StopReason};
 use crate::research::grounding;
 use crate::research::prompts::SynthOut;
-use crate::research::{RunMeter, ScopePlan, SourceRecord, Support, VerifiedClaim};
+use crate::research::{
+    RunMeter, ScopePlan, SourceRecord, Support, VerifiedClaim, MAX_ANSWER_CHARS,
+};
 use crate::schema::validate;
 use crate::traits::client::ModelClient;
 use std::collections::{BTreeMap, BTreeSet};
@@ -195,6 +197,20 @@ pub async fn synthesize_grounded(
             continue;
         }
 
+        // The answer bound is stated in the prompt but not in the grammar, so
+        // it is checked here and fed back rather than failing the run. Cutting
+        // the prose instead could drop citations mid-sentence.
+        let answer_chars = out.answer.chars().count();
+        if answer_chars > MAX_ANSWER_CHARS {
+            tracing::warn!(answer_chars, "synthesis answer over the length bound");
+            retry_clause = format!(
+                " YOUR PREVIOUS ATTEMPT WAS REJECTED: the answer was {answer_chars} \
+                 characters. It must be under {MAX_ANSWER_CHARS}; say less."
+            );
+            last_rejection = Rejection::Length;
+            continue;
+        }
+
         match grounding::ground(&out.answer, &finding_sources, fetched_ids) {
             Ok(grounded) => {
                 return Ok(Synthesized {
@@ -231,6 +247,12 @@ pub async fn synthesize_grounded(
             "The synthesis returned a malformed response after a retry; see key_findings \
              for the verified claims and gaps for what remains.",
         ),
+        Rejection::Length => (
+            StopReason::MalformedSynthesis,
+            "the synthesis returned an over-long answer twice and was demoted",
+            "The synthesis returned an over-long answer after a retry; see key_findings \
+             for the verified claims and gaps for what remains.",
+        ),
     };
     stop_reason.get_or_insert(reason);
     let mut gaps = vec![notice.to_string()];
@@ -259,6 +281,8 @@ enum Rejection {
     Grounding,
     /// `gaps` and `gap_targets` disagreed in length.
     Arity,
+    /// The answer exceeded `MAX_ANSWER_CHARS`.
+    Length,
 }
 
 /// What the synthesis phase produces: the prose, the gaps, the sub-question

@@ -51,6 +51,17 @@ arc.
 
 ### Fixed
 
+* **A research synthesis no longer fails the run on bounds the model never
+  saw** — `SynthOut` capped `gaps` and `gap_targets` at 10 items, each gap at
+  500 characters and the answer at 8 000, but the sanitizer strips those
+  bounds from the grammar and the prompt never stated them, so a live run that
+  returned 12 gaps ended in `validation_failure` after spending its budget.
+  The schema now carries no length bounds. The prompt states the answer and
+  gap limits; assembly publishes the first `MAX_GAPS` gaps, each cut to
+  `MAX_GAP_CHARS`, after coverage is derived from every target; and an
+  over-long answer is fed back once, then demoted as `malformedsynthesis`
+  rather than cut mid-citation.
+
 * **The routing startup table names the default variable the selected backend
   actually uses** — on `PARALLAX_BACKEND=openai_compat`, a call site that fell
   through to the default was reported as `source=ANTHROPIC_MODEL` even though

@@ -195,8 +195,8 @@ pub enum StopReason {
     /// The grounding gate demoted content after its retry.
     Grounding,
     /// The synthesis returned a malformed response twice — its gap list and
-    /// the sub-question keys for it disagreed in length — and was demoted
-    /// (021).
+    /// the sub-question keys for it disagreed in length (021), or its answer
+    /// exceeded the length bound — and was demoted.
     ///
     /// Distinct from [`Self::Grounding`] because the grounding gate is never
     /// reached on that path: reporting it as a grounding failure would tell

@@ -23,10 +23,9 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Output budget per model call.
 ///
 /// **Derived, not guessed** (018 D7 measurement procedure). The largest mode
-/// schema bounds its own output: research synthesis allows
-/// `MAX_ANSWER_CHARS` (8 000) answer characters plus `MAX_GAPS` × `MAX_GAP_CHARS`
-/// (10 × 500) of gaps — ~13 000 characters, or roughly **3 500 tokens** of
-/// answer before any reasoning. Every other mode schema is smaller. The budget
+/// output is research synthesis: `MAX_ANSWER_CHARS` (8 000) answer characters
+/// plus `MAX_GAPS` × `MAX_GAP_CHARS` (10 × 500) of published gaps — ~13 000
+/// characters, or roughly **3 500 tokens** of answer before any reasoning. Every other mode schema is smaller. The budget
 /// is set to ≥ 4× that floor, leaving the remainder for models that reason
 /// before answering.
 ///
