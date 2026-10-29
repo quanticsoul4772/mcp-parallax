@@ -43,7 +43,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # structured_content (T005/T006). Re-run the spike before any major bump.
 rmcp = { version = "3.0.1", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.1"
-jsonschema = "0.56.0"
+jsonschema = "0.60.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "stream"] }
@@ -59,7 +59,7 @@ evalexpr = "13"
 # regex matched over a non-symlink-following `walkdir` of the root. extglob
 # negation `!(...)` needs lookahead, which the RE2-style `regex` crate lacks —
 # hence `fancy-regex` (backtracking, supports lookahead).
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 walkdir = "2"
 
 # Observability: OTLP export (007) — the 0.32 release train, pinned together
