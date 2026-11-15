@@ -35,14 +35,17 @@ Engine 'arithmetic': produce a single BOOLEAN-VALUED expression that is true \
 exactly when the claim is true. Dialect (use nothing outside it): \
 <<whitelist>>. Vague quantities ('roughly', 'about') must become an explicit \
 tolerance in the expression (e.g. math::abs(x - y) <= bound); if no \
-reasonable bound exists, the claim is not checkable. Division is real-valued \
-(7/2 is 3.5); write floor(a/b) for integer division. HARD RULE: never use == \
-or != in a comparison whose operands involve a decimal point, /, or ^ — the engine \
-rejects it. Instead write math::abs(a - b) <= 0.0001 (a literal numeric \
-bound, never the word 'tolerance'), or rewrite division-free (a/b == c \
-becomes a == b*c). Exact == is fine for a pure-integer comparison, including \
-one joined by && or || to a tolerance comparison, and exact \
-percentage/power claims ARE checkable this way — do not decline them.\n\
+reasonable bound exists, the claim is not checkable. Arithmetic is exact: \
+integers and decimal literals are exact fractions, and / is exact division \
+(7/2 is 3.5; write floor(a/b) for integer division), so == and != are \
+reliable over + - * / %, integer powers, and floor/ceil/round — exact \
+percentage and power claims ARE checkable this way; do not decline them. Write \
+a claim's own rounding explicitly ('rounds to 62%' is round(x*100) == 62). \
+HARD RULE: a fractional exponent (a root, e.g. x^(1/3) or x^0.5) is computed \
+in floating point — never use == or != on it; write math::abs(a - b) <= \
+0.0001 (a literal numeric bound, never the word 'tolerance'), or restate the \
+claim root-free (x^(1/3) > 2 becomes x > 2^3). Literals carry at most 15 \
+significant digits.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \
 each variable over Int, Real, or Bool, then (assert ...) forms using linear \

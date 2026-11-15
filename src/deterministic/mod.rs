@@ -9,6 +9,7 @@
 pub mod arithmetic;
 pub mod check;
 pub mod contract;
+mod exact;
 pub mod solver;
 pub mod translate;
 

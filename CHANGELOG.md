@@ -83,20 +83,31 @@ arc.
 
 ### Fixed
 
-* **`check` no longer refutes true claims that divide integers** — evalexpr
-  truncates `int / int`, so `90/144` was `0` and `x^(1/3)` was `x^0`; a claim
-  such as "90/144 is within 0.005 of 0.625" came back `refuted`. Division is
-  now real-valued in the arithmetic dialect (`floor(a/b)` still truncates).
-  Integer literals are read as reals only inside a comparison that divides,
-  so integer comparisons elsewhere in the expression stay exact. Integer
-  division by zero is still a violation, not a verdict.
+* **`check` arithmetic is exact** — evalexpr still parses the expression, but
+  its tree is now evaluated over arbitrary-precision fractions
+  (`src/deterministic/exact.rs`) instead of i64/f64. This removes four classes
+  of confidently wrong verdict:
+  * integer division truncated (`90/144` was `0`, `x^(1/3)` was `x^0`), so
+    "90/144 is within 0.005 of 0.625" came back `refuted` (field report
+    2026-11-14);
+  * f64 rounding at a boundary (`0.1 + 0.2 <= 0.3` was false);
+  * `floor(7) == 7` was false (float against int);
+  * `1.0 / 0 > 0` was true (`inf`). Every division or remainder by zero is
+    now a violation.
 
-* **`check` evaluates bundled claims that mix integer equalities with
-  tolerance comparisons** — the float-equality guard looked at the whole
-  expression, so `(60+48==108) && (math::abs(90/144 - 0.62) <= 0.005)` was
-  rejected and failed after the retry. The guard now applies per comparison;
-  `==` over float-producing arithmetic is still rejected, and the message
-  names the offending comparison.
+  Because `==` and `!=` are exact, the whole-expression float-equality guard
+  is gone: bundles mixing integer equalities with tolerance comparisons, the
+  most frequent `check` failure in the field, are evaluated. Only a
+  fractional exponent has no exact value; it is computed in f64, `==`/`!=`
+  over it is rejected, and an ordering comparison or `floor`/`ceil`/`round`
+  too close to a boundary is rejected instead of answered. Also rejected:
+  anything outside the prompted dialect (variables, assignment, `if`,
+  strings, other functions — evalexpr used to evaluate these), literals the
+  parser would round (integers beyond i64, decimals over 15 significant
+  digits), and exact powers beyond `^4096` or about a million bits. `&&` and
+  `||` no longer short-circuit past an error. `num-rational`, `num-bigint`
+  and `num-traits` become direct dependencies; all three were already in the
+  lockfile.
 
 * **A research synthesis no longer fails the run on bounds the model never
   saw** — `SynthOut` capped `gaps` and `gap_targets` at 10 items, each gap at

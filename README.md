@@ -223,7 +223,7 @@ CI runs format, clippy, the test suite, an MSRV (1.94) build, the coverage gate,
 
 Parallax handles credentials and, when enabled, reaches the network — treat it accordingly:
 
-- **No code execution.** The deterministic layer evaluates formal targets with `evalexpr` and an in-process Z3; sandboxed code execution is deliberately deferred and off.
+- **No code execution.** The deterministic layer evaluates formal targets with an exact in-process arithmetic evaluator (parsed by `evalexpr`) and an in-process Z3; sandboxed code execution is deliberately deferred and off.
 - **Network egress is gated and off by default.** Research fetches happen only with `BRAVE_API_KEY` set and are SSRF-guarded (`FETCH_ALLOW_PRIVATE=false` blocks loopback/private/link-local targets). Telemetry egress happens only when an `OTEL_*` endpoint is set.
 - **The checkpoint layer reads transcript files** (bounded tail reads) and is off until you install the hooks. It is fail-open and never blocks an action on error or timeout.
 - **Secrets** are supplied via environment only and are never written to records or exported telemetry.

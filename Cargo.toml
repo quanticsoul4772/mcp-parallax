@@ -53,6 +53,11 @@ rs-trafilatura = "0.2.2"
 robotstxt = "0.3.0"
 z3 = { version = "0.23", features = ["bundled"] }
 evalexpr = "13"
+# Exact arithmetic for `check` (deterministic/exact.rs). All three were already
+# in the lockfile as transitive dependencies.
+num-rational = "0.4"
+num-bigint = "0.4"
+num-traits = "0.2"
 
 # Glob locators (009): the extended-glob grammar (incl. extglob) has no
 # off-the-shelf Rust crate, so a custom pattern->regex translator compiles to a
