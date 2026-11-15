@@ -651,7 +651,7 @@ impl Parallax {
     /// The `check` tool: checkable claims settled by execution, not judgment.
     #[tool(
         name = "check",
-        description = "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead."
+        description = "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. A claim that bundles several statements is checked part by part: parts holds each part's own verdict, form and result, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported, because nothing can confirm the parts cover every statement of the claim; read each part's verdict in parts. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead."
     )]
     pub async fn check(
         &self,
