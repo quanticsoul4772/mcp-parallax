@@ -1,0 +1,15 @@
+# cargo-audit configuration (read by `cargo audit` locally and in
+# .github/workflows/security.yml).
+
+[advisories]
+ignore = [
+    # libsqlite3-sys 0.37.0 bundles SQLite < 3.54 (CVE-2026-119375): a database
+    # opened with a `-wal` file of a different page size can return
+    # uninitialized page-cache memory. Not fixable by a version bump:
+    # sqlx-sqlite 0.9.0, the latest release, requires libsqlite3-sys < 0.38 and
+    # the fix is in 0.39. Exposure needs a database and `-wal` written by a
+    # less trusted party at DATABASE_PATH, which this server creates itself.
+    # REMOVE when a sqlx release accepts libsqlite3-sys >= 0.39 (sqlx main
+    # already does, as of 987b8c5a7, 2026-11-10), then bump sqlx.
+    "RUSTSEC-2026-0459",
+]

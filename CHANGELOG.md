@@ -49,6 +49,38 @@ arc.
   * `cargo test` stays green fully offline (wiremock); a live smoke per tool
     group runs only under `cargo test -- --ignored`.
 
+### Changed
+
+* **Dependency and toolchain refresh (2026-11)** — `rmcp` 3.4.0 → 3.10.0 with
+  the manifest floor raised to 3.10.0, clearing RUSTSEC-2026-0457, -0461 and
+  -0462 (all in transports this server does not enable, but the floor now
+  refuses the affected versions). rmcp 3.9 generates `Json<T>` output schemas
+  under the serialize contract, so bare `Option` result fields (`unstick`'s
+  `watch_for`, `check`'s `engine`/`formal_form`/`engine_result`/`witness`/
+  `reason`, the checkpoint `message`) are now listed as `required` in the
+  advertised `outputSchema`; they were always present in the payload (as
+  `null`), and the spec contracts already listed them. `jsonschema` 0.56 → 0.61, `fancy-regex`
+  0.19 → 0.20, `z3` 0.21 → 0.23 (bundled Z3 source 501 → 504), the
+  OpenTelemetry train 0.33.0 → 0.33.1, and every semver-compatible transitive
+  update, which clears the `quinn-udp`, `rustls-webpki`, `webpki-root-certs`,
+  `rustix` and `tokio` advisories. The pinned toolchain moves 1.98.0 → 1.100.0
+  in `rust-toolchain.toml` and both workflows together; MSRV stays 1.94.
+
+* **`opentelemetry-semantic-conventions` removed** — cargo 1.100's
+  `unused_dependencies` lint reported it; nothing in the crate imported it
+  (the attribute names are string constants in `src/observability.rs`).
+
+* **`clippy::assert_is_empty` allowed** — new in clippy 1.100, it fired at 43
+  test and example assertions and asks for `assert_eq!(x, [] as [T; 0])`.
+  Allowed by name in `Cargo.toml [lints]` and the `lib.rs` preamble.
+
+* **RUSTSEC-2026-0459 ignored by name in `.cargo/audit.toml`** (`libsqlite3-sys`
+  0.37, bundled SQLite < 3.54) — not fixable by a version bump: `sqlx-sqlite`
+  0.9.0, the latest release, requires `libsqlite3-sys < 0.38` and the fix is in
+  0.39. The bundled SQLite is unchanged; exposure needs a database file and
+  `-wal` written by a less trusted party at `DATABASE_PATH`. The entry states
+  its removal condition: a sqlx release that accepts `libsqlite3-sys >= 0.39`.
+
 ### Fixed
 
 * **A research synthesis no longer fails the run on bounds the model never

@@ -38,6 +38,7 @@
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::doc_markdown)] // Backticks in docs not required for all identifiers
+#![allow(clippy::assert_is_empty)] // See Cargo.toml [lints.clippy]: the cast form reads worse
 
 pub mod checkpoint;
 pub mod client;
