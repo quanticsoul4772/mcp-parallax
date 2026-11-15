@@ -35,12 +35,23 @@ Engine 'arithmetic': produce a single BOOLEAN-VALUED expression that is true \
 exactly when the claim is true. Dialect (use nothing outside it): \
 <<whitelist>>. Vague quantities ('roughly', 'about') must become an explicit \
 tolerance in the expression (e.g. math::abs(x - y) <= bound); if no \
-reasonable bound exists, the claim is not checkable. HARD RULE: never use == \
-or != when the expression involves a decimal point, /, or ^ — the engine \
-rejects it. Instead write math::abs(a - b) <= 0.0001 (a literal numeric \
-bound, never the word 'tolerance'), or rewrite division-free (a/b == c \
-becomes a == b*c). Exact == is fine for pure-integer arithmetic, and exact \
-percentage/power claims ARE checkable this way — do not decline them.\n\
+reasonable bound exists, the claim is not checkable. Arithmetic is exact: \
+integers and decimal literals are exact fractions, and / is exact division \
+(7/2 is 3.5; write floor(a/b) for integer division, never //), so == and != \
+are reliable over + - * / %, integer powers, and floor/ceil/round of those — \
+exact percentage and power claims ARE checkable this way; do not decline \
+them. Write a claim's own rounding explicitly ('rounds to 62%' is \
+round(x*100) == 62; round goes half away from zero). % is the truncated \
+remainder: its sign follows the left operand (-7 % 3 is -1). Parenthesise \
+chained powers: (a^b)^c or a^(b^c). HARD RULE: a fractional exponent (a \
+root, e.g. x^(1/3) or x^0.5) has no exact value — never use == or != on \
+anything computed from one; write math::abs(a - b) <= 0.0001 (a literal \
+numeric bound, never the word 'tolerance'), or better, restate the claim \
+root-free (x^(1/3) > 2 becomes x > 2^3). Call functions with parentheses, \
+and write numbers plainly in decimal, with every digit the claim gives and \
+no digit grouping (1000, not 1,000). Limits: values up to about 2,400 \
+digits, integer exponents up to 4096 (64 on a root), fractional exponents \
+up to 64.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \
 each variable over Int, Real, or Bool, then (assert ...) forms using linear \

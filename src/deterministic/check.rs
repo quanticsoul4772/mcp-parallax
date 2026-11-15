@@ -138,32 +138,39 @@ async fn run_spent(
                     output_tokens,
                 ));
             }
-            Translation::Arithmetic { expression } => match arithmetic::evaluate(&expression) {
-                Ok(outcome) => {
-                    let verdict = if outcome.holds {
-                        Verdict::Supported
-                    } else {
-                        Verdict::Refuted
-                    };
-                    return Ok((
-                        CheckResult {
-                            explanation: explain_arithmetic(&expression, verdict),
-                            verdict,
-                            engine: Some(Engine::Arithmetic),
-                            formal_form: Some(expression),
-                            engine_result: Some(outcome.result_text),
-                            witness: None,
-                            reason: None,
-                            translation_attempts: attempt,
-                        },
-                        input_tokens,
-                        output_tokens,
-                    ));
+            Translation::Arithmetic { expression } => {
+                // Exact arithmetic is blocking CPU work, like Z3 below.
+                let form = expression.clone();
+                let evaluated = tokio::task::spawn_blocking(move || arithmetic::evaluate(&form))
+                    .await
+                    .map_err(|e| AppError::Client(format!("arithmetic task failed: {e}")))?;
+                match evaluated {
+                    Ok(outcome) => {
+                        let verdict = if outcome.holds {
+                            Verdict::Supported
+                        } else {
+                            Verdict::Refuted
+                        };
+                        return Ok((
+                            CheckResult {
+                                explanation: explain_arithmetic(&expression, verdict),
+                                verdict,
+                                engine: Some(Engine::Arithmetic),
+                                formal_form: Some(expression),
+                                engine_result: Some(outcome.result_text),
+                                witness: None,
+                                reason: None,
+                                translation_attempts: attempt,
+                            },
+                            input_tokens,
+                            output_tokens,
+                        ));
+                    }
+                    Err(v) => {
+                        violation = Some(v);
+                    }
                 }
-                Err(v) => {
-                    violation = Some(v);
-                }
-            },
+            }
             Translation::Constraints { smtlib, asserted } => {
                 // Z3 is blocking CPU work — keep it off the async workers.
                 let script = smtlib.clone();

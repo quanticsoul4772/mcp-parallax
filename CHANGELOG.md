@@ -83,6 +83,48 @@ arc.
 
 ### Fixed
 
+* **`check` arithmetic is exact** — evalexpr still parses the expression, but
+  its tree is now evaluated over arbitrary-precision fractions
+  (`src/deterministic/exact.rs`) instead of i64/f64. This removes four classes
+  of confidently wrong verdict:
+  * integer division truncated (`90/144` was `0`, `x^(1/3)` was `x^0`), so
+    "90/144 is within 0.005 of 0.625" came back `refuted` (field report
+    2026-11-14);
+  * f64 rounding at a boundary (`0.1 + 0.2 <= 0.3` was false);
+  * `floor(7) == 7` was false (float against int);
+  * `1.0 / 0 > 0` was true (`inf`). Every division or remainder by zero is
+    now a violation.
+
+  Because `==` and `!=` are exact, the whole-expression float-equality guard
+  is gone: bundles mixing integer equalities with tolerance comparisons, the
+  most frequent `check` failure in the field, are evaluated.
+
+  Only a fractional exponent has no exact value. It becomes a pair of exact
+  bounds around its f64 result (one part in 10^9 either side), and the bounds
+  are carried through all later arithmetic as exact interval arithmetic, so
+  scaling or cancelling a root can never turn rounding noise into a verdict.
+  A comparison is answered only when the two ranges do not overlap;
+  `==`/`!=`, and a `floor`/`ceil`/`round` whose bounds round differently, are
+  rejected.
+
+  Rejected rather than evaluated, where evalexpr would have returned a value:
+  variables, assignment, `;` chains, `if`, strings, functions outside the six
+  in the dialect, `//` and `/* */` comments (a Python-style `7 // 2` used to
+  drop the divisor), chained powers `a^b^c` (evalexpr reads `(a^b)^c`),
+  paren-less calls (`floor 7/2` is `floor(7)/2`), zero-padded or
+  digit-grouped integers (`max(1,000, 2)` has three arguments),
+  non-decimal literals such as hex, and nested or oversized powers. Numeric
+  literals are read from the expression text, not from evalexpr's rounded
+  `f64`, so a 17-digit Python float or an integer past i64 keeps every
+  digit. Bounded so no input within the length cap can
+  hang or crash the server: values up to 8,192 bits (about 2,400 digits),
+  integer exponents up to 4096, tree depth up to 500, on a dedicated 32 MB
+  stack and off the async workers (`spawn_blocking`, as Z3 already was). `&&` and `||`
+  no longer short-circuit past an error. A bare `true` is still accepted.
+
+  `num-rational`, `num-bigint` and `num-traits` become direct dependencies;
+  all three were already in the lockfile.
+
 * **A research synthesis no longer fails the run on bounds the model never
   saw** — `SynthOut` capped `gaps` and `gap_targets` at 10 items, each gap at
   500 characters and the answer at 8 000, but the sanitizer strips those
