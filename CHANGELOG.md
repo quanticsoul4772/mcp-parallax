@@ -74,11 +74,12 @@ arc.
   test and example assertions and asks for `assert_eq!(x, [] as [T; 0])`.
   Allowed by name in `Cargo.toml [lints]` and the `lib.rs` preamble.
 
-* **Open advisory: RUSTSEC-2026-0459 (`libsqlite3-sys` 0.37, bundled SQLite
-  < 3.54)** — not fixable here: `sqlx-sqlite` 0.9.0, the latest release,
-  requires `libsqlite3-sys < 0.38` and the fix is in 0.39. `cargo audit`
-  reports it until sqlx ships a release that lifts the cap. Exposure needs a
-  database file and `-wal` written by a less trusted party at `DATABASE_PATH`.
+* **RUSTSEC-2026-0459 ignored by name in `.cargo/audit.toml`** (`libsqlite3-sys`
+  0.37, bundled SQLite < 3.54) — not fixable by a version bump: `sqlx-sqlite`
+  0.9.0, the latest release, requires `libsqlite3-sys < 0.38` and the fix is in
+  0.39. The bundled SQLite is unchanged; exposure needs a database file and
+  `-wal` written by a less trusted party at `DATABASE_PATH`. The entry states
+  its removal condition: a sqlx release that accepts `libsqlite3-sys >= 0.39`.
 
 ### Fixed
 
