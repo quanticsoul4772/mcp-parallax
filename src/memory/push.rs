@@ -325,7 +325,7 @@ mod tests {
                 memory(
                     &format!("m{i}"),
                     Trust::FirstHand,
-                    vec![x, (1.0 - x * x).max(0.0).sqrt()],
+                    vec![x, x.mul_add(-x, 1.0).max(0.0).sqrt()],
                 )
             })
             .collect();

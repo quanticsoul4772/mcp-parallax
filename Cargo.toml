@@ -39,11 +39,11 @@ async-trait = "0.1"
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# 1.7.0 validated by examples/spike_roundtrip.rs: Json<T> emits outputSchema +
+# Validated by examples/spike_roundtrip.rs (first on 1.7.0): Json<T> emits outputSchema +
 # structured_content (T005/T006). Re-run the spike before any major bump.
-rmcp = { version = "3.0.1", features = ["server", "macros", "transport-io", "schemars"] }
+rmcp = { version = "3.10.0", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.1"
-jsonschema = "0.56.0"
+jsonschema = "0.61.2"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "stream"] }
@@ -51,7 +51,7 @@ futures = "0.3.32"
 tokio-util = "0.7.18"
 rs-trafilatura = "0.2.2"
 robotstxt = "0.3.0"
-z3 = { version = "0.21", features = ["bundled"] }
+z3 = { version = "0.23", features = ["bundled"] }
 evalexpr = "13"
 
 # Glob locators (009): the extended-glob grammar (incl. extglob) has no
@@ -59,10 +59,10 @@ evalexpr = "13"
 # regex matched over a non-symlink-following `walkdir` of the root. extglob
 # negation `!(...)` needs lookahead, which the RE2-style `regex` crate lacks —
 # hence `fancy-regex` (backtracking, supports lookahead).
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 walkdir = "2"
 
-# Observability: OTLP export (007) — the 0.32 release train, pinned together
+# Observability: OTLP export (007) — the 0.33 release train, pinned together
 # (the ecosystem breaks API across minors; research.md 007 D1). http-proto +
 # blocking reqwest is the documented pairing for the SDK's background-thread
 # batch processors; rustls rides the in-tree stack; no tonic, no protoc.
@@ -78,12 +78,11 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = [
     "reqwest-blocking-client",
     "internal-logs",
 ] }
-opentelemetry-semantic-conventions = { version = "0.33", features = ["semconv_experimental"] }
 
 [dev-dependencies]
 # Trait mocking — the whole server tests without network or disk
 mockall = "0.15"
-rmcp = { version = "3.0.1", features = ["client"] }
+rmcp = { version = "3.10.0", features = ["client"] }
 wiremock = "0.6.5"
 # Transcript fixtures for FsTrajectoryReader tests (checkpoint layer)
 tempfile = "3"
@@ -107,6 +106,10 @@ panic = "deny"
 # stdout is the MCP JSON-RPC channel — a stray print corrupts the protocol.
 print_stdout = "deny"
 dbg_macro = "deny"
+# clippy 1.100 (nursery): wants every `assert!(x.is_empty())` rewritten as
+# `assert_eq!(x, [] as [T; 0])`. 43 sites, all in tests and examples; the cast
+# form reads worse than the assertion it replaces. Declared here and in lib.rs.
+assert_is_empty = "allow"
 
 # Z3's Debug C++ build opens `.z3-trace` in the process cwd from a global
 # initializer (artifact pollution for a stdio server running in the client's
