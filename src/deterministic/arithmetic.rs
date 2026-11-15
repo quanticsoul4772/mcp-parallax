@@ -88,6 +88,12 @@ mod tests {
             ("7 / 2 != 3.5", false),
             ("0.1 + 0.2 == 0.3", true),
             ("1e3 == 1000", true),
+            // Field form 2026-10-29: an indicator vector spelled as booleans.
+            (
+                "((141<=12)==false) && ((9<=12)==true) && ((1<2) != (2<1))",
+                true,
+            ),
+            ("(1 < 2) == (2 < 1)", false),
             ("floor(7) == 7 && round(5) == 5 && ceil(7) != 8", true),
             ("(60+48==108) && (math::abs(90/144 - 0.62) <= 0.005)", true),
             ("(60+48==109) && (math::abs(90/144 - 0.62) <= 0.005)", false),
@@ -225,6 +231,7 @@ mod tests {
             ("\"a\" == \"a\"", "not in the dialect"),
             ("1 + true > 0", "boolean was used where a number"),
             ("!3", "number was used where a boolean"),
+            ("(1 < 2) == 1", "between a number and a boolean"),
             ("floor(1, 2) > 0", "was given 2 arguments"),
             ("", "empty expression"),
         ] {

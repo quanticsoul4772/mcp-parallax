@@ -248,18 +248,23 @@ fn eval_node(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Val,
             power(&a, &b).map(Val::Num)
         }
         Operator::Eq | Operator::Neq => {
-            let (a, b) = numbers(children, depth, literals)?;
-            let (Num::Exact(a), Num::Exact(b)) = (a, b) else {
-                return Err(
-                    "== or != over a fractional power, which has no exact value - rewrite \
-                     the comparison as math::abs(a - b) <= 0.0001 (an explicit numeric \
-                     tolerance)"
-                        .to_owned(),
-                );
+            let [a, b] = children else {
+                return Err("malformed operator".to_owned());
             };
-            Ok(Val::Bool(
-                (a == b) == matches!(node.operator(), Operator::Eq),
-            ))
+            let equal = match (eval(a, depth, literals)?, eval(b, depth, literals)?) {
+                (Val::Bool(a), Val::Bool(b)) => a == b,
+                (Val::Num(Num::Exact(a)), Val::Num(Num::Exact(b))) => a == b,
+                (Val::Num(_), Val::Num(_)) => {
+                    return Err(
+                        "== or != over a fractional power, which has no exact value - \
+                         rewrite the comparison as math::abs(a - b) <= 0.0001 (an explicit \
+                         numeric tolerance)"
+                            .to_owned(),
+                    );
+                }
+                _ => return Err("== or != between a number and a boolean".to_owned()),
+            };
+            Ok(Val::Bool(equal == matches!(node.operator(), Operator::Eq)))
         }
         Operator::Gt | Operator::Lt | Operator::Geq | Operator::Leq => {
             let (a, b) = numbers(children, depth, literals)?;
