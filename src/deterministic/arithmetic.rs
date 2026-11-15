@@ -257,6 +257,15 @@ mod tests {
             ("1e3 == 1000 && 1.5E+3 == 1500 && 25e-1 == 2.5", true),
             (".5 == 1/2 && 5. == 5 && 0.50 == .5", true),
             (
+                "max(1, 500, 2) == 500 && min(12, 5) == 5 && max(1,2,3) == 3",
+                true,
+            ),
+            // Twelve literals: table indices past one digit.
+            (
+                "1+2+3+4+5+6+7+8+9+10+11 == 66 && 0.5 + 12.25 == 12.75",
+                true,
+            ),
+            (
                 "1.000000000000000 == 1 && 100000000000000000000.0 > 0",
                 true,
             ),
@@ -270,10 +279,14 @@ mod tests {
         for (expression, reason) in [
             ("0x10 == 16", "not a decimal number"),
             ("1.2.3 > 0", "not a decimal number"),
-            ("2e > 0", "not a decimal number"),
+            ("2e > 0", "malformed exponent"),
             ("1_000 > 0", "not a decimal number"),
-            ("1e999999999 > 0", "engine can hold"),
-            ("max(1,000, 2) == 2", "leading zero"),
+            ("1e999999999 > 0", "malformed exponent or one beyond"),
+            ("1e-2147483648 > 0", "malformed exponent or one beyond"), // i32::MIN
+            ("max(12,500, 9,800) > 12000", "digit grouping"),
+            ("min(2,345, 3000) == 2", "digit grouping"),
+            ("max(1,250, 900) == 1250", "digit grouping"),
+            ("max(1,000, 2) == 2", "digit grouping"),
             ("007 == 7", "leading zero"),
             ("1e2400 * 1e2400 > 0", "size limit"),
         ] {

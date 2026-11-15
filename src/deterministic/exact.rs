@@ -27,8 +27,9 @@ const RANGE_EXPONENT_MAX: u32 = 64;
 /// Largest numerator or denominator, in bits, any value may reach. Bounds
 /// both memory and the cost of each operation (about 2,400 decimal digits).
 const VALUE_MAX_BITS: u64 = 1 << 13;
-/// Largest power-of-ten exponent a literal may carry (`1e2000`).
-const LITERAL_EXPONENT_MAX: i32 = 2_500;
+/// Largest power-of-ten exponent a literal may carry. Larger than any value
+/// the size limit admits, so the limit that matters is `VALUE_MAX_BITS`.
+const LITERAL_EXPONENT_MAX: u32 = 2_500;
 /// A fractional power is bracketed by its `f64` value ± one part in this.
 /// The `f64` result is within about 1e-11 of the truth for the admitted
 /// operands (correctly rounded inputs, |exponent| <= 64, a libm `pow` good to
@@ -116,6 +117,7 @@ fn lift_literals(expression: &str) -> Result<(String, Vec<BigRational>), String>
     let mut rewritten = String::with_capacity(expression.len());
     let mut literals = Vec::new();
     let mut previous_is_word = false;
+    let mut previous_literal: Option<(usize, usize)> = None;
     let mut chars = expression.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
         if previous_is_word || !(c.is_ascii_digit() || c == '.') {
@@ -139,8 +141,28 @@ fn lift_literals(expression: &str) -> Result<(String, Vec<BigRational>), String>
             end = at + next.len_utf8();
             chars.next();
         }
+        // `max(12,500, 9)` would read as three arguments. A bare 3-digit
+        // literal straight after `<1-3 digits>,` is taken for a digit group.
+        let token = &expression[start..end];
+        let is_group = |t: &str, lengths: std::ops::RangeInclusive<usize>| {
+            lengths.contains(&t.len()) && t.chars().all(|d| d.is_ascii_digit())
+        };
+        if let Some((previous_start, previous_end)) = previous_literal {
+            if previous_end + 1 == start
+                && expression[previous_end..].starts_with(',')
+                && is_group(token, 3..=3)
+                && is_group(&expression[previous_start..previous_end], 1..=3)
+            {
+                return Err(format!(
+                    "`{}` looks like a number with digit grouping - write it without the \
+                     comma, or put a space after the comma if these are two arguments",
+                    &expression[previous_start..end]
+                ));
+            }
+        }
+        previous_literal = Some((start, end));
         rewritten.push_str(&literals.len().to_string());
-        literals.push(literal(&expression[start..end])?);
+        literals.push(literal(token)?);
         previous_is_word = true;
     }
     Ok((rewritten, literals))
@@ -156,9 +178,12 @@ fn literal(token: &str) -> Result<BigRational, String> {
             exponent
                 .parse::<i32>()
                 .ok()
-                .filter(|e| e.abs() <= LITERAL_EXPONENT_MAX)
+                .filter(|e| e.unsigned_abs() <= LITERAL_EXPONENT_MAX)
                 .ok_or_else(|| {
-                    format!("the literal {token} is not a decimal number the engine can hold")
+                    format!(
+                        "the literal {token} has a malformed exponent or one beyond \
+                         ±{LITERAL_EXPONENT_MAX}"
+                    )
                 })?,
         ),
         None => (token, 0),
@@ -171,7 +196,8 @@ fn literal(token: &str) -> Result<BigRational, String> {
     // `1,000` arrives as `1` and `000`: a digit group, not a number.
     if whole.len() > 1 && whole.starts_with('0') {
         return Err(format!(
-            "the literal {token} has a leading zero - write numbers without digit grouping              or padding"
+            "the literal {token} has a leading zero - write numbers without digit grouping \
+             or padding"
         ));
     }
     let digits = format!("{whole}{fraction}")
@@ -521,7 +547,8 @@ fn root(base: &Num, exponent: &BigRational) -> Result<Num, String> {
         };
     }
     let out_of_range = || {
-        "a fractional power whose base or result is outside the range of a 64-bit float \n         is not supported"
+        "a fractional power whose base or result is outside the range of a 64-bit float \
+         is not supported"
             .to_owned()
     };
     let as_float = |r: &BigRational| r.to_f64().filter(|f| f.is_normal());
