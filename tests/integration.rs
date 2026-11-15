@@ -1501,24 +1501,6 @@ async fn mount_check_translation(mock: &MockServer, translation: Value) {
         .await;
 }
 
-/// A translator reply in its index-aligned wire shape, one tuple per part:
-/// (text, checkable, reason, engine, form, asserted).
-fn check_parts(parts: &[(&str, bool, &str, &str, &str, &str)]) -> Value {
-    json!({
-        "parts": parts.iter().map(|p| p.0).collect::<Vec<_>>(),
-        "checkable": parts.iter().map(|p| p.1).collect::<Vec<_>>(),
-        "reasons": parts.iter().map(|p| p.2).collect::<Vec<_>>(),
-        "engines": parts.iter().map(|p| p.3).collect::<Vec<_>>(),
-        "forms": parts.iter().map(|p| p.4).collect::<Vec<_>>(),
-        "asserted": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
-    })
-}
-
-/// A one-part arithmetic reply.
-fn check_arithmetic(expression: &str) -> Value {
-    check_parts(&[("the claim", true, "", "arithmetic", expression, "")])
-}
-
 // ---- T008: catalog — check is always on, no keys required (SC-005) ---------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1559,7 +1541,11 @@ async fn check_arithmetic_round_trip_returns_an_engine_decided_verdict() {
     let mock = MockServer::start().await;
     mount_check_translation(
         &mock,
-        check_arithmetic("math::abs(1840 * 0.63 - 1159.2) <= 0.001"),
+        json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "math::abs(1840 * 0.63 - 1159.2) <= 0.001",
+            "smtlib_constraints": null, "asserted": null
+        }),
     )
     .await;
     let (client, storage, _server) = serve(&mock, 2_000).await;
@@ -1583,12 +1569,6 @@ async fn check_arithmetic_round_trip_returns_an_engine_decided_verdict() {
         .contains("math::abs"));
     assert_eq!(structured["engine_result"], "true");
     assert_eq!(structured["translation_attempts"], 1);
-    // A single claim is one part carrying the same form.
-    assert_eq!(structured["parts"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        structured["parts"][0]["formal_form"],
-        structured["formal_form"]
-    );
 
     let records = storage.list_invocations().await.unwrap();
     assert_eq!(records.len(), 1);
@@ -1604,14 +1584,12 @@ async fn check_refuted_impossibility_carries_the_solver_witness() {
     let mock = MockServer::start().await;
     mount_check_translation(
         &mock,
-        check_parts(&[(
-            "the claim",
-            true,
-            "",
-            "constraints",
-            "(declare-const a Int)\n(declare-const b Int)\n(declare-const c Int)\n(assert (< a b))\n(assert (< b c))\n(assert (< c a))",
-            "unsatisfiable",
-        )]),
+        json!({
+            "checkable": true, "reason": null, "engine": "constraints",
+            "arithmetic_expression": null,
+            "smtlib_constraints": "(declare-const a Int)\n(declare-const b Int)\n(declare-const c Int)\n(assert (< a b))\n(assert (< b c))\n(assert (< c a))",
+            "asserted": "unsatisfiable"
+        }),
     )
     .await;
     let (client, _storage, _server) = serve(&mock, 5_000).await;
@@ -1644,14 +1622,11 @@ async fn check_declines_uncheckable_claims_with_one_success_record() {
     let mock = MockServer::start().await;
     mount_check_translation(
         &mock,
-        check_parts(&[(
-            "the claim",
-            false,
-            "elegance is a judgment call",
-            "",
-            "",
-            "",
-        )]),
+        json!({
+            "checkable": false, "reason": "elegance is a judgment call",
+            "engine": null, "arithmetic_expression": null,
+            "smtlib_constraints": null, "asserted": null
+        }),
     )
     .await;
     let (client, storage, _server) = serve(&mock, 2_000).await;
@@ -1679,80 +1654,6 @@ async fn check_declines_uncheckable_claims_with_one_success_record() {
     client.cancel().await.unwrap();
 }
 
-// ---- Per-claim results: a bundle through the wire ---------------------------
-
-/// A bundle with one true part, one part no engine can settle, and one false
-/// part: the false part refutes the claim, every part is reported on its own,
-/// and the whole response still satisfies the published contract.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn check_reports_each_part_of_a_bundle_and_matches_the_contract() {
-    let mock = MockServer::start().await;
-    mount_check_translation(
-        &mock,
-        check_parts(&[
-            (
-                "3 x 2.5 is 7.5",
-                true,
-                "",
-                "arithmetic",
-                "3 * 2.5 == 7.5",
-                "",
-            ),
-            (
-                "the plan is tidy",
-                false,
-                "tidiness is a judgment",
-                "",
-                "",
-                "",
-            ),
-            (
-                "135 / 60 is 2.5",
-                true,
-                "",
-                "arithmetic",
-                "135 / 60 == 2.5",
-                "",
-            ),
-        ]),
-    )
-    .await;
-    let (client, storage, _server) = serve(&mock, 2_000).await;
-
-    let result = client
-        .call_tool(tool_call(
-            "check",
-            &json!({ "claim": "3 x 2.5 = 7.5, the plan is tidy, and 135 / 60 = 2.5" }),
-        ))
-        .await
-        .unwrap();
-    let structured = result.structured_content.as_ref().unwrap();
-
-    let contract: Value = serde_json::from_str(CHECK_CONTRACT).unwrap();
-    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
-    assert_eq!(structured["verdict"], "refuted");
-    assert!(structured["engine"].is_null());
-    assert_eq!(
-        structured["engine_result"],
-        "[1] true\n[2] (not checked)\n[3] false"
-    );
-    let verdicts: Vec<&str> = structured["parts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|part| part["verdict"].as_str().unwrap())
-        .collect();
-    assert_eq!(verdicts, ["supported", "not_checkable", "refuted"]);
-    assert_eq!(structured["parts"][1]["reason"], "tidiness is a judgment");
-    assert_eq!(structured["parts"][2]["formal_form"], "135 / 60 == 2.5");
-
-    // Still one translation call and one record for the whole bundle.
-    assert_eq!(mock.received_requests().await.unwrap().len(), 1);
-    assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
-
-    client.cancel().await.unwrap();
-}
-
 // ---- T010: the feedback loop end to end --------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1764,19 +1665,21 @@ async fn check_recovers_from_a_malformed_translation_via_one_violation_fed_retry
         .and(path("/v1/messages"))
         .and(body_string_contains("deterministic checking"))
         .and(body_string_contains("REJECTED"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(end_turn(&check_arithmetic("math::abs(2.0 - 2.0) <= 0.1"))),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "math::abs(2.0 - 2.0) <= 0.1",
+            "smtlib_constraints": null, "asserted": null
+        }))))
         .mount(&mock)
         .await;
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
         .and(body_string_contains("deterministic checking"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(end_turn(&check_arithmetic("abs(2.0 - 2.0) <= 0.1"))),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "abs(2.0 - 2.0) <= 0.1",
+            "smtlib_constraints": null, "asserted": null
+        }))))
         .mount(&mock)
         .await;
     let (client, storage, _server) = serve(&mock, 2_000).await;
@@ -1799,7 +1702,15 @@ async fn check_recovers_from_a_malformed_translation_via_one_violation_fed_retry
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn check_double_translation_failure_surfaces_as_validation_failure() {
     let mock = MockServer::start().await;
-    mount_check_translation(&mock, check_arithmetic("((( not an expression")).await;
+    mount_check_translation(
+        &mock,
+        json!({
+            "checkable": true, "reason": null, "engine": "arithmetic",
+            "arithmetic_expression": "((( not an expression",
+            "smtlib_constraints": null, "asserted": null
+        }),
+    )
+    .await;
     let (client, storage, _server) = serve(&mock, 2_000).await;
 
     let err = client
