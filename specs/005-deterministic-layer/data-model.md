@@ -29,11 +29,12 @@ Field consistency (server-guaranteed), for every entry of `parts` and for the
 top level of a one-part claim: verdict ≠ not_checkable ⇒ engine, formal_form,
 engine_result present; verdict = not_checkable ⇒ reason present,
 engine/formal_form/engine_result/witness null. For a bundle of two or more
-parts the top level is a summary: verdict is refuted if any part is refuted,
-supported only if every part is supported, not_checkable otherwise;
-formal_form and engine_result hold one `[n] …` line per part whenever any part
-was executed; witness lists only the parts that have one; reason lists the
-parts that were not checked, and only when the verdict is not_checkable.
+parts the top level is a summary: verdict is refuted if any part is refuted
+and not_checkable otherwise — never supported, because nothing can confirm the
+parts cover every statement of the claim; formal_form and engine_result hold
+one `[n] …` line per part whenever any part was executed; witness lists only
+the parts that have one; reason, only when the verdict is not_checkable, is a
+sentence about that coverage followed by the parts that were not checked.
 
 ## 3. Model-hop schema (flat + closed — Principle II)
 

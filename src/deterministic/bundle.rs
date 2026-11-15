@@ -4,18 +4,21 @@
 //! part's fields through unchanged, so a single claim reads exactly as it did
 //! before bundles existed. Two or more parts get a summary on top.
 //!
-//! The top-level verdict of a bundle is a conjunction read cautiously:
-//! `refuted` if any part is refuted, `supported` only if every part is
-//! supported, `not_checkable` otherwise. Parts that held beside a part that
-//! could not be checked therefore never surface as `supported` — a caller
-//! reading only the top-level verdict must not take an unchecked part as
-//! verified.
+//! The top-level verdict of a bundle is `refuted` if any part is refuted and
+//! `not_checkable` otherwise — never `supported`. The model chose the parts
+//! and nothing can confirm they cover the whole claim, so a caller reading
+//! only the top-level verdict must not take an unchecked or omitted statement
+//! as verified. What each part showed is in `parts`.
 
 use crate::deterministic::contract::{CheckResult, PartResult};
 use crate::deterministic::{Engine, Verdict};
 
 /// The placeholder line for a part no engine executed.
 const NOT_CHECKED: &str = "(not checked)";
+/// Why a bundle is never supported as a whole — the first line of its reason.
+const COVERAGE: &str = "the parts were checked separately; nothing can confirm they cover every \
+                        statement in the claim, so the claim as a whole is not reported as \
+                        supported — read each part's verdict in parts";
 /// The reason given when there are no parts at all.
 const NO_PARTS: &str = "the translation produced no parts, so nothing was checked";
 
@@ -65,9 +68,13 @@ pub fn assemble(checked: Vec<Checked>, translation_attempts: u32) -> CheckResult
         explanation: explain(&parts, verdict),
         reason: (verdict == Verdict::NotCheckable).then(|| {
             if parts.is_empty() {
-                NO_PARTS.to_string()
+                return NO_PARTS.to_string();
+            }
+            let declined = lines(&parts, |p| p.reason.as_deref(), false);
+            if declined.is_empty() {
+                COVERAGE.to_string()
             } else {
-                lines(&parts, |p| p.reason.as_deref(), false)
+                format!("{COVERAGE}\n{declined}")
             }
         }),
         translation_attempts,
@@ -75,15 +82,18 @@ pub fn assemble(checked: Vec<Checked>, translation_attempts: u32) -> CheckResult
     }
 }
 
-/// Any refuted part refutes the bundle; only all-supported supports it.
+/// Any refuted part refutes the bundle; nothing else is more than
+/// `NotCheckable`. A bundle is never `Supported`.
 ///
-/// No parts at all is `NotCheckable`: "every part is supported" is true of
-/// nothing, and nothing checked must never read as supported.
+/// The translating model chose the parts, and no computation can confirm
+/// they cover every statement of the claim: a statement it left out would be
+/// reported supported without ever reaching an engine. A refutation needs no
+/// such coverage — one false part makes the claim false whatever was omitted.
+/// (A one-part claim never reaches this function; `assemble` passes it
+/// through.)
 fn bundle_verdict(parts: &[PartResult]) -> Verdict {
     if parts.iter().any(|p| p.verdict == Verdict::Refuted) {
         Verdict::Refuted
-    } else if !parts.is_empty() && parts.iter().all(|p| p.verdict == Verdict::Supported) {
-        Verdict::Supported
     } else {
         Verdict::NotCheckable
     }
@@ -129,15 +139,11 @@ fn lines(
 /// Deterministic bundle explanation — counts and the rule, never model text.
 fn explain(parts: &[PartResult], verdict: Verdict) -> String {
     let count = |wanted: Verdict| parts.iter().filter(|p| p.verdict == wanted).count();
-    let rule = match verdict {
-        Verdict::Supported => "Every part holds as formalized, so the claim is supported.",
-        Verdict::Refuted => {
-            "At least one part does not hold as formalized, so the claim is refuted."
-        }
-        Verdict::NotCheckable => {
-            "No part was refuted, but not every part could be checked, so the claim as a \
-             whole is not verified."
-        }
+    let rule = if verdict == Verdict::Refuted {
+        "At least one part does not hold as formalized, so the claim is refuted."
+    } else {
+        "No part was refuted. A claim checked in parts is never reported as supported as a \
+         whole, because nothing can confirm the parts cover every statement in it."
     };
     format!(
         "The claim was checked as {} parts: {} supported, {} refuted, {} not checked. {rule} \
@@ -178,12 +184,65 @@ mod tests {
         assemble(checked, 1).verdict
     }
 
-    /// The whole truth table of the conjunction rule over two parts.
+    /// A bundle whose parts all hold is NOT supported as a whole: the model
+    /// chose the parts, and nothing can confirm they cover every statement of
+    /// the claim. A statement it left out would otherwise pass unchecked.
     #[test]
-    fn the_bundle_verdict_is_a_cautious_conjunction() {
+    fn a_bundle_whose_parts_all_hold_is_not_checkable_with_the_coverage_reason() {
+        let all_held = |count: usize| {
+            let checked = (0..count)
+                .map(|_| Checked {
+                    part: part(Verdict::Supported),
+                    explanation: "single".to_string(),
+                })
+                .collect();
+            assemble(checked, 1)
+        };
+        for count in [2, 3, 12] {
+            let result = all_held(count);
+            assert_eq!(result.verdict, Verdict::NotCheckable, "{count} parts");
+            assert_eq!(result.reason.as_deref(), Some(COVERAGE), "{count} parts");
+            assert!(
+                result.explanation.contains("never reported as supported"),
+                "{}",
+                result.explanation
+            );
+            // What each part showed is untouched.
+            assert!(result.parts.iter().all(|p| p.verdict == Verdict::Supported));
+            assert_eq!(result.engine, Some(Engine::Arithmetic));
+            assert!(result.formal_form.is_some() && result.engine_result.is_some());
+        }
+        // One part is a single claim, settled as it always was.
+        assert_eq!(all_held(1).verdict, Verdict::Supported);
+
+        // Beside an unchecked part the coverage sentence comes first, then
+        // that part's own reason.
+        let mixed = assemble(
+            vec![
+                Checked {
+                    part: part(Verdict::Supported),
+                    explanation: String::new(),
+                },
+                Checked {
+                    part: part(Verdict::NotCheckable),
+                    explanation: String::new(),
+                },
+            ],
+            1,
+        );
+        assert_eq!(
+            mixed.reason.as_deref(),
+            Some(format!("{COVERAGE}\n[2] why").as_str())
+        );
+    }
+
+    /// The whole truth table over two parts: any refuted part refutes, and
+    /// nothing else is ever more than `not_checkable`.
+    #[test]
+    fn the_bundle_verdict_is_refuted_or_not_checkable_never_supported() {
         use Verdict::{NotCheckable as N, Refuted as R, Supported as S};
         for (verdicts, expected) in [
-            ([S, S], S),
+            ([S, S], N),
             ([S, R], R),
             ([R, S], R),
             ([R, R], R),

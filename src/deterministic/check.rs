@@ -636,7 +636,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_bundle_whose_parts_all_hold_is_supported() {
+    async fn a_bundle_whose_parts_all_hold_is_not_supported_as_a_whole() {
         let result = check_bundle(&[
             (
                 "3 x 2.5 is 7.5",
@@ -649,14 +649,21 @@ mod tests {
             ("7.5 is at most 30", true, "", "arithmetic", "7.5 <= 30", ""),
         ])
         .await;
-        assert_eq!(result.verdict, Verdict::Supported);
+        assert_eq!(result.verdict, Verdict::NotCheckable);
         assert_eq!(result.engine, Some(Engine::Arithmetic));
         assert_eq!(
             result.formal_form.as_deref(),
             Some("[1] 3 * 2.5 == 7.5\n[2] 7.5 <= 30")
         );
         assert_eq!(result.engine_result.as_deref(), Some("[1] true\n[2] true"));
-        assert!(result.witness.is_none() && result.reason.is_none());
+        assert!(result.witness.is_none());
+        // Every part held, yet the claim as a whole is not called supported:
+        // the reason is the coverage sentence alone.
+        let reason = result.reason.as_deref().unwrap();
+        assert!(
+            reason.starts_with("the parts were checked separately") && !reason.contains('\n'),
+            "{reason}"
+        );
         assert!(
             result.explanation.contains("2 parts"),
             "{}",
@@ -717,9 +724,11 @@ mod tests {
             result.formal_form.as_deref(),
             Some("[1] 2 + 2 == 4\n[2] (not checked)")
         );
-        assert_eq!(
-            result.reason.as_deref(),
-            Some("[2] needs symbolic calculus")
+        let reason = result.reason.as_deref().unwrap();
+        assert!(
+            reason.starts_with("the parts were checked separately")
+                && reason.ends_with("\n[2] needs symbolic calculus"),
+            "{reason}"
         );
         assert!(
             result.explanation.contains("1 supported")
@@ -743,7 +752,7 @@ mod tests {
             ),
         ])
         .await;
-        assert_eq!(result.verdict, Verdict::Supported);
+        assert_eq!(result.verdict, Verdict::NotCheckable);
         assert!(result.engine.is_none(), "two engines, so no single one");
         assert_eq!(result.parts[1].engine, Some(Engine::Constraints));
         // The script sits on one line at the top level; the part keeps it exact.
@@ -772,9 +781,14 @@ mod tests {
         .await;
         assert_eq!(result.verdict, Verdict::NotCheckable);
         assert!(result.formal_form.is_none() && result.engine_result.is_none());
-        assert_eq!(
-            result.reason.as_deref(),
-            Some("[1] a judgment\n[2] a prediction")
+        assert!(
+            result
+                .reason
+                .as_deref()
+                .unwrap()
+                .ends_with("\n[1] a judgment\n[2] a prediction"),
+            "{:?}",
+            result.reason
         );
     }
 
@@ -893,7 +907,7 @@ mod tests {
         let (result, inp, out) = run_with(d, &params("a bundle"), d.model_client.as_ref())
             .await
             .unwrap();
-        assert_eq!(result.verdict, Verdict::Supported);
+        assert_eq!(result.verdict, Verdict::NotCheckable);
         assert_eq!(result.translation_attempts, 2);
         assert_eq!(result.parts.len(), 2);
         assert_eq!(result.engine_result.as_deref(), Some("[1] true\n[2] sat"));
@@ -930,7 +944,7 @@ mod tests {
         let (result, _, _) = run_with(d, &params("a bundle"), d.model_client.as_ref())
             .await
             .unwrap();
-        assert_eq!(result.verdict, Verdict::Supported);
+        assert_eq!(result.verdict, Verdict::NotCheckable);
         assert_eq!(result.translation_attempts, 2);
     }
 
@@ -1017,7 +1031,7 @@ mod tests {
             ),
         ])
         .await;
-        assert_eq!(result.verdict, Verdict::Supported);
+        assert_eq!(result.verdict, Verdict::NotCheckable);
         assert_eq!(result.engine, Some(Engine::Constraints));
         assert_eq!(result.engine_result.as_deref(), Some("[1] sat\n[2] unsat"));
         assert!(result.parts[0].witness.as_deref().unwrap().contains('y'));

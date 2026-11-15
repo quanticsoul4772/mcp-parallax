@@ -23,11 +23,12 @@ arc.
   and one invocation record per `check`.
 
   * **Top-level verdict of a bundle:** `refuted` if any part is refuted,
-    `supported` only if every part is supported, `not_checkable` otherwise.
-    Parts that held beside a part that could not be checked therefore leave
-    the top level at `not_checkable`; which parts held is in `parts`. A
-    caller that reads only the top-level verdict never takes an unchecked
-    part as verified.
+    `not_checkable` otherwise. The server cannot verify that the listed parts
+    cover every statement of the claim, so a bundle is never reported as
+    `supported` as a whole; which parts held is in `parts`, and the top-level
+    `reason` says so. A caller that reads only the top-level verdict never
+    takes an unchecked or omitted statement as verified. The translator is
+    also told to list every statement, declining the ones no engine can check.
   * **Top-level form of a bundle:** `formal_form` and `engine_result` hold one
     `[n] …` line per part, numbered in part order, with `(not checked)` for a
     part no engine ran; both are null when no part ran. `witness` lists only

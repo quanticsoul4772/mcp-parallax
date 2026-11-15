@@ -1,7 +1,7 @@
 {
   "$comment": "MCP tool contract for `check`. The verdict comes only from deterministic engine execution; the model classifies checkability and translates - it never decides. formal_form and engine_result make every verdict auditable (FR-007). not_checkable is a successful, honest outcome (FR-004).",
   "name": "check",
-  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. A claim that bundles several statements is checked part by part: parts holds each part's own verdict, form and result, and the top-level verdict is refuted if any part is refuted, supported only if every part is supported, and not_checkable otherwise. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
+  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. A claim that bundles several statements is checked part by part: parts holds each part's own verdict, form and result, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported, because nothing can confirm the parts cover every statement of the claim; read each part's verdict in parts. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -87,7 +87,7 @@
           "string",
           "null"
         ],
-        "description": "Why the claim is not checkable (verdict = not_checkable only). For a bundle: one '[n] reason' line for each part that was not checked, and only when the top-level verdict is not_checkable."
+        "description": "Why the claim is not checkable (verdict = not_checkable only). For a bundle whose top-level verdict is not_checkable: first a sentence saying nothing can confirm the parts cover every statement of the claim, then one '[n] reason' line for each part that was not checked."
       },
       "translation_attempts": {
         "type": "integer",
@@ -98,7 +98,7 @@
         "type": "array",
         "minItems": 1,
         "maxItems": 12,
-        "description": "One entry per separately checked part, in the order the claim states them. A single claim has exactly one part. For a bundle of two or more parts the top-level formal_form, engine_result, witness and reason are summaries in '[n] ...' lines as each field describes, engine is set only when every part ran on the same engine, and parts that held beside a part that could not be checked are visible only here.",
+        "description": "One entry per separately checked part, in the order the claim states them. A single claim has exactly one part. For a bundle of two or more parts the top-level formal_form, engine_result, witness and reason are summaries in '[n] ...' lines as each field describes, engine is set only when every part ran on the same engine, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported - so which parts held is visible only here.",
         "items": {
           "type": "object",
           "properties": {

@@ -86,7 +86,9 @@ its own. The parts are combined as 'all must hold', so a claim joined any other 
 over several statements such as \
 'not both' — stays in ONE part, written as one expression or script. Statements that share \
 the variables of one constraint system, or that only make sense together, also stay in ONE \
-part. When in doubt, keep one part. At most {max} parts. Restate each \
+part. When in doubt, keep one part. At most {max} parts. Every statement the claim makes \
+must appear in exactly one part: never leave one out. A statement no engine can check is \
+still listed, and declined. Restate each \
 part so it stands alone, carrying in any value it needs from an earlier part or the context. \
 Each part is classified and translated independently for exactly one engine: a part that \
 needs judgment, or a function no engine has, is declined by itself and does not stop the \
@@ -597,6 +599,21 @@ mod tests {
         ] {
             assert!(prompt.contains(connective), "{connective} missing");
         }
+    }
+
+    /// The model is told to list every statement, because the server can only
+    /// check the parts it is given. (The server does not rely on this: a
+    /// bundle is never reported supported as a whole — see `bundle.rs`.)
+    #[test]
+    fn the_parts_rule_requires_every_statement_to_be_listed() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(
+            prompt.contains(
+                "Every statement the claim makes must appear in exactly one part: never \
+                 leave one out. A statement no engine can check is still listed, and declined."
+            ),
+            "{prompt}"
+        );
     }
 
     /// An opinion attached to a computable statement must not become its own

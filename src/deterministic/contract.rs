@@ -64,17 +64,18 @@ pub struct CheckResult {
     /// to the claim (research.md 005 D4 — never model-phrased).
     pub explanation: String,
     /// Why the claim is not checkable (verdict = not_checkable only). For a
-    /// bundle: one `[n] reason` line for each part that was not checked, and
-    /// only when the top-level verdict is not_checkable.
+    /// bundle whose top-level verdict is not_checkable: first a sentence
+    /// saying nothing can confirm the parts cover every statement of the
+    /// claim, then one `[n] reason` line for each part that was not checked.
     pub reason: Option<String>,
     /// 1 or 2 (the violation-fed retry — FR-005).
     pub translation_attempts: u32,
     /// One entry per separately checked part, in the order the claim states
     /// them. A single claim has exactly one part. For a bundle, read each
-    /// part's verdict here: the top-level verdict is `refuted` if any part is
-    /// refuted, `supported` only if every part is supported, and
-    /// `not_checkable` otherwise — so parts that held beside a part that could
-    /// not be checked are visible only in this list.
+    /// part's verdict here: the top-level verdict of a bundle is `refuted` if
+    /// any part is refuted and `not_checkable` otherwise — never `supported`,
+    /// because nothing can confirm the parts cover every statement of the
+    /// claim — so which parts held is visible only in this list.
     #[schemars(length(min = 1, max = crate::deterministic::PARTS_MAX))]
     pub parts: Vec<PartResult>,
 }
