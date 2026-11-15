@@ -120,7 +120,8 @@ cargo cov                         # llvm-cov coverage report (no gate yet)
 cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
 ```
 
-Toolchain is pinned (`rust-toolchain.toml`: stable + clippy/rustfmt/llvm-tools).
+Toolchain is pinned (`rust-toolchain.toml`: an exact version, 1.100.0, + clippy/rustfmt/llvm-tools;
+the workflows pin the same version — move all three together).
 MSRV is 1.94 (CI verifies it with a dedicated job — bump `Cargo.toml` `rust-version`
 and the CI job in lockstep). A separate weekly `cargo audit` workflow gates
 advisories. `pre-commit` hooks mirror the gate — `pre-commit install`.
@@ -330,8 +331,8 @@ just its coverage.
 
 **What is still hand-written, in rough order of risk:** 034's variable-presence
 scan carries a fixture-exclusion list; five files declare the gate command with
-nothing binding them; `rust-toolchain.toml` pins a floating `stable`, which is
-what let CI fail on code that was clean locally.
+nothing binding them; the toolchain version is written in `rust-toolchain.toml`
+and two workflows with nothing binding them.
 <!-- SPECKIT END -->
 
 ## Working style

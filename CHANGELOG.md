@@ -54,7 +54,12 @@ arc.
 * **Dependency and toolchain refresh (2026-11)** — `rmcp` 3.4.0 → 3.10.0 with
   the manifest floor raised to 3.10.0, clearing RUSTSEC-2026-0457, -0461 and
   -0462 (all in transports this server does not enable, but the floor now
-  refuses the affected versions). `jsonschema` 0.56 → 0.61, `fancy-regex`
+  refuses the affected versions). rmcp 3.9 generates `Json<T>` output schemas
+  under the serialize contract, so bare `Option` result fields (`unstick`'s
+  `watch_for`, `check`'s `engine`/`formal_form`/`engine_result`/`witness`/
+  `reason`, the checkpoint `message`) are now listed as `required` in the
+  advertised `outputSchema`; they were always present in the payload (as
+  `null`), and the spec contracts already listed them. `jsonschema` 0.56 → 0.61, `fancy-regex`
   0.19 → 0.20, `z3` 0.21 → 0.23 (bundled Z3 source 501 → 504), the
   OpenTelemetry train 0.33.0 → 0.33.1, and every semver-compatible transitive
   update, which clears the `quinn-udp`, `rustls-webpki`, `webpki-root-certs`,
