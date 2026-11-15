@@ -178,7 +178,7 @@ mod tests {
         for expression in ["2^0.5 * 2^0.5 == 2", "27^(1/3) != 3"] {
             let violation = evaluate(expression).unwrap_err();
             assert!(
-                violation.0.contains("tolerance"),
+                violation.0.contains("== or != over"),
                 "{expression}: {violation}"
             );
         }
@@ -201,6 +201,7 @@ mod tests {
             "0/(1/2 - 0.5) <= 0",
             "10 % (7/2 - 3.5) >= 0",
             "0^-1 > 0",
+            "0^-0.5 > 0",
             "true || 1/0 > 0", // no short circuit hides it
             "2^0.5 / (2 - 2) > 0",
             "-7 % 0 == 0",
@@ -232,22 +233,46 @@ mod tests {
         }
     }
 
-    // evalexpr parses these to a rounded f64 before the tree exists.
+    // evalexpr would round each of these to an f64 before its tree exists;
+    // literals are read from the text instead, so every digit counts.
     #[test]
-    fn literals_the_parser_would_round_are_violations() {
-        for expression in [
-            "9223372036854775808 > 0",
-            "0.12345678901234567 > 0",
-            "1.00000000000000001 == 1",
+    fn literals_are_exact_at_any_length_and_magnitude() {
+        for (expression, expected) in [
+            ("1.00000000000000001 == 1", false),
+            ("1.00000000000000001 > 1", true),
+            ("0.30000000000000004 > 0.3", true), // Python's 0.1 + 0.2
+            ("13.572000000000001 - 13.572 == 0.000000000000001", true),
+            ("9223372036854775808 - 9223372036854775807 == 1", true), // past i64
+            ("-9223372036854775808 < 0", true),
+            ("123456789012345678901234567890 % 10 == 0", true),
+            ("1e-400 > 0 && 1e-400 * 1e400 == 1", true),
+            ("4e-324 == 5e-324", false),
+            ("1e3 == 1000 && 1.5E+3 == 1500 && 25e-1 == 2.5", true),
+            (".5 == 1/2 && 5. == 5 && 0.50 == .5", true),
+            (
+                "1.000000000000000 == 1 && 100000000000000000000.0 > 0",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                evaluate(expression).unwrap().holds,
+                expected,
+                "{expression}"
+            );
+        }
+        for (expression, reason) in [
+            ("0x10 == 16", "not a decimal number"),
+            ("1.2.3 > 0", "not a decimal number"),
+            ("2e > 0", "not a decimal number"),
+            ("1_000 > 0", "not a decimal number"),
+            ("1e999999999 > 0", "engine can hold"),
+            ("max(1,000, 2) == 2", "leading zero"),
+            ("007 == 7", "leading zero"),
+            ("1e2400 * 1e2400 > 0", "size limit"),
         ] {
             let violation = evaluate(expression).unwrap_err();
-            assert!(violation.0.contains("literal"), "{expression}: {violation}");
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
         }
-        assert!(
-            evaluate("math::abs(1e-3 - 1/1000) == 0 && 1.5e3 == 1500")
-                .unwrap()
-                .holds
-        );
     }
 
     // Size and depth are bounded, so no input within the length cap can
@@ -256,8 +281,11 @@ mod tests {
     fn runaway_inputs_are_violations_not_hangs_or_crashes() {
         for (expression, reason) in [
             ("2^5000 > 0".to_owned(), "beyond the engine's range"),
-            ("((2^4096)^4096)^4096 > 0".to_owned(), "too large"),
-            ("(9^4096)^80 * (9^4096)^80 > 0".to_owned(), "too large"),
+            ("((2^4096)^4096)^4096 > 0".to_owned(), "size limit"),
+            // Only the per-value check sees these: no single power is too big.
+            ("7^1000 * 7^1000 * 7^1000 > 0".to_owned(), "size limit"),
+            ("(2^0.5 * 7^1000)^8 > 0".to_owned(), "size limit"),
+            ("(9^4096)^80 * (9^4096)^80 > 0".to_owned(), "size limit"),
             (
                 "2 ^ -2147483648 > 0".to_owned(),
                 "beyond the engine's range",
@@ -276,7 +304,10 @@ mod tests {
                 .holds
         );
         // A huge non-boolean result is reported, not printed in full.
-        let violation = evaluate("9^4096").unwrap_err();
+        let violation = evaluate("7^1400").unwrap_err();
+        assert!(violation.0.contains("characters)"), "{violation}");
+        assert!(violation.0.len() < 400, "{}", violation.0.len());
+        let violation = evaluate("2^(7^1400) > 0").unwrap_err();
         assert!(violation.0.len() < 400, "{}", violation.0.len());
     }
 
@@ -311,7 +342,37 @@ mod tests {
         ] {
             let violation = evaluate(expression).unwrap_err();
             assert!(
-                violation.0.contains("tolerance"),
+                violation.0.contains("== or != over"),
+                "{expression}: {violation}"
+            );
+        }
+    }
+
+    // The bracket is exact interval arithmetic: every sign case, and wide
+    // enough to hold the true value.
+    #[test]
+    fn root_brackets_follow_signs_and_contain_the_truth() {
+        for expression in [
+            "-(2^0.5) < -1.41 && -(2^0.5) > -1.42",
+            "math::abs(-(2^0.5)) > 1.41 && math::abs(-(2^0.5)) < 1.42",
+            "math::abs(2^0.5 - 3^0.5) > 0.31 && math::abs(2^0.5 - 3^0.5) < 0.32",
+            "math::abs((2^0.5)^2 - 2) <= 0.0001",
+            "-(2^0.5) * 3^0.5 < -2.44 && -(2^0.5) * 3^0.5 > -2.45",
+            "(-(2^0.5)) * (-(3^0.5)) > 2.44 && (-(2^0.5)) * (-(3^0.5)) < 2.45",
+            "2^0.5 / -(3^0.5) < -0.81 && 2^0.5 / -(3^0.5) > -0.82",
+            "(-(2^0.5))^3 < -2.82 && (-(2^0.5))^3 > -2.83",
+            "(-(2^0.5))^2 > 1.99 && (-(2^0.5))^-2 < 0.51",
+            "min(-(2^0.5), 3^0.5) < -1.41 && max(-(2^0.5), 3^0.5) > 1.73",
+        ] {
+            assert!(evaluate(expression).unwrap().holds, "{expression}");
+        }
+        // f64 is off by about 1e-13 here (third review, worst case found):
+        // (3^640)^(641/640) is exactly 3^641, so neither strict comparison
+        // may be answered. A bracket narrower than the error answers one.
+        for expression in ["(3^640)^(641/640) > 3^641", "(3^640)^(641/640) < 3^641"] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(
+                violation.0.contains("too close"),
                 "{expression}: {violation}"
             );
         }
@@ -343,8 +404,9 @@ mod tests {
             ("2^(2^0.5) > 2", "used as an exponent"),
             (
                 "(10^-300)^1.5 * 10^300 * 10^300 > 1",
-                "outside the engine's range",
+                "outside the range of a 64-bit float",
             ),
+            ("2^64.5 > 0", "beyond ±64"),
             ("2^0.5 % 1 > 0", "% over a fractional power"),
         ] {
             let violation = evaluate(expression).unwrap_err();
@@ -361,9 +423,8 @@ mod tests {
             ("2 + 2 == 5 /* || true */", "comment"),
             ("2^3^2 == 64", "ambiguous"),
             ("2^3^2 == 512", "ambiguous"),
-            ("0x10 == 16", "not a decimal number"),
-            ("1e-400 > 0", "outside the range"),
-            ("4e-324 == 5e-324", "outside the range"),
+            ("floor 7/2 == 3", "must be called with parentheses"),
+            ("round 2.5*2 == 5", "must be called with parentheses"),
         ] {
             let violation = evaluate(expression).unwrap_err();
             assert!(violation.0.contains(reason), "{expression}: {violation}");

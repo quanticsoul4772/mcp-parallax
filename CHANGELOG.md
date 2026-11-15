@@ -111,15 +111,16 @@ arc.
   variables, assignment, `;` chains, `if`, strings, functions outside the six
   in the dialect, `//` and `/* */` comments (a Python-style `7 // 2` used to
   drop the divisor), chained powers `a^b^c` (evalexpr reads `(a^b)^c`),
-  non-decimal literals such as hex, integer literals beyond i64, decimals
-  with more than 15 significant digits or outside f64's normal range, and
-  nested or oversized powers. Bounded so no input within the length cap can
-  hang or crash the server: values up to 65,536 bits, integer exponents up
-  to 4096, tree depth up to 500, on a dedicated 32 MB stack. `&&` and `||`
-  no longer short-circuit past an error. Paren-less calls (`floor 7.5`) and
-  a bare `true` are still accepted. `grounded_verify`'s compute path
-  abstains on a threshold of exactly `i64::MIN`, whose magnitude is not an
-  i64 literal.
+  paren-less calls (`floor 7/2` is `floor(7)/2`), zero-padded or
+  digit-grouped integers (`max(1,000, 2)` has three arguments),
+  non-decimal literals such as hex, and nested or oversized powers. Numeric
+  literals are read from the expression text, not from evalexpr's rounded
+  `f64`, so a 17-digit Python float or an integer past i64 keeps every
+  digit. Bounded so no input within the length cap can
+  hang or crash the server: values up to 8,192 bits (about 2,400 digits),
+  integer exponents up to 4096, tree depth up to 500, on a dedicated 32 MB
+  stack and off the async workers (`spawn_blocking`, as Z3 already was). `&&` and `||`
+  no longer short-circuit past an error. A bare `true` is still accepted.
 
   `num-rational`, `num-bigint` and `num-traits` become direct dependencies;
   all three were already in the lockfile.

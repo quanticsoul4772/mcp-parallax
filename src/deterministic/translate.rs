@@ -47,9 +47,11 @@ chained powers: (a^b)^c or a^(b^c). HARD RULE: a fractional exponent (a \
 root, e.g. x^(1/3) or x^0.5) has no exact value — never use == or != on \
 anything computed from one; write math::abs(a - b) <= 0.0001 (a literal \
 numeric bound, never the word 'tolerance'), or better, restate the claim \
-root-free (x^(1/3) > 2 becomes x > 2^3). Decimal literals carry at most 15 \
-significant digits, integer literals fit in 64 bits, and integer exponents \
-are at most 4096.\n\
+root-free (x^(1/3) > 2 becomes x > 2^3). Call functions with parentheses, \
+and write numbers plainly in decimal, with every digit the claim gives and \
+no digit grouping (1000, not 1,000). Limits: values up to about 2,400 \
+digits, integer exponents up to 4096 (64 on a root), fractional exponents \
+up to 64.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \
 each variable over Int, Real, or Bool, then (assert ...) forms using linear \

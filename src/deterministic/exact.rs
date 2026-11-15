@@ -3,7 +3,8 @@
 //! evalexpr parses; this module evaluates its tree. Integers and decimal
 //! literals are arbitrary-precision fractions, so `+ - * / %`, integer
 //! powers, and every comparison over them are exact: `90/144` is `5/8`,
-//! `0.15 * 240 == 36` holds, and integers above 2^53 keep every digit.
+//! `0.15 * 240 == 36` holds, and integers above 2^53 keep every digit. Numeric
+//! literals are read from the expression text, never from a rounded `f64`.
 //!
 //! Only a fractional exponent (a root) has no exact result. It becomes a
 //! [`Num::Range`]: two exact fractions that bracket the true value. Ranges
@@ -24,12 +25,10 @@ const EXACT_EXPONENT_MAX: u32 = 4_096;
 /// fractional exponent.
 const RANGE_EXPONENT_MAX: u32 = 64;
 /// Largest numerator or denominator, in bits, any value may reach. Bounds
-/// both memory and the cost of each operation.
-const VALUE_MAX_BITS: u64 = 1 << 16;
-/// Most significant digits a decimal literal may carry: up to this many, an
-/// `f64` round-trips the decimal exactly, so it can be recovered from the
-/// `f64` evalexpr parsed it to.
-const DECIMAL_LITERAL_MAX_DIGITS: usize = 15;
+/// both memory and the cost of each operation (about 2,400 decimal digits).
+const VALUE_MAX_BITS: u64 = 1 << 13;
+/// Largest power-of-ten exponent a literal may carry (`1e2000`).
+const LITERAL_EXPONENT_MAX: i32 = 2_500;
 /// A fractional power is bracketed by its `f64` value ± one part in this.
 /// The `f64` result is within about 1e-11 of the truth for the admitted
 /// operands (correctly rounded inputs, |exponent| <= 64, a libm `pow` good to
@@ -86,10 +85,10 @@ fn evaluate_here(expression: &str) -> Result<Outcome, String> {
                 .to_owned(),
         );
     }
-    check_literals(expression)?;
-    let tree = evalexpr::build_operator_tree::<DefaultNumericTypes>(expression)
+    let (rewritten, literals) = lift_literals(expression)?;
+    let tree = evalexpr::build_operator_tree::<DefaultNumericTypes>(&rewritten)
         .map_err(|e| e.to_string())?;
-    Ok(match eval(&tree, 0)? {
+    Ok(match eval(&tree, 0, &literals)? {
         Val::Bool(holds) => Outcome::Boolean(holds),
         Val::Num(Num::Exact(n)) => Outcome::NonBoolean(printed(&n)),
         Val::Num(Num::Range(low, _)) => Outcome::NonBoolean(format!("about {}", printed(&low))),
@@ -105,17 +104,23 @@ fn printed(n: &BigRational) -> String {
     format!("{head}... ({} characters)", text.len())
 }
 
-/// Reject numeric literals evalexpr would not hand over exactly: an integer
-/// beyond `i64` (it parses as a rounded float), a decimal with more
-/// significant digits than an `f64` round-trips, one outside `f64`'s normal
-/// range, or a non-decimal form such as hex.
-fn check_literals(expression: &str) -> Result<(), String> {
+/// Lift every numeric literal out of `expression`, exactly.
+///
+/// evalexpr would parse a decimal to a rounded `f64` (and an integer beyond
+/// `i64` likewise) before its tree exists. So each literal is parsed here,
+/// from its text, into a fraction, and replaced in the text by its index in
+/// the returned table; every integer constant in the tree is then such an
+/// index. Non-decimal forms (hex and the like) are rejected.
+fn lift_literals(expression: &str) -> Result<(String, Vec<BigRational>), String> {
     let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
+    let mut rewritten = String::with_capacity(expression.len());
+    let mut literals = Vec::new();
     let mut previous_is_word = false;
     let mut chars = expression.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
         if previous_is_word || !(c.is_ascii_digit() || c == '.') {
             previous_is_word = is_word(c);
+            rewritten.push(c);
             continue;
         }
         // A token starting with a digit or a dot: take it whole, including
@@ -134,81 +139,97 @@ fn check_literals(expression: &str) -> Result<(), String> {
             end = at + next.len_utf8();
             chars.next();
         }
-        check_literal(&expression[start..end])?;
+        rewritten.push_str(&literals.len().to_string());
+        literals.push(literal(&expression[start..end])?);
         previous_is_word = true;
     }
-    Ok(())
+    Ok((rewritten, literals))
 }
 
-fn check_literal(token: &str) -> Result<(), String> {
-    if token.chars().all(|c| c.is_ascii_digit()) {
-        return match token.parse::<i64>() {
-            Ok(_) => Ok(()),
-            Err(_) => Err(format!(
-                "the integer literal {token} is too large for the engine"
-            )),
-        };
-    }
-    let Ok(value) = token.parse::<f64>() else {
-        return Err(format!("the literal {token} is not a decimal number"));
+/// The exact value of one decimal literal: digits, an optional point, an
+/// optional power-of-ten exponent.
+fn literal(token: &str) -> Result<BigRational, String> {
+    let malformed = || format!("the literal {token} is not a decimal number");
+    let (mantissa, exponent) = match token.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (
+            mantissa,
+            exponent
+                .parse::<i32>()
+                .ok()
+                .filter(|e| e.abs() <= LITERAL_EXPONENT_MAX)
+                .ok_or_else(|| {
+                    format!("the literal {token} is not a decimal number the engine can hold")
+                })?,
+        ),
+        None => (token, 0),
     };
-    let mantissa = token.split(['e', 'E']).next().unwrap_or(token);
-    let significant = mantissa
-        .chars()
-        .filter(char::is_ascii_digit)
-        .skip_while(|d| *d == '0')
-        .count();
-    if significant > DECIMAL_LITERAL_MAX_DIGITS {
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let all_digits = |part: &str| part.chars().all(|d| d.is_ascii_digit());
+    if !all_digits(whole) || !all_digits(fraction) || whole.len() + fraction.len() == 0 {
+        return Err(malformed());
+    }
+    // `1,000` arrives as `1` and `000`: a digit group, not a number.
+    if whole.len() > 1 && whole.starts_with('0') {
         return Err(format!(
-            "the literal {token} has more than {DECIMAL_LITERAL_MAX_DIGITS} significant \
-             digits, which the engine cannot represent exactly"
+            "the literal {token} has a leading zero - write numbers without digit grouping              or padding"
         ));
     }
-    if significant > 0 && !value.is_normal() {
-        return Err(format!(
-            "the literal {token} is outside the range the engine can represent exactly"
-        ));
-    }
-    Ok(())
+    let digits = format!("{whole}{fraction}")
+        .parse::<BigInt>()
+        .map_err(|_| malformed())?;
+    let fraction_len = i32::try_from(fraction.len()).map_err(|_| malformed())?;
+    let scale = exponent - fraction_len;
+    let power = BigInt::from(10).pow(scale.unsigned_abs());
+    Ok(if scale >= 0 {
+        BigRational::from_integer(digits * power)
+    } else {
+        BigRational::new(digits, power)
+    })
 }
 
-fn eval(node: &Node, depth: usize) -> Result<Val, String> {
+fn eval(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Val, String> {
     if depth > DEPTH_MAX {
         return Err("the expression is nested too deeply".to_owned());
     }
-    let value = eval_node(node, depth + 1)?;
-    if let Val::Num(n) = &value {
-        let (low, high) = bounds(n);
-        let bits = |r: &BigRational| r.numer().bits().max(r.denom().bits());
-        if bits(low).max(bits(high)) > VALUE_MAX_BITS {
-            return Err("a value is too large for exact arithmetic".to_owned());
-        }
+    let value = eval_node(node, depth + 1, literals)?;
+    match &value {
+        Val::Num(n) if oversized(n) => Err(too_large()),
+        _ => Ok(value),
     }
-    Ok(value)
 }
 
-fn eval_node(node: &Node, depth: usize) -> Result<Val, String> {
+fn oversized(n: &Num) -> bool {
+    let (low, high) = bounds(n);
+    let bits = |r: &BigRational| r.numer().bits().max(r.denom().bits());
+    bits(low).max(bits(high)) > VALUE_MAX_BITS
+}
+
+fn too_large() -> String {
+    format!("a value exceeds the engine's size limit of {VALUE_MAX_BITS} bits (about 2,400 digits)")
+}
+
+fn eval_node(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Val, String> {
     let children = node.children();
     match node.operator() {
         Operator::RootNode => match children {
-            [only] => eval(only, depth),
+            [only] => eval(only, depth, literals),
             _ => Err("empty expression".to_owned()),
         },
-        Operator::Const { value } => constant(value),
-        Operator::Neg => Ok(Val::Num(match number(unary(children)?, depth)? {
+        Operator::Const { value } => constant(value, literals),
+        Operator::Neg => Ok(Val::Num(match number(unary(children)?, depth, literals)? {
             Num::Exact(n) => Num::Exact(-n),
             Num::Range(low, high) => Num::Range(-high, -low),
         })),
         Operator::Add | Operator::Sub | Operator::Mul => {
-            let (a, b) = numbers(children, depth)?;
+            let (a, b) = numbers(children, depth, literals)?;
             Ok(Val::Num(arithmetic(node.operator(), &a, &b)))
         }
         Operator::Div => {
-            let (a, b) = numbers(children, depth)?;
+            let (a, b) = numbers(children, depth, literals)?;
             divide(&a, &b).map(Val::Num)
         }
         Operator::Mod => {
-            let (a, b) = numbers(children, depth)?;
+            let (a, b) = numbers(children, depth, literals)?;
             remainder(&a, &b).map(Val::Num)
         }
         Operator::Exp => {
@@ -223,11 +244,11 @@ fn eval_node(node: &Node, depth: usize) -> Result<Val, String> {
                         .to_owned(),
                 );
             }
-            let (a, b) = numbers(children, depth)?;
+            let (a, b) = numbers(children, depth, literals)?;
             power(&a, &b).map(Val::Num)
         }
         Operator::Eq | Operator::Neq => {
-            let (a, b) = numbers(children, depth)?;
+            let (a, b) = numbers(children, depth, literals)?;
             let (Num::Exact(a), Num::Exact(b)) = (a, b) else {
                 return Err(
                     "== or != over a fractional power, which has no exact value - rewrite \
@@ -241,7 +262,7 @@ fn eval_node(node: &Node, depth: usize) -> Result<Val, String> {
             ))
         }
         Operator::Gt | Operator::Lt | Operator::Geq | Operator::Leq => {
-            let (a, b) = numbers(children, depth)?;
+            let (a, b) = numbers(children, depth, literals)?;
             let ordering = order(&a, &b)?;
             Ok(Val::Bool(match node.operator() {
                 Operator::Gt => ordering == Ordering::Greater,
@@ -256,19 +277,26 @@ fn eval_node(node: &Node, depth: usize) -> Result<Val, String> {
             let [a, b] = children else {
                 return Err("malformed boolean operator".to_owned());
             };
-            let (a, b) = (boolean(a, depth)?, boolean(b, depth)?);
+            let (a, b) = (boolean(a, depth, literals)?, boolean(b, depth, literals)?);
             Ok(Val::Bool(if matches!(node.operator(), Operator::And) {
                 a && b
             } else {
                 a || b
             }))
         }
-        Operator::Not => Ok(Val::Bool(!boolean(unary(children)?, depth)?)),
+        Operator::Not => Ok(Val::Bool(!boolean(unary(children)?, depth, literals)?)),
         Operator::FunctionIdentifier { identifier } => {
             if !FUNCTIONS.contains(&identifier.as_str()) {
                 return Err(format!("the function `{identifier}` is not in the dialect"));
             }
-            let arguments = collect_arguments(unary(children)?, depth)?;
+            // `floor 7/2` parses as `floor(7)/2`: require the parentheses.
+            let argument = unary(children)?;
+            if !matches!(argument.operator(), Operator::RootNode) {
+                return Err(format!(
+                    "`{identifier}` must be called with parentheses: {identifier}(...)"
+                ));
+            }
+            let arguments = collect_arguments(argument, depth, literals)?;
             function(identifier, &arguments).map(Val::Num)
         }
         other => Err(format!("`{other}` is not in the dialect")),
@@ -282,22 +310,26 @@ fn unary(children: &[Node]) -> Result<&Node, String> {
     }
 }
 
-fn number(node: &Node, depth: usize) -> Result<Num, String> {
-    match eval(node, depth)? {
+fn number(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Num, String> {
+    match eval(node, depth, literals)? {
         Val::Num(n) => Ok(n),
         Val::Bool(_) => Err("a boolean was used where a number is required".to_owned()),
     }
 }
 
-fn numbers(children: &[Node], depth: usize) -> Result<(Num, Num), String> {
+fn numbers(
+    children: &[Node],
+    depth: usize,
+    literals: &[BigRational],
+) -> Result<(Num, Num), String> {
     match children {
-        [a, b] => Ok((number(a, depth)?, number(b, depth)?)),
+        [a, b] => Ok((number(a, depth, literals)?, number(b, depth, literals)?)),
         _ => Err("malformed operator".to_owned()),
     }
 }
 
-fn boolean(node: &Node, depth: usize) -> Result<bool, String> {
-    match eval(node, depth)? {
+fn boolean(node: &Node, depth: usize, literals: &[BigRational]) -> Result<bool, String> {
+    match eval(node, depth, literals)? {
         Val::Bool(b) => Ok(b),
         Val::Num(_) => Err("a number was used where a boolean is required".to_owned()),
     }
@@ -305,7 +337,11 @@ fn boolean(node: &Node, depth: usize) -> Result<bool, String> {
 
 /// Function arguments: one expression, or a comma tuple of them. A
 /// parenthesised tuple inside the list is not flattened.
-fn collect_arguments(node: &Node, depth: usize) -> Result<Vec<Num>, String> {
+fn collect_arguments(
+    node: &Node,
+    depth: usize,
+    literals: &[BigRational],
+) -> Result<Vec<Num>, String> {
     let inner = match (node.operator(), node.children()) {
         (Operator::RootNode, [only]) => only,
         _ => node,
@@ -314,39 +350,24 @@ fn collect_arguments(node: &Node, depth: usize) -> Result<Vec<Num>, String> {
         inner
             .children()
             .iter()
-            .map(|child| number(child, depth))
+            .map(|child| number(child, depth, literals))
             .collect()
     } else {
-        Ok(vec![number(inner, depth)?])
+        Ok(vec![number(inner, depth, literals)?])
     }
 }
 
-fn constant(value: &Value) -> Result<Val, String> {
+fn constant(value: &Value, literals: &[BigRational]) -> Result<Val, String> {
     match value {
-        Value::Int(i) => Ok(Val::Num(Num::Exact(BigRational::from_integer(
-            BigInt::from(*i),
-        )))),
-        Value::Float(f) => decimal(*f).map(|n| Val::Num(Num::Exact(n))),
+        // Every integer the parser saw is an index written by `lift_literals`.
+        Value::Int(index) => usize::try_from(*index)
+            .ok()
+            .and_then(|index| literals.get(index))
+            .map(|n| Val::Num(Num::Exact(n.clone())))
+            .ok_or_else(|| "a literal could not be read".to_owned()),
         Value::Boolean(b) => Ok(Val::Bool(*b)),
         other => Err(format!("the value {other} is not in the dialect")),
     }
-}
-
-/// The decimal a float literal was written as. `f64`'s `Display` prints the
-/// shortest decimal that round-trips, with no exponent; for a literal of at
-/// most 15 significant digits in the normal range — all `check_literals`
-/// admits — that is the literal itself.
-fn decimal(f: f64) -> Result<BigRational, String> {
-    if !f.is_finite() {
-        return Err("a literal is out of range".to_owned());
-    }
-    let text = f.to_string();
-    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
-    let numerator = format!("{whole}{fraction}")
-        .parse::<BigInt>()
-        .map_err(|_| format!("the literal {text} could not be read"))?;
-    let scale = u32::try_from(fraction.len()).map_err(|_| "a literal is out of range")?;
-    Ok(BigRational::new(numerator, BigInt::from(10).pow(scale)))
 }
 
 fn bounds(n: &Num) -> (&BigRational, &BigRational) {
@@ -444,13 +465,16 @@ fn power(base: &Num, exponent: &Num) -> Result<Num, String> {
         .to_u32()
         .filter(|m| *m <= limit)
         .ok_or_else(|| {
-            format!("the exponent {exponent} is beyond the engine's range (±{limit})")
+            format!(
+                "the exponent {} is beyond the engine's range (±{limit})",
+                printed(exponent)
+            )
         })?;
     let positive = match base {
         Num::Exact(b) => {
             let bits = b.numer().bits().max(b.denom().bits());
             if bits.saturating_mul(u64::from(magnitude)) > VALUE_MAX_BITS {
-                return Err("a power is too large for exact arithmetic".to_owned());
+                return Err(too_large());
             }
             Num::Exact(Pow::pow(b, magnitude))
         }
@@ -458,6 +482,9 @@ fn power(base: &Num, exponent: &Num) -> Result<Num, String> {
             let mut product = Num::Exact(BigRational::one());
             for _ in 0..magnitude {
                 product = multiply(&product, base);
+                if oversized(&product) {
+                    return Err(too_large());
+                }
             }
             product
         }
@@ -488,14 +515,19 @@ fn root(base: &Num, exponent: &BigRational) -> Result<Num, String> {
             Err("division by zero (zero raised to a negative power)".to_owned())
         };
     }
-    let out_of_range = || "a fractional power is outside the engine's range".to_owned();
+    let out_of_range = || {
+        "a fractional power whose base or result is outside the range of a 64-bit float \n         is not supported"
+            .to_owned()
+    };
     let as_float = |r: &BigRational| r.to_f64().filter(|f| f.is_normal());
     let (b, e) = (
         as_float(base).ok_or_else(out_of_range)?,
         as_float(exponent).ok_or_else(out_of_range)?,
     );
     if e.abs() > f64::from(RANGE_EXPONENT_MAX) {
-        return Err(out_of_range());
+        return Err(format!(
+            "a fractional exponent beyond ±{RANGE_EXPONENT_MAX} is not supported"
+        ));
     }
     let value = Some(b.powf(e))
         .filter(|v| v.is_normal())
