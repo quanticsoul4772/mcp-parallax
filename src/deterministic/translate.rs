@@ -35,11 +35,13 @@ Engine 'arithmetic': produce a single BOOLEAN-VALUED expression that is true \
 exactly when the claim is true. Dialect (use nothing outside it): \
 <<whitelist>>. Vague quantities ('roughly', 'about') must become an explicit \
 tolerance in the expression (e.g. math::abs(x - y) <= bound); if no \
-reasonable bound exists, the claim is not checkable. HARD RULE: never use == \
-or != when the expression involves a decimal point, /, or ^ — the engine \
+reasonable bound exists, the claim is not checkable. Division is real-valued \
+(7/2 is 3.5); write floor(a/b) for integer division. HARD RULE: never use == \
+or != in a comparison whose operands involve a decimal point, /, or ^ — the engine \
 rejects it. Instead write math::abs(a - b) <= 0.0001 (a literal numeric \
 bound, never the word 'tolerance'), or rewrite division-free (a/b == c \
-becomes a == b*c). Exact == is fine for pure-integer arithmetic, and exact \
+becomes a == b*c). Exact == is fine for a pure-integer comparison, including \
+one joined by && or || to a tolerance comparison, and exact \
 percentage/power claims ARE checkable this way — do not decline them.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \

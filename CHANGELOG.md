@@ -83,6 +83,21 @@ arc.
 
 ### Fixed
 
+* **`check` no longer refutes true claims that divide integers** — evalexpr
+  truncates `int / int`, so `90/144` was `0` and `x^(1/3)` was `x^0`; a claim
+  such as "90/144 is within 0.005 of 0.625" came back `refuted`. Division is
+  now real-valued in the arithmetic dialect (`floor(a/b)` still truncates).
+  Integer literals are read as reals only inside a comparison that divides,
+  so integer comparisons elsewhere in the expression stay exact. Integer
+  division by zero is still a violation, not a verdict.
+
+* **`check` evaluates bundled claims that mix integer equalities with
+  tolerance comparisons** — the float-equality guard looked at the whole
+  expression, so `(60+48==108) && (math::abs(90/144 - 0.62) <= 0.005)` was
+  rejected and failed after the retry. The guard now applies per comparison;
+  `==` over float-producing arithmetic is still rejected, and the message
+  names the offending comparison.
+
 * **A research synthesis no longer fails the run on bounds the model never
   saw** — `SynthOut` capped `gaps` and `gap_targets` at 10 items, each gap at
   500 characters and the answer at 8 000, but the sanitizer strips those

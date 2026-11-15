@@ -30,28 +30,103 @@ pub fn evaluate(expression: &str) -> Result<ArithmeticOutcome, Violation> {
     // The equality guard (acceptance run 1 finding): exact == / != over
     // float-producing arithmetic yields confidently wrong verdicts (f64
     // rounding; evalexpr's int != float strictness). Force the tolerance
-    // form via the feedback loop. Pure-integer equality stays exact.
-    let has_equality = expression.contains("==") || expression.contains("!=");
-    let produces_floats =
-        expression.contains('.') || expression.contains('/') || expression.contains('^');
-    if has_equality && produces_floats {
-        return Err(Violation(format!(
-            "the expression `{expression}` uses exact == or != over float-producing \
-             arithmetic (a decimal point, /, or ^), which is not allowed - rewrite the \
-             comparison as math::abs(a - b) <= 0.0001 (an explicit numeric tolerance), \
-             or rewrite division-free (a/b == c becomes a == b*c)"
-        )));
+    // form via the feedback loop. Pure-integer equality stays exact. The
+    // guard is per comparison, so an integer equality may sit beside a
+    // tolerance comparison in one bundled claim.
+    for comparison in comparisons(expression) {
+        let has_equality = comparison.contains("==") || comparison.contains("!=");
+        let produces_floats =
+            comparison.contains('.') || comparison.contains('/') || comparison.contains('^');
+        if has_equality && produces_floats {
+            return Err(Violation(format!(
+                "the comparison `{}` in the expression `{expression}` uses exact == or !=                  over float-producing arithmetic (a decimal point, /, or ^), which is not                  allowed - rewrite the comparison as math::abs(a - b) <= 0.0001 (an                  explicit numeric tolerance), or rewrite division-free (a/b == c becomes                  a == b*c)",
+                comparison.trim()
+            )));
+        }
     }
+    // The expression as written decides whether evaluation is an error at
+    // all (integer division by zero stays a violation, never `inf > 0`);
+    // the real-division form decides the verdict.
+    let written = eval_boolean(expression)?;
+    if !expression.contains('/') {
+        return Ok(written);
+    }
+    eval_boolean(&with_real_division(expression))
+}
+
+fn eval_boolean(expression: &str) -> Result<ArithmeticOutcome, Violation> {
     match evalexpr::eval(expression) {
         Ok(evalexpr::Value::Boolean(holds)) => Ok(ArithmeticOutcome {
             holds,
             result_text: holds.to_string(),
         }),
         Ok(other) => Err(Violation(format!(
-            "expression evaluated to the non-boolean value {other:?}; the formal target \
-             must be a boolean-valued claim encoding (e.g. a comparison)"
+            "expression evaluated to the non-boolean value {other:?}; the formal target              must be a boolean-valued claim encoding (e.g. a comparison)"
         ))),
         Err(e) => Err(Violation(format!("expression rejected by the engine: {e}"))),
+    }
+}
+
+/// The text between boolean connectives. No arithmetic operand spans `&&` or
+/// `||`, so each piece holds whole comparisons; parentheses may be unbalanced
+/// within a piece, which neither caller minds.
+fn comparisons(expression: &str) -> impl Iterator<Item = &str> {
+    expression.split("&&").flat_map(|piece| piece.split("||"))
+}
+
+/// Rewrite integer literals as floats in every comparison that divides, so
+/// `/` is real division there (evalexpr truncates `int / int`: `90/144` is
+/// `0`, and `x^(1/3)` is `x^0`). Comparisons without a `/` are left as
+/// written, which keeps their integer arithmetic exact.
+fn with_real_division(expression: &str) -> String {
+    let mut out = String::with_capacity(expression.len() + 16);
+    let mut rest = expression;
+    while !rest.is_empty() {
+        let end = [rest.find("&&"), rest.find("||")]
+            .into_iter()
+            .flatten()
+            .min()
+            .map_or(rest.len(), |at| at + 2);
+        let (piece, tail) = rest.split_at(end);
+        if piece.contains('/') {
+            promote_integer_literals(piece, &mut out);
+        } else {
+            out.push_str(piece);
+        }
+        rest = tail;
+    }
+    out
+}
+
+/// Append `piece` to `out` with `.0` after each integer literal. A numeric
+/// token that is already a float (`1.5`, `1e-3`) or part of an identifier
+/// is copied unchanged.
+fn promote_integer_literals(piece: &str, out: &mut String) {
+    let word_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
+    let mut chars = piece.chars().peekable();
+    let mut in_word = false;
+    while let Some(c) = chars.next() {
+        if in_word || !c.is_ascii_digit() {
+            out.push(c);
+            in_word = word_char(c);
+            continue;
+        }
+        // A token starting with a digit: consume it whole.
+        let mut token = String::from(c);
+        while let Some(&next) = chars.peek() {
+            let exponent_sign =
+                matches!(next, '+' | '-') && token.ends_with(['e', 'E']) && !token.contains('x');
+            if !(word_char(next) || exponent_sign) {
+                break;
+            }
+            token.push(next);
+            chars.next();
+        }
+        let is_integer = token.chars().all(|d| d.is_ascii_digit());
+        out.push_str(&token);
+        if is_integer {
+            out.push_str(".0");
+        }
     }
 }
 
@@ -100,6 +175,57 @@ mod tests {
                 "{expression}: {violation}"
             );
         }
+    }
+
+    // Field report 2026-11-14: `25149/3600` with integer operands evaluated to
+    // 6 (evalexpr integer division) and refuted a true claim; `x^(1/3)` became
+    // `x^0`. Division is real-valued in the dialect.
+    #[test]
+    fn integer_operands_divide_as_reals_not_truncating() {
+        for (expression, expected) in [
+            ("math::abs(90/144 - 0.625) <= 0.005", true),
+            ("25149/3600 > 6.9", true),
+            ("25149/3600 > 7", false),
+            ("math::abs(27^(1/3) - 3) <= 0.0001", true),
+            ("math::abs(1e-3 - 1/1000) <= 0.0000001", true),
+            ("floor(7/2) >= 3 && floor(7/2) < 3.5", true), // explicit floor still truncates
+        ] {
+            let outcome = evaluate(expression).unwrap();
+            assert_eq!(outcome.holds, expected, "{expression}");
+        }
+    }
+
+    // The equality guard is per comparison: an exact integer equality beside a
+    // tolerance comparison is the common bundled-claim shape, and rejecting it
+    // was the most frequent `check` failure in the field.
+    #[test]
+    fn integer_equality_beside_a_float_comparison_is_evaluated() {
+        for (expression, expected) in [
+            ("(60+48==108) && (math::abs(90/144 - 0.625) <= 0.005)", true),
+            (
+                "(60+48==109) && (math::abs(90/144 - 0.625) <= 0.005)",
+                false,
+            ),
+            ("(60+48==108) || (0.84-0.27 > 1)", true),
+        ] {
+            let outcome = evaluate(expression).unwrap();
+            assert_eq!(outcome.holds, expected, "{expression}");
+        }
+    }
+
+    #[test]
+    fn float_equality_inside_a_bundle_is_still_a_violation() {
+        let violation = evaluate("(3 == 3) && (0.15 * 240 == 36)").unwrap_err();
+        assert!(violation.0.contains("tolerance"), "{violation}");
+        assert!(violation.0.contains("0.15 * 240 == 36"), "{violation}");
+    }
+
+    // Real division must not leak into a neighbouring integer comparison:
+    // above 2^53 an f64 cannot tell these two integers apart.
+    #[test]
+    fn integer_comparisons_stay_exact_beside_a_division() {
+        let outcome = evaluate("9007199254740993 != 9007199254740992 && 1/2 < 1").unwrap();
+        assert!(outcome.holds);
     }
 
     #[test]
