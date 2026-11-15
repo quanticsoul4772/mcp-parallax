@@ -36,7 +36,8 @@ pub fn evaluate(expression: &str) -> Result<ArithmeticOutcome, Violation> {
             result_text: holds.to_string(),
         }),
         Ok(exact::Outcome::NonBoolean(value)) => Err(Violation(format!(
-            "expression evaluated to the non-boolean value {value}; the formal target              must be a boolean-valued claim encoding (e.g. a comparison)"
+            "expression evaluated to the non-boolean value {value}; the formal target \
+             must be a boolean-valued claim encoding (e.g. a comparison)"
         ))),
         Err(reason) => Err(Violation(format!(
             "expression `{expression}` rejected by the engine: {reason}"
@@ -56,8 +57,8 @@ mod tests {
             ("math::abs(1840 * 0.63 - 1159.2) <= 0.001", true),
             ("math::abs(1840 * 0.63 - 1159) <= 0.5", true), // explicit tolerance
             ("math::abs(1840 * 0.63 - 1200) <= 0.5", false),
-            ("math::abs(2^32 - 4294967296) <= 0.5", true), // ^ yields a float
-            ("2^31 - 1.0 >= 2147483648.0", false),         // i32::MAX is smaller
+            ("math::abs(2^32 - 4294967296) <= 0.5", true),
+            ("2^31 - 1.0 >= 2147483648.0", false), // i32::MAX is smaller
             ("(3 < 5) && (5 < 7)", true),
             ("min(3, 9) == 3 && max(3, 9) == 9", true), // pure-int equality stays exact
             ("7 * 24 * 60 == 10000", false),            // pure-int equality stays exact
@@ -111,7 +112,7 @@ mod tests {
             ("1/(1/2) > 1", true),
             ("10/(3/4) > 13", true),
             ("5 % (1/2) < 1", true),
-            ("-7 % 2 == -1 && 7 % -2 == 1", true), // truncated, as in Rust
+            ("-7 % 2 == -1 && 7 % -2 == 1 && -7 % 3 == -1", true), // truncated, as in C
             (
                 "floor(7/2) == 3 && floor(-7/2) == -4 && round(5/2) == 3",
                 true,
@@ -202,34 +203,32 @@ mod tests {
             "0^-1 > 0",
             "true || 1/0 > 0", // no short circuit hides it
             "2^0.5 / (2 - 2) > 0",
+            "-7 % 0 == 0",
         ] {
             let violation = evaluate(expression).unwrap_err();
             assert!(violation.0.contains("by zero"), "{expression}: {violation}");
         }
     }
 
-    // Nothing outside the prompted dialect is evaluated.
+    // Constructs evalexpr would evaluate but the prompted dialect lacks.
     #[test]
-    fn everything_outside_the_dialect_is_a_violation() {
-        for expression in [
-            "a = 1/3; true && a*3 == 1",
-            "(1/3)*3 * if(true && true, 1, 1) == 1",
-            "len(\"1/2\") < 4",
-            "x > 1",
-            "math::sqrt(4) == 2",
-            "(1, 2) == (1, 2)",
-            "\"a\" == \"a\"",
-            "1 + true > 0",
-            "!3",
-            "min() > 0",
-            "floor(1, 2) > 0",
-            "",
+    fn constructs_outside_the_dialect_are_violations() {
+        for (expression, reason) in [
+            ("a = 1/3; true && a*3 == 1", "not in the dialect"),
+            ("if(true, 1, 2) == 1", "`if` is not in the dialect"),
+            ("len(\"1/2\") < 4", "not in the dialect"),
+            ("x > 1", "not in the dialect"),
+            ("math::sqrt(4) == 2", "`math::sqrt` is not in the dialect"),
+            ("abs(1) == 1", "`abs` is not in the dialect"),
+            ("(1, 2) == (1, 2)", "not in the dialect"),
+            ("\"a\" == \"a\"", "not in the dialect"),
+            ("1 + true > 0", "boolean was used where a number"),
+            ("!3", "number was used where a boolean"),
+            ("floor(1, 2) > 0", "was given 2 arguments"),
+            ("", "empty expression"),
         ] {
             let violation = evaluate(expression).unwrap_err();
-            assert!(
-                violation.0.contains("rejected by the engine"),
-                "{expression}: {violation}"
-            );
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
         }
     }
 
@@ -251,15 +250,134 @@ mod tests {
         );
     }
 
+    // Size and depth are bounded, so no input within the length cap can
+    // hang the engine or overflow its stack.
     #[test]
-    fn runaway_powers_are_violations() {
-        for expression in [
-            "2^5000 > 0",
-            "((2^4096)^4096)^4096 > 0",
-            "10^400 * 1.5 ^ 0.5 > 0",
+    fn runaway_inputs_are_violations_not_hangs_or_crashes() {
+        for (expression, reason) in [
+            ("2^5000 > 0".to_owned(), "beyond the engine's range"),
+            ("((2^4096)^4096)^4096 > 0".to_owned(), "too large"),
+            ("(9^4096)^80 * (9^4096)^80 > 0".to_owned(), "too large"),
+            (
+                "2 ^ -2147483648 > 0".to_owned(),
+                "beyond the engine's range",
+            ),
+            (format!("{}1 < 0", "-".repeat(1990)), "nested too deeply"),
+            (format!("{}true", "!".repeat(1990)), "nested too deeply"),
+            (format!("{}1 > 0", "1+".repeat(990)), "nested too deeply"),
         ] {
-            assert!(evaluate(expression).is_err(), "{expression}");
+            let violation = evaluate(&expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{violation}");
         }
+        // A long sum within the depth bound is fine.
+        assert!(
+            evaluate(&format!("{}1 == 401", "1+".repeat(400)))
+                .unwrap()
+                .holds
+        );
+        // A huge non-boolean result is reported, not printed in full.
+        let violation = evaluate("9^4096").unwrap_err();
+        assert!(violation.0.len() < 400, "{}", violation.0.len());
+    }
+
+    // Second review: f64 noise left by cancelling two roots was scaled up
+    // and answered. A root is a bracket now, and the bracket is scaled with it.
+    #[test]
+    fn cancelled_roots_are_never_answered_from_noise() {
+        for expression in [
+            "((2^0.5)^2 - 2) * 10^20 > 1",
+            "(2^0.5 * 2^0.5 - 2) * 10^16 < 1",
+            "math::abs((2^0.5 * 2^0.5 - 2) * 10^12) <= 0.0001",
+            "math::abs((3^0.5)^2 - 3) * 10^15 >= 0.4",
+            "(5^0.5)^2 * 10^16 - 5 * 10^16 < 1",
+            "(2^0.5 + 10^-20 - 2^0.5) * 10^30 > 1",
+            "floor(((2^0.5)^2 - 2) * 10^16 + 0.5) == 4",
+            "min(2, (2^0.5)^2 - 10^-20) >= 2",
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(
+                violation.0.contains("too close"),
+                "{expression}: {violation}"
+            );
+        }
+        let violation = evaluate("1/((2^0.5)^2 - 2) > 1000").unwrap_err();
+        assert!(violation.0.contains("by zero"), "{violation}");
+        // min/max keep the bracket, whatever the argument order.
+        for expression in [
+            "max(1414213562373095048/10^18, 2^0.5) == 1414213562373095048/10^18",
+            "min(2, (2^0.5)^2 - 10^-20) == 2",
+            "max(2, 4^0.5) == 2",
+            "max(4^0.5, 2) == 2",
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(
+                violation.0.contains("tolerance"),
+                "{expression}: {violation}"
+            );
+        }
+    }
+
+    // Roots that floating point separates clearly are answered, at any scale.
+    #[test]
+    fn clearly_separated_roots_are_answered() {
+        for (expression, expected) in [
+            ("2^0.5 / 10^20 > 0", true),
+            ("2^0.5 / 10^10 > 1 / 10^10", true),
+            ("2^0.5 > 1.4142135", true),
+            ("2^0.5 > 1.4142136", false),
+            ("10^400 > 2^0.5", true),
+            ("10^-400 * 2^0.5 * 10^300 * 10^200 > 1", true),
+            ("(2^0.5)^2 > 1.9999 && (2^0.5)^-2 < 0.50001", true),
+            ("math::abs(2^0.5 - 1.41421356) <= 0.00000001", true),
+            ("0^0.5 == 0", true),
+        ] {
+            assert_eq!(
+                evaluate(expression).unwrap().holds,
+                expected,
+                "{expression}"
+            );
+        }
+        for (expression, reason) in [
+            ("(-8)^(1/3) < 0", "negative"),
+            ("(2^0.5)^0.5 > 1", "fractional power of a fractional power"),
+            ("2^(2^0.5) > 2", "used as an exponent"),
+            (
+                "(10^-300)^1.5 * 10^300 * 10^300 > 1",
+                "outside the engine's range",
+            ),
+            ("2^0.5 % 1 > 0", "% over a fractional power"),
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
+        }
+    }
+
+    // evalexpr reads these differently from mathematics, or drops text.
+    #[test]
+    fn forms_evalexpr_would_misread_are_violations() {
+        for (expression, reason) in [
+            ("3 < 7 // 2", "comment"),
+            ("1 == 1 // && 1 == 2", "comment"),
+            ("2 + 2 == 5 /* || true */", "comment"),
+            ("2^3^2 == 64", "ambiguous"),
+            ("2^3^2 == 512", "ambiguous"),
+            ("0x10 == 16", "not a decimal number"),
+            ("1e-400 > 0", "outside the range"),
+            ("4e-324 == 5e-324", "outside the range"),
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
+        }
+        assert!(
+            evaluate("(2^3)^2 == 64 && 2^(3^2) == 512 && -2^2 == -4")
+                .unwrap()
+                .holds
+        );
+        assert!(
+            evaluate("0.000000000000001 == 1/10^15 && 1e-7 * 1E+7 == 1")
+                .unwrap()
+                .holds
+        );
     }
 
     #[test]
@@ -270,11 +388,13 @@ mod tests {
 
     #[test]
     fn parse_errors_are_violations_with_the_engine_message() {
-        let violation = evaluate("abs(1) == 1").unwrap_err(); // not in the dialect: math::abs
-        assert!(
-            violation.0.contains("rejected by the engine"),
-            "{violation}"
-        );
+        for expression in ["(1 > 0", "1 +* 2 > 0", "1 > 0)"] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(
+                violation.0.contains("rejected by the engine"),
+                "{expression}: {violation}"
+            );
+        }
     }
 
     #[test]

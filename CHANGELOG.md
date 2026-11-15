@@ -97,17 +97,32 @@ arc.
 
   Because `==` and `!=` are exact, the whole-expression float-equality guard
   is gone: bundles mixing integer equalities with tolerance comparisons, the
-  most frequent `check` failure in the field, are evaluated. Only a
-  fractional exponent has no exact value; it is computed in f64, `==`/`!=`
-  over it is rejected, and an ordering comparison or `floor`/`ceil`/`round`
-  too close to a boundary is rejected instead of answered. Also rejected:
-  anything outside the prompted dialect (variables, assignment, `if`,
-  strings, other functions — evalexpr used to evaluate these), literals the
-  parser would round (integers beyond i64, decimals over 15 significant
-  digits), and exact powers beyond `^4096` or about a million bits. `&&` and
-  `||` no longer short-circuit past an error. `num-rational`, `num-bigint`
-  and `num-traits` become direct dependencies; all three were already in the
-  lockfile.
+  most frequent `check` failure in the field, are evaluated.
+
+  Only a fractional exponent has no exact value. It becomes a pair of exact
+  bounds around its f64 result (one part in 10^9 either side), and the bounds
+  are carried through all later arithmetic as exact interval arithmetic, so
+  scaling or cancelling a root can never turn rounding noise into a verdict.
+  A comparison is answered only when the two ranges do not overlap;
+  `==`/`!=`, and a `floor`/`ceil`/`round` whose bounds round differently, are
+  rejected.
+
+  Rejected rather than evaluated, where evalexpr would have returned a value:
+  variables, assignment, `;` chains, `if`, strings, functions outside the six
+  in the dialect, `//` and `/* */` comments (a Python-style `7 // 2` used to
+  drop the divisor), chained powers `a^b^c` (evalexpr reads `(a^b)^c`),
+  non-decimal literals such as hex, integer literals beyond i64, decimals
+  with more than 15 significant digits or outside f64's normal range, and
+  nested or oversized powers. Bounded so no input within the length cap can
+  hang or crash the server: values up to 65,536 bits, integer exponents up
+  to 4096, tree depth up to 500, on a dedicated 32 MB stack. `&&` and `||`
+  no longer short-circuit past an error. Paren-less calls (`floor 7.5`) and
+  a bare `true` are still accepted. `grounded_verify`'s compute path
+  abstains on a threshold of exactly `i64::MIN`, whose magnitude is not an
+  i64 literal.
+
+  `num-rational`, `num-bigint` and `num-traits` become direct dependencies;
+  all three were already in the lockfile.
 
 * **A research synthesis no longer fails the run on bounds the model never
   saw** — `SynthOut` capped `gaps` and `gap_targets` at 10 items, each gap at
