@@ -7,7 +7,6 @@
 //! no judge to fool, no calibration knob, no sycophancy (Principle V).
 
 pub mod arithmetic;
-pub mod bundle;
 pub mod check;
 pub mod contract;
 mod exact;
@@ -24,18 +23,6 @@ pub const EXPRESSION_MAX_CHARS: usize = 2_000;
 pub const SMTLIB_MAX_CHARS: usize = 10_000;
 /// Initial translation + one violation-fed retry (FR-005).
 pub const TRANSLATION_ATTEMPTS_MAX: u32 = 2;
-/// Maximum separately checked parts in one claim.
-///
-/// This bounds the size of the translator's reply and a call's total engine
-/// work; how many parts execute at once is [`PARTS_CONCURRENCY`].
-pub const PARTS_MAX: usize = 12;
-/// How many parts of one claim execute at the same time.
-///
-/// The solver's timeout is clock time, so every simultaneous run makes the
-/// others likelier to exceed it; one after another, twelve slow parts would
-/// outlast the request timeout. Four bounds both: a part competes with at
-/// most three others, and twelve slow parts take about three timeouts.
-pub const PARTS_CONCURRENCY: usize = 4;
 
 /// The check verdict (contract `check.tool.json`). `NotCheckable` is a
 /// successful, honest outcome (FR-004) — not an error class.
