@@ -41,6 +41,12 @@ arc.
     `reason` says so. A caller that reads only the top-level verdict never
     takes an unchecked or omitted statement as verified. The translator is
     also told to list every statement, declining the ones no engine can check.
+  * **`every_listed_part_held`:** a top-level yes/no field for callers that
+    read one value. It is true when every listed part held as formalized,
+    including for a bundle whose top-level verdict stays `not_checkable`; for
+    a single claim it mirrors `supported`. It does not say the whole claim is
+    verified: a statement the translator did not list is not covered. The
+    tool description and the bundle explanation point to it.
   * **Top-level form of a bundle:** `formal_form` and `engine_result` hold one
     `[n] …` line per part, numbered in part order, with `(not checked)` for a
     part no engine ran; both are null when no part ran. `witness` lists only

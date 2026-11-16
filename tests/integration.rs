@@ -1745,10 +1745,67 @@ async fn check_reports_each_part_of_a_bundle_and_matches_the_contract() {
     assert_eq!(verdicts, ["supported", "not_checkable", "refuted"]);
     assert_eq!(structured["parts"][1]["reason"], "tidiness is a judgment");
     assert_eq!(structured["parts"][2]["formal_form"], "135 / 60 == 2.5");
+    assert_eq!(structured["every_listed_part_held"], false);
 
     // Still one translation call and one record for the whole bundle.
     assert_eq!(mock.received_requests().await.unwrap().len(), 1);
     assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+
+    client.cancel().await.unwrap();
+}
+
+/// A bundle whose parts all hold: the top-level verdict stays `not_checkable`
+/// (the bundle rule), and `every_listed_part_held` is the one top-level value
+/// that says the listed parts held. This is the only case where the field
+/// says something the verdict does not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_marks_a_bundle_whose_listed_parts_all_held() {
+    let mock = MockServer::start().await;
+    mount_check_translation(
+        &mock,
+        check_parts(&[
+            (
+                "3 x 2.5 is 7.5",
+                true,
+                "",
+                "arithmetic",
+                "3 * 2.5 == 7.5",
+                "",
+            ),
+            (
+                "135 / 60 is 2.25",
+                true,
+                "",
+                "arithmetic",
+                "135 / 60 == 2.25",
+                "",
+            ),
+        ]),
+    )
+    .await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "check",
+            &json!({ "claim": "3 x 2.5 = 7.5, and 135 / 60 = 2.25" }),
+        ))
+        .await
+        .unwrap();
+    let structured = result.structured_content.as_ref().unwrap();
+
+    let contract: Value = serde_json::from_str(CHECK_CONTRACT).unwrap();
+    mcp_parallax::schema::validate(&contract["outputSchema"], structured).unwrap();
+    assert_eq!(structured["verdict"], "not_checkable");
+    assert_eq!(structured["every_listed_part_held"], true);
+    assert!(
+        structured["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("every_listed_part_held is true"),
+        "{}",
+        structured["explanation"]
+    );
 
     client.cancel().await.unwrap();
 }

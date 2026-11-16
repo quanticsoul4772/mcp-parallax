@@ -23,6 +23,7 @@ persists except the standard invocation record.
 | explanation | string | deterministic template over (claim, form, result) — never model-phrased (D4) |
 | reason | string \| null | why not checkable (verdict = not_checkable only) |
 | translation_attempts | integer | 1 or 2 (the violation-fed retry — FR-005) |
+| every_listed_part_held | boolean | true when every listed part's verdict is supported; can be true beside a not_checkable bundle verdict; says nothing about statements the translator did not list |
 | parts | array (1–12) of part results | one per separately checked part, in claim order: claim, verdict, engine, formal_form, engine_result, witness, reason |
 
 Field consistency (server-guaranteed), for every entry of `parts` and for the
