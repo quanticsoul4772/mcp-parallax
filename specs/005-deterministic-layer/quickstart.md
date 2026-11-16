@@ -84,6 +84,15 @@ mapping):
   the last four runs also carried bundled claims, 6/6 once and 8/8 three
   times.
 
+### Results (2026-11-16, claude-opus-4-8): square roots
+
+- **First attempt: FAIL.** A false claim, "The square root of
+  16.0000000800000001 is exactly 4", came back `supported` in 2 of 3 runs:
+  the model wrote a tolerance form.
+- **With a bare square root compared exactly and the instructions requiring
+  `==`: PASS, 3 full runs** as printed by the acceptance example. SC-001
+  28/28, SC-002 7/7, bundles 8/8 in each.
+
 ## Inspect
 
 ```bash

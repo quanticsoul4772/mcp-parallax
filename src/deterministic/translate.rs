@@ -25,7 +25,7 @@ answer to the wrong question is worse than no answer.";
 /// The evalexpr dialect whitelist — prompt-borne and pinned by test
 /// (analysis A1: syntax mistakes must not burn the semantic retry).
 pub const EVALEXPR_WHITELIST: &str = "operators + - * / % ^ (exponentiation), comparisons \
-< <= > >= == !=, boolean && || !, parentheses, and ONLY these functions: math::abs, min, max, \
+< <= > >= == !=, boolean && || !, parentheses, and ONLY these functions: math::abs, math::sqrt, min, max, \
 floor, ceil, round";
 
 const TRANSLATE_PROMPT_TEMPLATE: &str = "\
@@ -51,7 +51,11 @@ chained powers: (a^b)^c or a^(b^c). HARD RULE: a fractional exponent (a \
 root, e.g. x^(1/3) or x^0.5) has no exact value — never use == or != on \
 anything computed from one; write math::abs(a - b) <= 0.0001 (a literal \
 numeric bound, never the word 'tolerance'), or better, restate the claim \
-root-free (x^(1/3) > 2 becomes x > 2^3). Call functions with parentheses, \
+root-free (x^(1/3) > 2 becomes x > 2^3). Exception: a claim that a square \
+root equals a value is written math::sqrt(a) == b, with the square root \
+alone on one side (rearrange if needed: 2*math::sqrt(15) == 8 becomes \
+math::sqrt(15) == 4); the engine decides it exactly. Never write such a \
+claim as a tolerance. Call functions with parentheses, \
 and write numbers plainly in decimal, with every digit the claim gives and \
 no digit grouping (1000, not 1,000). Limits: values up to about 2,400 \
 digits, integer exponents up to 4096 (64 on a root), fractional exponents \
@@ -521,6 +525,46 @@ mod tests {
             "forms": parts.iter().map(|p| p.4).collect::<Vec<_>>(),
             "stated": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
         })
+    }
+
+    /// The function list the model is given is exactly the engine's: a
+    /// function the engine has but the prompt omits is declined for no reason
+    /// (the mined square-root declines), and one the prompt names but the
+    /// engine lacks burns the retry.
+    #[test]
+    fn the_prompted_function_list_is_the_engines() {
+        let listed = EVALEXPR_WHITELIST
+            .split("ONLY these functions: ")
+            .nth(1)
+            .expect("the function list");
+        let mut prompted: Vec<&str> = listed.split(", ").collect();
+        prompted.sort_unstable();
+        let mut engine = crate::deterministic::exact::FUNCTIONS.to_vec();
+        engine.sort_unstable();
+        assert_eq!(prompted, engine);
+    }
+
+    /// An equality claim about a square root is written with ==, never as a
+    /// tolerance. Live run 2026-11-16: told to use a tolerance, the model
+    /// turned a false "is exactly 4" into a true `<= 0.0001`, and the verdict
+    /// was a wrong `supported`. The engine decides the == form exactly.
+    #[test]
+    fn a_square_root_equality_is_prompted_as_an_exact_comparison() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(
+            prompt.contains(
+                "(x^(1/3) > 2 becomes x > 2^3). Exception: a claim that a square root \
+                 equals a value is written math::sqrt(a) == b, with the square root alone \
+                 on one side (rearrange if needed: 2*math::sqrt(15) == 8 becomes \
+                 math::sqrt(15) == 4); the engine decides it exactly. Never write such a \
+                 claim as a tolerance."
+            ),
+            "{prompt}"
+        );
+        assert!(
+            !prompt.contains("anything but a perfect square"),
+            "{prompt}"
+        );
     }
 
     /// The parts rule sits before the engine paragraphs. Placed after the

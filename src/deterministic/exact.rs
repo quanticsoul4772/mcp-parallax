@@ -6,7 +6,8 @@
 //! `0.15 * 240 == 36` holds, and integers above 2^53 keep every digit. Numeric
 //! literals are read from the expression text, never from a rounded `f64`.
 //!
-//! Only a fractional exponent (a root) has no exact result. It becomes a
+//! Only a root has no exact result: a fractional exponent, or `math::sqrt` of
+//! anything but a perfect-square fraction (that one is exact). It becomes a
 //! [`Num::Range`]: two exact fractions that bracket the true value. Ranges
 //! flow through later arithmetic as exact interval arithmetic, so the
 //! bracket stays true however the value is scaled or cancelled. A comparison
@@ -30,7 +31,8 @@ const VALUE_MAX_BITS: u64 = 1 << 13;
 /// Largest power-of-ten exponent a literal may carry. Larger than any value
 /// the size limit admits, so the limit that matters is `VALUE_MAX_BITS`.
 const LITERAL_EXPONENT_MAX: u32 = 2_500;
-/// A fractional power is bracketed by its `f64` value ± one part in this.
+/// A fractional power — and an inexact square root, which is the half power —
+/// is bracketed by its `f64` value ± one part in this.
 /// The `f64` result is within about 1e-11 of the truth for the admitted
 /// operands (correctly rounded inputs, |exponent| <= 64, a libm `pow` good to
 /// a few ulp), so the bracket has two orders of magnitude to spare.
@@ -44,7 +46,15 @@ const STACK_BYTES: usize = 32 << 20;
 const PRINTED_MAX_CHARS: usize = 60;
 
 /// The dialect's functions.
-const FUNCTIONS: [&str; 6] = ["math::abs", "min", "max", "floor", "ceil", "round"];
+pub(super) const FUNCTIONS: [&str; 7] = [
+    "math::abs",
+    "math::sqrt",
+    "min",
+    "max",
+    "floor",
+    "ceil",
+    "round",
+];
 
 /// A number: exact, or bracketed by two exact bounds (`low < high`).
 #[derive(Debug, Clone)]
@@ -277,19 +287,7 @@ fn eval_node(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Val,
             let [a, b] = children else {
                 return Err("malformed operator".to_owned());
             };
-            let equal = match (eval(a, depth, literals)?, eval(b, depth, literals)?) {
-                (Val::Bool(a), Val::Bool(b)) => a == b,
-                (Val::Num(Num::Exact(a)), Val::Num(Num::Exact(b))) => a == b,
-                (Val::Num(_), Val::Num(_)) => {
-                    return Err(
-                        "== or != over a fractional power, which has no exact value - \
-                         rewrite the comparison as math::abs(a - b) <= 0.0001 (an explicit \
-                         numeric tolerance)"
-                            .to_owned(),
-                    );
-                }
-                _ => return Err("== or != between a number and a boolean".to_owned()),
-            };
+            let equal = equals(a, b, depth, literals)?;
             Ok(Val::Bool(equal == matches!(node.operator(), Operator::Eq)))
         }
         Operator::Gt | Operator::Lt | Operator::Geq | Operator::Leq => {
@@ -331,6 +329,98 @@ fn eval_node(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Val,
             function(identifier, &arguments).map(Val::Num)
         }
         other => Err(format!("`{other}` is not in the dialect")),
+    }
+}
+
+/// Whether the two sides of `==` or `!=` are equal, when that is decidable.
+fn equals(a: &Node, b: &Node, depth: usize, literals: &[BigRational]) -> Result<bool, String> {
+    if let Some(equal) = bare_root_equality(a, b, depth, literals)? {
+        return Ok(equal);
+    }
+    match (eval(a, depth, literals)?, eval(b, depth, literals)?) {
+        (Val::Bool(a), Val::Bool(b)) => Ok(a == b),
+        (Val::Num(Num::Exact(a)), Val::Num(Num::Exact(b))) => Ok(a == b),
+        // A bare square root the squaring rule could not settle: the prompt
+        // forbids a tolerance for this shape, so the refusal must not advise
+        // one.
+        (Val::Num(_), Val::Num(_)) if is_bare_sqrt(a) || is_bare_sqrt(b) => Err(
+            "an equality with a square root is decided exactly only when the square root \
+             stands alone and the other side is exact or a single square root - rearrange \
+             the claim into that shape (square both sides if needed), or decline it; do \
+             not use a tolerance"
+                .to_owned(),
+        ),
+        (Val::Num(_), Val::Num(_)) => Err(
+            "== or != over a fractional power, which has no exact value - rewrite the \
+             comparison as math::abs(a - b) <= 0.0001 (an explicit numeric tolerance)"
+                .to_owned(),
+        ),
+        _ => Err("== or != between a number and a boolean".to_owned()),
+    }
+}
+
+/// The argument of a bare `math::sqrt(...)` call, through any parentheses
+/// around the call. `None` for any other node.
+fn bare_sqrt_argument(node: &Node) -> Option<&Node> {
+    let mut node = node;
+    while let (Operator::RootNode, [only]) = (node.operator(), node.children()) {
+        node = only;
+    }
+    match (node.operator(), node.children()) {
+        (Operator::FunctionIdentifier { identifier }, [argument])
+            if identifier == "math::sqrt" && matches!(argument.operator(), Operator::RootNode) =>
+        {
+            Some(argument)
+        }
+        _ => None,
+    }
+}
+
+fn is_bare_sqrt(node: &Node) -> bool {
+    bare_sqrt_argument(node).is_some()
+}
+
+/// What stands under a bare `math::sqrt(...)`, when it is exact and not
+/// negative. `None` for any other node, so the ordinary rules decide.
+fn radicand(
+    node: &Node,
+    depth: usize,
+    literals: &[BigRational],
+) -> Result<Option<BigRational>, String> {
+    let Some(argument) = bare_sqrt_argument(node) else {
+        return Ok(None);
+    };
+    Ok(
+        match collect_arguments(argument, depth, literals)?.as_slice() {
+            [Num::Exact(x)] if !x.is_negative() => Some(x.clone()),
+            _ => None,
+        },
+    )
+}
+
+/// `math::sqrt(a) == b`, decided exactly.
+///
+/// For exact `a >= 0` and exact `b`, the root equals `b` exactly when
+/// `b >= 0` and `b * b == a`: no float and no bracket, so an equality claim
+/// about a square root never needs a tolerance. `None` when neither side is a
+/// bare square root, or a value involved is inexact or not a number.
+fn bare_root_equality(
+    a: &Node,
+    b: &Node,
+    depth: usize,
+    literals: &[BigRational],
+) -> Result<Option<bool>, String> {
+    let squares_to = |other: &Node, under: &BigRational| -> Result<Option<bool>, String> {
+        Ok(match eval(other, depth, literals)? {
+            Val::Num(Num::Exact(q)) => Some(!q.is_negative() && &q * &q == *under),
+            _ => None,
+        })
+    };
+    match (radicand(a, depth, literals)?, radicand(b, depth, literals)?) {
+        (Some(x), Some(y)) => Ok(Some(x == y)),
+        (Some(x), None) => squares_to(b, &x),
+        (None, Some(y)) => squares_to(a, &y),
+        (None, None) => Ok(None),
     }
 }
 
@@ -588,8 +678,33 @@ fn order(a: &Num, b: &Num) -> Result<Ordering, String> {
     }
 }
 
+/// The square root: exact when the argument is a perfect-square fraction,
+/// otherwise the bracketed half power.
+fn square_root(x: &Num) -> Result<Num, String> {
+    if let Num::Exact(value) = x {
+        if value.is_negative() {
+            return Err("the square root of a negative number is undefined".to_owned());
+        }
+        // A fraction in lowest terms is a perfect square exactly when its
+        // numerator and denominator both are. Integer roots: no float.
+        let (numer, denom) = (value.numer().sqrt(), value.denom().sqrt());
+        if &numer * &numer == *value.numer() && &denom * &denom == *value.denom() {
+            return Ok(Num::Exact(BigRational::new(numer, denom)));
+        }
+    }
+    if matches!(x, Num::Range(..)) {
+        return Err(
+            "the square root of an inexact value is not supported - take the square root \
+             of an exact number"
+                .to_owned(),
+        );
+    }
+    root(x, &BigRational::new(BigInt::one(), BigInt::from(2)))
+}
+
 fn function(identifier: &str, arguments: &[Num]) -> Result<Num, String> {
     match (identifier, arguments) {
+        ("math::sqrt", [x]) => square_root(x),
         ("math::abs", [x]) => Ok(match x {
             Num::Exact(x) => Num::Exact(x.abs()),
             Num::Range(low, high) if !low.is_negative() => Num::Range(low.clone(), high.clone()),

@@ -58,6 +58,34 @@ const GROUND_TRUTH: &[(&str, Verdict)] = &[
     ("Doubling 750 gives more than 2000.", Verdict::Refuted),
     ("A week has exactly 10000 minutes.", Verdict::Refuted),
     ("Half of 7 is greater than 4.", Verdict::Refuted),
+    // arithmetic — square roots (exact on a perfect square, bracketed otherwise)
+    ("The square root of 16 is 4.", Verdict::Supported),
+    // 16.0000000800000001 is a perfect square (root 4.00000001), so this is
+    // false exactly — and only the exact form says so: a tolerance form
+    // would call it supported.
+    (
+        "The square root of 16.0000000800000001 is exactly 4.",
+        Verdict::Refuted,
+    ),
+    // The same, with the root not alone: also false only in an exact form.
+    (
+        "2 times the square root of 16.0000000800000001 is exactly 8.",
+        Verdict::Refuted,
+    ),
+    (
+        "The square root of 2 is greater than 1.41.",
+        Verdict::Supported,
+    ),
+    ("The square root of 50 is less than 7.", Verdict::Refuted),
+    (
+        "1.683 * 7.6 * sqrt(1/3 + 1/6) is between 9 and 9.1.",
+        Verdict::Supported,
+    ),
+    // A mined claim, false as stated: the value rounds to 0.80.
+    (
+        "(1.645 + 0.842) * 1.24 * sqrt(2/30) rounds to 0.79 at two decimals.",
+        Verdict::Refuted,
+    ),
     // constraints — claims about satisfiability with known truth
     (
         "There exist two integers greater than 2 whose sum is 11.",

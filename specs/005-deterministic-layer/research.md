@@ -87,6 +87,14 @@ feedback loop; pure-integer equality stays exact. The dialect whitelist is
 prompt-borne + violation-enforced; evaluating against a builtins-disabled
 context (making it engine-enforced) is named follow-up hardening.
 
+**Superseded 2026-11 (#122, then `math::sqrt`)**: the engine no longer
+evaluates in f64. evalexpr only parses; `exact.rs` evaluates with
+arbitrary-precision fractions, so `+ - * / %`, integer powers and `==` or
+`!=` over them are exact, and integers beyond 2^53 keep every digit. Only a
+root is inexact (a fractional exponent, or `math::sqrt` of a
+non-perfect-square): it is a bracket of two exact bounds, and a comparison is
+answered only when the bracket settles it.
+
 ## D3 — One model call: classify + translate in a single flat schema
 
 **Decision**: one constrained call returns

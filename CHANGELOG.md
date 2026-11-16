@@ -13,6 +13,18 @@ arc.
 
 ### Added
 
+* **`check` computes square roots** — `math::sqrt` joins the arithmetic
+  dialect. It is exact when the argument is a perfect-square fraction
+  (`math::sqrt(16) == 4` holds). A square root standing alone on one side of
+  `==` or `!=` is decided exactly by squaring, so `math::sqrt(15) == 4` is
+  false with no tolerance. Any other inexact root is a bracketed value under
+  the same rule as a fractional power. The translator is told to write an
+  equality claim about a square root with `==`, never as a tolerance: in a
+  live run a false is-exactly-4 claim had come back `supported` through a
+  tolerance form. Nine of the 21 distinct declines among 359 `check` calls
+  mined from local session transcripts (2026-11-15) needed a square root. The
+  half power is unchanged: `16^0.5 == 4` is still refused.
+
 * **`check` settles a bundle of claims part by part** — a claim that states
   several things at once used to be declined whole whenever one of them could
   not be checked. The translator now splits such a claim into at most 12
