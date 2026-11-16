@@ -49,6 +49,7 @@ pub fn assemble(checked: Vec<Checked>, translation_attempts: u32) -> CheckResult
             explanation: only.explanation.clone(),
             reason: part.reason.clone(),
             translation_attempts,
+            every_listed_part_held: part.verdict == Verdict::Supported,
             parts: vec![part.clone()],
         };
     }
@@ -56,6 +57,10 @@ pub fn assemble(checked: Vec<Checked>, translation_attempts: u32) -> CheckResult
     let parts: Vec<PartResult> = checked.into_iter().map(|c| c.part).collect();
     let verdict = bundle_verdict(&parts);
     let any_executed = parts.iter().any(|p| p.engine.is_some());
+    // Computed once, for the field and for the explanation that names it.
+    // Not vacuously true: no parts means nothing was checked.
+    let every_listed_part_held =
+        !parts.is_empty() && parts.iter().all(|p| p.verdict == Verdict::Supported);
     CheckResult {
         verdict,
         engine: shared_engine(&parts),
@@ -65,7 +70,7 @@ pub fn assemble(checked: Vec<Checked>, translation_attempts: u32) -> CheckResult
             .iter()
             .any(|p| p.witness.is_some())
             .then(|| lines(&parts, |p| p.witness.as_deref(), false)),
-        explanation: explain(&parts, verdict),
+        explanation: explain(&parts, verdict, every_listed_part_held),
         reason: (verdict == Verdict::NotCheckable).then(|| {
             if parts.is_empty() {
                 return NO_PARTS.to_string();
@@ -78,6 +83,7 @@ pub fn assemble(checked: Vec<Checked>, translation_attempts: u32) -> CheckResult
             }
         }),
         translation_attempts,
+        every_listed_part_held,
         parts,
     }
 }
@@ -137,7 +143,7 @@ fn lines(
 }
 
 /// Deterministic bundle explanation — counts and the rule, never model text.
-fn explain(parts: &[PartResult], verdict: Verdict) -> String {
+fn explain(parts: &[PartResult], verdict: Verdict, every_listed_part_held: bool) -> String {
     let count = |wanted: Verdict| parts.iter().filter(|p| p.verdict == wanted).count();
     let rule = if verdict == Verdict::Refuted {
         "At least one part does not hold as formalized, so the claim is refuted."
@@ -145,9 +151,16 @@ fn explain(parts: &[PartResult], verdict: Verdict) -> String {
         "No part was refuted. A claim checked in parts is never reported as supported as a \
          whole, because nothing can confirm the parts cover every statement in it."
     };
+    // A caller reading only the verdict sees `not_checkable` here; the
+    // explanation points it at the one field that says the listed parts held.
+    let held = if every_listed_part_held {
+        " Every listed part held as formalized: every_listed_part_held is true."
+    } else {
+        ""
+    };
     format!(
-        "The claim was checked as {} parts: {} supported, {} refuted, {} not checked. {rule} \
-         See `parts` for each part's verdict, executed form and result.",
+        "The claim was checked as {} parts: {} supported, {} refuted, {} not checked. \
+         {rule}{held} See `parts` for each part's verdict, executed form and result.",
         parts.len(),
         count(Verdict::Supported),
         count(Verdict::Refuted),
@@ -253,6 +266,63 @@ mod tests {
             ([N, R], R),
         ] {
             assert_eq!(verdict_of(&verdicts), expected, "{verdicts:?}");
+        }
+    }
+
+    /// `every_listed_part_held` is the one value a simple caller reads: true
+    /// only when each listed part is supported. It leaves the top-level
+    /// verdict alone — a bundle whose parts all hold is still `not_checkable`
+    /// — and it is false, not vacuously true, when there are no parts.
+    #[test]
+    fn every_listed_part_held_is_true_only_when_each_listed_part_is_supported() {
+        use Verdict::{NotCheckable as N, Refuted as R, Supported as S};
+        let result_of = |verdicts: &[Verdict]| {
+            let checked = verdicts
+                .iter()
+                .map(|v| Checked {
+                    part: part(*v),
+                    explanation: "single".to_string(),
+                })
+                .collect();
+            assemble(checked, 1)
+        };
+        for (verdicts, expected) in [
+            (&[S][..], true),
+            (&[R], false),
+            (&[N], false),
+            (&[S, S], true),
+            (&[S, S, S], true),
+            (&[S, R], false),
+            (&[R, S], false),
+            (&[S, N], false),
+            (&[N, S], false),
+            (&[N, N], false),
+            (&[], false),
+        ] {
+            assert_eq!(
+                result_of(verdicts).every_listed_part_held,
+                expected,
+                "{verdicts:?}"
+            );
+        }
+        let all_held = result_of(&[S, S]);
+        assert_eq!(all_held.verdict, Verdict::NotCheckable);
+        assert!(all_held.every_listed_part_held);
+
+        // The explanation, which arrives with every result, points a caller
+        // that reads only the verdict at the field — and only when it is true.
+        let pointer = "Every listed part held as formalized: every_listed_part_held is true.";
+        assert!(
+            all_held.explanation.contains(pointer),
+            "{}",
+            all_held.explanation
+        );
+        for verdicts in [&[S, N][..], &[S, R], &[N, N], &[]] {
+            let explanation = result_of(verdicts).explanation;
+            assert!(
+                !explanation.contains("every_listed_part_held"),
+                "{explanation}"
+            );
         }
     }
 

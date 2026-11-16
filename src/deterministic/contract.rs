@@ -70,6 +70,13 @@ pub struct CheckResult {
     pub reason: Option<String>,
     /// 1 or 2 (the violation-fed retry — FR-005).
     pub translation_attempts: u32,
+    /// True when every part listed in parts held as formalized (each
+    /// part's verdict is supported). For a claim with several statements this
+    /// can be true while verdict is not_checkable: the server cannot confirm
+    /// the listed parts cover every statement of the claim, so this says only
+    /// that the listed parts held. For a single claim it is true exactly when
+    /// verdict is supported.
+    pub every_listed_part_held: bool,
     /// One entry per separately checked part, in the order the claim states
     /// them. A single claim has exactly one part. For a bundle, read each
     /// part's verdict here: the top-level verdict of a bundle is `refuted` if
@@ -139,6 +146,35 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
         assert_eq!(verdict_values, ["supported", "refuted", "not_checkable"]);
+    }
+
+    /// `every_listed_part_held` is published as a required boolean, in the
+    /// derived schema and in the contract file alike. The name comparison
+    /// above would not notice it becoming optional or changing type.
+    #[test]
+    fn every_listed_part_held_is_a_required_boolean_in_schema_and_contract() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../specs/005-deterministic-layer/contracts/check.tool.json"
+        ))
+        .unwrap();
+        let derived = serde_json::to_value(schemars::schema_for!(CheckResult)).unwrap();
+        for (name, schema) in [
+            ("contract", &contract["outputSchema"]),
+            ("derived", &derived),
+        ] {
+            assert_eq!(
+                schema["properties"]["every_listed_part_held"]["type"], "boolean",
+                "{name}"
+            );
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|required| required == "every_listed_part_held"),
+                "{name}"
+            );
+        }
     }
 
     /// A `parts` entry is bound to the contract structurally, not by one

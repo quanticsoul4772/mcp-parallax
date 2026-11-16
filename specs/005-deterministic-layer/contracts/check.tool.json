@@ -1,7 +1,7 @@
 {
   "$comment": "MCP tool contract for `check`. The verdict comes only from deterministic engine execution; the model classifies checkability and translates - it never decides. formal_form and engine_result make every verdict auditable (FR-007). not_checkable is a successful, honest outcome (FR-004).",
   "name": "check",
-  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. A claim that bundles several statements is checked part by part: parts holds each part's own verdict, form and result, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported, because nothing can confirm the parts cover every statement of the claim; read each part's verdict in parts. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
+  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. A claim that bundles several statements is checked part by part: parts holds each part's own verdict, form and result, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported, because nothing can confirm the parts cover every statement of the claim; every_listed_part_held says whether every part the translator listed held as formalized, and each part's verdict is in parts. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -94,6 +94,10 @@
         "minimum": 1,
         "maximum": 2
       },
+      "every_listed_part_held": {
+        "type": "boolean",
+        "description": "True when every part listed in parts held as formalized (each part's verdict is supported). For a claim with several statements this can be true while verdict is not_checkable: the server cannot confirm the listed parts cover every statement of the claim, so this says only that the listed parts held. For a single claim it is true exactly when verdict is supported."
+      },
       "parts": {
         "type": "array",
         "minItems": 1,
@@ -177,6 +181,7 @@
       "explanation",
       "reason",
       "translation_attempts",
+      "every_listed_part_held",
       "parts"
     ],
     "additionalProperties": false

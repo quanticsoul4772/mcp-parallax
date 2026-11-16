@@ -650,6 +650,16 @@ mod tests {
         ])
         .await;
         assert_eq!(result.verdict, Verdict::NotCheckable);
+        // The one value a verdict-only caller can read instead, and the
+        // explanation that points to it.
+        assert!(result.every_listed_part_held);
+        assert!(
+            result
+                .explanation
+                .contains("every_listed_part_held is true"),
+            "{}",
+            result.explanation
+        );
         assert_eq!(result.engine, Some(Engine::Arithmetic));
         assert_eq!(
             result.formal_form.as_deref(),
