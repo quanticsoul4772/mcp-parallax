@@ -70,6 +70,20 @@ mapping):
   responses carry `formal_form` + `engine_result`, SC-007 determinism
   true (forms varied across the repeat; engine results identical).
 
+### Results (2026-11-15, claude-opus-4-8): per-part results
+
+- **First version (#123): FAIL in every run.** One constraint claim
+  ("Three numbers can each be strictly less than the next, cyclically") came
+  back `supported`: the model wrote its own conclusion as the polarity.
+  Reverted in #124.
+- **Probe, that one claim, 10 runs per variant.** As merged: 0 right. Parts
+  rule moved before the engine paragraphs: 7 right. Rule moved and polarity
+  written last (`stated`): 10 right. A new-style name still written before
+  the script: 0 right.
+- **Fixed version: PASS, 7 full runs.** SC-001 21/21 and SC-002 7/7 in each;
+  the last four runs also carried bundled claims, 6/6 once and 8/8 three
+  times.
+
 ## Inspect
 
 ```bash

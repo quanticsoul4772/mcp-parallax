@@ -101,6 +101,61 @@ const UNCHECKABLE: &[&str] = &[
     "Performance got noticeably better recently.", // numeric-ish but unboundable
 ];
 
+/// (claim, expected overall verdict, expected verdict of each part in order).
+///
+/// Bundles of several statements, and two claims that must stay ONE part. A
+/// bundle is never `supported` as a whole: it is `refuted` when a part is,
+/// and `not_checkable` otherwise.
+const BUNDLES: &[(&str, Verdict, &[Verdict])] = &[
+    (
+        "15% of 240 is 36, and 2 to the power of 10 is 1024.",
+        Verdict::NotCheckable,
+        &[Verdict::Supported, Verdict::Supported],
+    ),
+    (
+        "24 times 7 is 168, and 60 times 24 is 1500.",
+        Verdict::Refuted,
+        &[Verdict::Supported, Verdict::Refuted],
+    ),
+    (
+        "25% of 80 is 20, and Rust is more elegant than C++.",
+        Verdict::NotCheckable,
+        &[Verdict::Supported, Verdict::NotCheckable],
+    ),
+    // An 'or' is not a conjunction: it must not be split.
+    (
+        "Either 2 plus 2 is 5 or 3 times 3 is 9.",
+        Verdict::Supported,
+        &[Verdict::Supported],
+    ),
+    // An attached opinion is not a part of its own.
+    (
+        "A 37% reduction from 1840 ms leaves 1159.2 ms, which is a great improvement.",
+        Verdict::Supported,
+        &[Verdict::Supported],
+    ),
+    (
+        "2 to the power of 8 is 256, there is an integer strictly between 4 and 6, \
+         and half of 9 is 5.",
+        Verdict::Refuted,
+        &[Verdict::Supported, Verdict::Supported, Verdict::Refuted],
+    ),
+    // A FALSE constraint part: the only kind on which a wrong polarity label
+    // changes the verdict. Once after an arithmetic part, once before one.
+    (
+        "2 to the power of 8 is 256, and three numbers can each be strictly less than \
+         the next, cyclically.",
+        Verdict::Refuted,
+        &[Verdict::Supported, Verdict::Refuted],
+    ),
+    (
+        "There is an integer that is both less than 5 and greater than 10, and 15% of \
+         240 is 36.",
+        Verdict::Refuted,
+        &[Verdict::Refuted, Verdict::Supported],
+    ),
+];
+
 fn deps(config: &Config) -> CheckDeps {
     let mut registry = ModeRegistry::new();
     register(&mut registry).expect("register translate mode");
@@ -173,6 +228,29 @@ async fn main() {
         }
     }
 
+    // Bundles: the overall verdict and every part's verdict, in order.
+    let mut bundled = 0_u32;
+    for (claim, expected, expected_parts) in BUNDLES {
+        match run_with(&deps, &params(claim), deps.model_client.as_ref()).await {
+            Ok((result, _, _)) => {
+                let got: Vec<Verdict> = result.parts.iter().map(|p| p.verdict).collect();
+                let ok = result.verdict == *expected && got == *expected_parts;
+                if ok {
+                    bundled += 1;
+                }
+                println!(
+                    "\n[bundle {}] {claim}\n   overall {:?} (expected {expected:?})",
+                    if ok { "ok" } else { "** WRONG **" },
+                    result.verdict
+                );
+                for part in &result.parts {
+                    println!("   part {:?}: {}", part.verdict, part.claim);
+                }
+            }
+            Err(e) => println!("[ERROR] {claim}: {e}"),
+        }
+    }
+
     // SC-007: a repeated check with the same formalization → identical
     // engine result. (Engine-level determinism is unit-pinned; this repeats
     // one live claim and compares engine results when the forms agree.)
@@ -210,8 +288,13 @@ async fn main() {
     );
     println!("SC-003 auditability     : {audited}/{completed} responses carry form+result");
     println!("SC-007 determinism      : {deterministic}");
+    println!(
+        "Bundles                 : {bundled}/{} (target: 100%)",
+        BUNDLES.len()
+    );
 
-    let pass = correct as usize == GROUND_TRUTH.len()
+    let pass = bundled as usize == BUNDLES.len()
+        && correct as usize == GROUND_TRUTH.len()
         && completed as usize == GROUND_TRUTH.len()
         && declined as usize == UNCHECKABLE.len()
         && audited == completed

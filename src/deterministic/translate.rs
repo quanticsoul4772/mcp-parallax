@@ -6,7 +6,9 @@
 //! violations, fed to the single retry exactly like an engine parse error
 //! (D5).
 
-use crate::deterministic::{Polarity, Violation, EXPRESSION_MAX_CHARS, SMTLIB_MAX_CHARS};
+use crate::deterministic::{
+    Polarity, Violation, EXPRESSION_MAX_CHARS, PARTS_MAX, SMTLIB_MAX_CHARS,
+};
 use crate::error::AppError;
 use crate::modes::{CorrectiveMode, ModeRegistry};
 use crate::schema::validate;
@@ -30,6 +32,8 @@ const TRANSLATE_PROMPT_TEMPLATE: &str = "\
 You classify and translate one claim for deterministic checking. The claim is \
 checkable only if its truth is computable by one of two engines, with no \
 judgment, world knowledge, or prediction required. <<decline_bias>>\n\
+\n\
+<<parts_rule>>\n\
 \n\
 Engine 'arithmetic': produce a single BOOLEAN-VALUED expression that is true \
 exactly when the claim is true. Dialect (use nothing outside it): \
@@ -55,43 +59,92 @@ up to 64.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \
 each variable over Int, Real, or Bool, then (assert ...) forms using linear \
-arithmetic; do NOT emit (check-sat). Set 'asserted' to what the claim says \
+arithmetic; do NOT emit (check-sat). Set 'stated' to what the claim says \
 about the system: 'satisfiable' if the claim says an assignment exists, \
 'unsatisfiable' if the claim says none exists. The polarity reflects what \
 the claim STATES, never what you compute to be true. Cues: 'there is/are', \
 'there exist(s)', 'you can', 'it is possible' assert satisfiable; 'no ... \
 exists', 'you cannot', 'it is impossible', 'never' assert unsatisfiable.\n\
 \n\
-A claim mixing a checkable core with judgment may be checked ONLY for the \
+A part mixing a checkable core with judgment may be checked ONLY for the \
 core — the formal form is the statement of what was checked; if the core \
-cannot stand alone, decline.<<violation_clause>>\n\
+cannot stand alone, decline that part. A remark of opinion attached to a \
+statement ('..., which is a great improvement') is NOT a part of its own: it \
+belongs to that statement's part and is left out of the form. Only a \
+judgment the claim asserts as a separate statement becomes its own part.<<violation_clause>>\n\
 \n\
 Claim: <<claim>>\n\
 Context: <<context>>";
 
+/// How a claim is divided into separately checked parts — prompt-borne and
+/// pinned by test. The `{max}` slot is filled from [`PARTS_MAX`].
+pub const PARTS_RULE_TEMPLATE: &str = "PARTS. A claim may bundle several statements. Split it \
+into parts ONLY where the claim asserts every part at once (statements joined by 'and', by \
+commas, or as listed items) and each part is a complete statement that is true or false on \
+its own. The parts are combined as 'all must hold', so a claim joined any other way — 'or', \
+'either', 'if ... then', 'unless', 'only if', 'because', 'so', 'therefore', or a negation \
+over several statements such as \
+'not both' — stays in ONE part, written as one expression or script. Statements that share \
+the variables of one constraint system, or that only make sense together, also stay in ONE \
+part. When in doubt, keep one part. At most {max} parts. Every statement the claim makes \
+must appear in exactly one part: never leave one out. A statement no engine can check is \
+still listed, and declined. Restate each \
+part so it stands alone, carrying in any value it needs from an earlier part or the context. \
+Each part is classified and translated independently for exactly one engine: a part that \
+needs judgment, or a function no engine has, is declined by itself and does not stop the \
+other parts from being checked. A list of numbers to add or count is written out in full \
+inside the expression (a + b + c ...); there is no summation or counting function. Answer in \
+six lists of equal length, one entry per part, in the order the claim states the parts: \
+'parts' (the restated part), 'checkable', 'reasons' (why not checkable; empty string when \
+checkable), 'engines' ('arithmetic' or 'constraints'; empty string when not checkable), \
+'forms' (the expression or the SMT-LIB script; empty string when not checkable), 'stated' \
+('satisfiable' or 'unsatisfiable' for a constraints part; empty string otherwise).";
+
 /// The hop's constrained output (flat + closed — Principle II;
 /// data-model.md §3).
+///
+/// Mode schemas admit only scalars and arrays of scalars,
+/// so the parts travel as six index-aligned lists, the encoding `decide`
+/// uses for its per-option scores.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct TranslateOut {
-    /// Whether the claim is honestly checkable (decline-biased).
-    pub checkable: bool,
-    /// Why not checkable (required when checkable is false).
-    pub reason: Option<String>,
-    /// The chosen engine when checkable: "arithmetic" or "constraints".
-    pub engine: Option<String>,
-    /// Boolean-valued evalexpr expression (engine = arithmetic).
-    pub arithmetic_expression: Option<String>,
-    /// SMT-LIB 2 declares + asserts, no check-sat (engine = constraints).
-    pub smtlib_constraints: Option<String>,
-    /// The claim's polarity about the constraint system when engine =
-    /// constraints: "satisfiable" or "unsatisfiable".
-    pub asserted: Option<String>,
+    /// Each part of the claim, restated so it stands alone. One entry per
+    /// part; a claim that is a single statement has exactly one.
+    pub parts: Vec<String>,
+    /// Per part: whether its truth is computable by an engine (decline-biased).
+    pub checkable: Vec<bool>,
+    /// Per part: why it is not checkable; empty string when it is.
+    pub reasons: Vec<String>,
+    /// Per part: "arithmetic" or "constraints"; empty string when not checkable.
+    pub engines: Vec<String>,
+    /// Per part: the boolean-valued expression (arithmetic) or the SMT-LIB 2
+    /// declares + asserts with no check-sat (constraints); empty string when
+    /// not checkable.
+    pub forms: Vec<String>,
+    /// Per part: "satisfiable" or "unsatisfiable" for a constraints part;
+    /// empty string otherwise.
+    ///
+    /// Named `stated` on the wire so it is the last field the model writes:
+    /// reply keys are emitted in alphabetical order, and a label written
+    /// before the script came back as the model's own conclusion in live
+    /// runs instead of what the claim states.
+    #[serde(rename = "stated")]
+    pub asserted: Vec<String>,
 }
 
-/// A validated translation, ready for exactly one engine.
+/// One part of the claim with its validated translation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Part {
+    /// The part as the translator restated it.
+    pub text: String,
+    /// What to execute for it, or its decline.
+    pub translation: Translation,
+}
+
+/// A validated translation of one part, ready for exactly one engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Translation {
-    /// Honest decline (a successful outcome — FR-004).
+    /// A decline (a successful outcome — FR-004).
     NotCheckable {
         /// The classifier's stated reason.
         reason: String,
@@ -110,9 +163,12 @@ pub enum Translation {
     },
 }
 
-/// One translation attempt's outcome: a usable translation, or a REAL
-/// violation to feed the single retry.
-pub type TranslateAttempt = Result<Translation, Violation>;
+/// One translation attempt's outcome: the claim's parts, or a REAL violation.
+///
+/// On success every part has a usable translation. The violation, fed to the
+/// single retry, carries every part's validation violation together, each
+/// labelled with its part.
+pub type TranslateAttempt = Result<Vec<Part>, Violation>;
 
 /// Register the translation mode (boot-time; enforces flat+closed).
 ///
@@ -144,15 +200,17 @@ fn build_prompt(
     let violation_clause = violation.map_or(String::new(), |v| {
         format!(
             "\n\nYOUR PREVIOUS TRANSLATION WAS REJECTED by the engine with this exact \
-             violation: {v}. Produce a corrected translation (or decline if the claim \
-             cannot be faithfully formalized)."
+             violation: {v}. Produce a corrected translation of every part (or decline a \
+             part that cannot be faithfully formalized)."
         )
     });
+    let parts_rule = PARTS_RULE_TEMPLATE.replace("{max}", &PARTS_MAX.to_string());
     fill(
         mode.prompt_template,
         &[
             ("<<decline_bias>>", DECLINE_BIAS),
             ("<<whitelist>>", EVALEXPR_WHITELIST),
+            ("<<parts_rule>>", &parts_rule),
             ("<<violation_clause>>", &violation_clause),
             ("<<claim>>", claim),
             ("<<context>>", context.unwrap_or("(none)")),
@@ -204,8 +262,17 @@ pub async fn translate_once(
     let prompt = build_prompt(mode, claim, context, violation);
     let completion = client.complete(&prompt, &mode.sanitized_schema).await?;
     validate(&mode.output_schema, &completion.value)?;
-    let out: TranslateOut = serde_json::from_value(completion.value)
+    let mut out: TranslateOut = serde_json::from_value(completion.value)
         .map_err(|e| AppError::ValidationFailure(format!("translation shape: {e}")))?;
+    // A single claim needs no restating, so an empty text there is the
+    // caller's own claim — not a violation that spends the retry on a field a
+    // one-claim call never needed. In a bundle the text is the only thing
+    // saying which statement a part is, so the validator still rejects it.
+    if let [only] = out.parts.as_mut_slice() {
+        if only.trim().is_empty() {
+            *only = claim.trim().to_string();
+        }
+    }
     Ok((
         cross_field_validate(&out),
         completion.input_tokens,
@@ -216,62 +283,162 @@ pub async fn translate_once(
 /// The pure cross-field validator (D3): enforce the consistency the flat
 /// schema cannot express. Failures are translation violations (retryable).
 fn cross_field_validate(out: &TranslateOut) -> TranslateAttempt {
-    if !out.checkable {
-        let reason = out
-            .reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|r| !r.is_empty())
-            .ok_or_else(|| Violation("checkable=false requires a non-empty reason".to_string()))?;
+    let count = out.parts.len();
+    for (name, len) in [
+        ("checkable", out.checkable.len()),
+        ("reasons", out.reasons.len()),
+        ("engines", out.engines.len()),
+        ("forms", out.forms.len()),
+        ("stated", out.asserted.len()),
+    ] {
+        if len != count {
+            return Err(Violation(format!(
+                "the six lists must have one entry per part: 'parts' has {count} but \
+                 '{name}' has {len}"
+            )));
+        }
+    }
+    if count == 0 {
+        return Err(Violation(
+            "'parts' is empty; a claim has at least one part".to_string(),
+        ));
+    }
+    if count > PARTS_MAX {
+        return Err(Violation(format!(
+            "the claim was split into {count} parts; the maximum is {PARTS_MAX}"
+        )));
+    }
+
+    // Every part is validated, and every validation violation is reported, so
+    // the single retry is told about all of them at once. (Engine violations
+    // are a later stage: no engine runs on a reply rejected here.) A bundle
+    // names the part; a one-part claim reads as it always has.
+    let mut parts = Vec::with_capacity(count);
+    let mut violations = Vec::new();
+    for index in 0..count {
+        let text = out.parts[index].trim();
+        let validated = if text.is_empty() {
+            Err(Violation("the part's text is empty".to_string()))
+        } else {
+            validate_part(
+                out.checkable[index],
+                &out.reasons[index],
+                &out.engines[index],
+                &out.forms[index],
+                &out.asserted[index],
+                count > 1,
+            )
+        };
+        match validated {
+            Ok(translation) => parts.push(Part {
+                text: text.to_string(),
+                translation,
+            }),
+            Err(violation) => violations.push(part_violation(index, count, text, &violation)),
+        }
+    }
+    if violations.is_empty() {
+        Ok(parts)
+    } else {
+        Err(Violation(violations.join("; ")))
+    }
+}
+
+/// How much of a part's text a violation label quotes.
+const PART_LABEL_MAX_CHARS: usize = 80;
+
+/// Label a violation with its 1-based part number and the part's own text
+/// when the claim has several parts; a one-part claim's violation is passed
+/// through unchanged.
+///
+/// The text is quoted because a number alone refers to a split the retry is
+/// not shown: a solver violation does not echo its script, so "part 2" would
+/// leave the model to reproduce its earlier split to learn what to fix.
+#[must_use]
+pub fn part_violation(index: usize, count: usize, text: &str, violation: &Violation) -> String {
+    if count <= 1 {
+        return violation.0.clone();
+    }
+    let text = text.trim();
+    let quoted: String = text.chars().take(PART_LABEL_MAX_CHARS).collect();
+    let cut = if text.chars().count() > PART_LABEL_MAX_CHARS {
+        "…"
+    } else {
+        ""
+    };
+    format!("part {} (\"{quoted}{cut}\"): {violation}", index + 1)
+}
+
+/// Validate one part's fields into a translation for exactly one engine.
+fn validate_part(
+    checkable: bool,
+    reason: &str,
+    engine: &str,
+    form: &str,
+    asserted: &str,
+    in_bundle: bool,
+) -> Result<Translation, Violation> {
+    if !checkable {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(Violation(
+                "checkable=false requires a non-empty reason".to_string(),
+            ));
+        }
+        // In a bundle a declined part carries nothing for an engine, and
+        // leftovers are not dropped: they are the cheapest sign that the
+        // index-aligned lists have slipped by a position. A one-part reply
+        // has nothing to slip against, so its leftovers are ignored and the
+        // decline stands — as it did before parts existed.
+        for (name, value) in [("engines", engine), ("forms", form), ("stated", asserted)] {
+            if in_bundle && !value.trim().is_empty() {
+                return Err(Violation(format!(
+                    "checkable=false requires an empty '{name}' entry; got {value:?} — check \
+                     that the six lists line up part by part"
+                )));
+            }
+        }
         return Ok(Translation::NotCheckable {
             reason: reason.to_string(),
         });
     }
-    match out.engine.as_deref() {
-        Some("arithmetic") => {
-            let expression = out
-                .arithmetic_expression
-                .as_deref()
-                .map(str::trim)
-                .filter(|e| !e.is_empty())
-                .ok_or_else(|| {
-                    Violation(
-                        "engine=arithmetic requires a non-empty arithmetic_expression".to_string(),
-                    )
-                })?;
-            if expression.chars().count() > EXPRESSION_MAX_CHARS {
+    let form = form.trim();
+    match engine {
+        "arithmetic" => {
+            if form.is_empty() {
+                return Err(Violation(
+                    "engine=arithmetic requires a non-empty form (the expression)".to_string(),
+                ));
+            }
+            if form.chars().count() > EXPRESSION_MAX_CHARS {
                 return Err(Violation(format!(
-                    "arithmetic_expression exceeds {EXPRESSION_MAX_CHARS} characters"
+                    "the arithmetic expression exceeds {EXPRESSION_MAX_CHARS} characters"
                 )));
             }
             Ok(Translation::Arithmetic {
-                expression: expression.to_string(),
+                expression: form.to_string(),
             })
         }
-        Some("constraints") => {
-            let smtlib = out
-                .smtlib_constraints
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    Violation(
-                        "engine=constraints requires non-empty smtlib_constraints".to_string(),
-                    )
-                })?;
+        "constraints" => {
+            let smtlib = form;
+            if smtlib.is_empty() {
+                return Err(Violation(
+                    "engine=constraints requires a non-empty form (the SMT-LIB script)".to_string(),
+                ));
+            }
             if smtlib.chars().count() > SMTLIB_MAX_CHARS {
                 return Err(Violation(format!(
-                    "smtlib_constraints exceeds {SMTLIB_MAX_CHARS} characters"
+                    "the SMT-LIB script exceeds {SMTLIB_MAX_CHARS} characters"
                 )));
             }
             if smtlib.contains('\0') {
                 return Err(Violation(
-                    "smtlib_constraints contains a NUL byte".to_string(),
+                    "the SMT-LIB script contains a NUL byte".to_string(),
                 ));
             }
             if crate::deterministic::solver::count_asserts(smtlib) == 0 {
                 return Err(Violation(
-                    "smtlib_constraints contains no (assert ...) form".to_string(),
+                    "the SMT-LIB script contains no (assert ...) form".to_string(),
                 ));
             }
             // The prompt restricts scripts to declares + asserts; comments
@@ -288,16 +455,16 @@ fn cross_field_validate(out: &TranslateOut) -> TranslateAttempt {
             ] {
                 if smtlib.contains(forbidden) {
                     return Err(Violation(format!(
-                        "smtlib_constraints must contain only (declare-const ...) and (assert ...) forms; {forbidden:?} is not allowed"
+                        "the SMT-LIB script must contain only (declare-const ...) and (assert ...) forms; {forbidden:?} is not allowed"
                     )));
                 }
             }
-            let asserted = match out.asserted.as_deref() {
-                Some("satisfiable") => Polarity::Satisfiable,
-                Some("unsatisfiable") => Polarity::Unsatisfiable,
+            let asserted = match asserted {
+                "satisfiable" => Polarity::Satisfiable,
+                "unsatisfiable" => Polarity::Unsatisfiable,
                 other => {
                     return Err(Violation(format!(
-                        "engine=constraints requires asserted to be exactly \"satisfiable\" or \"unsatisfiable\"; got {other:?}"
+                        "engine=constraints requires 'stated' to be exactly \"satisfiable\" or \"unsatisfiable\"; got {other:?}"
                     )))
                 }
             };
@@ -306,12 +473,12 @@ fn cross_field_validate(out: &TranslateOut) -> TranslateAttempt {
                 asserted,
             })
         }
-        Some(other) => Err(Violation(format!(
-            "engine must be exactly \"arithmetic\" or \"constraints\"; got {other:?}"
-        ))),
-        None => Err(Violation(
+        "" => Err(Violation(
             "checkable=true requires an engine choice".to_string(),
         )),
+        other => Err(Violation(format!(
+            "engine must be exactly \"arithmetic\" or \"constraints\"; got {other:?}"
+        ))),
     }
 }
 
@@ -340,7 +507,142 @@ mod tests {
         client
     }
 
-    // Analysis A1 + FR-004: both prompt-borne guarantees are pinned.
+    /// One part of a stand-in reply: (text, checkable, reason, engine, form,
+    /// polarity — sent as `stated`).
+    type PartSpec<'a> = (&'a str, bool, &'a str, &'a str, &'a str, &'a str);
+
+    /// A reply in the index-aligned wire shape.
+    fn reply(parts: &[PartSpec<'_>]) -> serde_json::Value {
+        json!({
+            "parts": parts.iter().map(|p| p.0).collect::<Vec<_>>(),
+            "checkable": parts.iter().map(|p| p.1).collect::<Vec<_>>(),
+            "reasons": parts.iter().map(|p| p.2).collect::<Vec<_>>(),
+            "engines": parts.iter().map(|p| p.3).collect::<Vec<_>>(),
+            "forms": parts.iter().map(|p| p.4).collect::<Vec<_>>(),
+            "stated": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
+        })
+    }
+
+    /// The parts rule sits before the engine paragraphs. Placed after the
+    /// polarity instruction it separated that instruction from the claim, and
+    /// the live model labelled polarity with its own conclusion in every run.
+    #[test]
+    fn the_parts_rule_precedes_the_polarity_instruction() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        let rule = prompt.find("PARTS. A claim may bundle").unwrap();
+        let first_engine = prompt.find("Engine 'arithmetic':").unwrap();
+        let polarity = prompt
+            .find("The polarity reflects what the claim STATES")
+            .unwrap();
+        assert!(rule < first_engine, "rule after an engine paragraph");
+        assert!(first_engine < polarity, "{prompt}");
+
+        // Nothing but the mixed-judgment paragraph may sit between the
+        // polarity paragraph and the claim: the live evidence was gathered
+        // with exactly this text there.
+        let polarity_end = "'never' assert unsatisfiable.";
+        let from = prompt.find(polarity_end).unwrap() + polarity_end.len();
+        let to = prompt.find("\n\nClaim: c\n").unwrap();
+        assert_eq!(
+            &prompt[from..to],
+            "\n\nA part mixing a checkable core with judgment may be checked ONLY for the \
+             core — the formal form is the statement of what was checked; if the core \
+             cannot stand alone, decline that part. A remark of opinion attached to a \
+             statement ('..., which is a great improvement') is NOT a part of its own: it \
+             belongs to that statement's part and is left out of the form. Only a \
+             judgment the claim asserts as a separate statement becomes its own part."
+        );
+    }
+
+    /// The model-hop table in the data model lists exactly the reply shape's
+    /// fields, by their wire names. Nothing else ties that table to the code.
+    #[test]
+    fn the_data_model_table_names_the_reply_fields() {
+        let doc = include_str!("../../specs/005-deterministic-layer/data-model.md");
+        let start = doc.find("## 3. Model-hop schema").expect("section 3");
+        let end = doc.find("## 4. ").expect("section 4");
+        assert!(start < end);
+        let mut documented: Vec<String> = doc[start..end]
+            .lines()
+            .filter(|line| line.starts_with('|'))
+            .map(|line| line.split('|').nth(1).unwrap().trim().to_string())
+            .filter(|cell| cell != "field" && !cell.starts_with("---"))
+            .collect();
+        documented.sort();
+        let schema = serde_json::to_value(schemars::schema_for!(TranslateOut)).unwrap();
+        let mut fields: Vec<String> = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        fields.sort();
+        assert_eq!(fields.len(), 6, "{fields:?}");
+        assert_eq!(documented, fields);
+    }
+
+    /// The polarity field's description is model-facing text: the doc comment
+    /// on the field is what the model reads. The live acceptance evidence was
+    /// gathered with exactly this text, so a change to it must be deliberate
+    /// and re-measured live.
+    #[test]
+    fn the_polarity_description_sent_to_the_model_is_pinned() {
+        let sent = &mode().sanitized_schema["properties"]["stated"]["description"];
+        assert_eq!(
+            sent.as_str().unwrap(),
+            "Per part: \"satisfiable\" or \"unsatisfiable\" for a constraints part;\n\
+             empty string otherwise.\n\n\
+             Named `stated` on the wire so it is the last field the model writes:\n\
+             reply keys are emitted in alphabetical order, and a label written\n\
+             before the script came back as the model's own conclusion in live\n\
+             runs instead of what the claim states."
+        );
+    }
+
+    /// A rejection is sent back to the model on the retry, so it must name
+    /// the polarity field as the reply shape names it.
+    #[test]
+    fn rejections_name_the_polarity_field_as_the_reply_does() {
+        let missing =
+            cross_field_validate(&out(&[("c", true, "", "constraints", "(assert true)", "")]))
+                .unwrap_err();
+        let leftover = cross_field_validate(&out(&[
+            SUM,
+            ("c", false, "judgment", "", "", "satisfiable"),
+        ]))
+        .unwrap_err();
+        let mut short = out(&[SUM, SUM]);
+        short.asserted.pop();
+        let uneven = cross_field_validate(&short).unwrap_err();
+        for violation in [missing, leftover, uneven] {
+            assert!(
+                violation.0.contains("'stated'") && !violation.0.contains("asserted"),
+                "{violation}"
+            );
+        }
+    }
+
+    /// Reply keys are emitted alphabetically, so the polarity key must sort
+    /// after every other key: the model then writes the script first and the
+    /// label after it.
+    #[test]
+    fn the_polarity_field_is_the_last_one_written() {
+        // The shape as sent to the provider, not the raw derived one.
+        let schema = mode().sanitized_schema;
+        let keys: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
+        assert_eq!(keys.last().map(|k| k.as_str()), Some("stated"), "{keys:?}");
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(prompt.contains("'stated'") && !prompt.contains("'asserted'"));
+    }
+
+    fn out(parts: &[PartSpec<'_>]) -> TranslateOut {
+        serde_json::from_value(reply(parts)).unwrap()
+    }
+
+    const DECLINED: PartSpec<'static> = ("the claim", false, "judgment", "", "", "");
+    const SUM: PartSpec<'static> = ("1 + 1 is 2", true, "", "arithmetic", "1 + 1 == 2", "");
+
+    // Analysis A1 + FR-004: the prompt-borne guarantees are pinned.
     #[tokio::test]
     async fn the_prompt_carries_the_decline_bias_and_the_whitelist_verbatim() {
         let mut client = MockModelClient::new();
@@ -349,11 +651,7 @@ mod tests {
             assert!(prompt.contains(EVALEXPR_WHITELIST), "whitelist missing");
             assert!(prompt.contains("Claim: the claim text"));
             Ok(Completion {
-                value: json!({
-                    "checkable": false, "reason": "judgment", "engine": null,
-                    "arithmetic_expression": null, "smtlib_constraints": null,
-                    "asserted": null
-                }),
+                value: reply(&[DECLINED]),
                 input_tokens: 1,
                 output_tokens: 1,
             })
@@ -363,9 +661,90 @@ mod tests {
             .unwrap();
         assert_eq!(
             attempt.unwrap(),
-            Translation::NotCheckable {
-                reason: "judgment".into()
-            }
+            [Part {
+                text: "the claim".into(),
+                translation: Translation::NotCheckable {
+                    reason: "judgment".into()
+                }
+            }]
+        );
+    }
+
+    /// The parts rule reaches the model with the real limit filled in, and no
+    /// placeholder survives into the prompt.
+    #[tokio::test]
+    async fn the_prompt_carries_the_parts_rule_with_the_limit_filled_in() {
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|prompt, _| {
+            let rule = PARTS_RULE_TEMPLATE.replace("{max}", &PARTS_MAX.to_string());
+            assert!(prompt.contains(&rule), "parts rule missing: {prompt}");
+            assert!(prompt.contains(&format!("At most {PARTS_MAX} parts.")));
+            assert!(
+                !prompt.contains("{max}") && !prompt.contains("<<"),
+                "{prompt}"
+            );
+            Ok(Completion {
+                value: reply(&[DECLINED]),
+                input_tokens: 1,
+                output_tokens: 1,
+            })
+        });
+        translate_once(&client, &mode(), "c", None, None)
+            .await
+            .unwrap()
+            .0
+            .unwrap();
+    }
+
+    /// Parts are combined as a conjunction, so the model must be told not to
+    /// split a claim joined any other way: a split "either A or B" with A
+    /// false would come back refuted although the claim is true.
+    #[test]
+    fn the_parts_rule_confines_splitting_to_conjunctions() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(
+            prompt.contains("The parts are combined as 'all must hold'"),
+            "{prompt}"
+        );
+        for connective in [
+            "'or'",
+            "'if ... then'",
+            "'unless'",
+            "'not both'",
+            "'because'",
+            "'so'",
+            "'therefore'",
+        ] {
+            assert!(prompt.contains(connective), "{connective} missing");
+        }
+    }
+
+    /// The model is told to list every statement, because the server can only
+    /// check the parts it is given. (The server does not rely on this: a
+    /// bundle is never reported supported as a whole — see `bundle.rs`.)
+    #[test]
+    fn the_parts_rule_requires_every_statement_to_be_listed() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(
+            prompt.contains(
+                "Every statement the claim makes must appear in exactly one part: never \
+                 leave one out. A statement no engine can check is still listed, and declined."
+            ),
+            "{prompt}"
+        );
+    }
+
+    /// An opinion attached to a computable statement must not become its own
+    /// part: that would turn a claim `main` settles as supported into
+    /// `not_checkable`, and leave the outcome to how the model happened to
+    /// split it.
+    #[test]
+    fn an_attached_opinion_is_not_a_part_of_its_own() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(prompt.contains("is NOT a part of its own"), "{prompt}");
+        assert!(
+            prompt.contains("asserts as a separate statement becomes its own part"),
+            "{prompt}"
         );
     }
 
@@ -380,12 +759,16 @@ mod tests {
                 ),
                 "{prompt}"
             );
+            // A bundle is corrected part by part, not declined whole.
+            assert!(
+                prompt.contains(
+                    "Produce a corrected translation of every part (or decline a part \
+                     that cannot be faithfully formalized)."
+                ),
+                "{prompt}"
+            );
             Ok(Completion {
-                value: json!({
-                    "checkable": true, "reason": null, "engine": "arithmetic",
-                    "arithmetic_expression": "1 + 1 == 2",
-                    "smtlib_constraints": null, "asserted": null
-                }),
+                value: reply(&[SUM]),
                 input_tokens: 1,
                 output_tokens: 1,
             })
@@ -394,99 +777,294 @@ mod tests {
         let (attempt, _, _) = translate_once(&client, &mode(), "c", None, Some(&violation))
             .await
             .unwrap();
-        assert!(matches!(attempt, Ok(Translation::Arithmetic { .. })));
+        let parts = attempt.unwrap();
+        assert!(matches!(
+            parts.as_slice(),
+            [Part {
+                translation: Translation::Arithmetic { .. },
+                ..
+            }]
+        ));
     }
 
     #[tokio::test]
     async fn clean_constraint_translation_passes_the_cross_field_validator() {
-        let client = client_returning(json!({
-            "checkable": true, "reason": null, "engine": "constraints",
-            "arithmetic_expression": null,
-            "smtlib_constraints": "(declare-const x Int)\n(assert (> x 0))",
-            "asserted": "satisfiable"
-        }));
+        let client = client_returning(reply(&[(
+            "some x is positive",
+            true,
+            "",
+            "constraints",
+            "(declare-const x Int)\n(assert (> x 0))",
+            "satisfiable",
+        )]));
         let (attempt, input, output) = translate_once(&client, &mode(), "c", Some("ctx"), None)
             .await
             .unwrap();
+        let parts = attempt.unwrap();
         assert!(matches!(
-            attempt,
-            Ok(Translation::Constraints {
-                asserted: Polarity::Satisfiable,
+            parts.as_slice(),
+            [Part {
+                translation: Translation::Constraints {
+                    asserted: Polarity::Satisfiable,
+                    ..
+                },
                 ..
-            })
+            }]
         ));
         assert_eq!((input, output), (10, 5));
     }
 
     #[tokio::test]
     async fn cross_field_violations_are_retryable_not_hard_errors() {
-        for (value, marker) in [
+        for (part, marker) in [
+            (("c", true, "", "", "", ""), "requires an engine"),
+            (("c", true, "", "sympy", "x", ""), "engine must be exactly"),
             (
-                json!({ "checkable": true, "reason": null, "engine": null,
-                        "arithmetic_expression": null, "smtlib_constraints": null,
-                        "asserted": null }),
-                "requires an engine",
+                ("c", true, "", "arithmetic", "  ", ""),
+                "requires a non-empty form",
             ),
             (
-                json!({ "checkable": true, "reason": null, "engine": "arithmetic",
-                        "arithmetic_expression": "  ", "smtlib_constraints": null,
-                        "asserted": null }),
-                "non-empty arithmetic_expression",
-            ),
-            (
-                json!({ "checkable": true, "reason": null, "engine": "constraints",
-                        "arithmetic_expression": null,
-                        "smtlib_constraints": "(declare-const x Int)", "asserted": "satisfiable" }),
+                (
+                    "c",
+                    true,
+                    "",
+                    "constraints",
+                    "(declare-const x Int)",
+                    "satisfiable",
+                ),
                 "no (assert",
             ),
             (
-                json!({ "checkable": true, "reason": null, "engine": "constraints",
-                        "arithmetic_expression": null,
-                        "smtlib_constraints": "(assert true)(check-sat)", "asserted": "satisfiable" }),
+                (
+                    "c",
+                    true,
+                    "",
+                    "constraints",
+                    "(assert true)(check-sat)",
+                    "satisfiable",
+                ),
                 "is not allowed",
             ),
             (
-                json!({ "checkable": true, "reason": null, "engine": "constraints",
-                        "arithmetic_expression": null,
-                        "smtlib_constraints": "(assert true)", "asserted": null }),
-                "requires asserted",
+                ("c", true, "", "constraints", "(assert true)", ""),
+                "requires 'stated'",
             ),
-            (
-                json!({ "checkable": false, "reason": "  ", "engine": null,
-                        "arithmetic_expression": null, "smtlib_constraints": null,
-                        "asserted": null }),
-                "non-empty reason",
-            ),
+            (("c", false, "  ", "", "", ""), "non-empty reason"),
         ] {
-            let client = client_returning(value);
+            let client = client_returning(reply(&[part]));
             let (attempt, _, _) = translate_once(&client, &mode(), "c", None, None)
                 .await
                 .unwrap();
             let violation = attempt.unwrap_err();
             assert!(violation.0.contains(marker), "{marker}: {violation}");
+            // A one-part claim's violation carries no part label.
+            assert!(!violation.0.contains("part 1"), "{violation}");
         }
     }
 
     #[test]
     fn oversized_targets_are_violations() {
-        let big_expr = cross_field_validate(&TranslateOut {
-            checkable: true,
-            reason: None,
-            engine: Some("arithmetic".to_string()),
-            arithmetic_expression: Some("1".repeat(EXPRESSION_MAX_CHARS + 1)),
-            smtlib_constraints: None,
-            asserted: None,
-        });
+        let long_expression = "1".repeat(EXPRESSION_MAX_CHARS + 1);
+        let big_expr =
+            cross_field_validate(&out(&[("c", true, "", "arithmetic", &long_expression, "")]));
         assert!(big_expr.unwrap_err().0.contains("exceeds"));
 
-        let big_smt = cross_field_validate(&TranslateOut {
-            checkable: true,
-            reason: None,
-            engine: Some("constraints".to_string()),
-            arithmetic_expression: None,
-            smtlib_constraints: Some("(assert true)".repeat(SMTLIB_MAX_CHARS / 10)),
-            asserted: Some("satisfiable".to_string()),
-        });
+        let long_script = "(assert true)".repeat(SMTLIB_MAX_CHARS / 10);
+        let big_smt = cross_field_validate(&out(&[(
+            "c",
+            true,
+            "",
+            "constraints",
+            &long_script,
+            "satisfiable",
+        )]));
         assert!(big_smt.unwrap_err().0.contains("exceeds"));
+    }
+
+    // ---- Parts -------------------------------------------------------------
+
+    #[test]
+    fn a_bundle_yields_one_translation_per_part_in_order() {
+        let parts = cross_field_validate(&out(&[
+            SUM,
+            ("it is elegant", false, "a judgment", "", "", ""),
+            (
+                "no x is below itself",
+                true,
+                "",
+                "constraints",
+                "(declare-const x Int)\n(assert (< x x))",
+                "unsatisfiable",
+            ),
+        ]))
+        .unwrap();
+        assert_eq!(
+            parts.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(),
+            ["1 + 1 is 2", "it is elegant", "no x is below itself"]
+        );
+        assert!(matches!(
+            parts[0].translation,
+            Translation::Arithmetic { .. }
+        ));
+        assert!(matches!(
+            parts[1].translation,
+            Translation::NotCheckable { .. }
+        ));
+        assert!(matches!(
+            parts[2].translation,
+            Translation::Constraints {
+                asserted: Polarity::Unsatisfiable,
+                ..
+            }
+        ));
+    }
+
+    /// Every bad part is named, so the single retry hears about all of them.
+    #[test]
+    fn a_bundle_reports_every_violating_part_by_number() {
+        let violation = cross_field_validate(&out(&[
+            ("a", true, "", "arithmetic", "", ""),
+            SUM,
+            ("c", false, "", "", "", ""),
+        ]))
+        .unwrap_err();
+        assert!(
+            violation.0.contains("part 1 (\"a\"): engine=arithmetic")
+                && violation.0.contains("part 3 (\"c\"): checkable=false"),
+            "{violation}"
+        );
+        assert!(!violation.0.contains("part 2"), "{violation}");
+    }
+
+    /// A long part is quoted up to the limit and marked as cut, counting
+    /// characters rather than bytes.
+    #[test]
+    fn a_part_label_quotes_at_most_the_limit() {
+        let violation = Violation("bad".into());
+        let long = "é".repeat(PART_LABEL_MAX_CHARS + 5);
+        assert_eq!(
+            part_violation(1, 2, &long, &violation),
+            format!("part 2 (\"{}…\"): bad", "é".repeat(PART_LABEL_MAX_CHARS))
+        );
+        let exact = "x".repeat(PART_LABEL_MAX_CHARS);
+        assert_eq!(
+            part_violation(0, 2, &exact, &violation),
+            format!("part 1 (\"{exact}\"): bad")
+        );
+        // One part: no label at all.
+        assert_eq!(part_violation(0, 1, "anything", &violation), "bad");
+    }
+
+    /// A declined part that still carries an engine, a form or a polarity is
+    /// the cheapest sign that the six lists have slipped out of line, so it is
+    /// reported rather than dropped.
+    #[test]
+    fn a_declined_part_carrying_engine_fields_is_a_violation_naming_the_field() {
+        for (part, field) in [
+            (("c", false, "judgment", "arithmetic", "", ""), "engines"),
+            (("c", false, "judgment", "", "1 == 2", ""), "forms"),
+            (("c", false, "judgment", "", "", "satisfiable"), "stated"),
+        ] {
+            let violation = cross_field_validate(&out(&[SUM, part])).unwrap_err();
+            assert!(
+                violation.0.contains("part 2 (\"c\"): checkable=false")
+                    && violation.0.contains(&format!("'{field}'")),
+                "{field}: {violation}"
+            );
+
+            // With ONE part there is nothing for a list to slip against, and
+            // `main` ignored such leftovers: the decline stands, in one
+            // attempt, exactly as it always did.
+            let alone = cross_field_validate(&out(&[part])).unwrap();
+            assert_eq!(
+                alone[0].translation,
+                Translation::NotCheckable {
+                    reason: "judgment".into()
+                },
+                "{field}"
+            );
+        }
+        // Whitespace is not content: a clean decline still passes.
+        let clean = cross_field_validate(&out(&[("c", false, "judgment", " ", "\n", "")]));
+        assert!(matches!(
+            clean.unwrap().as_slice(),
+            [Part {
+                translation: Translation::NotCheckable { .. },
+                ..
+            }]
+        ));
+
+        // The reviewer's case: lists shifted so part 1's form sits on a
+        // declined part. Named by part, not absorbed.
+        let shifted = cross_field_validate(&out(&[
+            ("a", false, "judgment", "arithmetic", "1 == 2", ""),
+            ("b", true, "", "arithmetic", "1 == 1", ""),
+        ]))
+        .unwrap_err();
+        assert!(shifted.0.contains("part 1 (\"a\"): "), "{shifted}");
+    }
+
+    /// A single claim needs no restating: an empty text is filled with the
+    /// caller's own claim rather than spending the retry on a field `main`
+    /// never had. In a bundle the text is the only thing saying which
+    /// statement a part is, so there it stays a violation.
+    #[tokio::test]
+    async fn an_empty_text_is_the_callers_claim_for_one_part_and_a_violation_in_a_bundle() {
+        let client = client_returning(reply(&[("  ", true, "", "arithmetic", "1 == 1", "")]));
+        let (attempt, _, _) = translate_once(&client, &mode(), " the caller's claim ", None, None)
+            .await
+            .unwrap();
+        let parts = attempt.unwrap();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].text, "the caller's claim");
+        assert!(matches!(
+            parts[0].translation,
+            Translation::Arithmetic { .. }
+        ));
+
+        let client = client_returning(reply(&[SUM, ("", true, "", "arithmetic", "1 == 1", "")]));
+        let (attempt, _, _) = translate_once(&client, &mode(), "the caller's claim", None, None)
+            .await
+            .unwrap();
+        let violation = attempt.unwrap_err();
+        assert!(
+            violation
+                .0
+                .contains("part 2 (\"\"): the part's text is empty"),
+            "{violation}"
+        );
+    }
+
+    #[test]
+    fn lists_of_unequal_length_are_a_violation_naming_the_short_list() {
+        let mut uneven = out(&[SUM, SUM]);
+        uneven.forms.pop();
+        let violation = cross_field_validate(&uneven).unwrap_err();
+        assert!(
+            violation.0.contains("'parts' has 2") && violation.0.contains("'forms' has 1"),
+            "{violation}"
+        );
+    }
+
+    #[test]
+    fn the_part_count_is_bounded_at_both_ends() {
+        let empty = cross_field_validate(&out(&[])).unwrap_err();
+        assert!(empty.0.contains("at least one part"), "{empty}");
+
+        let at_limit = vec![SUM; PARTS_MAX];
+        assert_eq!(
+            cross_field_validate(&out(&at_limit)).unwrap().len(),
+            PARTS_MAX
+        );
+
+        let over = vec![SUM; PARTS_MAX + 1];
+        let violation = cross_field_validate(&out(&over)).unwrap_err();
+        assert!(
+            violation.0.contains(&format!(
+                "{} parts; the maximum is {PARTS_MAX}",
+                PARTS_MAX + 1
+            )),
+            "{violation}"
+        );
     }
 }
