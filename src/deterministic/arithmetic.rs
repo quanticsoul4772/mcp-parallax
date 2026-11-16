@@ -22,7 +22,8 @@ pub struct ArithmeticOutcome {
 ///
 /// Returns a [`Violation`] (retryable — research.md D5) for parse/eval
 /// errors, a non-boolean result, an oversized expression, or a comparison
-/// over a fractional power that floating point cannot decide.
+/// over a fractional power or inexact square root that floating point cannot
+/// decide.
 pub fn evaluate(expression: &str) -> Result<ArithmeticOutcome, Violation> {
     let len = expression.chars().count();
     if len > EXPRESSION_MAX_CHARS {
@@ -166,7 +167,8 @@ mod tests {
     }
 
     // A fractional exponent has no exact value: it is computed in f64, and
-    // the engine answers only when f64 can.
+    // the engine answers only when f64 can. (`math::sqrt` of a non-square
+    // takes the same path; its own tests follow.)
     #[test]
     fn fractional_powers_are_decided_only_when_floating_point_can() {
         for (expression, expected) in [
@@ -194,6 +196,176 @@ mod tests {
                 violation.0.contains("too close"),
                 "{expression}: {violation}"
             );
+        }
+    }
+
+    // Mined declines 2026-10/11: nine of 21 needed a square root. It is exact
+    // on a perfect-square fraction and the bracketed half power otherwise.
+    #[test]
+    fn square_roots_are_exact_on_perfect_squares_and_bracketed_otherwise() {
+        for (expression, expected) in [
+            ("math::sqrt(16) == 4", true),
+            ("math::sqrt(16) != 4", false),
+            ("math::sqrt(9/4) == 1.5 && math::sqrt(0.25) == 1/2", true),
+            // sqrt(0) is a boundary case the older zero rule also covers; it
+            // is not proof of the exact path. sqrt(1) is.
+            ("math::sqrt(0) == 0 && math::sqrt(1) == 1", true),
+            ("math::sqrt(10^400) == 10^200", true), // exact far beyond f64
+            ("math::sqrt(2) > 1.41 && math::sqrt(2) < 1.42", true),
+            ("math::sqrt(50) < 7", false),
+            // Two of the mined claims; the second was false as stated (0.79).
+            (
+                "math::abs(1.683 * 7.6 * math::sqrt(1/3 + 1/6) - 9.05) <= 0.01",
+                true,
+            ),
+            (
+                "round((1.645+0.842)*1.24*math::sqrt(2/30) * 100) == 79",
+                false,
+            ),
+            (
+                "round((1.645+0.842)*1.24*math::sqrt(2/30) * 100) == 80",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                evaluate(expression).unwrap().holds,
+                expected,
+                "{expression}"
+            );
+        }
+        for (expression, reason) in [
+            ("math::sqrt(2) * math::sqrt(2) == 2", "== or != over"),
+            ("math::sqrt(2) * math::sqrt(2) >= 2", "too close"),
+            ("math::sqrt(-4) > 0", "negative"),
+            (
+                "math::sqrt(math::sqrt(2)) > 1",
+                "the square root of an inexact value is not supported - take the square \
+                 root of an exact number",
+            ),
+            (
+                "math::sqrt(-(2^0.5)) > 0",
+                "square root of an inexact value",
+            ),
+            ("math::sqrt(4, 9) > 0", "was given 2 arguments"),
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
+        }
+    }
+
+    // Review of the sqrt change: its combinations with the other functions,
+    // pinned. An exact root behaves as the number it is; an inexact one keeps
+    // its bracket through every function.
+    #[test]
+    fn square_roots_combine_with_the_other_functions() {
+        for expression in [
+            "floor(math::sqrt(17)) == 4 && ceil(math::sqrt(17)) == 5",
+            "floor(math::sqrt(16)) == 4 && round(math::sqrt(6.25)) == 3",
+            "max(2, math::sqrt(4)) == 2 && min(3, math::sqrt(4)) == 2",
+            "max(1, math::sqrt(2)) > 1.41 && min(2, math::sqrt(2)) < 1.42",
+            "1/math::sqrt(4) == 0.5",
+            "1/math::sqrt(2) > 0.70 && 1/math::sqrt(2) < 0.71",
+            "math::abs(math::sqrt(2)^2 - 2) <= 0.0001",
+            "2^math::sqrt(4) == 4",
+        ] {
+            assert!(evaluate(expression).unwrap().holds, "{expression}");
+        }
+        for (expression, reason) in [
+            ("1/math::sqrt(0) > 0", "by zero"),
+            ("1/(math::sqrt(2) - math::sqrt(2)) > 0", "by zero"),
+            ("math::sqrt(2)^2 == 2", "== or != over"),
+            ("2^math::sqrt(2) > 2", "used as an exponent"),
+            (
+                "floor(math::sqrt(16.000000000000000001)) == 4",
+                "rounding boundary",
+            ),
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
+        }
+    }
+
+    // A square root standing alone on one side of == or != is decided
+    // exactly, by squaring: no float, no bracket, so no tolerance is needed.
+    //
+    // The first three rows are perfect squares: the exact-root path already
+    // answers them, and they would pass without the squaring rule. (The first
+    // is the live-run claim of 2026-11-16, which came back supported through
+    // a tolerance form; the prompt, not this rule, is what fixed that.) Every
+    // row after them is a non-square and needs the squaring rule.
+    #[test]
+    fn a_bare_square_root_is_compared_exactly_by_squaring() {
+        for (expression, expected) in [
+            ("math::sqrt(16.0000000800000001) == 4", false),
+            ("math::sqrt(16.0000000800000001) == 4.00000001", true),
+            ("4 == math::sqrt(16) && (math::sqrt(16)) == 4", true),
+            ("math::sqrt(15) == 4", false),
+            // The root on the right, and inside parentheses.
+            ("4 == math::sqrt(15)", false),
+            ("4.5 != math::sqrt(17)", true),
+            ("(math::sqrt(15)) == 4", false),
+            ("((math::sqrt(15))) != 4", true),
+            ("math::sqrt(15) != 4", true),
+            ("math::sqrt(2) == 1.4142135623730951", false),
+            ("math::sqrt(16) == -4", false), // the root is the non-negative one
+            ("math::sqrt(2) == math::sqrt(2)", true),
+            ("math::sqrt(2) != math::sqrt(3)", true),
+            ("math::sqrt(1/3 + 1/6) == math::sqrt(1/2)", true),
+            ("math::sqrt(10^401) == 10^200", false), // far beyond f64
+        ] {
+            assert_eq!(
+                evaluate(expression).unwrap().holds,
+                expected,
+                "{expression}"
+            );
+        }
+        // Not a bare root, or an inexact value on either side: the ordinary
+        // rules apply, unchanged.
+        for (expression, reason) in [
+            ("math::sqrt(2) + 0 == 1.41", "== or != over"),
+            // A bare root the engine cannot decide exactly: the refusal must
+            // not advise a tolerance, which the prompt forbids for this shape.
+            (
+                "math::sqrt(2) == 2^0.5",
+                "rearrange the claim into that shape (square both sides if needed), or \
+                 decline it; do not use a tolerance",
+            ),
+            (
+                "math::sqrt(8) == 2*math::sqrt(2)",
+                "decided exactly only when the square root stands alone",
+            ),
+            (
+                "2*math::sqrt(2) != (math::sqrt(8))",
+                "decided exactly only when the square root stands alone",
+            ),
+            ("math::sqrt(2^0.5) == 1", "square root of an inexact value"),
+            ("math::sqrt(-4) == 2", "negative"),
+            ("math::sqrt(4) == (1 < 2)", "between a number and a boolean"),
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
+        }
+    }
+
+    // An inexact root is a float with a bracket: where the float cannot hold
+    // the argument, or cannot separate the two sides, the engine refuses.
+    #[test]
+    fn inexact_square_roots_refuse_at_the_limits_of_floating_point() {
+        for (expression, reason) in [
+            (
+                "math::sqrt(10^400 + 1) > 0",
+                "outside the range of a 64-bit float",
+            ),
+            (
+                "math::sqrt(2e-320) > 0",
+                "outside the range of a 64-bit float",
+            ),
+            ("math::sqrt(16.000000000000000001) > 4", "too close"),
+            ("math::sqrt(16.000000000000000001) <= 4", "too close"),
+            ("math::sqrt(15.999999999999999999) < 4", "too close"),
+        ] {
+            let violation = evaluate(expression).unwrap_err();
+            assert!(violation.0.contains(reason), "{expression}: {violation}");
         }
     }
 
@@ -225,7 +397,7 @@ mod tests {
             ("if(true, 1, 2) == 1", "`if` is not in the dialect"),
             ("len(\"1/2\") < 4", "not in the dialect"),
             ("x > 1", "not in the dialect"),
-            ("math::sqrt(4) == 2", "`math::sqrt` is not in the dialect"),
+            ("math::ln(4) > 1", "`math::ln` is not in the dialect"),
             ("abs(1) == 1", "`abs` is not in the dialect"),
             ("(1, 2) == (1, 2)", "not in the dialect"),
             ("\"a\" == \"a\"", "not in the dialect"),

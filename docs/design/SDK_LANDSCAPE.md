@@ -169,6 +169,10 @@ arbitrary Python.
   int never equals float, `/` on integers is integer division) — the
   translation prompt embeds the whitelist + type rules, and the engine rejects
   exact `==`/`!=` over float-producing arithmetic (tolerance forms enforced).
+  **Amended 2026-11:** evalexpr now only parses; evaluation is exact rational
+  arithmetic in `src/deterministic/exact.rs` (`/` is exact division, decimals
+  are exact, `==` is reliable), with roots (fractional exponents and inexact
+  `math::sqrt`) held as brackets.
   `fend-core` remains the upgrade path for the units/dates row.
 - **Arbitrary code (PAL-style) — the sandbox question.** Running model-written Python
   is what needs isolation. Options, by isolation strength:
