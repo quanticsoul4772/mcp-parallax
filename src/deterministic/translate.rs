@@ -33,6 +33,8 @@ You classify and translate one claim for deterministic checking. The claim is \
 checkable only if its truth is computable by one of two engines, with no \
 judgment, world knowledge, or prediction required. <<decline_bias>>\n\
 \n\
+<<parts_rule>>\n\
+\n\
 Engine 'arithmetic': produce a single BOOLEAN-VALUED expression that is true \
 exactly when the claim is true. Dialect (use nothing outside it): \
 <<whitelist>>. Vague quantities ('roughly', 'about') must become an explicit \
@@ -57,7 +59,7 @@ up to 64.\n\
 \n\
 Engine 'constraints': produce an SMT-LIB 2 script — (declare-const ...) for \
 each variable over Int, Real, or Bool, then (assert ...) forms using linear \
-arithmetic; do NOT emit (check-sat). Set 'asserted' to what the claim says \
+arithmetic; do NOT emit (check-sat). Set 'stated' to what the claim says \
 about the system: 'satisfiable' if the claim says an assignment exists, \
 'unsatisfiable' if the claim says none exists. The polarity reflects what \
 the claim STATES, never what you compute to be true. Cues: 'there is/are', \
@@ -69,9 +71,7 @@ core — the formal form is the statement of what was checked; if the core \
 cannot stand alone, decline that part. A remark of opinion attached to a \
 statement ('..., which is a great improvement') is NOT a part of its own: it \
 belongs to that statement's part and is left out of the form. Only a \
-judgment the claim asserts as a separate statement becomes its own part.\n\
-\n\
-<<parts_rule>><<violation_clause>>\n\
+judgment the claim asserts as a separate statement becomes its own part.<<violation_clause>>\n\
 \n\
 Claim: <<claim>>\n\
 Context: <<context>>";
@@ -97,7 +97,7 @@ inside the expression (a + b + c ...); there is no summation or counting functio
 six lists of equal length, one entry per part, in the order the claim states the parts: \
 'parts' (the restated part), 'checkable', 'reasons' (why not checkable; empty string when \
 checkable), 'engines' ('arithmetic' or 'constraints'; empty string when not checkable), \
-'forms' (the expression or the SMT-LIB script; empty string when not checkable), 'asserted' \
+'forms' (the expression or the SMT-LIB script; empty string when not checkable), 'stated' \
 ('satisfiable' or 'unsatisfiable' for a constraints part; empty string otherwise).";
 
 /// The hop's constrained output (flat + closed — Principle II;
@@ -123,6 +123,12 @@ pub struct TranslateOut {
     pub forms: Vec<String>,
     /// Per part: "satisfiable" or "unsatisfiable" for a constraints part;
     /// empty string otherwise.
+    ///
+    /// Named `stated` on the wire so it is the last field the model writes:
+    /// reply keys are emitted in alphabetical order, and a label written
+    /// before the script came back as the model's own conclusion in live
+    /// runs instead of what the claim states.
+    #[serde(rename = "stated")]
     pub asserted: Vec<String>,
 }
 
@@ -283,7 +289,7 @@ fn cross_field_validate(out: &TranslateOut) -> TranslateAttempt {
         ("reasons", out.reasons.len()),
         ("engines", out.engines.len()),
         ("forms", out.forms.len()),
-        ("asserted", out.asserted.len()),
+        ("stated", out.asserted.len()),
     ] {
         if len != count {
             return Err(Violation(format!(
@@ -384,7 +390,7 @@ fn validate_part(
         // index-aligned lists have slipped by a position. A one-part reply
         // has nothing to slip against, so its leftovers are ignored and the
         // decline stands — as it did before parts existed.
-        for (name, value) in [("engines", engine), ("forms", form), ("asserted", asserted)] {
+        for (name, value) in [("engines", engine), ("forms", form), ("stated", asserted)] {
             if in_bundle && !value.trim().is_empty() {
                 return Err(Violation(format!(
                     "checkable=false requires an empty '{name}' entry; got {value:?} — check \
@@ -458,7 +464,7 @@ fn validate_part(
                 "unsatisfiable" => Polarity::Unsatisfiable,
                 other => {
                     return Err(Violation(format!(
-                        "engine=constraints requires asserted to be exactly \"satisfiable\" or \"unsatisfiable\"; got {other:?}"
+                        "engine=constraints requires 'stated' to be exactly \"satisfiable\" or \"unsatisfiable\"; got {other:?}"
                     )))
                 }
             };
@@ -502,7 +508,7 @@ mod tests {
     }
 
     /// One part of a stand-in reply: (text, checkable, reason, engine, form,
-    /// asserted).
+    /// polarity — sent as `stated`).
     type PartSpec<'a> = (&'a str, bool, &'a str, &'a str, &'a str, &'a str);
 
     /// A reply in the index-aligned wire shape.
@@ -513,8 +519,120 @@ mod tests {
             "reasons": parts.iter().map(|p| p.2).collect::<Vec<_>>(),
             "engines": parts.iter().map(|p| p.3).collect::<Vec<_>>(),
             "forms": parts.iter().map(|p| p.4).collect::<Vec<_>>(),
-            "asserted": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
+            "stated": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
         })
+    }
+
+    /// The parts rule sits before the engine paragraphs. Placed after the
+    /// polarity instruction it separated that instruction from the claim, and
+    /// the live model labelled polarity with its own conclusion in every run.
+    #[test]
+    fn the_parts_rule_precedes_the_polarity_instruction() {
+        let prompt = build_prompt(&mode(), "c", None, None);
+        let rule = prompt.find("PARTS. A claim may bundle").unwrap();
+        let first_engine = prompt.find("Engine 'arithmetic':").unwrap();
+        let polarity = prompt
+            .find("The polarity reflects what the claim STATES")
+            .unwrap();
+        assert!(rule < first_engine, "rule after an engine paragraph");
+        assert!(first_engine < polarity, "{prompt}");
+
+        // Nothing but the mixed-judgment paragraph may sit between the
+        // polarity paragraph and the claim: the live evidence was gathered
+        // with exactly this text there.
+        let polarity_end = "'never' assert unsatisfiable.";
+        let from = prompt.find(polarity_end).unwrap() + polarity_end.len();
+        let to = prompt.find("\n\nClaim: c\n").unwrap();
+        assert_eq!(
+            &prompt[from..to],
+            "\n\nA part mixing a checkable core with judgment may be checked ONLY for the \
+             core — the formal form is the statement of what was checked; if the core \
+             cannot stand alone, decline that part. A remark of opinion attached to a \
+             statement ('..., which is a great improvement') is NOT a part of its own: it \
+             belongs to that statement's part and is left out of the form. Only a \
+             judgment the claim asserts as a separate statement becomes its own part."
+        );
+    }
+
+    /// The model-hop table in the data model lists exactly the reply shape's
+    /// fields, by their wire names. Nothing else ties that table to the code.
+    #[test]
+    fn the_data_model_table_names_the_reply_fields() {
+        let doc = include_str!("../../specs/005-deterministic-layer/data-model.md");
+        let start = doc.find("## 3. Model-hop schema").expect("section 3");
+        let end = doc.find("## 4. ").expect("section 4");
+        assert!(start < end);
+        let mut documented: Vec<String> = doc[start..end]
+            .lines()
+            .filter(|line| line.starts_with('|'))
+            .map(|line| line.split('|').nth(1).unwrap().trim().to_string())
+            .filter(|cell| cell != "field" && !cell.starts_with("---"))
+            .collect();
+        documented.sort();
+        let schema = serde_json::to_value(schemars::schema_for!(TranslateOut)).unwrap();
+        let mut fields: Vec<String> = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        fields.sort();
+        assert_eq!(fields.len(), 6, "{fields:?}");
+        assert_eq!(documented, fields);
+    }
+
+    /// The polarity field's description is model-facing text: the doc comment
+    /// on the field is what the model reads. The live acceptance evidence was
+    /// gathered with exactly this text, so a change to it must be deliberate
+    /// and re-measured live.
+    #[test]
+    fn the_polarity_description_sent_to_the_model_is_pinned() {
+        let sent = &mode().sanitized_schema["properties"]["stated"]["description"];
+        assert_eq!(
+            sent.as_str().unwrap(),
+            "Per part: \"satisfiable\" or \"unsatisfiable\" for a constraints part;\n\
+             empty string otherwise.\n\n\
+             Named `stated` on the wire so it is the last field the model writes:\n\
+             reply keys are emitted in alphabetical order, and a label written\n\
+             before the script came back as the model's own conclusion in live\n\
+             runs instead of what the claim states."
+        );
+    }
+
+    /// A rejection is sent back to the model on the retry, so it must name
+    /// the polarity field as the reply shape names it.
+    #[test]
+    fn rejections_name_the_polarity_field_as_the_reply_does() {
+        let missing =
+            cross_field_validate(&out(&[("c", true, "", "constraints", "(assert true)", "")]))
+                .unwrap_err();
+        let leftover = cross_field_validate(&out(&[
+            SUM,
+            ("c", false, "judgment", "", "", "satisfiable"),
+        ]))
+        .unwrap_err();
+        let mut short = out(&[SUM, SUM]);
+        short.asserted.pop();
+        let uneven = cross_field_validate(&short).unwrap_err();
+        for violation in [missing, leftover, uneven] {
+            assert!(
+                violation.0.contains("'stated'") && !violation.0.contains("asserted"),
+                "{violation}"
+            );
+        }
+    }
+
+    /// Reply keys are emitted alphabetically, so the polarity key must sort
+    /// after every other key: the model then writes the script first and the
+    /// label after it.
+    #[test]
+    fn the_polarity_field_is_the_last_one_written() {
+        // The shape as sent to the provider, not the raw derived one.
+        let schema = mode().sanitized_schema;
+        let keys: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
+        assert_eq!(keys.last().map(|k| k.as_str()), Some("stated"), "{keys:?}");
+        let prompt = build_prompt(&mode(), "c", None, None);
+        assert!(prompt.contains("'stated'") && !prompt.contains("'asserted'"));
     }
 
     fn out(parts: &[PartSpec<'_>]) -> TranslateOut {
@@ -729,7 +847,7 @@ mod tests {
             ),
             (
                 ("c", true, "", "constraints", "(assert true)", ""),
-                "requires asserted",
+                "requires 'stated'",
             ),
             (("c", false, "  ", "", "", ""), "non-empty reason"),
         ] {
@@ -845,7 +963,7 @@ mod tests {
         for (part, field) in [
             (("c", false, "judgment", "arithmetic", "", ""), "engines"),
             (("c", false, "judgment", "", "1 == 2", ""), "forms"),
-            (("c", false, "judgment", "", "", "satisfiable"), "asserted"),
+            (("c", false, "judgment", "", "", "satisfiable"), "stated"),
         ] {
             let violation = cross_field_validate(&out(&[SUM, part])).unwrap_err();
             assert!(

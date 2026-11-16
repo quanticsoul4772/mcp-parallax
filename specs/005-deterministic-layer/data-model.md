@@ -47,7 +47,7 @@ One call, classify + translate (research.md D3):
 | reasons | string[] | per part; empty string when checkable |
 | engines | string[] | per part; "arithmetic" or "constraints", empty string when not checkable (values enforced by the cross-field validator) |
 | forms | string[] | per part; the expression (≤ 2000 chars) or the SMT-LIB 2 declares + asserts (≤ 10000 chars), empty string when not checkable |
-| asserted | string[] | per part; "satisfiable" or "unsatisfiable" for a constraints part, empty string otherwise |
+| stated | string[] | per part; "satisfiable" or "unsatisfiable" for a constraints part, empty string otherwise |
 
 The six lists are index-aligned and must be the same length; flat+closed
 forbids an array of objects.

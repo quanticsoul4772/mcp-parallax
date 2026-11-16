@@ -59,8 +59,18 @@ arc.
     still rejects after the one retry, or a solver timeout on any part, fails
     the call as before. No part is downgraded to rescue the others. More than
     12 parts is a translation violation.
-  * **Not yet measured:** how reliably the live model splits a bundle. The
-    suite drives the engines with a stand-in translator.
+  * **Polarity is the last thing the translator writes.** An earlier version
+    of this change was reverted (#124) because the live model labelled one
+    constraint claim with its own conclusion. The parts rule now comes before
+    the engine paragraphs in the prompt, and the polarity list is named
+    `stated` on the wire so it is written after the script.
+  * The polarity fix is measured on the Anthropic backend only; on the
+    OpenAI-compatible backend, where the reply shape may not govern the order
+    fields are written in, it is unmeasured.
+  * **Measured live:** `examples/acceptance_check.rs` carries eight bundled
+    claims with known answers beside its 21 single claims and 7 declines, and
+    passes with the default model. The suite itself still drives the engines
+    with a stand-in translator.
 
 * **`cost.estimated` on the invocation log line** — the console record now
   self-describes its cost figure: `false` when priced from the catalog,

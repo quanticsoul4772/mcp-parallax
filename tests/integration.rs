@@ -1502,7 +1502,7 @@ async fn mount_check_translation(mock: &MockServer, translation: Value) {
 }
 
 /// A translator reply in its index-aligned wire shape, one tuple per part:
-/// (text, checkable, reason, engine, form, asserted).
+/// (text, checkable, reason, engine, form, polarity — sent as `stated`).
 fn check_parts(parts: &[(&str, bool, &str, &str, &str, &str)]) -> Value {
     json!({
         "parts": parts.iter().map(|p| p.0).collect::<Vec<_>>(),
@@ -1510,7 +1510,7 @@ fn check_parts(parts: &[(&str, bool, &str, &str, &str, &str)]) -> Value {
         "reasons": parts.iter().map(|p| p.2).collect::<Vec<_>>(),
         "engines": parts.iter().map(|p| p.3).collect::<Vec<_>>(),
         "forms": parts.iter().map(|p| p.4).collect::<Vec<_>>(),
-        "asserted": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
+        "stated": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
     })
 }
 

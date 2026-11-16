@@ -368,7 +368,7 @@ mod tests {
     }
 
     /// One part of a stand-in translator reply: (text, checkable, reason,
-    /// engine, form, asserted).
+    /// engine, form, polarity — sent as `stated`).
     type PartSpec<'a> = (&'a str, bool, &'a str, &'a str, &'a str, &'a str);
 
     /// A stand-in translator reply in the index-aligned wire shape.
@@ -379,7 +379,7 @@ mod tests {
             "reasons": parts.iter().map(|p| p.2).collect::<Vec<_>>(),
             "engines": parts.iter().map(|p| p.3).collect::<Vec<_>>(),
             "forms": parts.iter().map(|p| p.4).collect::<Vec<_>>(),
-            "asserted": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
+            "stated": parts.iter().map(|p| p.5).collect::<Vec<_>>(),
         })
     }
 
