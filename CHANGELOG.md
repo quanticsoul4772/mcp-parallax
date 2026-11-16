@@ -13,6 +13,55 @@ arc.
 
 ### Added
 
+* **`check` settles a bundle of claims part by part** — a claim that states
+  several things at once used to be declined whole whenever one of them could
+  not be checked. The translator now splits such a claim into at most 12
+  parts, each sent to its own engine (a bundle may mix arithmetic and
+  constraints), and the response gains a `parts` list with each part's
+  restated text, verdict, engine, executed form, raw result, witness and
+  decline reason. Still one translation call per attempt (two with the retry),
+  and one invocation record per `check`.
+
+  * **Top-level verdict of a bundle:** `refuted` if any part is refuted,
+    `not_checkable` otherwise. The server cannot verify that the listed parts
+    cover every statement of the claim, so a bundle is never reported as
+    `supported` as a whole; which parts held is in `parts`, and the top-level
+    `reason` says so. A caller that reads only the top-level verdict never
+    takes an unchecked or omitted statement as verified. The translator is
+    also told to list every statement, declining the ones no engine can check.
+  * **Top-level form of a bundle:** `formal_form` and `engine_result` hold one
+    `[n] …` line per part, numbered in part order, with `(not checked)` for a
+    part no engine ran; both are null when no part ran. `witness` lists only
+    the parts that have one. `reason` lists the parts that were not checked,
+    and only when the top-level verdict is `not_checkable`. A constraint script or a
+    multi-line witness is collapsed onto its line; the exact text is in
+    `parts`. `engine` is set only when every part ran on the same engine.
+  * **A single claim is unchanged** at the top level and carries one entry in
+    `parts`. If the translator leaves that part's restated text empty, the
+    text is the caller's own claim.
+  * **Only statements the claim asserts together are split.** Parts are
+    combined as "all must hold", so a claim joined by "or", "if … then",
+    "unless", "because", "so", "therefore" or a negation such as "not both"
+    stays one part. An opinion attached to a statement ("…, which is a great
+    improvement") stays with that statement and is left out of its form, as
+    before.
+  * **At most 4 parts run at once**, results kept in part order. Twelve slow
+    constraint parts neither queue past the request timeout nor compete all at
+    once under the solver's clock-time limit.
+  * **The one retry names every rejected part**, quoted
+    (`part 2 ("…"): …`). Violations are reported one stage at a time: a reply
+    the validator rejects goes back with every part's validation violation and
+    no engine runs on it; on a reply the validator accepts, every part's
+    engine violation is reported together. In a bundle, a declined part that
+    still carries an engine, form or polarity is a violation, since it signals
+    lists out of step.
+  * **Errors are unchanged and apply to the whole call:** a part the engine
+    still rejects after the one retry, or a solver timeout on any part, fails
+    the call as before. No part is downgraded to rescue the others. More than
+    12 parts is a translation violation.
+  * **Not yet measured:** how reliably the live model splits a bundle. The
+    suite drives the engines with a stand-in translator.
+
 * **`cost.estimated` on the invocation log line** — the console record now
   self-describes its cost figure: `false` when priced from the catalog,
   `true` when a model id with no price row was costed at the conservative

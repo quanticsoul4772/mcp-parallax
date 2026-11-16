@@ -1,7 +1,7 @@
 {
   "$comment": "MCP tool contract for `check`. The verdict comes only from deterministic engine execution; the model classifies checkability and translates - it never decides. formal_form and engine_result make every verdict auditable (FR-007). not_checkable is a successful, honest outcome (FR-004).",
   "name": "check",
-  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
+  "description": "Settle a checkable claim by execution, not judgment. The claim is translated into a small formal problem - an arithmetic comparison or a logic/constraint system - and a deterministic engine executes it: no judge to fool, no calibration, no sycophancy. Returns the verdict with the executed formal form and the engine's raw result so the check is auditable, plus a solver witness when one exists. A claim that bundles several statements is checked part by part: parts holds each part's own verdict, form and result, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported, because nothing can confirm the parts cover every statement of the claim; read each part's verdict in parts. Claims that cannot be formalized honestly (judgment, taste, open questions) return not_checkable with the reason - route those to verify instead.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -55,28 +55,28 @@
           "constraints",
           null
         ],
-        "description": "Which engine executed the check; null iff not_checkable."
+        "description": "Which engine executed the check. For a single claim: null iff not_checkable. For a bundle of two or more parts: set only when every part ran on the same engine, so it can be null beside any verdict; read each part's engine in parts."
       },
       "formal_form": {
         "type": [
           "string",
           "null"
         ],
-        "description": "The executed expression or constraint script - audit the translation without re-running it."
+        "description": "The executed expression or constraint script - audit the translation without re-running it. For a bundle of two or more parts: one '[n] form' line per part in part order, '(not checked)' for a part no engine ran, a script collapsed onto its line; null when no part ran. The exact forms are in parts."
       },
       "engine_result": {
         "type": [
           "string",
           "null"
         ],
-        "description": "The engine's raw result (evaluated value, or sat/unsat)."
+        "description": "The engine's raw result (evaluated value, or sat/unsat). For a bundle: one '[n] result' line per part, '(not checked)' for a part no engine ran; null when no part ran."
       },
       "witness": {
         "type": [
           "string",
           "null"
         ],
-        "description": "Solver model when one exists: the satisfying assignment, or the counterexample refuting an impossibility claim."
+        "description": "Solver model when one exists: the satisfying assignment, or the counterexample refuting an impossibility claim. For a bundle: one '[n] witness' line for each part that has one, collapsed onto its line; null when no part has one."
       },
       "explanation": {
         "type": "string",
@@ -87,12 +87,85 @@
           "string",
           "null"
         ],
-        "description": "Why the claim is not checkable (verdict = not_checkable only)."
+        "description": "Why the claim is not checkable (verdict = not_checkable only). For a bundle whose top-level verdict is not_checkable: first a sentence saying nothing can confirm the parts cover every statement of the claim, then one '[n] reason' line for each part that was not checked."
       },
       "translation_attempts": {
         "type": "integer",
         "minimum": 1,
         "maximum": 2
+      },
+      "parts": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "description": "One entry per separately checked part, in the order the claim states them. A single claim has exactly one part. For a bundle of two or more parts the top-level formal_form, engine_result, witness and reason are summaries in '[n] ...' lines as each field describes, engine is set only when every part ran on the same engine, and the top-level verdict of a bundle is refuted if any part is refuted and not_checkable otherwise - never supported - so which parts held is visible only here.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "claim": {
+              "type": "string",
+              "description": "The part, restated by the translator so it stands alone."
+            },
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "supported",
+                "refuted",
+                "not_checkable"
+              ]
+            },
+            "engine": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "arithmetic",
+                "constraints",
+                null
+              ],
+              "description": "Which engine executed this part; null iff it was not checked."
+            },
+            "formal_form": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The exact expression or constraint script executed for this part."
+            },
+            "engine_result": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The engine's raw result for this part."
+            },
+            "witness": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Solver model for this part, when one exists."
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why this part is not checkable (verdict = not_checkable only)."
+            }
+          },
+          "required": [
+            "claim",
+            "verdict",
+            "engine",
+            "formal_form",
+            "engine_result",
+            "witness",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
       }
     },
     "required": [
@@ -103,7 +176,8 @@
       "witness",
       "explanation",
       "reason",
-      "translation_attempts"
+      "translation_attempts",
+      "parts"
     ],
     "additionalProperties": false
   }

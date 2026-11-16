@@ -16,17 +16,25 @@ persists except the standard invocation record.
 | field | type | notes |
 |---|---|---|
 | verdict | "supported" \| "refuted" \| "not_checkable" | engine-decided (or honest decline — FR-004) |
-| engine | "arithmetic" \| "constraints" \| null | null iff not_checkable |
+| engine | "arithmetic" \| "constraints" \| null | one-part claim: null iff not_checkable; bundle: set only when every part ran on the same engine |
 | formal_form | string \| null | the executed expression / SMT-LIB 2 script (FR-007 auditability) |
 | engine_result | string \| null | raw engine output: evaluated value, or sat/unsat |
 | witness | string \| null | solver model: satisfying assignment (sat-supports) or counterexample (sat-refutes) |
 | explanation | string | deterministic template over (claim, form, result) — never model-phrased (D4) |
 | reason | string \| null | why not checkable (verdict = not_checkable only) |
 | translation_attempts | integer | 1 or 2 (the violation-fed retry — FR-005) |
+| parts | array (1–12) of part results | one per separately checked part, in claim order: claim, verdict, engine, formal_form, engine_result, witness, reason |
 
-Field consistency (server-guaranteed): verdict ≠ not_checkable ⇒ engine,
-formal_form, engine_result present; verdict = not_checkable ⇒ reason present,
-engine/formal_form/engine_result/witness null.
+Field consistency (server-guaranteed), for every entry of `parts` and for the
+top level of a one-part claim: verdict ≠ not_checkable ⇒ engine, formal_form,
+engine_result present; verdict = not_checkable ⇒ reason present,
+engine/formal_form/engine_result/witness null. For a bundle of two or more
+parts the top level is a summary: verdict is refuted if any part is refuted
+and not_checkable otherwise — never supported, because nothing can confirm the
+parts cover every statement of the claim; formal_form and engine_result hold
+one `[n] …` line per part whenever any part was executed; witness lists only
+the parts that have one; reason, only when the verdict is not_checkable, is a
+sentence about that coverage followed by the parts that were not checked.
 
 ## 3. Model-hop schema (flat + closed — Principle II)
 
@@ -34,12 +42,15 @@ One call, classify + translate (research.md D3):
 
 | field | type | notes |
 |---|---|---|
-| checkable | boolean | decline-biased |
-| reason | string \| null | required when checkable = false |
-| engine | "arithmetic" \| "constraints" \| null (a nullable STRING on the wire — flat+closed forbids `Option<enum>`'s `anyOf` encoding; values enforced by the cross-field validator) | required when checkable |
-| arithmetic_expression | string \| null | boolean-valued evalexpr expression; tolerances explicit; ≤ 2000 chars (local validator) |
-| smtlib_constraints | string \| null | SMT-LIB 2 declares + asserts (no check-sat) |
-| asserted | "satisfiable" \| "unsatisfiable" \| null | the claim's polarity; required for constraints |
+| parts | string[] | each part restated to stand alone; 1 to 12 entries |
+| checkable | boolean[] | per part; decline-biased |
+| reasons | string[] | per part; empty string when checkable |
+| engines | string[] | per part; "arithmetic" or "constraints", empty string when not checkable (values enforced by the cross-field validator) |
+| forms | string[] | per part; the expression (≤ 2000 chars) or the SMT-LIB 2 declares + asserts (≤ 10000 chars), empty string when not checkable |
+| asserted | string[] | per part; "satisfiable" or "unsatisfiable" for a constraints part, empty string otherwise |
+
+The six lists are index-aligned and must be the same length; flat+closed
+forbids an array of objects.
 
 Cross-field consistency is checked by a pure validator after parse; a
 violation is a translation violation (fed to the single retry, like an
@@ -67,6 +78,8 @@ engine parse error — D5).
   class, message names the solver).
 - `EXPRESSION_MAX_CHARS = 2_000`; `SMTLIB_MAX_CHARS = 10_000`.
 - `TRANSLATION_ATTEMPTS_MAX = 2` (initial + one violation-fed retry).
+- `PARTS_MAX = 12` (parts per claim; more is a translation violation).
+- `PARTS_CONCURRENCY = 4` (parts of one claim executing at once).
 
 ## 6. Outcome classes used by `check` (no taxonomy changes — D6)
 
