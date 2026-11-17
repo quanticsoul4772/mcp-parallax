@@ -3770,6 +3770,49 @@ async fn decide_rejects_fewer_than_two_options() {
     client.cancel().await.unwrap();
 }
 
+// The question is also read under the name `question`, through the real
+// request path (callers guessed that name; each call failed with "missing
+// field `decision`"). An empty one is refused in words either caller follows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decide_reads_the_question_under_the_name_question() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&decide_assessment(
+                "weigh",
+                json!([85, 40]),
+                json!(["first", "second"]),
+                json!(["a factor"]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+    let call = |question: &str| {
+        let mut params = CallToolRequestParams::new("decide");
+        params.arguments = json!({ "question": question, "options": ["a", "b"] })
+            .as_object()
+            .cloned();
+        params
+    };
+
+    let result = client.call_tool(call("Which one?")).await.unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert_eq!(s["recommended"], "a");
+
+    let err = client.call_tool(call("  ")).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("the decision (the question to settle) is empty or whitespace-only"),
+        "{err}"
+    );
+    client.cancel().await.unwrap();
+}
+
 // ---- 014-elicit -----------------------------------------------------------
 
 fn elicit_call(task: &str) -> CallToolRequestParams {

@@ -77,6 +77,11 @@ pub enum Methodology {
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct DecideParams {
     /// The question to settle, stated neutrally.
+    // Also read under the name `question`, which callers guess when the
+    // schema is not in front of them. Deliberately not in the description:
+    // the published schema requires `decision`, and advertising a second
+    // name there would contradict it.
+    #[serde(alias = "question")]
     pub decision: String,
     /// The candidate options — at least two. Order is the index basis for the
     /// per-option score arrays. May be omitted when `options_text` is supplied.
@@ -229,7 +234,7 @@ fn build_prompt(template: &str, params: &DecideParams, violation: Option<&str>) 
 fn check_input(params: &DecideParams, max_chars: usize) -> Result<(), AppError> {
     if params.decision.trim().is_empty() {
         return Err(AppError::InvalidInput(
-            "decision is empty or whitespace-only".to_string(),
+            "the decision (the question to settle) is empty or whitespace-only".to_string(),
         ));
     }
     if params.options.len() < 2 {
@@ -764,5 +769,28 @@ mod tests {
             &output,
             "decide output",
         );
+    }
+
+    /// Callers repeatedly wrote the question under `question` (7 calls in
+    /// the calling agents' session transcripts, each failing with "missing
+    /// field `decision`" before the server could record it), so that name is
+    /// read too. Sending both is still an error, not a silent choice; the
+    /// parser's wording is pinned so a change to it is noticed.
+    #[test]
+    fn question_is_accepted_as_a_second_name_for_decision() {
+        let params: DecideParams = serde_json::from_value(serde_json::json!({
+            "question": "Which one?",
+            "options": ["a", "b"],
+        }))
+        .unwrap();
+        assert_eq!(params.decision, "Which one?");
+
+        let both = serde_json::from_value::<DecideParams>(serde_json::json!({
+            "decision": "Which one?",
+            "question": "Which other?",
+            "options": ["a", "b"],
+        }));
+        let err = both.unwrap_err().to_string();
+        assert_eq!(err, "duplicate field `decision`");
     }
 }
