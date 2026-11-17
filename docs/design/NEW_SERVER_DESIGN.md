@@ -209,6 +209,54 @@ diversity critical ([multiagent debate](https://www.emergentmind.com/papers/2305
 > and the margin-derived confidence understates this; an explicit
 > too-close-to-call surface is the named candidate if live usage shows
 > low-margin multi-option calls mattering.
+>
+> **2026-11-17 amendment (run-to-run stability, measured on `decide`;
+> 054).** Ten recorded real `decide` inputs were re-run unchanged, reordered,
+> and with one context sentence removed: 281 completed calls on the server's
+> default model setting (`claude-opus-4-8`; the model is not recorded in the
+> result files and per-site routing was bypassed). Scores and scripts are in
+> `claudedocs/experiments/decide-stability/`; the input texts are withheld.
+> This amends the 2026-07-21/22 block above, whose text is left as written:
+>
+> 1. **"Margin ≥ 17 was perfectly stable" is withdrawn as a general
+>    claim.** It stands only as the result of that study's 70 authored
+>    fixtures (250 calls). On recorded real inputs, identical calls named
+>    different winners at margins of 25, 31, and 28 to 38; on one input one
+>    option led by 38 points and the other by 33.
+> 2. **"The score margin encodes all of it" is withdrawn** for the same
+>    reason.
+> 3. **The margin-derived confidence is the gap rescaled.** The statement
+>    that it "understates" instability at low margins is replaced by: winners
+>    reversed here at margins up to 38, and this sample cannot say how
+>    reliability varies with the margin.
+> 4. **"Order permutation is not empirically required" is questioned, not
+>    overturned.** In one of five inputs, one ordering gave one winner in 5 of
+>    5 runs and another ordering the other winner in 5 of 5.
+> 5. **A single pass does not correct miscalibration.** The primitives table
+>    in this document and the same table in `NEXT_REASONING_SERVER.md` list
+>    Decide against "indecision, miscalibration". `decide` makes the scoring
+>    explicit; from one pass it does not calibrate. The tool's description no
+>    longer says it does.
+> 6. **The too-close-to-call surface named above is not built.** This sample
+>    could not show that the gap separates reliable results from unreliable
+>    ones: runs with a gap of 15 or less and runs with a larger gap named the
+>    less common winner at similar rates (9 of 45 against 5 of 30), while no
+>    run with a gap over 38 did (0 of 7). That is not proof either way.
+> 7. **Limits.** Ten inputs, one model, chosen in bands by recorded gap; five
+>    inputs have 10 identical runs and five have 5, and 5 runs proved too few
+>    to call an input stable (one showed one winner in its first 5 runs and
+>    three after 10); the runs cluster, with 10 of the 14 less-common-winner
+>    runs coming from three inputs; 221 of the 281 completed calls feed the
+>    figures; the reordering and removed-sentence findings rest on five
+>    inputs because 179 further calls failed on account billing. This
+>    supports withdrawing the general claims
+>    above. It supports no error rate, no threshold, and nothing about other
+>    models.
+>
+> What 054 changed is words only: the description and the documents. Running
+> more than one pass, and any change to the confidence number, are deferred
+> to their own specification and a larger measurement
+> (`specs/054-decide-reliability/spec.md`).
 
 ---
 

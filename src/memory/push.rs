@@ -28,7 +28,7 @@ pub const PUSH_RELEVANCE_TAU: f32 = 0.55;
 pub const PUSH_CAP: usize = 3;
 
 /// Hard evaluation budget in milliseconds; timeout → fail-open silence
-/// (FR-007, clarification Q2 — decided at margin 30, the stable band).
+/// (FR-007, clarification Q2 — decided at margin 30).
 pub const PUSH_BUDGET_MS: u64 = 500;
 
 /// Max prompt chars embedded as the relevance query (bounded evaluation).

@@ -1,0 +1,90 @@
+//! RECORD ONLY. This is the program that made the 2026-11 measurement of
+//! decide's score stability (specs/054-decide-reliability). It is kept as
+//! text so the method can be read. It is not compiled and is not an example.
+//!
+//! WARNING: running it makes one paid model call per line of the call plan.
+//! The 2026-11 runs made 460 attempts and exhausted the account's credit.
+//!
+//! What it does: reads a call plan (JSON) and runs each call through the
+//! server's own `decide::run` against the live model, writing one JSON line
+//! per call. It builds the client from the default configuration directly, so
+//! per-site model and effort routing are bypassed, and it records neither the
+//! model nor the effort in its output.
+//!
+//! How it was run, when it lived under examples/:
+//! `cargo run -j 2 --example probe_decide_sensitivity -- <plan.json> <out.jsonl>`
+
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use mcp_parallax::client::AnthropicClient;
+use mcp_parallax::config::Config;
+use mcp_parallax::modes::decide::{self, DecideParams, DECIDE_ID};
+use mcp_parallax::modes::ModeRegistry;
+use serde_json::{json, Value};
+use std::io::Write;
+use std::sync::Arc;
+use tokio::task::JoinSet;
+
+const CONCURRENCY: usize = 4;
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let plan: Value = serde_json::from_str(&std::fs::read_to_string(&args[1]).unwrap()).unwrap();
+    let mut out = std::fs::File::create(&args[2]).unwrap();
+
+    let config = Config::from_env().expect("config (ANTHROPIC_API_KEY)");
+    let max_chars = config.input_max_chars;
+    let client = Arc::new(AnthropicClient::new(&config));
+    let mut registry = ModeRegistry::new();
+    decide::register(&mut registry).unwrap();
+    let mode = Arc::new(registry.get(DECIDE_ID).unwrap().clone());
+
+    let calls = plan["calls"].as_array().unwrap().clone();
+    let total = calls.len();
+    let mut pending = calls.into_iter();
+    let mut running = JoinSet::new();
+    let mut done = 0_usize;
+    loop {
+        while running.len() < CONCURRENCY {
+            let Some(call) = pending.next() else { break };
+            let (client, mode) = (client.clone(), mode.clone());
+            running.spawn(async move {
+                let params: DecideParams = serde_json::from_value(json!({
+                    "decision": call["decision"],
+                    "options": call["options"],
+                    "context": call["context"],
+                }))
+                .unwrap();
+                let outcome = decide::run(client.as_ref(), &mode, &params, max_chars).await;
+                let mut line = json!({
+                    "id": call["id"], "variant": call["variant"], "perm": call["perm"],
+                });
+                match outcome {
+                    Ok(run) => {
+                        line["scores"] = json!(run
+                            .result
+                            .assessments
+                            .iter()
+                            .map(|a| a.score)
+                            .collect::<Vec<_>>());
+                        line["methodology"] = json!(run.result.methodology);
+                        line["input_tokens"] = json!(run.input_tokens);
+                        line["output_tokens"] = json!(run.output_tokens);
+                    }
+                    Err(e) => line["error"] = json!(e.to_string()),
+                }
+                line
+            });
+        }
+        let Some(joined) = running.join_next().await else {
+            break;
+        };
+        writeln!(out, "{}", joined.unwrap()).unwrap();
+        done += 1;
+        if done % 10 == 0 || done == total {
+            println!("{done}/{total}");
+        }
+    }
+}

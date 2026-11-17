@@ -66,11 +66,15 @@ model **does not** name the winner — it only scores.
 > Choose among two or more options under tradeoffs, with the reasoning shown. Applies an
 > explicit decision methodology (weigh named criteria, trace what each option causes, or
 > reason under uncertainty), scores every option, and returns the recommended option, the
-> runner-up and why it lost, the deciding factors, the methodology used, and a confidence
-> calibrated to how close the call is. The choice is computed from the scores, not asserted
-> — never a menu handed back, never a hidden gut pick. For judging whether a claim is true
-> use `verify`; for one next step when you're looping use `unstick`; for a computable
-> comparison use `check`.
+> runner-up and why it lost, the deciding factors, the methodology used, and a confidence.
+> Confidence restates this run's top-two score gap (0.5 + gap / 200). Scores come from one
+> pass: an identical call can give different scores and a different winner (seen on one
+> input with leads of 38 points one way and 33 the other), and the winner has changed when
+> one sentence of context was removed and when the options were reordered. Report the lead
+> in points alongside the recommendation, and say when it is small. The choice is computed
+> from the scores, not asserted - never a menu handed back, never a hidden gut pick. To
+> judge whether a claim is true use verify; for one next step when you are looping use
+> unstick; for a computable comparison use check.
 
 ## Invariants
 

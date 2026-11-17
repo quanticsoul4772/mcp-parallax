@@ -1,0 +1,40 @@
+calls attempted: 460
+calls completed: 281
+calls failed (billing): 179
+completed calls used in the table: 221
+completed calls not used (first-stage single reorder/removal runs): 60
+
+inputs whose top option changed between identical runs: 5 of 10 (c00, c01, c03, c04, c07)
+identical runs per input: c00=10, c01=10, c02=10, c03=10, c04=10, c05=5, c06=5, c07=5, c08=5, c09=5
+distinct winners per input over its identical runs: c00=3, c01=2, c02=1, c03=2, c04=2, c05=1, c06=1, c07=2, c08=1, c09=1
+difference between two identical runs of one option's score: median 4, 90th percentile 13, max 54 (860 pairs)
+differences of 40 or more, by (input, option index): {('c07', 1): 6}
+input c07, top-two gap over its identical runs in order: [33, 38, 28, 6, 16]; winners: [1, 0, 0, 1, 1]
+input c07, largest lead for each option that won: {0: 38, 1: 33}
+
+identical runs with a gap of 15 or less that named the less common winner: 9 of 45
+identical runs with a gap over 15 that named the less common winner: 5 of 30
+identical runs with a gap over 20 that named the less common winner: 4 of 20
+identical runs with a gap over 25 that named the less common winner: 3 of 19
+identical runs with a gap over 30 that named the less common winner: 2 of 15
+identical runs with a gap over 38 that named the less common winner: 0 of 7
+less-common-winner runs by input: {'c00': 2, 'c01': 4, 'c03': 2, 'c04': 4, 'c07': 2}
+less-common-winner runs with a gap over 15, as input and gap: [('c01', 18), ('c03', 25), ('c04', 31), ('c07', 28), ('c07', 38)]
+wins per option over identical runs, by input: c00=[8, 1, 1], c01=[6, 4], c02=[10], c03=[8, 2], c04=[6, 4], c05=[5], c06=[5], c07=[3, 2], c08=[5], c09=[5]
+distinct winners in the first 5 identical runs, by input: c00=1, c01=2, c02=1, c03=2, c04=2, c05=1, c06=1, c07=2, c08=1, c09=1
+
+pairs of identical runs naming different winners, first run's gap 8 or less: 86 of 183 (47%), from 6 inputs
+pairs of identical runs naming different winners, first run's gap 9 to 16: 54 of 232 (23%), from 7 inputs
+pairs of identical runs naming different winners, first run's gap 17 to 38: 34 of 107 (32%), from 8 inputs
+pairs of identical runs naming different winners, first run's gap over 38: 0 of 28 (0%), from 3 inputs
+
+sentence removals with 5 runs: 13; with fewer: {('c04', 'drop1'): 4, ('c04', 'drop2'): 2}
+removals where all 5 runs named a winner other than the usual one: 3 of 13 (c00 drop0, c03 drop0, c03 drop1), in 2 of 5 inputs
+
+distinct reorderings across 5 inputs: 13
+reorder groups with fewer than 5 runs: {}
+inputs where one ordering gave one winner 5 of 5 times and another ordering a different winner 5 of 5 times: 1 of 5 (c04 {'order1': 0, 'order2': 1})
+
+identical runs with about twice their siblings' input tokens (a retry is inferred): 4 of 75 (c02 same4, c02 same7, c04 same2, c05 same1)
+recorded gaps of the planned cases, in plan order: [4, 4, 8, 8, 12, 20, 12, 34, 35, 45]
+inputs with reorder/removal repeats: c00, c01, c02, c03, c04

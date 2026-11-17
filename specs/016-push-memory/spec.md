@@ -1,5 +1,7 @@
 # Feature Specification: Push Memory
 
+> **2026-11 note:** statements here about `decide`'s confidence and about a stable margin band are revisited in specs/054-decide-reliability/spec.md.
+
 **Feature Branch**: `016-push-memory`
 
 **Created**: 2026-07-23

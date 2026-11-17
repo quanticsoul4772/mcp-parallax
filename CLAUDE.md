@@ -23,7 +23,7 @@ deterministically deduplicated set of distinct problem framings; the
 divergence counterpart to verify, always on — 012), **`decide`** (single
 scored pass over ≥2 options — the model picks a methodology
 (weigh/causal/probabilistic) and scores each option, the server argmax-picks the
-top and calibrates confidence from the score margin; choose-among-options, always
+top and derives confidence from the score margin; choose-among-options, always
 on — 013), **`elicit`** (the wrong-objective corrective: a single stance-blind
 pass surfaces the assumed objective, the governing preferences traced to their
 signals (revealed>stated), and the divergence points worth resolving before
@@ -291,7 +291,7 @@ not a mandate — confirm priorities before building.
 **No active Spec Kit feature.** `main` is at **v0.5.0** (tagged 2026-07-27),
 clean, no open PRs.
 
-The last full Spec Kit run was `040-unresolvable-default-fails` — complete, all
+The last full Spec Kit run before 054 was `040-unresolvable-default-fails` — complete, all
 34 tasks closed
 ([plan](specs/040-unresolvable-default-fails/plan.md)). Its branch is `029-`
 because the hook numbers from `specs/`, which lags: 029–039 and 041–045 shipped
@@ -302,6 +302,16 @@ default model with no price row now fails the build (041); one `Config` fixture
 for the library's unit tests (042); `--help`'s routing vocabularies derive from
 the enums (043); tests and examples brought under the lint gate (044); block
 comments no longer mint configuration variables (045).
+
+**054 (`054-decide-reliability`) followed, as a full Spec Kit run.** A
+measurement on recorded `decide` inputs showed the same input sent twice can
+name a different winner, including at score gaps the design document had
+called stable. The change was words only: `decide`'s description now says its
+confidence restates the run's score gap, and states what was measured, the
+design document carries a dated amendment, and the evidence is in
+`claudedocs/experiments/decide-stability`. Deferred, each needing its own
+measurement first: running more than one pass, and any change to the
+confidence number.
 
 **The through-line of 040–045, worth carrying forward.** Every one of them was
 a check that passed for a reason unrelated to what it claimed to verify:

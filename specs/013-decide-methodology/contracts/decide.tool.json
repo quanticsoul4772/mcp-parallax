@@ -115,7 +115,7 @@
         "type": "array"
       },
       "confidence": {
-        "description": "Confidence, server-derived from the score margin (`[0.5, 1.0]`).",
+        "description": "This run's top-two score gap rescaled to [0.5, 1.0] (0.5 + gap / 200). An identical call can score differently.",
         "format": "double",
         "type": "number"
       },
