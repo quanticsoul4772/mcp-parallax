@@ -13,6 +13,14 @@ arc.
 
 ### Added
 
+* **`decide` reads `question` as a second name for `decision`** — in the
+  calling agents' session transcripts, all 7 `decide` calls that failed for a
+  missing `decision` field had written the question under `question` (such a
+  call fails before the server records it), and the error did not say what to
+  rename. Either name is now read; sending both is an error. The schema still
+  advertises only `decision`. The empty-input error now reads "the decision
+  (the question to settle) is empty or whitespace-only".
+
 * **`check` computes square roots** — `math::sqrt` joins the arithmetic
   dialect. It is exact when the argument is a perfect-square fraction
   (`math::sqrt(16) == 4` holds). A square root standing alone on one side of
