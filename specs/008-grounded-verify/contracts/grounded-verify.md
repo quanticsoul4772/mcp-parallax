@@ -61,8 +61,8 @@ drops length constraints).
 | Condition | Error |
 |---|---|
 | `locators` empty | `[invalid_input] grounded_verify requires at least one locator` |
-| path resolves outside the root (traversal/symlink) | `[invalid_input] locator escapes the source root: <path>` |
-| file missing | `[invalid_input] source not found: <path>` |
+| path resolves outside the root (traversal/symlink), or on Windows is a network path not under the root (refused from its text) | `[invalid_input] locator escapes the source root <root>: <path> - only files inside that root can be read` |
+| file missing | `[invalid_input] source not found under the source root <root>: <path> - give a path relative to that root, or an absolute path inside it` |
 | file empty (0 bytes) | `[invalid_input] source is empty: <path>` |
 | line range out of bounds | `[invalid_input] line range out of range for <path> (<n> lines)` |
 | non-text / invalid UTF-8 | `[invalid_input] source is not text: <path>` |

@@ -21,11 +21,15 @@ use serde::{Deserialize, Serialize};
 /// — never both.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct SourceLocator {
-    /// Exact relative path within the configured source root. Mutually
-    /// exclusive with `glob`.
+    /// Exact path to one file: relative to the configured source root, or
+    /// absolute inside it. Mutually exclusive with `glob`.
     pub path: Option<String>,
-    /// Extended-glob pattern (009), expanded within the root. Mutually
-    /// exclusive with `path`; may not carry a line range.
+    /// Extended-glob pattern (009), relative to the configured source root.
+    /// It is searched only in the folder it starts with (`src/*.rs`), in each
+    /// folder of a leading brace list (`{src,tests}/**/*.rs`), or, with no
+    /// `/`, among the root's own files (`*.md`); a glob that would search the
+    /// whole root (`**/x.py`, a leading `!`) is refused. Mutually exclusive
+    /// with `path`; may not carry a line range.
     pub glob: Option<String>,
     /// 1-based inclusive start line (only with `path`). With `end_line`,
     /// restricts to a range; both omitted reads the whole file.

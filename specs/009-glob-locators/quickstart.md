@@ -47,7 +47,7 @@ Mix globs and exact paths in one call; the exact-path and line-range shapes from
 
 ```jsonc
 { "claim": "...", "locators": [ { "glob": "src/nope/*.rs" } ] }
-// => error: [invalid_input] glob matched no files: src/nope/*.rs
+// => error: [invalid_input] glob matched no files under the source root <root>: src/nope/*.rs
 
 { "claim": "...", "locators": [ { "glob": "*.rs", "start_line": 1, "end_line": 5 } ] }
 // => error: [invalid_input] a line range is not allowed with a glob: *.rs

@@ -191,7 +191,7 @@ mod tests {
             }
         });
         mock.expect_list_files()
-            .returning(move || Ok(list.iter().map(|s| (*s).to_string()).collect()));
+            .returning(move |_, _| Ok(list.iter().map(|s| (*s).to_string()).collect()));
         mock
     }
 
@@ -245,19 +245,20 @@ mod tests {
 
     #[test]
     fn a_zero_match_glob_aborts_named() {
-        let reader = reader_failing(&[], &["src/a.rs"]);
+        let mut reader = reader_failing(&[], &["src/a.rs"]);
+        reader.expect_root_display().return_const("R".to_string());
         let err = assemble(&reader, &[glob_loc("nope/*.rs")], limits()).unwrap_err();
         assert!(err.to_string().contains("matched no files"));
     }
 
     #[test]
     fn expansion_past_the_locator_ceiling_is_rejected() {
-        let reader = reader_failing(&[], &["a.rs", "b.rs", "c.rs"]);
+        let reader = reader_failing(&[], &["src/a.rs", "src/b.rs", "src/c.rs"]);
         let tight = AssemblyLimits {
             max_bytes: 262_144,
             max_locators: 2,
         };
-        let err = assemble(&reader, &[glob_loc("*.rs")], tight).unwrap_err();
+        let err = assemble(&reader, &[glob_loc("src/*.rs")], tight).unwrap_err();
         assert!(err.to_string().contains("too many locators"));
     }
 

@@ -3076,8 +3076,13 @@ async fn grounded_verify_unresolvable_locator_errors_named_with_no_verdict() {
         ))
         .await
         .unwrap_err();
+    // The root named is the configured directory itself, worked out here
+    // without the server's own display code.
+    let root = shown_root(dir.path());
     assert!(
-        err.to_string().contains("source not found: gone.rs"),
+        err.to_string().contains(&format!(
+            "source not found under the source root {root}: gone.rs - give a path relative"
+        )),
         "{err}"
     );
 
@@ -3217,7 +3222,55 @@ async fn grounded_verify_zero_match_glob_errors_named() {
         .call_tool(grounded_call("c", json!([{ "glob": "nope/*.rs" }])))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("matched no files"), "{err}");
+    let root = shown_root(dir.path());
+    assert!(
+        err.to_string().contains(&format!(
+            "glob matched no files under the source root {root}: nope/*.rs"
+        )),
+        "{err}"
+    );
+    client.cancel().await.unwrap();
+}
+
+/// The root a caller should be shown for `dir`: its real path without the
+/// Windows verbatim prefix. It repeats the server's prefix rule, so what the
+/// tests using it check is that the root named is this directory.
+fn shown_root(dir: &std::path::Path) -> String {
+    let real = std::fs::canonicalize(dir).unwrap();
+    let shown = real.to_str().unwrap();
+    shown.strip_prefix(r"\\?\").unwrap_or(shown).to_string()
+}
+
+// A locator outside the root is rejected with the root named, and nothing is
+// read: no model call happens (no mounts).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_locator_outside_the_root_errors_naming_the_root() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "x\n").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, "top secret").unwrap();
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    let err = client
+        .call_tool(grounded_call(
+            "c",
+            json!([{ "path": secret.to_str().unwrap() }]),
+        ))
+        .await
+        .unwrap_err();
+    let root = shown_root(dir.path());
+    assert!(
+        err.to_string()
+            .contains(&format!("locator escapes the source root {root}: "))
+            && err
+                .to_string()
+                .contains("only files inside that root can be read"),
+        "{err}"
+    );
+    // Rejected before any model call.
+    assert!(mock.received_requests().await.unwrap().is_empty());
     client.cancel().await.unwrap();
 }
 
@@ -3232,7 +3285,7 @@ async fn grounded_verify_glob_with_a_line_range_is_rejected() {
     let err = client
         .call_tool(grounded_call(
             "c",
-            json!([{ "glob": "*.rs", "start_line": 1, "end_line": 2 }]),
+            json!([{ "glob": "src/*.rs", "start_line": 1, "end_line": 2 }]),
         ))
         .await
         .unwrap_err();
@@ -3872,4 +3925,25 @@ async fn the_gated_seventh_corrective_also_takes_effort_and_passes() {
     for level in ["low", "medium", "high", "max", "xhigh"] {
         assert!(rendered.contains(level), "schema must name `{level}`");
     }
+}
+
+/// The description a caller receives is the registered constant. The two are
+/// written separately (the `#[tool]` attribute needs a literal), and a
+/// sentence added to the constant alone never reached a caller.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_served_grounded_verify_description_is_the_registered_one() {
+    let mock = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, &dir.path().to_string_lossy()).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let gv = tools
+        .iter()
+        .find(|t| t.name == "grounded_verify")
+        .expect("the root is configured, so the tool must be in the catalog");
+    assert_eq!(
+        gv.description.as_deref().unwrap(),
+        mcp_parallax::modes::grounded_verify::GROUNDED_VERIFY_DESCRIPTION
+    );
 }

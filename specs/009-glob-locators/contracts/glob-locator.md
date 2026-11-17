@@ -22,9 +22,15 @@ Adds a glob shape to the `grounded_verify` tool's `locators`. Present only when
 ## Grammar (full extended globbing)
 
 `*`, `**`, `?`, `[class]` / `[!class]`, brace `{a,b}` (nestable), extglob
-`@(...)` `?(...)` `*(...)` `+(...)` `!(...)`, and a leading `!` to negate the
-whole pattern. Patterns are matched against each file's path relative to the
-configured root.
+`@(...)` `?(...)` `*(...)` `+(...)` `!(...)`. Patterns are matched against each
+file's path relative to the configured root.
+
+**Amended 2026-11.** A glob is searched only where it points: in the folder it
+starts with (`src/*.rs`), in each folder of a leading brace list
+(`{src,tests}/**/*.rs`), or, with no `/`, among the root's own files (`*.md`).
+A glob that would search the whole root is refused: `**/x.py`, a leading `!`
+(whole-pattern negation, no longer accepted), or a folder part that is `.`,
+`..` or absolute. Use `!(...)` inside a folder instead (`src/!(test)*.rs`).
 
 ## Expansion behaviour
 
@@ -46,12 +52,16 @@ and `manifest` (one entry per expanded file). No model-schema change.
 
 | Condition | Error |
 |---|---|
-| glob matches zero files | `[invalid_input] glob matched no files: <pattern>` |
+| glob matches zero files | `[invalid_input] glob matched no files under the source root <root>: <pattern>` |
+| glob has a `/` but no plain folder name in front (its first part is a pattern, a one-name brace list, or an extglob group), or has no `/` and contains a backslash | `[invalid_input] glob needs a folder in front: <pattern> - start it with the folder to search, using / between folders, for example src/*.rs` |
+| glob's folder turns out to be the root itself (for example a link back to it) | `[invalid_input] the glob's folder resolves to the source root itself: <folder> - name a folder inside the root` |
+| glob folder is `.`, `..`, empty or absolute, a folder name contains `:`, or the glob starts with a drive letter or a backslash | `[invalid_input] a glob must be relative to the source root and start with a plain folder name (no ., .. or absolute path): <pattern> - for example src/*.rs` |
+| glob starts with `!` | `[invalid_input] a glob starting with ! (everything except a pattern) is not accepted: it would search the whole source root - name a folder and use !(...) inside it, for example src/!(test)*.rs` |
 | glob + line range | `[invalid_input] a line range is not allowed with a glob: <pattern>` |
 | neither path nor glob | `[invalid_input] locator must give a path or a glob` |
 | both path and glob | `[invalid_input] locator cannot give both a path and a glob` |
 | malformed pattern | `[invalid_input] malformed glob pattern: <pattern> (<reason>)` |
-| expansion over the locator ceiling | `[invalid_input] glob '<pattern>' expands to N files, over the limit of <max>` |
+| expansion over the locator ceiling | `[invalid_input] too many locators (<n>, max <max>) after glob expansion` |
 | expansion over the byte ceiling | `[invalid_input] assembled evidence exceeds <max> bytes` (008) |
 
 ## Invariants

@@ -78,7 +78,9 @@ pub const GROUNDED_VERIFY_DESCRIPTION: &str = "Verify a claim against verbatim s
     configured root); the server reads that exact text and runs independent stance-blind passes \
     over it - you cannot paraphrase or bias the evidence. Returns a verdict (supported/refuted), \
     findings citing the source, a confidence from cross-pass agreement, an evidence manifest of \
-    exactly what was read, and a completeness signal naming any evidence you did not provide. Use \
+    exactly what was read, and a completeness signal naming any evidence you did not provide. \
+    Locators resolve inside one configured source root: give a path relative to it or an \
+    absolute path inside it (globs are always relative); an error names the root. Use \
     when a claim must be checked against source you should not be trusted to summarize.";
 
 /// The verifier prompt. Placeholders exist for the claim and the assembled

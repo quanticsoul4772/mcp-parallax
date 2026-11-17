@@ -8,8 +8,8 @@ A locator is now *either* a path (with optional line range) *or* a glob.
 
 | Field | Type | Notes |
 |---|---|---|
-| `path` | string? | Exact relative path (008). Mutually exclusive with `glob`. |
-| `glob` | string? | Extended-glob pattern (009). Mutually exclusive with `path`. |
+| `path` | string? | Exact path (008): relative to the root, or absolute inside it. Mutually exclusive with `glob`. |
+| `glob` | string? | Extended-glob pattern (009); searched only in the folder it starts with, in each folder of a leading brace list, or, with no `/`, among the root's own files. Mutually exclusive with `path`. |
 | `start_line` | integer? | 1-based inclusive start; only valid with `path`. |
 | `end_line` | integer? | 1-based inclusive end; only valid with `path`. |
 
@@ -40,7 +40,7 @@ Supported constructs (the clarified grammar):
 | `*(p)` | zero or more |
 | `+(p)` | one or more |
 | `!(p)` | a single path segment that does NOT match `p` (segment-scoped; never crosses `/`) |
-| leading `!` | negates the whole pattern's match result |
+| leading `!` | no longer accepted (2026-11): refused, because it would search the whole root; use `!(...)` inside a folder |
 
 **Matching semantics (FR-010)**: case-sensitive; `*` and `**` match dotfiles
 (leading-dot files are evidence); every extglob group is segment-scoped and

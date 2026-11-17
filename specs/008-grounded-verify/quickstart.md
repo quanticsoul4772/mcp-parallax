@@ -60,7 +60,7 @@ partial set:
 
 ```jsonc
 { "claim": "...", "locators": [ { "path": "src/telemetry.rs" }, { "path": "src/gone.rs" } ] }
-// => error: [invalid_input] source not found: src/gone.rs
+// => error: [invalid_input] source not found under the source root <root>: src/gone.rs - give a path relative to that root, or an absolute path inside it
 ```
 
 ## Acceptance

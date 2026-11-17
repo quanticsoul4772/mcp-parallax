@@ -126,7 +126,7 @@ silently rendering a verdict as if the evidence were complete.
 ### Functional Requirements
 
 - **FR-001**: The tool MUST be gated and off by default — present in the catalog only when an operator has configured a single allowed source root, following the existing off-by-default convention for capabilities that read or reach outside the process.
-- **FR-002**: The tool MUST accept a claim plus a set of source locators, where a locator is a file path or a file-with-line-range, interpreted relative to the single configured source root. (Glob locators are deferred to a follow-up.)
+- **FR-002**: The tool MUST accept a claim plus a set of source locators, where a locator is a file path or a file-with-line-range, interpreted relative to the single configured source root. (Glob locators are deferred to a follow-up.) **Amended 2026-11:** an absolute path that lies inside the root is also accepted.
 - **FR-003**: The server MUST assemble the verification evidence by reading the verbatim text of the resolved locators with no model involvement in the assembly step — the calling model never authors, paraphrases, or edits the evidence.
 - **FR-004**: Every resolved locator MUST be confined to the single configured source root; any locator resolving outside it (via traversal or symlink) MUST be rejected before any content is read.
 - **FR-005**: The total bytes read per call MUST be bounded; exceeding the bound is a loud error that names the overflowing locators, never a silent truncation.
@@ -158,7 +158,7 @@ silently rendering a verdict as if the evidence were complete.
 
 ## Assumptions
 
-- **The sources live on the server's filesystem.** In the MCP model the server reads its own filesystem, not the client's; the single "source root" scopes that filesystem. The calling model supplies locators (relative paths or file/line ranges); the operator configures the one root they resolve within.
+- **The sources live on the server's filesystem.** In the MCP model the server reads its own filesystem, not the client's; the single "source root" scopes that filesystem. The calling model supplies locators (relative paths, absolute paths inside the root, or file/line ranges); the operator configures the one root they resolve within.
 - **The existing `verify` ensemble and stance-blindness are reused** — this feature changes *where the evidence comes from*, not how verification reasons. It is a sibling of `verify`, distinct from `check` (which executes a formal target rather than judging).
 - **Text sources only for v1.** Binary/non-text content is rejected, not parsed; rendering or decoding non-text formats is out of scope.
 - **Globs are deferred.** v1 locators are exact paths and line ranges; glob resolution (directory walk, deterministic ordering, zero-match semantics, symlink-expansion guarding) is a named follow-up, not part of this scope.

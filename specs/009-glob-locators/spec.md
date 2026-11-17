@@ -75,7 +75,7 @@ ceilings as hand-named locators: the locator count and the total evidence bytes.
 Exceeding either is a loud named error, never a silent truncation that would
 hide files from the verdict.
 
-**Why this priority**: It prevents a single broad glob (`**/*`) from quietly
+**Why this priority**: It prevents a single broad glob (`src/**/*`) from quietly
 blowing the budget or being silently trimmed; correctness of the all-or-nothing
 guarantee depends on it, but it is a bound on an already-working expansion.
 
@@ -102,7 +102,7 @@ error and no verdict.
 
 ### Functional Requirements
 
-- **FR-001**: A source locator MAY be a glob pattern, in addition to the exact path and file/line range shapes from 008. The existing shapes are unchanged. The supported grammar is full extended globbing: standard wildcards (`*`, `?`, `[class]`, `**` recursive) plus brace expansion (`{a,b}`), extglob operators (`!(...)`, `+(...)`, `@(...)`, `?(...)`, `*(...)`), and negation. Zero-match and ceiling rules apply to the net expanded set.
+- **FR-001**: A source locator MAY be a glob pattern, in addition to the exact path and file/line range shapes from 008. The existing shapes are unchanged. The supported grammar is full extended globbing: standard wildcards (`*`, `?`, `[class]`, `**` recursive) plus brace expansion (`{a,b}`), extglob operators (`!(...)`, `+(...)`, `@(...)`, `?(...)`, `*(...)`), and negation. Zero-match and ceiling rules apply to the net expanded set. **Amended 2026-11:** a glob is searched only in the folder it starts with, in each folder of a leading brace list, or, with no `/`, among the root's own files; a glob that would search the whole root (`**/x.py`, or a leading `!` for whole-pattern negation) is refused.
 - **FR-002**: The server MUST expand a glob, within the single configured source root, to the set of matching files, and treat each match as it treats an exact-path locator — read verbatim, judged as evidence, and recorded as its own manifest entry naming the concrete file (not the pattern).
 - **FR-003**: Glob expansion MUST be deterministic: the same pattern over an unchanged file set MUST yield the same ordered set, so assembled evidence is identical across repeated calls (preserving 008's determinism guarantee).
 - **FR-004**: Every expanded path MUST be confined to the configured root — re-checked against the canonicalized root so no match can escape via traversal or a symlinked directory — before it is read.
@@ -134,4 +134,4 @@ error and no verdict.
 - **The all-or-nothing and confinement guarantees come from 008** — this feature reuses the existing root-confined reader and assembly; the only new machinery is deterministic expansion of a pattern into the concrete file set before assembly.
 - **Text-only and per-file/total byte guards from 008 apply unchanged** to every expanded file.
 - **A glob expands to files, not directories** — directories among the matches are not read as evidence.
-- **Pattern syntax is full extended globbing** (clarified 2026-06-13): standard wildcards plus brace expansion, extglob, and negation. The standard `glob` crate does not cover this grammar, so engine selection (e.g. a crate that supports brace/extglob, or composing one) is a `/speckit-plan` decision — but the *grammar* is fixed here.
+- **Pattern syntax is full extended globbing** (clarified 2026-06-13): standard wildcards plus brace expansion, extglob, and negation. (Whole-pattern negation with a leading `!` was withdrawn 2026-11; see FR-001.) The standard `glob` crate does not cover this grammar, so engine selection (e.g. a crate that supports brace/extglob, or composing one) is a `/speckit-plan` decision — but the *grammar* is fixed here.

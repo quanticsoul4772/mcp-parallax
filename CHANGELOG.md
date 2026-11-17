@@ -136,6 +136,23 @@ arc.
 
 ### Changed
 
+* **`grounded_verify` errors name the source root** — a locator that is not
+  found or escapes the root, and a glob that matches nothing, now report the
+  configured root; a missing file also reports the locator forms that work (a
+  path relative to the root, or an absolute path inside it). In 53 mined
+  calls (2026-10-10 to 2026-11-15, from local session transcripts) 47 failed,
+  46 of them because the caller was working in a project other than the root
+  and had no way to know it: 21 paths outside the root, 19 paths not found
+  under it, 6 globs for files that lived elsewhere. The tool description says
+  how locators resolve. A glob is now searched only where it points: in the
+  folder it starts with (`src/*.rs`), in each folder of a leading brace list
+  (`{src,tests}/**/*.rs`), or, with no `/`, among the root's own files
+  (`*.md`). A glob that would search the whole root is refused: `**/x.py`, a
+  leading `!`, or a folder part that is `.`, `..` or absolute. On Windows a
+  network path outside the root is refused from its text, before its host is
+  contacted; every other path is resolved on disk and then checked, as
+  before.
+
 * **Dependency and toolchain refresh (2026-11)** — `rmcp` 3.4.0 → 3.10.0 with
   the manifest floor raised to 3.10.0, clearing RUSTSEC-2026-0457, -0461 and
   -0462 (all in transports this server does not enable, but the floor now
