@@ -323,12 +323,24 @@ mod tests {
             r"\\no-such-host.invalid\share\x.txt",
             r"\\?\UNC\no-such-host.invalid\share\x.txt",
         ] {
-            assert!(reader.is_network_path_outside_root(path), "{path}");
-            let err = reader.read(path, None, None).unwrap_err();
-            assert!(
-                err.to_string().contains("locator escapes the source root"),
-                "{path}: {err}"
-            );
+            // Only Windows has network paths of this shape. Elsewhere they
+            // are ordinary local paths: not screened, and the disk check
+            // still reads nothing (no such file under or outside the root).
+            let screened = reader.is_network_path_outside_root(path);
+            assert_eq!(screened, cfg!(windows), "{path}");
+            let err = reader.read(path, None, None).unwrap_err().to_string();
+            if cfg!(windows) {
+                assert!(
+                    err.contains("locator escapes the source root"),
+                    "{path}: {err}"
+                );
+            } else {
+                assert!(
+                    err.contains("source not found")
+                        || err.contains("locator escapes the source root"),
+                    "{path}: {err}"
+                );
+            }
         }
         // Not network paths: these go to the disk check, unscreened.
         let inside = dir.path().join("a.rs");
