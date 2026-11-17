@@ -1,10 +1,10 @@
-//! Acceptance for 013-decide-methodology (offline calibration shape).
+//! Acceptance for 013-decide-methodology (offline confidence shape).
 //!
 //! Drives the real server (Anthropic mocked by wiremock): a scored single pass
-//! yields a server-derived recommendation with margin-calibrated confidence, and
+//! yields a server-derived recommendation with margin-derived confidence, and
 //! a near-tie reads lower than a dominant winner. The live SC-004 property (the
 //! model picks the *fitting* methodology) is the dogfood — a mock can't judge fit;
-//! the calibration math here is fully offline (server math over the scores).
+//! the confidence math here is fully offline (server math over the scores).
 //!
 //! Run: `cargo run --example acceptance_decide`
 

@@ -1,13 +1,13 @@
 //! The Decide corrective (013) — methodology-driven choice.
 //!
-//! For indecision and miscalibration: given a decision and ≥2 options, a single
+//! For indecision and gut-feel choices: given a decision and ≥2 options, a single
 //! stance-blind pass selects a decision **methodology** (weigh / causal /
 //! probabilistic) and emits a numeric **score per option** (plus per-option
 //! rationales and the deciding factors) as flat scalar arrays. The server zips
 //! those with the option labels, ranks by score, and **deterministically**
 //! assembles the recommendation: the top option, the runner-up and why it lost,
 //! the surfaced methodology, the deciding factors, and a confidence derived from
-//! the score *margin*. The model scores; the server chooses and calibrates — so
+//! the score *margin*. The model scores; the server ranks and reports — so
 //! the choice traces to the factors, never an unexamined preference. Single pass
 //! (closest to `unstick`); it does **not** use `verify`'s vote aggregation.
 
@@ -25,10 +25,14 @@ pub const DECIDE_DESCRIPTION: &str = "Choose among two or more options under tra
     reasoning shown. Applies an explicit decision methodology (weigh named criteria, trace what \
     each option causes, or reason under uncertainty), scores every option, and returns the \
     recommended option, the runner-up and why it lost, the deciding factors, the methodology \
-    used, and a confidence calibrated to how close the call is. The choice is computed from the \
-    scores, not asserted - never a menu handed back, never a hidden gut pick. To judge whether a \
-    claim is true use verify; for one next step when you are looping use unstick; for a computable \
-    comparison use check.";
+    used, and a confidence. Confidence restates this run's top-two score gap (0.5 + gap / 200). \
+    Scores come from one pass: an identical call can give different scores and a different winner \
+    (seen on one input with leads of 38 points one way and 33 the other), and the winner has \
+    changed when one sentence of context was removed and when the options were reordered. Report \
+    the lead in points alongside the recommendation, and say when it is small. The choice is \
+    computed from the scores, not asserted - never a menu handed back, never a hidden gut pick. \
+    To judge whether a claim is true use verify; for one next step when you are looping use \
+    unstick; for a computable comparison use check.";
 
 /// The decision prompt. Placeholders exist for the decision, the options, and the
 /// context ONLY — no slot for the caller's preferred option or stance (blindness
@@ -160,7 +164,7 @@ pub struct DecideResult {
     pub runner_up: String,
     /// Why the runner-up lost (server-composed: margin + its rationale).
     pub runner_up_reason: String,
-    /// Confidence, server-derived from the score margin (`[0.5, 1.0]`).
+    /// This run's top-two score gap rescaled to [0.5, 1.0] (0.5 + gap / 200). An identical call can score differently.
     pub confidence: f64,
     /// The surfaced methodology.
     pub methodology: Methodology,
@@ -265,7 +269,7 @@ fn check_input(params: &DecideParams, max_chars: usize) -> Result<(), AppError> 
 }
 
 /// Run one Decide invocation: a single stance-blind pass, then deterministic
-/// validation + rank + calibrate.
+/// validation + rank + confidence.
 ///
 /// # Errors
 ///
@@ -336,7 +340,7 @@ async fn run_spent(
     )))
 }
 
-/// Validate well-formedness, then zip + rank + calibrate (research D2/D3).
+/// Validate well-formedness, then zip + rank + confidence (research D2/D3).
 /// A malformed assessment is a failed pass (loud) — arity mismatch, empty
 /// `deciding_factors`, or a score outside 0–100 (analyze M1: never clamped).
 fn assemble(params: &DecideParams, pass: DecidePass) -> Result<DecideResult, AppError> {
@@ -464,7 +468,7 @@ mod tests {
         mock
     }
 
-    // ---- T005: schema, prompt, calibration (pure) --------------------------
+    // ---- T005: schema, prompt, confidence (pure) ---------------------------
 
     #[test]
     fn mode_registers_flat_closed_with_single_pass() {
@@ -702,7 +706,7 @@ mod tests {
 
     #[test]
     fn margin_to_confidence_map() {
-        // Build assessments directly and exercise the calibration via assemble.
+        // Build assessments directly and exercise the confidence via assemble.
         let p = params("d", &["x", "y"]);
         let mk = |a: i64, b: i64| {
             assemble(
@@ -792,5 +796,84 @@ mod tests {
         }));
         let err = both.unwrap_err().to_string();
         assert_eq!(err, "duplicate field `decision`");
+    }
+
+    // ---- 054: what the description says, and what must not move -----------
+
+    /// The prompt as built for one fixed input, the same with the retry
+    /// wording, and the schema the request carries, as they were before 054.
+    const PIN_PROMPT: &str = "You are an external decision aid. Someone must choose among the options below and is either stalling or about to pick on a gut feel. Assess the options explicitly and score them; you do not pick the winner — the server does, from your scores.\n\nRules:\n1. Choose the decision methodology that fits this decision's shape and report it in `methodology`: \"weigh\" (the decision turns on several named criteria), \"causal\" (it turns on what each option causes or prevents downstream), or \"probabilistic\" (it turns on uncertainty about which outcome obtains).\n2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses — the terms the decision actually turns on. Non-empty.\n3. Score every option from 0 to 100 on its overall standing under your methodology, in the SAME ORDER the options are listed: `option_scores[i]` and `option_rationales[i]` are for option i. Provide exactly one score and one rationale per option. A score is an integer in 0–100.\n4. `option_rationales[i]` is one self-contained sentence on why option i scored as it did, in the methodology's terms.\n5. Do not state a verdict, and do not name a single winner — only assess and score. The higher score is the better option.\n\nDecision:\nWhich database?\n\nOptions (score in this order):\n1. Postgres\n2. SQLite\n\nContext provided with the decision (may be empty):\nSingle user, local.\n";
+    const PIN_PROMPT_RETRY: &str = "You are an external decision aid. Someone must choose among the options below and is either stalling or about to pick on a gut feel. Assess the options explicitly and score them; you do not pick the winner — the server does, from your scores.\n\nRules:\n1. Choose the decision methodology that fits this decision's shape and report it in `methodology`: \"weigh\" (the decision turns on several named criteria), \"causal\" (it turns on what each option causes or prevents downstream), or \"probabilistic\" (it turns on uncertainty about which outcome obtains).\n2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses — the terms the decision actually turns on. Non-empty.\n3. Score every option from 0 to 100 on its overall standing under your methodology, in the SAME ORDER the options are listed: `option_scores[i]` and `option_rationales[i]` are for option i. Provide exactly one score and one rationale per option. A score is an integer in 0–100.\n4. `option_rationales[i]` is one self-contained sentence on why option i scored as it did, in the methodology's terms.\n5. Do not state a verdict, and do not name a single winner — only assess and score. The higher score is the better option.\n\nDecision:\nWhich database?\n\nOptions (score in this order):\n1. Postgres\n2. SQLite\n\nContext provided with the decision (may be empty):\nSingle user, local.\n\nYOUR PREVIOUS ASSESSMENT WAS REJECTED for this exact reason: assessment arity mismatch: 2 options but 2 scores / 3 rationales. Produce a corrected assessment — exactly one score and one rationale per option, every score an integer 0-100, and non-empty deciding_factors.";
+    const PIN_SCHEMA: &str = "{\"additionalProperties\":false,\"description\":\"What the single pass is grammar-constrained to produce (data-model.md).\\n\\nA scalar enum plus three arrays of scalars (per-option data as parallel\\narrays, since arrays of objects are illegal under the flat-schema gate). Flat\\n+ closed.\",\"properties\":{\"deciding_factors\":{\"description\":\"The factors/criteria/effects/likelihoods the methodology used.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"methodology\":{\"description\":\"The methodology the model applied.\",\"enum\":[\"weigh\",\"causal\",\"probabilistic\"],\"type\":\"string\"},\"option_rationales\":{\"description\":\"Rationale per option, index-aligned to the input options.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"option_scores\":{\"description\":\"Score per option (0–100), index-aligned to the input options.\",\"items\":{\"format\":\"int64\",\"type\":\"integer\"},\"type\":\"array\"}},\"required\":[\"deciding_factors\",\"methodology\",\"option_rationales\",\"option_scores\"],\"type\":\"object\"}";
+
+    /// 054 changes words callers read, never what the model is sent. Nothing
+    /// pinned the prompt text before (the existing prompt test only counts
+    /// placeholders), and the retry wording lives outside the template, so
+    /// all three are held here as literals.
+    #[test]
+    fn the_prompt_the_model_sees_is_unchanged_by_054() {
+        let mode = test_mode();
+        let mut p = params("Which database?", &["Postgres", "SQLite"]);
+        p.context = Some("Single user, local.".to_string());
+        let violation = "assessment arity mismatch: 2 options but 2 scores / 3 rationales";
+        assert_eq!(
+            (
+                build_prompt(mode.prompt_template, &p, None),
+                build_prompt(mode.prompt_template, &p, Some(violation)),
+                serde_json::to_string(&mode.sanitized_schema).unwrap(),
+            ),
+            (
+                PIN_PROMPT.to_string(),
+                PIN_PROMPT_RETRY.to_string(),
+                PIN_SCHEMA.to_string(),
+            )
+        );
+    }
+
+    /// The description must say what was measured and must not claim the
+    /// confidence is tuned to reliability. Every problem is collected, so one
+    /// run shows all of them.
+    #[test]
+    fn decide_description_states_what_was_measured() {
+        let required = [
+            "Confidence restates this run's top-two score gap (0.5 + gap / 200).",
+            "Scores come from one pass: an identical call can give different scores and a different winner (seen on one input with leads of 38 points one way and 33 the other), and the winner has changed when one sentence of context was removed and when the options were reordered.",
+            "Report the lead in points alongside the recommendation, and say when it is small.",
+        ];
+        let mut problems = Vec::new();
+        for sentence in required {
+            let found = DECIDE_DESCRIPTION.matches(sentence).count();
+            if found != 1 {
+                problems.push(format!("found {found} times, expected once: {sentence}"));
+            }
+        }
+        if DECIDE_DESCRIPTION.to_lowercase().contains("calibrat") {
+            problems.push("contains the forbidden word stem".to_string());
+        }
+        assert!(problems.is_empty(), "{problems:#?}");
+    }
+
+    /// The confidence field's description is what callers read beside the
+    /// number. The contract test compares names and constraints only, so the
+    /// text is held here: first to the specified wording, then to the
+    /// contract file.
+    #[test]
+    fn decide_description_of_confidence_matches_the_contract() {
+        let expected = "This run's top-two score gap rescaled to [0.5, 1.0] (0.5 + gap / 200). An identical call can score differently.";
+        let derived = serde_json::to_value(schemars::schema_for!(DecideResult)).unwrap();
+        let derived = derived["properties"]["confidence"]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../specs/013-decide-methodology/contracts/decide.tool.json"
+        ))
+        .unwrap();
+        let contract = contract["outputSchema"]["properties"]["confidence"]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(derived, expected, "the derived schema's description");
+        assert_eq!(derived, contract, "the contract file's description");
     }
 }

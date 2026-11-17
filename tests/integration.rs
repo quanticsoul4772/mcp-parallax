@@ -3701,10 +3701,10 @@ fn decide_assessment(methodology: &str, scores: Value, rationales: Value, factor
 }
 
 // 013 US1 + FR-002/004/005/007 + SC-001/003: a scored single pass yields a
-// server-derived recommendation with margin-calibrated confidence, the full
+// server-derived recommendation with margin-derived confidence, the full
 // breakdown, the surfaced methodology, no verdict/next_step, and one record.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn decide_returns_calibrated_recommendation_and_one_record() {
+async fn decide_returns_margin_derived_recommendation_and_one_record() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
@@ -3809,6 +3809,27 @@ async fn decide_reads_the_question_under_the_name_question() {
         err.to_string()
             .contains("the decision (the question to settle) is empty or whitespace-only"),
         "{err}"
+    );
+    client.cancel().await.unwrap();
+}
+
+/// The `decide` description a caller receives is the registered constant.
+/// The two are written separately (the `#[tool]` attribute needs a literal),
+/// so a sentence changed in one alone would never reach a caller, or would
+/// reach callers without being checked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_served_decide_description_is_the_registered_one() {
+    let mock = MockServer::start().await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+
+    let tools = client.list_all_tools().await.unwrap();
+    let decide = tools
+        .iter()
+        .find(|t| t.name == "decide")
+        .expect("decide is always in the catalog");
+    assert_eq!(
+        decide.description.as_deref().unwrap(),
+        mcp_parallax::modes::decide::DECIDE_DESCRIPTION
     );
     client.cancel().await.unwrap();
 }

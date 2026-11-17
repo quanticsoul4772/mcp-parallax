@@ -23,7 +23,7 @@ deterministically deduplicated set of distinct problem framings; the
 divergence counterpart to verify, always on — 012), **`decide`** (single
 scored pass over ≥2 options — the model picks a methodology
 (weigh/causal/probabilistic) and scores each option, the server argmax-picks the
-top and calibrates confidence from the score margin; choose-among-options, always
+top and derives confidence from the score margin; choose-among-options, always
 on — 013), **`elicit`** (the wrong-objective corrective: a single stance-blind
 pass surfaces the assumed objective, the governing preferences traced to their
 signals (revealed>stated), and the divergence points worth resolving before
