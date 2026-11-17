@@ -1,5 +1,7 @@
 # Results: decide order-bias experiment
 
+> **2026-11 note:** statements here about `decide`'s confidence and about a stable margin band are revisited in specs/054-decide-reliability/spec.md.
+
 **Run**: 2026-07-21 · `claude-opus-4-8` · 130/130 calls, 0 errors · $1.68
 (151,652 input / 37,018 output tokens, from the invocation records) · raw
 data `results.jsonl`, computed by `analysis.py`.

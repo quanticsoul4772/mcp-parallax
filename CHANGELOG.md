@@ -144,6 +144,15 @@ arc.
 
 ### Changed
 
+* **`decide` no longer describes its confidence as calibrated** — the
+  description now says the confidence restates the run's top-two score gap,
+  that an identical call can give different scores and a different winner,
+  and that the winner has changed when a context sentence was removed and
+  when options were reordered; it asks callers to report the lead in points.
+  The `confidence` field's description in the result schema changed to match.
+  No computed value, field or prompt changed. Evidence:
+  `claudedocs/experiments/decide-stability/`.
+
 * **`grounded_verify` errors name the source root** — a locator that is not
   found or escapes the root, and a glob that matches nothing, now report the
   configured root; a missing file also reports the locator forms that work (a

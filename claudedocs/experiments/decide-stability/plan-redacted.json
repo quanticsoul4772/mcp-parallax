@@ -1,0 +1,114 @@
+{
+ "cases": [
+  {
+   "id": "c00",
+   "options": 4,
+   "sentences": 7,
+   "recorded_scores": [
+    62,
+    70,
+    55,
+    66
+   ],
+   "recorded_gap": 4
+  },
+  {
+   "id": "c01",
+   "options": 3,
+   "sentences": 8,
+   "recorded_scores": [
+    78,
+    74,
+    38
+   ],
+   "recorded_gap": 4
+  },
+  {
+   "id": "c02",
+   "options": 3,
+   "sentences": 18,
+   "recorded_scores": [
+    82,
+    74,
+    55
+   ],
+   "recorded_gap": 8
+  },
+  {
+   "id": "c03",
+   "options": 2,
+   "sentences": 9,
+   "recorded_scores": [
+    66,
+    58
+   ],
+   "recorded_gap": 8
+  },
+  {
+   "id": "c04",
+   "options": 4,
+   "sentences": 7,
+   "recorded_scores": [
+    82,
+    70,
+    40,
+    30
+   ],
+   "recorded_gap": 12
+  },
+  {
+   "id": "c05",
+   "options": 2,
+   "sentences": 6,
+   "recorded_scores": [
+    58,
+    78
+   ],
+   "recorded_gap": 20
+  },
+  {
+   "id": "c06",
+   "options": 3,
+   "sentences": 8,
+   "recorded_scores": [
+    55,
+    68,
+    80
+   ],
+   "recorded_gap": 12
+  },
+  {
+   "id": "c07",
+   "options": 3,
+   "sentences": 16,
+   "recorded_scores": [
+    72,
+    38,
+    15
+   ],
+   "recorded_gap": 34
+  },
+  {
+   "id": "c08",
+   "options": 3,
+   "sentences": 9,
+   "recorded_scores": [
+    90,
+    35,
+    55
+   ],
+   "recorded_gap": 35
+  },
+  {
+   "id": "c09",
+   "options": 3,
+   "sentences": 4,
+   "recorded_scores": [
+    90,
+    45,
+    10
+   ],
+   "recorded_gap": 45
+  }
+ ]
+}

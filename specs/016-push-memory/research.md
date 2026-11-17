@@ -1,5 +1,7 @@
 # Phase 0 Research: Push Memory
 
+> **2026-11 note:** statements here about `decide`'s confidence and about a stable margin band are revisited in specs/054-decide-reliability/spec.md.
+
 All Technical Context unknowns resolved against the shipped code (memory
 ranking, gate budget, checkpoint suppression, 007 dual-sink) and the design
 corpus (`MEMORY_LAYER.md`, `WATCHDOG_LAYER.md` MCP amendment, Constitution
