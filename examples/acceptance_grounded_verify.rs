@@ -144,7 +144,12 @@ async fn main() {
             .call_tool(gv("c", json!([{ "path": "gone.rs" }])))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("source not found: gone.rs"));
+        let message = err.to_string();
+        assert!(
+            message.contains("source not found under the source root")
+                && message.contains(": gone.rs - give a path relative"),
+            "{message}"
+        );
         client.cancel().await.unwrap();
         println!("SC-003 all-or-nothing named error: PASS");
     }

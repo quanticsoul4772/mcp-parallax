@@ -37,14 +37,24 @@ pub trait SourceReader: Send + Sync {
         end_line: Option<u32>,
     ) -> Result<SourceContent, AppError>;
 
-    /// List every regular file under the configured root, as root-relative,
-    /// `/`-separated paths. Used by glob expansion (009); symlinks are not
-    /// followed, so nothing outside the root is listed.
+    /// List the regular files under the folder `under` (root-relative; empty
+    /// for the root itself), as root-relative, `/`-separated paths. With
+    /// `recurse` every file below it; without, only the files directly in it.
+    /// Used by glob expansion (009), which names the folder a glob starts with
+    /// so that only that folder is walked. Symlinks are not followed, so
+    /// nothing outside the root is listed; a folder that does not exist lists
+    /// nothing.
     ///
     /// # Errors
     ///
-    /// [`AppError::Storage`] if the root cannot be walked.
-    fn list_files(&self) -> Result<Vec<String>, AppError>;
+    /// [`AppError::InvalidInput`] if `under` resolves outside the root;
+    /// [`AppError::Storage`] if the folder cannot be walked.
+    fn list_files(&self, under: &str, recurse: bool) -> Result<Vec<String>, AppError>;
+
+    /// The configured root as a caller should read it, for error messages.
+    /// A caller working in another project cannot otherwise know where its
+    /// locators are resolved.
+    fn root_display(&self) -> String;
 }
 
 #[cfg(test)]

@@ -16,14 +16,14 @@
             ]
           },
           "glob": {
-            "description": "Extended-glob pattern (009), expanded within the root. Mutually\nexclusive with `path`; may not carry a line range.",
+            "description": "Extended-glob pattern (009), relative to the configured source root.\nIt is searched only in the folder it starts with (`src/*.rs`), in each\nfolder of a leading brace list (`{src,tests}/**/*.rs`), or, with no\n`/`, among the root's own files (`*.md`); a glob that would search the\nwhole root (`**/x.py`, a leading `!`) is refused. Mutually exclusive\nwith `path`; may not carry a line range.",
             "type": [
               "string",
               "null"
             ]
           },
           "path": {
-            "description": "Exact relative path within the configured source root. Mutually\nexclusive with `glob`.",
+            "description": "Exact path to one file: relative to the configured source root, or\nabsolute inside it. Mutually exclusive with `glob`.",
             "type": [
               "string",
               "null"
