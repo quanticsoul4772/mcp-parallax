@@ -210,7 +210,11 @@ async fn execute(part: Part) -> Result<Result<Checked, Violation>, AppError> {
                     Verdict::Refuted
                 };
                 Checked {
-                    explanation: explain_arithmetic(&expression, verdict),
+                    explanation: explain_arithmetic(
+                        &expression,
+                        verdict,
+                        outcome.exact_root_equality,
+                    ),
                     part: PartResult {
                         claim,
                         verdict,
@@ -287,16 +291,28 @@ fn constraint_verdict(proven: Proven, asserted: Polarity) -> (Verdict, Option<St
 }
 
 /// Deterministic explanation templates (D4) — never model-phrased.
-fn explain_arithmetic(expression: &str, verdict: Verdict) -> String {
-    match verdict {
-        Verdict::Supported => format!(
+///
+/// `exact_root_equality` marks a refuted bare square root compared with `==`:
+/// a plain rounded claim ("the square root of 2 is 1.414") is checked exactly
+/// and refuted, so the caller is pointed at the executed form. The pointer
+/// gives no advice: telling a caller how to restate a claim would coach it
+/// past the refutation.
+fn explain_arithmetic(expression: &str, verdict: Verdict, exact_root_equality: bool) -> String {
+    if verdict == Verdict::Supported {
+        return format!(
             "The expression `{expression}` evaluated to true: the claim holds as formalized."
-        ),
-        _ => format!(
-            "The expression `{expression}` evaluated to false: the claim does not hold as \
-             formalized."
-        ),
+        );
     }
+    let pointer = if exact_root_equality {
+        " An exact equality was checked; compare formal_form with the claim to see what was \
+         executed."
+    } else {
+        ""
+    };
+    format!(
+        "The expression `{expression}` evaluated to false: the claim does not hold as \
+         formalized.{pointer}"
+    )
 }
 
 fn explain_constraints(asserted: Polarity, verdict: Verdict, has_witness: bool) -> String {
@@ -435,6 +451,66 @@ mod tests {
         .unwrap();
         assert_eq!(result.verdict, Verdict::Refuted);
         assert!(result.explanation.contains("evaluated to false"));
+    }
+
+    /// A plain rounded square-root claim is refuted as an exact equality, and
+    /// the explanation points the caller at the executed form. It makes no
+    /// statement about rounding and gives no advice to restate the claim.
+    #[tokio::test]
+    async fn a_refuted_bare_root_equality_points_at_the_executed_form() {
+        let explanation_of = |expression: &'static str| async move {
+            let client = client_translating(arithmetic_translation(expression));
+            let d = &deps_with(client);
+            let (result, _, _) = run_with(d, &params("the claim"), d.model_client.as_ref())
+                .await
+                .unwrap();
+            assert_eq!(result.verdict, Verdict::Refuted, "{expression}");
+            assert!(!result.every_listed_part_held, "{expression}");
+            result.explanation
+        };
+        assert_eq!(
+            explanation_of("math::sqrt(2) == 1.414").await,
+            "The expression `math::sqrt(2) == 1.414` evaluated to false: the claim does not \
+             hold as formalized. An exact equality was checked; compare formal_form with the \
+             claim to see what was executed."
+        );
+        // Not a bare square-root equality: the plain explanation.
+        assert!(explanation_of("7 / 2 == 3.4")
+            .await
+            .ends_with("does not hold as formalized."));
+    }
+
+    /// A claim checked in parts gets the bundle summary, not each part's own
+    /// explanation, so the pointer does not appear there. The changelog
+    /// states this limit; this pins it.
+    #[tokio::test]
+    async fn a_bundle_of_root_equalities_carries_no_pointer() {
+        let result = check_bundle(&[
+            (
+                "the square root of 2 is 1.414",
+                true,
+                "",
+                "arithmetic",
+                "math::sqrt(2) == 1.414",
+                "",
+            ),
+            (
+                "the square root of 3 is 1.732",
+                true,
+                "",
+                "arithmetic",
+                "math::sqrt(3) == 1.732",
+                "",
+            ),
+        ])
+        .await;
+        assert_eq!(result.verdict, Verdict::Refuted);
+        assert!(result.parts.iter().all(|p| p.verdict == Verdict::Refuted));
+        assert!(
+            !result.explanation.contains("exact equality was checked"),
+            "{}",
+            result.explanation
+        );
     }
 
     #[tokio::test]

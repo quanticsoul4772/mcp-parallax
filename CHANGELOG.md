@@ -23,7 +23,15 @@ arc.
   live run a false is-exactly-4 claim had come back `supported` through a
   tolerance form. Nine of the 21 distinct declines among 359 `check` calls
   mined from local session transcripts (2026-11-15) needed a square root. The
-  half power is unchanged: `16^0.5 == 4` is still refused.
+  half power is unchanged: `16^0.5 == 4` is still refused. A plain rounded
+  claim ("the square root of 2 is 1.414") was written by the translator as an
+  exact equality and refuted in the live runs recorded in the quickstart;
+  that is the translator's reading, not a guarantee. For a single claim refuted as a bare square root compared with
+  `==`, the explanation adds that an exact equality was checked and points to
+  `formal_form`; it says nothing about rounding, and a claim checked in parts
+  gets no such sentence. The tool description now says the executed
+  comparison is in `formal_form`: an equality was checked exactly, a
+  tolerance form only to within its bound.
 
 * **`check` settles a bundle of claims part by part** — a claim that states
   several things at once used to be declined whole whenever one of them could

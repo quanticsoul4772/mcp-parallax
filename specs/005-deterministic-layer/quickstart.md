@@ -92,6 +92,10 @@ mapping):
 - **With a bare square root compared exactly and the instructions requiring
   `==`: PASS, 3 full runs** as printed by the acceptance example. SC-001
   28/28, SC-002 7/7, bundles 8/8 in each.
+- **A plain rounded claim: PASS, 3 full runs** as printed by the acceptance
+  example. SC-001 29/29 with "The square root of 10 is 3.16." added (written
+  as `math::sqrt(10) == 3.16` and refuted each time), SC-002 7/7, bundles 8/8
+  in each.
 
 ## Inspect
 

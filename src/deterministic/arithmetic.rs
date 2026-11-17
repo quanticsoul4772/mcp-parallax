@@ -14,6 +14,10 @@ pub struct ArithmeticOutcome {
     pub holds: bool,
     /// The raw engine result text (for `engine_result` — FR-007).
     pub result_text: String,
+    /// True for a false expression that is, as a whole, a bare square root
+    /// compared by `==` with an exact value. The explanation then points the
+    /// caller at the executed form; the verdict is unaffected.
+    pub exact_root_equality: bool,
 }
 
 /// Evaluate a boolean-valued expression.
@@ -32,9 +36,13 @@ pub fn evaluate(expression: &str) -> Result<ArithmeticOutcome, Violation> {
         )));
     }
     match exact::evaluate(expression) {
-        Ok(exact::Outcome::Boolean(holds)) => Ok(ArithmeticOutcome {
+        Ok(exact::Outcome::Boolean {
+            holds,
+            exact_root_equality,
+        }) => Ok(ArithmeticOutcome {
             holds,
             result_text: holds.to_string(),
+            exact_root_equality,
         }),
         Ok(exact::Outcome::NonBoolean(value)) => Err(Violation(format!(
             "expression evaluated to the non-boolean value {value}; the formal target \
@@ -344,6 +352,46 @@ mod tests {
         ] {
             let violation = evaluate(expression).unwrap_err();
             assert!(violation.0.contains(reason), "{expression}: {violation}");
+        }
+    }
+
+    // Server check 2026-11-16: "the square root of 2 is 1.414" is written as
+    // an exact equality and refuted. That is right as formalized, and the
+    // caller is pointed at the executed form to see it was an exact check.
+    //
+    // The engine only reports THAT the expression was, as a whole, a bare
+    // square root compared with an exact value; why it says no more is on
+    // `exact::exact_root_equality`.
+    #[test]
+    fn a_false_bare_root_equality_is_reported_as_an_exact_check() {
+        for (expression, reported) in [
+            ("math::sqrt(2) == 1.414", true),
+            ("1.4142 == math::sqrt(2)", true),
+            ("(math::sqrt(10) == 3.16)", true),
+            ("math::sqrt(10) == 3", true),
+            ("math::sqrt(16.0000000800000001) == 4", true),
+            ("math::sqrt(2) == 7/5", true),
+            ("math::sqrt(2) == 1.4 + 0.014", true),
+            ("math::sqrt(2) == -1.414", true),
+            // Not the whole expression, not an equality, not a root, or a
+            // root on both sides.
+            ("(math::sqrt(2) == 1.414) && 1 == 1", false),
+            ("math::sqrt(2) > 1.5", false),
+            // A refuted != is not "an exact equality was checked".
+            ("math::sqrt(16) != 4", false),
+            ("1.5 != math::sqrt(2.25)", false),
+            ("7 / 2 == 3.4", false),
+            ("math::sqrt(2) == math::sqrt(3)", false),
+        ] {
+            let outcome = evaluate(expression).unwrap();
+            assert!(!outcome.holds, "{expression}");
+            assert_eq!(outcome.exact_root_equality, reported, "{expression}");
+        }
+        // A true result never carries the report.
+        for expression in ["math::sqrt(16) == 4", "math::sqrt(2) != 1.414"] {
+            let outcome = evaluate(expression).unwrap();
+            assert!(outcome.holds, "{expression}");
+            assert!(!outcome.exact_root_equality, "{expression}");
         }
     }
 

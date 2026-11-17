@@ -20,7 +20,7 @@ persists except the standard invocation record.
 | formal_form | string \| null | the executed expression / SMT-LIB 2 script (FR-007 auditability) |
 | engine_result | string \| null | raw engine output: evaluated value, or sat/unsat |
 | witness | string \| null | solver model: satisfying assignment (sat-supports) or counterexample (sat-refutes) |
-| explanation | string | deterministic template over (claim, form, result) — never model-phrased (D4) |
+| explanation | string | deterministic template over (form, verdict) — never model-phrased (D4) |
 | reason | string \| null | why not checkable (verdict = not_checkable only) |
 | translation_attempts | integer | 1 or 2 (the violation-fed retry — FR-005) |
 | every_listed_part_held | boolean | true when every listed part's verdict is supported; can be true beside a not_checkable bundle verdict; says nothing about statements the translator did not list |
@@ -59,7 +59,8 @@ engine parse error — D5).
 
 ## 4. Pure functions (`check.rs`, engine wrappers)
 
-- `arithmetic::evaluate(expr) -> Result<bool, Violation>` — evalexpr;
+- `arithmetic::evaluate(expr) -> Result<ArithmeticOutcome, Violation>` —
+  evalexpr parses, `exact.rs` evaluates;
   non-boolean result and parse/eval errors are Violations (retryable);
   expression length bound enforced first.
 - `solver::check(smtlib, asserted) -> Result<SolverOutcome, Violation>` —
@@ -70,8 +71,11 @@ engine parse error — D5).
   sat × satisfiable → supported(witness); sat × unsatisfiable →
   refuted(counterexample); unsat × unsatisfiable → supported; unsat ×
   satisfiable → refuted; arithmetic true/false → supported/refuted.
-- `explanation(claim, form, result, verdict) -> String` — deterministic
-  template (D4).
+- `explain_arithmetic(expression, verdict, exact_root_equality) -> String`
+  and `explain_constraints(asserted, verdict, has_witness) -> String` —
+  deterministic templates (D4). For a refuted bare square-root equality the
+  arithmetic one adds that an exact equality was checked and points to
+  `formal_form`.
 
 ## 5. Constants (`deterministic/mod.rs` — no new env vars, D6)
 

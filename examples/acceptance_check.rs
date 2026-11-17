@@ -67,6 +67,9 @@ const GROUND_TRUTH: &[(&str, Verdict)] = &[
         "The square root of 16.0000000800000001 is exactly 4.",
         Verdict::Refuted,
     ),
+    // A plain rounded value with no "about": read as an exact equality, so
+    // refuted. This is the translator's reading; the run measures it.
+    ("The square root of 10 is 3.16.", Verdict::Refuted),
     // The same, with the root not alone: also false only in an exact form.
     (
         "2 times the square root of 16.0000000800000001 is exactly 8.",

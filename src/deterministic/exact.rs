@@ -71,7 +71,13 @@ enum Val {
 
 /// What a well-formed expression evaluated to.
 pub(super) enum Outcome {
-    Boolean(bool),
+    Boolean {
+        /// What the expression evaluated to.
+        holds: bool,
+        /// True for a false expression that is, as a whole, a bare
+        /// `math::sqrt(a)` compared by `==` with an exact value.
+        exact_root_equality: bool,
+    },
     /// A number, printed — the caller reports it as a non-boolean result.
     NonBoolean(String),
 }
@@ -100,7 +106,10 @@ fn evaluate_here(expression: &str) -> Result<Outcome, String> {
     let tree = evalexpr::build_operator_tree::<DefaultNumericTypes>(&rewritten)
         .map_err(|e| e.to_string())?;
     Ok(match eval(&tree, 0, &literals)? {
-        Val::Bool(holds) => Outcome::Boolean(holds),
+        Val::Bool(holds) => Outcome::Boolean {
+            holds,
+            exact_root_equality: !holds && exact_root_equality(&tree, &literals)?,
+        },
         Val::Num(Num::Exact(n)) => Outcome::NonBoolean(printed(&n)),
         Val::Num(Num::Range(low, _)) => Outcome::NonBoolean(format!("about {}", printed(&low))),
     })
@@ -330,6 +339,26 @@ fn eval_node(node: &Node, depth: usize, literals: &[BigRational]) -> Result<Val,
         }
         other => Err(format!("`{other}` is not in the dialect")),
     }
+}
+
+/// Whether the expression is, as a whole, `==` with a bare `math::sqrt(a)`
+/// of exact `a` on exactly one side.
+///
+/// Called only for an expression that evaluated to false, so the other side
+/// is already known to be an exact number: `equals` rejects anything else.
+/// The caller is then told an exact equality was checked — and nothing about
+/// how close the two sides are, because the translator may have rearranged
+/// the claim to isolate the root, and a statement about the compared value
+/// could sit beside a claim it does not describe.
+fn exact_root_equality(tree: &Node, literals: &[BigRational]) -> Result<bool, String> {
+    let mut top = tree;
+    while let (Operator::RootNode, [only]) = (top.operator(), top.children()) {
+        top = only;
+    }
+    let (Operator::Eq, [a, b]) = (top.operator(), top.children()) else {
+        return Ok(false);
+    };
+    Ok(radicand(a, 0, literals)?.is_some() != radicand(b, 0, literals)?.is_some())
 }
 
 /// Whether the two sides of `==` or `!=` are equal, when that is decidable.
