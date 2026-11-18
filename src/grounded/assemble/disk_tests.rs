@@ -29,6 +29,7 @@ fn reader(root: &Path) -> SystemSourceReader {
 }
 
 /// The root as a caller would type it: its real path, without `\\?\`.
+#[cfg(windows)]
 fn shown(root: &Path) -> String {
     let real = fs::canonicalize(root).unwrap();
     let real = real.to_str().unwrap();
@@ -42,6 +43,7 @@ fn refused_text(path: &str) -> String {
     )
 }
 
+#[cfg(windows)]
 fn colon_text(path: &str) -> String {
     format!(
         "invalid input: locator refused: {path} - a colon is not accepted in a path; give line \
