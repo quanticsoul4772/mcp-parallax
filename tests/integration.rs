@@ -4010,4 +4010,146 @@ async fn the_served_grounded_verify_description_is_the_registered_one() {
         gv.description.as_deref().unwrap(),
         mcp_parallax::modes::grounded_verify::GROUNDED_VERIFY_DESCRIPTION
     );
+    // 055 FR-011: the refusal is stated where calling models read it.
+    let passage = "Files whose names mark them as secrets (for example .env, key files and \
+                   credential files) are refused. An exact path to one fails the call. A glob \
+                   leaves them out, lists them under refused and sets evidence_reduced; if every \
+                   match is refused the call fails.";
+    assert_eq!(
+        mcp_parallax::modes::grounded_verify::GROUNDED_VERIFY_DESCRIPTION
+            .matches(passage)
+            .count(),
+        1
+    );
+}
+
+// ---- 055: secret-named files ------------------------------------------------
+
+/// A model endpoint that fails the test if it is ever called.
+async fn no_model_calls(mock: &MockServer) {
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(mock)
+        .await;
+}
+
+// SC-001 through the served tool: one secret file of each kind of rule, named
+// exactly, fails the call and no model is called.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_refuses_each_kind_of_secret_name_with_no_model_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let secrets = [
+        ".env",
+        ".env.local",
+        "x.pem",
+        "a.tfstate.b",
+        "id_rsa.bak",
+        ".ssh/k",
+        ".git/config",
+        ".config/gh/x",
+    ];
+    for rel in secrets {
+        let p = dir.path().join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, "secret").unwrap();
+    }
+    std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+    let mock = MockServer::start().await;
+    no_model_calls(&mock).await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    for rel in secrets {
+        let err = client
+            .call_tool(grounded_call(
+                "c",
+                json!([{ "path": "a.rs" }, { "path": rel }]),
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(&format!(
+                "locator refused: {rel} - it is, or resolves to, a file whose name marks it as \
+                 a likely secret"
+            )),
+            "{rel}: {err}"
+        );
+    }
+    client.cancel().await.unwrap();
+}
+
+// SC-004 through the served tool: a glob leaves the secret file out and the
+// result says so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_glob_leaves_a_secret_file_out_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.path().join("src/b.rs"), "fn b() {}\n").unwrap();
+    std::fs::write(dir.path().join("src/.env"), "KEY=1\n").unwrap();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(end_turn(&grounded_pass(
+                "supported",
+                json!([]),
+                json!([]),
+            ))),
+        )
+        .mount(&mock)
+        .await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    let result = client
+        .call_tool(grounded_call(
+            "the src files compile",
+            json!([{ "glob": "src/*" }]),
+        ))
+        .await
+        .unwrap();
+    let s = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    let paths: Vec<&str> = s["manifest"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["src/a.rs", "src/b.rs"]);
+    assert_eq!(s["refused"], json!(["src/.env"]));
+    assert_eq!(s["refused_count"], 1);
+    assert_eq!(s["evidence_reduced"], true);
+    assert_eq!(
+        s["evidence_note"],
+        "1 file(s) matching a glob were not read because their names mark them as likely \
+         secrets. The verdict covers only the files that were read."
+    );
+    client.cancel().await.unwrap();
+}
+
+// A glob that plainly starts in a secret folder is refused from its text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grounded_verify_refuses_a_glob_starting_in_a_secret_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".ssh")).unwrap();
+    std::fs::write(dir.path().join(".ssh/known_hosts"), "host key\n").unwrap();
+    let mock = MockServer::start().await;
+    no_model_calls(&mock).await;
+    let (client, _storage, _server) =
+        serve_with_grounded(&mock, dir.path().to_str().unwrap()).await;
+    let err = client
+        .call_tool(grounded_call("c", json!([{ "glob": ".ssh/*" }])))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains(
+            "glob refused: .ssh/* - it searches a folder whose name marks its files as likely \
+             secrets"
+        ),
+        "{err}"
+    );
+    client.cancel().await.unwrap();
 }

@@ -5,21 +5,71 @@
 //! determinism. Pure over the seam — unit-tested with a mock file list.
 
 use crate::error::AppError;
-use crate::grounded::glob::translate::translate;
+use crate::grounded::glob::translate::{translate, GlobMatcher};
+use crate::grounded::secrets::refused_folder;
 use crate::traits::source::SourceReader;
 
-/// Expand a glob to the deterministic, sorted set of matching root-relative
-/// file paths.
+/// A glob's matches, split by the name rules (055).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Expansion {
+    /// Matching files to read: sorted, root-relative, no duplicates.
+    pub files: Vec<String>,
+    /// Matching files the name rules refuse: sorted, root-relative, no
+    /// duplicates. Never read.
+    pub refused: Vec<String>,
+}
+
+/// The checks on a glob that need only its text (055 phase one): well
+/// formed, not starting with `!`, starting with a plain folder, and not
+/// starting in a folder the folder rules refuse. Nothing is listed.
 ///
 /// # Errors
 ///
-/// [`AppError::InvalidInput`] for a malformed pattern, a pattern starting with
-/// `!`, one with no plain relative folder in front, or zero matches;
-/// [`AppError::Storage`] if the folder cannot be walked.
-pub fn expand(reader: &dyn SourceReader, pattern: &str) -> Result<Vec<String>, AppError> {
+/// [`AppError::InvalidInput`] naming the fault, with the same text as
+/// [`expand`] gives for the checks it shares.
+pub fn glob_text_check(pattern: &str) -> Result<(), AppError> {
+    prepare(pattern).map(|_| ())
+}
+
+/// Expand a glob over the marked listing (055), splitting its matches into
+/// files to read and files refused. The text checks of [`glob_text_check`]
+/// run first, so a refused or malformed glob is never listed.
+///
+/// # Errors
+///
+/// As [`glob_text_check`]; [`AppError::InvalidInput`] if nothing matches at
+/// all; [`AppError::Storage`] if the folder cannot be walked. A glob whose
+/// every match is refused is not an error here: assembly reports it.
+pub fn expand(reader: &dyn SourceReader, pattern: &str) -> Result<Expansion, AppError> {
+    let (compiled, scope) = prepare(pattern)?;
+    let mut listed = Vec::new();
+    match scope {
+        Scope::RootFiles => listed.extend(reader.list_files("", false)?),
+        Scope::Folders(folders) => {
+            for folder in &folders {
+                listed.extend(reader.list_files(folder, true)?);
+            }
+        }
+    }
+    listed.retain(|file| compiled.matches(&file.path));
+    listed.sort_by(|a, b| a.path.cmp(&b.path));
+    listed.dedup_by(|a, b| a.path == b.path);
+    if listed.is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "glob matched no files under the source root {}: {pattern}",
+            reader.root_display()
+        )));
+    }
+    let (refused, files): (Vec<_>, Vec<_>) = listed.into_iter().partition(|file| file.refused);
+    Ok(Expansion {
+        files: files.into_iter().map(|file| file.path).collect(),
+        refused: refused.into_iter().map(|file| file.path).collect(),
+    })
+}
+
+/// The text-only stage shared by [`glob_text_check`] and [`expand`].
+fn prepare(pattern: &str) -> Result<(GlobMatcher, Scope), AppError> {
     let compiled = translate(pattern)?;
-    // Whole-pattern negation selects across the whole root by definition, so
-    // it cannot be confined to a folder; it is refused by name.
     if pattern.starts_with('!') {
         return Err(AppError::InvalidInput(
             "a glob starting with ! (everything except a pattern) is not accepted: it would \
@@ -28,26 +78,19 @@ pub fn expand(reader: &dyn SourceReader, pattern: &str) -> Result<Vec<String>, A
                 .to_string(),
         ));
     }
-    let mut selected: Vec<String> = Vec::new();
-    match search_scope(pattern)? {
-        // Only the root's own files: no descent, so nothing below is walked.
-        Scope::RootFiles => selected.extend(reader.list_files("", false)?),
-        Scope::Folders(folders) => {
-            for folder in &folders {
-                selected.extend(reader.list_files(folder, true)?);
+    let scope = search_scope(pattern)?;
+    if let Scope::Folders(folders) = &scope {
+        for folder in folders {
+            let parts: Vec<String> = folder.split('/').map(str::to_string).collect();
+            if refused_folder(&parts).is_some() {
+                return Err(AppError::InvalidInput(format!(
+                    "glob refused: {pattern} - it searches a folder whose name marks its \
+                     files as likely secrets"
+                )));
             }
         }
     }
-    selected.retain(|path| compiled.matches(path));
-    selected.sort();
-    selected.dedup();
-    if selected.is_empty() {
-        return Err(AppError::InvalidInput(format!(
-            "glob matched no files under the source root {}: {pattern}",
-            reader.root_display()
-        )));
-    }
-    Ok(selected)
+    Ok((compiled, scope))
 }
 
 /// Where a glob is searched.
@@ -149,7 +192,7 @@ fn brace_list(segment: &str) -> Option<Vec<&str>> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::traits::source::MockSourceReader;
+    use crate::traits::source::{ListedFile, MockSourceReader};
 
     fn reader_with(files: &'static [&'static str]) -> MockSourceReader {
         let mut mock = MockSourceReader::new();
@@ -165,10 +208,30 @@ mod tests {
                 .iter()
                 .filter(|file| file.starts_with(&inside))
                 .filter(|file| recurse || !file[inside.len()..].contains('/'))
-                .map(|s| (*s).to_string())
+                .map(|s| ListedFile {
+                    path: (*s).to_string(),
+                    refused: false,
+                })
                 .collect())
         });
         mock
+    }
+
+    /// Unrefused listing entries for `paths`.
+    fn plain(paths: &[&str]) -> Vec<ListedFile> {
+        paths
+            .iter()
+            .map(|p| ListedFile {
+                path: (*p).to_string(),
+                refused: false,
+            })
+            .collect()
+    }
+
+    /// The files a glob matches (055 renamed the marked expansion `expand`;
+    /// these tests assert on its files, as they did before).
+    fn matched(reader: &MockSourceReader, pattern: &str) -> Result<Vec<String>, AppError> {
+        expand(reader, pattern).map(|found| found.files)
     }
 
     /// A glob with no slash matches only the files directly in the root: it
@@ -179,19 +242,14 @@ mod tests {
         reader
             .expect_list_files()
             .withf(|under, recurse| under.is_empty() && !*recurse)
-            .returning(|_, _| {
-                Ok(["README.md", "Cargo.toml", "notes.md"]
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect())
-            });
-        assert_eq!(expand(&reader, "*.md").unwrap(), ["README.md", "notes.md"]);
-        assert_eq!(expand(&reader, "Cargo.*").unwrap(), ["Cargo.toml"]);
-        assert_eq!(expand(&reader, "README.md").unwrap(), ["README.md"]);
+            .returning(|_, _| Ok(plain(&["README.md", "Cargo.toml", "notes.md"])));
+        assert_eq!(matched(&reader, "*.md").unwrap(), ["README.md", "notes.md"]);
+        assert_eq!(matched(&reader, "Cargo.*").unwrap(), ["Cargo.toml"]);
+        assert_eq!(matched(&reader, "README.md").unwrap(), ["README.md"]);
         // Through the folder-aware stand-in: nothing below the root is seen.
         let reader = reader_with(&["a.md", "docs/b.md", "docs/deep/c.md"]);
-        assert_eq!(expand(&reader, "*.md").unwrap(), ["a.md"]);
-        assert_eq!(expand(&reader, "**.md").unwrap(), ["a.md"]);
+        assert_eq!(matched(&reader, "*.md").unwrap(), ["a.md"]);
+        assert_eq!(matched(&reader, "**.md").unwrap(), ["a.md"]);
     }
 
     /// A first segment that is a brace list of plain folder names searches
@@ -205,13 +263,13 @@ mod tests {
             assert!(recurse);
             seen.lock().unwrap().push(under.to_string());
             Ok(match under {
-                "src" => vec!["src/a.rs".to_string(), "src/x/b.rs".to_string()],
-                "tests" => vec!["tests/t.rs".to_string(), "tests/t.txt".to_string()],
+                "src" => plain(&["src/a.rs", "src/x/b.rs"]),
+                "tests" => plain(&["tests/t.rs", "tests/t.txt"]),
                 _ => Vec::new(),
             })
         });
         assert_eq!(
-            expand(&reader, "{src,tests}/**/*.rs").unwrap(),
+            matched(&reader, "{src,tests}/**/*.rs").unwrap(),
             ["src/a.rs", "src/x/b.rs", "tests/t.rs"]
         );
         assert_eq!(*listed.lock().unwrap(), ["src", "tests"]);
@@ -219,7 +277,7 @@ mod tests {
         // Plain folder names after the list narrow each folder further.
         listed.lock().unwrap().clear();
         reader.expect_root_display().return_const("R".to_string());
-        let err = expand(&reader, "{src,tests}/unit/*.rs").unwrap_err();
+        let err = matched(&reader, "{src,tests}/unit/*.rs").unwrap_err();
         assert!(err.to_string().contains("matched no files"), "{err}");
         assert_eq!(*listed.lock().unwrap(), ["src/unit", "tests/unit"]);
     }
@@ -238,7 +296,7 @@ mod tests {
             "{a,*}/x.rs",
             "x*/{a,b}/y.rs",
         ] {
-            let err = expand(&reader, pattern).unwrap_err();
+            let err = matched(&reader, pattern).unwrap_err();
             assert!(
                 err.to_string().contains(&format!(
                     "glob needs a folder in front: {pattern} - start it with the folder to \
@@ -256,7 +314,7 @@ mod tests {
     fn whole_pattern_negation_is_refused_by_name() {
         let reader = MockSourceReader::new();
         for pattern in ["!src/*.rs", "!*.rs", "!(a)/x.rs"] {
-            let err = expand(&reader, pattern).unwrap_err();
+            let err = matched(&reader, pattern).unwrap_err();
             assert!(
                 err.to_string().contains(
                     "a glob starting with ! (everything except a pattern) is not accepted: \
@@ -271,8 +329,8 @@ mod tests {
         reader
             .expect_list_files()
             .withf(|under, _| under == "src")
-            .returning(|_, _| Ok(vec!["src/a.rs".to_string(), "src/test_a.rs".to_string()]));
-        assert_eq!(expand(&reader, "src/!(test)*.rs").unwrap(), ["src/a.rs"]);
+            .returning(|_, _| Ok(plain(&["src/a.rs", "src/test_a.rs"])));
+        assert_eq!(matched(&reader, "src/!(test)*.rs").unwrap(), ["src/a.rs"]);
     }
 
     /// A folder part that is empty, absolute, a drive or network path, or has
@@ -302,7 +360,7 @@ mod tests {
             "{a,..}/x.rs",
             "{src,C:}/x.rs",
         ] {
-            let err = expand(&reader, pattern).unwrap_err();
+            let err = matched(&reader, pattern).unwrap_err();
             assert!(
                 err.to_string().contains(&format!(
                     "a glob must be relative to the source root and start with a plain \
@@ -317,9 +375,9 @@ mod tests {
         reader
             .expect_list_files()
             .withf(|under, _| under == ".github/workflows")
-            .returning(|_, _| Ok(vec![".github/workflows/ci.yml".to_string()]));
+            .returning(|_, _| Ok(plain(&[".github/workflows/ci.yml"])));
         assert_eq!(
-            expand(&reader, ".github/workflows/*.yml").unwrap(),
+            matched(&reader, ".github/workflows/*.yml").unwrap(),
             [".github/workflows/ci.yml"]
         );
     }
@@ -343,7 +401,7 @@ mod tests {
             reader.expect_root_display().return_const("R".to_string());
             // Nothing is listed back, so the outcome is the no-match error;
             // what is pinned here is the folder that was asked for.
-            let err = expand(&reader, pattern).unwrap_err();
+            let err = matched(&reader, pattern).unwrap_err();
             assert!(err.to_string().contains("matched no files"), "{pattern}");
         }
     }
@@ -356,7 +414,7 @@ mod tests {
         reader
             .expect_root_display()
             .return_const("D:\\Projects\\one".to_string());
-        let err = expand(&reader, "src/**/missing.py").unwrap_err();
+        let err = matched(&reader, "src/**/missing.py").unwrap_err();
         assert!(
             err.to_string().contains(
                 "glob matched no files under the source root D:\\Projects\\one: \
@@ -369,14 +427,14 @@ mod tests {
     #[test]
     fn expands_sorted_and_filtered_to_the_match_set() {
         let reader = reader_with(&["src/b.rs", "src/a.rs", "src/x.txt", "tests/t.rs"]);
-        let got = expand(&reader, "src/*.rs").unwrap();
+        let got = matched(&reader, "src/*.rs").unwrap();
         assert_eq!(got, vec!["src/a.rs".to_string(), "src/b.rs".to_string()]);
     }
 
     #[test]
     fn doublestar_is_recursive() {
         let reader = reader_with(&["src/a.rs", "src/x/b.rs", "src/x/y/c.rs", "top.rs"]);
-        let got = expand(&reader, "src/**/*.rs").unwrap();
+        let got = matched(&reader, "src/**/*.rs").unwrap();
         assert_eq!(
             got,
             vec![
@@ -391,16 +449,84 @@ mod tests {
     fn zero_match_is_a_named_error() {
         let mut reader = reader_with(&["a.rs"]);
         reader.expect_root_display().return_const("R".to_string());
-        let err = expand(&reader, "nope/*.rs").unwrap_err();
+        let err = matched(&reader, "nope/*.rs").unwrap_err();
         assert!(err
             .to_string()
             .contains("matched no files under the source root R: nope/*.rs"));
     }
 
+    // ---- 055: the text check and the marked expansion ----
+
+    /// A reader whose flagged listing returns `files` under the folder asked
+    /// for, each with its refused mark.
+    fn flagged_reader(files: &'static [(&'static str, bool)]) -> MockSourceReader {
+        let mut mock = MockSourceReader::new();
+        mock.expect_list_files().returning(move |under, _| {
+            let inside = format!("{under}/");
+            Ok(files
+                .iter()
+                .filter(|(path, _)| path.starts_with(&inside))
+                .map(|(path, refused)| ListedFile {
+                    path: (*path).to_string(),
+                    refused: *refused,
+                })
+                .collect())
+        });
+        mock.expect_root_display().return_const("R".to_string());
+        mock
+    }
+
+    #[test]
+    fn a_glob_starting_in_a_secret_folder_is_refused_from_its_text() {
+        for pattern in [".ssh/*", ".ssh.bak/*", ".config/gh/*", "{src,.ssh}/*.rs"] {
+            let expected = format!(
+                "glob refused: {pattern} - it searches a folder whose name marks its files as \
+                 likely secrets"
+            );
+            let err = glob_text_check(pattern).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("invalid input: {expected}"),
+                "{pattern}"
+            );
+            // No expectations: listing anything would panic the mock.
+            let err = expand(&MockSourceReader::new(), pattern).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("invalid input: {expected}"),
+                "{pattern}"
+            );
+        }
+        // Only the folder rules apply to a starting folder.
+        assert!(glob_text_check("credentials/*.json").is_ok());
+        assert!(glob_text_check("src/*.rs").is_ok());
+    }
+
+    #[test]
+    fn matches_are_split_only_after_the_pattern_is_applied() {
+        let reader = flagged_reader(&[
+            ("src/a.rs", false),
+            ("src/key.rs", true),
+            ("src/x.pem", true),
+            ("src/notes.txt", false),
+        ]);
+        let got: Expansion = expand(&reader, "src/*.rs").unwrap();
+        assert_eq!(got.files, ["src/a.rs"]);
+        assert_eq!(got.refused, ["src/key.rs"]);
+    }
+
+    #[test]
+    fn a_glob_whose_every_match_is_refused_returns_them_all_as_refused() {
+        let reader = flagged_reader(&[("src/k.rs", true), ("src/j.rs", true)]);
+        let got = expand(&reader, "src/*.rs").unwrap();
+        assert!(got.files.is_empty());
+        assert_eq!(got.refused, ["src/j.rs", "src/k.rs"]);
+    }
+
     #[test]
     fn malformed_pattern_propagates_named() {
         let reader = reader_with(&["a.rs"]);
-        let err = expand(&reader, "@(a").unwrap_err();
+        let err = matched(&reader, "@(a").unwrap_err();
         assert!(err.to_string().contains("malformed glob pattern"));
     }
 }

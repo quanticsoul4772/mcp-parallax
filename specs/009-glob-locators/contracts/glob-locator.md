@@ -41,12 +41,14 @@ A glob that would search the whole root is refused: `**/x.py`, a leading `!`
 - Confined: the walk does not follow symlinks out of the root; every match is
   re-checked against the canonical root before reading.
 - All-or-nothing: any expanded file that fails 008's guards (non-text,
-  unreadable, over a ceiling) fails the whole call.
+  unreadable, over a ceiling) fails the whole call. 055: a match whose name
+  marks it as a likely secret is left out and listed in `refused` instead.
 
 ## Output
 
 Unchanged from 008 — `verdict`, `confidence`, `findings`, `missing_evidence`,
-and `manifest` (one entry per expanded file). No model-schema change.
+and `manifest` (one entry per expanded file). No model-schema change. 055 adds
+`refused`, `refused_count`, `evidence_reduced` and `evidence_note`.
 
 ## Errors (`invalid_params`, naming the offending pattern)
 
@@ -63,10 +65,13 @@ and `manifest` (one entry per expanded file). No model-schema change.
 | malformed pattern | `[invalid_input] malformed glob pattern: <pattern> (<reason>)` |
 | expansion over the locator ceiling | `[invalid_input] too many locators (<n>, max <max>) after glob expansion` |
 | expansion over the byte ceiling | `[invalid_input] assembled evidence exceeds <max> bytes` (008) |
+| (055) glob plainly starts in a secret folder | `[invalid_input] invalid input: glob refused: <pattern> - it searches a folder whose name marks its files as likely secrets` |
+| (055) every match of a glob is refused as a likely secret | `[invalid_input] invalid input: glob matched only files refused as likely secrets (<n>): <pattern>` |
 
 ## Invariants
 
 - 008 path/range locators behave byte-identically (FR-009); their tests pass
-  unmodified.
+  unmodified. (055: they moved onto the split reader with the same assertions;
+  an exact path to a secret-named file now fails the call.)
 - One `InvocationRecord` per call (tool `grounded_verify`), OTLP-exported when
   telemetry is configured.

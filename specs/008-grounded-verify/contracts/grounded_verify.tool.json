@@ -169,6 +169,14 @@
           "null"
         ]
       },
+      "evidence_note": {
+        "description": "Empty, or a server-written notice that files were left out (055).",
+        "type": "string"
+      },
+      "evidence_reduced": {
+        "description": "True exactly when `refused_count` is above zero: the verdict covers\nonly the files that were read (055). `confidence` is unchanged by it.",
+        "type": "boolean"
+      },
       "executed_form": {
         "description": "The comparison the engine decided (e.g. `1224 > 1000`), present only on a\nsettled compute verdict (011); absent on judgment and abstain paths.",
         "type": [
@@ -210,6 +218,19 @@
           "null"
         ]
       },
+      "refused": {
+        "description": "Paths, from the root, that a glob matched but the name rules refuse\nas likely secrets (055): never read; sorted; at most 50.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "refused_count": {
+        "description": "How many distinct files a glob left out as likely secrets (055).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
       "verdict": {
         "description": "Majority verdict across passes; ties resolve to refuted; or\n`inconclusive` when a majority of passes set `needs_computation`.",
         "oneOf": [
@@ -237,7 +258,11 @@
       "confidence",
       "passes",
       "missing_evidence",
-      "manifest"
+      "manifest",
+      "refused",
+      "refused_count",
+      "evidence_reduced",
+      "evidence_note"
     ],
     "title": "GroundedVerdict",
     "type": "object"

@@ -54,7 +54,7 @@ out-of-class and the call abstains (`inconclusive`).
 |---|---|---|
 | not a `needs_computation` majority | `supported`/`refuted` (010 judgment) | — |
 | `needs_computation` majority, agreed in-class single-source spec, **purely computable** | `supported`/`refuted` (counted + engine) | `executed_form`, `engine_result` |
-| `needs_computation` majority, no agreed spec / multi-source / **compound (judgment finding present)** / engine error | `inconclusive` (010 abstain) | `reason` |
+| `needs_computation` majority, no agreed spec / multi-source / **compound (judgment finding present)** / engine error, or any file left out of a glob (055) | `inconclusive` (010 abstain) | `reason` |
 
 The compute verdict is settled by `arithmetic::evaluate` over a server-counted value —
 never a model estimate, never a model verdict.

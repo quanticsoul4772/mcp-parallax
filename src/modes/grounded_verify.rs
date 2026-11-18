@@ -80,8 +80,11 @@ pub const GROUNDED_VERIFY_DESCRIPTION: &str = "Verify a claim against verbatim s
     findings citing the source, a confidence from cross-pass agreement, an evidence manifest of \
     exactly what was read, and a completeness signal naming any evidence you did not provide. \
     Locators resolve inside one configured source root: give a path relative to it or an \
-    absolute path inside it (globs are always relative); an error names the root. Use \
-    when a claim must be checked against source you should not be trusted to summarize.";
+    absolute path inside it (globs are always relative); an error names the root. Files whose \
+    names mark them as secrets (for example .env, key files and credential files) are refused. \
+    An exact path to one fails the call. A glob leaves them out, lists them under refused and \
+    sets evidence_reduced; if every match is refused the call fails. Use when a claim must be \
+    checked against source you should not be trusted to summarize.";
 
 /// The verifier prompt. Placeholders exist for the claim and the assembled
 /// evidence ONLY — no slot for caller stance or conversation (blindness is
@@ -241,6 +244,16 @@ pub struct GroundedVerdict {
     /// otherwise. Mirrors `check`'s auditable output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine_result: Option<String>,
+    /// Paths, from the root, that a glob matched but the name rules refuse
+    /// as likely secrets (055): never read; sorted; at most 50.
+    pub refused: Vec<String>,
+    /// How many distinct files a glob left out as likely secrets (055).
+    pub refused_count: u32,
+    /// True exactly when `refused_count` is above zero: the verdict covers
+    /// only the files that were read (055). `confidence` is unchanged by it.
+    pub evidence_reduced: bool,
+    /// Empty, or a server-written notice that files were left out (055).
+    pub evidence_note: String,
 }
 
 /// One grounded-verify run: the verdict plus summed usage for the record.
@@ -299,6 +312,9 @@ fn check_claim(claim: &str, max_claim_chars: usize) -> Result<(), AppError> {
 /// Run one grounded-verify invocation: validate, assemble evidence
 /// all-or-nothing, k stance-blind passes, aggregate.
 ///
+/// Since 055 a file whose name marks it as a likely secret is refused, and a
+/// glob's refused matches are the one exception to all-or-nothing.
+///
 /// # Errors
 ///
 /// `InvalidInput` for a bad claim or any unresolvable locator (before any model
@@ -321,7 +337,13 @@ pub async fn run(
 
     let passes = futures::future::join_all((0..k).map(|_| one_pass(client, mode, &prompt))).await;
 
-    aggregate(passes, k, assembled.manifest, &assembled.units)
+    aggregate(
+        passes,
+        k,
+        assembled.manifest,
+        &assembled.units,
+        &assembled.refused,
+    )
 }
 
 /// One blind pass: constrained completion → local validation → typed pass.
@@ -344,6 +366,42 @@ async fn one_pass(
     Ok((pass, completion.input_tokens, completion.output_tokens))
 }
 
+/// What a glob left out, as the result reports it (055 FR-007 to FR-009).
+struct Additions {
+    refused: Vec<String>,
+    count: u32,
+    note: String,
+    /// Files were left out of a claim that would otherwise have been settled.
+    blocked_settling: bool,
+}
+
+impl Additions {
+    /// At most 50 of the sorted refused paths, the true count, and the notice.
+    fn new(refused: &[String], would_have_settled: bool) -> Self {
+        let count = u32::try_from(refused.len()).unwrap_or(u32::MAX);
+        let note = if refused.is_empty() {
+            String::new()
+        } else {
+            let mut note = format!(
+                "{count} file(s) matching a glob were not read because their names mark them as {}",
+                "likely secrets. The verdict covers only the files that were read."
+            );
+            if would_have_settled {
+                note.push_str(
+                    " To have a countable claim settled, name the file to count by its exact path.",
+                );
+            }
+            note
+        };
+        Self {
+            refused: refused.iter().take(50).cloned().collect(),
+            count,
+            note,
+            blocked_settling: !refused.is_empty() && would_have_settled,
+        }
+    }
+}
+
 /// Aggregate: union the completeness signals, count the abstain self-reports,
 /// then either **settle** a computable claim (011) or share verify's verdict
 /// math. `needs_computation` (a majority of completed passes) routes to compute:
@@ -355,6 +413,7 @@ fn aggregate(
     k: u8,
     manifest: Vec<ManifestEntry>,
     units: &[RawUnit],
+    refused: &[String],
 ) -> Result<GroundedRun, AppError> {
     // Completeness is the union/dedup of every completed pass's missing list;
     // tally the abstain self-reports and collect the `needs_computation` passes
@@ -387,8 +446,16 @@ fn aggregate(
     // (T006). The else-branch (no agreed spec / multi-source / compound / engine
     // error) falls through to the 010 abstain below (T008). Computed before
     // `passes` is consumed into `core` (the `nc_passes` borrows end here).
-    let settled = if nc_majority && !compound && units.len() == 1 {
+    let would_settle = if nc_majority && !compound && units.len() == 1 {
         agreed_spec(&nc_passes).and_then(|spec| settle(&spec, &units[0]))
+    } else {
+        None
+    };
+    // 055 FR-009: nothing is settled by arithmetic when a glob left files out;
+    // the note says how to get it settled only when that would have worked.
+    let left_out = Additions::new(refused, would_settle.is_some());
+    let settled = if refused.is_empty() {
+        would_settle
     } else {
         None
     };
@@ -414,6 +481,10 @@ fn aggregate(
             reason: None,
             executed_form: Some(settled.executed_form),
             engine_result: Some(settled.engine_result),
+            refused: left_out.refused,
+            refused_count: left_out.count,
+            evidence_reduced: left_out.count > 0,
+            evidence_note: left_out.note,
         }
     } else if nc_majority {
         GroundedVerdict {
@@ -423,9 +494,18 @@ fn aggregate(
             passes: run.verdict.passes,
             missing_evidence,
             manifest,
-            reason: Some("computable property — route to `check`".to_string()),
+            reason: Some(if left_out.blocked_settling {
+                "files were left out as likely secrets — name the file to count by its exact path"
+                    .to_string()
+            } else {
+                "computable property — route to `check`".to_string()
+            }),
             executed_form: None,
             engine_result: None,
+            refused: left_out.refused,
+            refused_count: left_out.count,
+            evidence_reduced: left_out.count > 0,
+            evidence_note: left_out.note,
         }
     } else {
         GroundedVerdict {
@@ -438,6 +518,10 @@ fn aggregate(
             reason: None,
             executed_form: None,
             engine_result: None,
+            refused: left_out.refused,
+            refused_count: left_out.count,
+            evidence_reduced: left_out.count > 0,
+            evidence_note: left_out.note,
         }
     };
 
@@ -453,7 +537,9 @@ fn aggregate(
 mod tests {
     use super::*;
     use crate::traits::client::{Completion, MockModelClient};
-    use crate::traits::source::{MockSourceReader, SourceContent};
+    use crate::traits::source::{
+        CheckFailure, Checked, ListedFile, MockSourceReader, SourceContent,
+    };
     use serde_json::{json, Value};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -468,6 +554,7 @@ mod tests {
         AssemblyLimits {
             max_bytes: 262_144,
             max_locators: 64,
+            platform: crate::grounded::secrets::Platform::Other,
         }
     }
 
@@ -490,8 +577,14 @@ mod tests {
 
     fn ok_reader() -> MockSourceReader {
         let mut mock = MockSourceReader::new();
-        mock.expect_read().returning(|path, _, _| {
-            let text = format!("contents of {path}");
+        mock.expect_check().returning(|path| {
+            Ok(Checked::new(
+                path.to_string(),
+                std::path::PathBuf::from(path),
+            ))
+        });
+        mock.expect_read_checked().returning(|checked, _, _| {
+            let text = format!("contents of {}", checked.spelling());
             let bytes = text.len() as u64;
             Ok(SourceContent { text, bytes })
         });
@@ -550,7 +643,8 @@ mod tests {
     async fn empty_claim_is_rejected_before_any_read_or_model_call() {
         let mode = test_mode(3);
         let mut reader = MockSourceReader::new();
-        reader.expect_read().times(0);
+        reader.expect_check().times(0);
+        reader.expect_read_checked().times(0);
         let mut client = MockModelClient::new();
         client.expect_complete().times(0);
 
@@ -567,12 +661,52 @@ mod tests {
         assert!(matches!(err, AppError::InvalidInput(_)));
     }
 
+    /// 055 SC-001 at the tool: for each kind of rule, the call fails with
+    /// nothing checked or read and no model call.
+    #[tokio::test]
+    async fn a_secret_named_file_fails_the_call_with_nothing_read_and_no_model_call() {
+        let mode = test_mode(3);
+        for secret in [
+            ".env",
+            ".env.local",
+            "x.pem",
+            "a.tfstate.b",
+            "id_rsa.bak",
+            ".ssh/k",
+            ".git/config",
+            ".config/gh/x",
+        ] {
+            let mut reader = MockSourceReader::new();
+            reader.expect_check().times(0);
+            reader.expect_read_checked().times(0);
+            let mut client = MockModelClient::new();
+            client.expect_complete().times(0);
+            let err = run(
+                &client,
+                &reader,
+                &mode,
+                &params("c", &[secret]),
+                limits(),
+                50_000,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("locator refused: {secret}")),
+                "{secret}: {err}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn an_unresolvable_locator_aborts_before_any_model_call() {
         let mode = test_mode(3);
         let mut reader = MockSourceReader::new();
-        reader.expect_read().returning(|path, _, _| {
-            Err(AppError::InvalidInput(format!("source not found: {path}")))
+        reader.expect_check().returning(|path| {
+            Err(CheckFailure::Other(AppError::InvalidInput(format!(
+                "source not found: {path}"
+            ))))
         });
         let mut client = MockModelClient::new();
         client.expect_complete().times(0);
@@ -796,7 +930,13 @@ mod tests {
 
     fn reader_returning(text: String) -> MockSourceReader {
         let mut mock = MockSourceReader::new();
-        mock.expect_read().returning(move |_, _, _| {
+        mock.expect_check().returning(|path| {
+            Ok(Checked::new(
+                path.to_string(),
+                std::path::PathBuf::from(path),
+            ))
+        });
+        mock.expect_read_checked().returning(move |_, _, _| {
             Ok(SourceContent {
                 text: text.clone(),
                 #[allow(clippy::cast_possible_truncation)]
@@ -1043,6 +1183,226 @@ mod tests {
         assert!(out.executed_form.is_none());
         assert!(out.engine_result.is_none());
     }
+    // ---- 055: files a glob left out ----
+
+    const LEFT_OUT_ONE: &str = "1 file(s) matching a glob were not read because their names \
+                                mark them as likely secrets. The verdict covers only the files \
+                                that were read.";
+    const CLOSING: &str =
+        " To have a countable claim settled, name the file to count by its exact path.";
+
+    fn listing(read: &[&str], refused: &[&str]) -> Vec<(String, bool)> {
+        read.iter()
+            .map(|p| ((*p).to_string(), false))
+            .chain(refused.iter().map(|p| ((*p).to_string(), true)))
+            .collect()
+    }
+
+    /// A reader for one glob: its flagged listing, and `text` for every file.
+    fn glob_reader(files: Vec<(String, bool)>, text: String) -> MockSourceReader {
+        let mut mock = MockSourceReader::new();
+        mock.expect_list_files().returning(move |_, _| {
+            Ok(files
+                .iter()
+                .map(|(path, refused)| ListedFile {
+                    path: path.clone(),
+                    refused: *refused,
+                })
+                .collect())
+        });
+        mock.expect_check().returning(|path| {
+            Ok(Checked::new(
+                path.to_string(),
+                std::path::PathBuf::from(path),
+            ))
+        });
+        mock.expect_read_checked().returning(move |_, _, _| {
+            Ok(SourceContent {
+                text: text.clone(),
+                bytes: text.len() as u64,
+            })
+        });
+        mock.expect_root_display().return_const("R".to_string());
+        mock
+    }
+
+    async fn glob_verdict(results: Vec<Value>, reader: MockSourceReader) -> GroundedVerdict {
+        let params = GroundedVerifyParams {
+            claim: "c".to_string(),
+            locators: vec![SourceLocator {
+                path: None,
+                glob: Some("src/*.rs".to_string()),
+                start_line: None,
+                end_line: None,
+            }],
+            effort: None,
+            passes: None,
+        };
+        run(
+            &scripted_client(results),
+            &reader,
+            &test_mode(3),
+            &params,
+            limits(),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .verdict
+    }
+
+    fn judged(split: bool) -> Vec<Value> {
+        let against = if split {
+            gpass("refuted", json!(["the count is wrong"]), json!([]), false)
+        } else {
+            gpass("supported", json!([]), json!([]), false)
+        };
+        vec![
+            gpass("supported", json!([]), json!([]), false),
+            gpass("supported", json!([]), json!([]), false),
+            against,
+        ]
+    }
+
+    #[tokio::test]
+    async fn a_left_out_file_is_listed_flagged_and_noted_with_confidence_unchanged() {
+        for split in [false, true] {
+            let reduced = glob_verdict(
+                judged(split),
+                glob_reader(
+                    listing(&["src/a.rs"], &["src/k.rs"]),
+                    "fn a() {}".to_string(),
+                ),
+            )
+            .await;
+            let whole = glob_verdict(
+                judged(split),
+                glob_reader(listing(&["src/a.rs"], &[]), "fn a() {}".to_string()),
+            )
+            .await;
+            assert_eq!(reduced.refused, ["src/k.rs"]);
+            assert_eq!(reduced.refused_count, 1);
+            assert!(reduced.evidence_reduced);
+            assert_eq!(reduced.evidence_note, LEFT_OUT_ONE);
+            assert!(
+                (reduced.confidence - whole.confidence).abs() < f64::EPSILON,
+                "split {split}"
+            );
+            // The agreement ratio itself, so a change made to both runs is caught.
+            let expected = if split { 2.0 / 3.0 } else { 1.0 };
+            assert!(
+                (reduced.confidence - expected).abs() < 1e-9,
+                "split {split}: {}",
+                reduced.confidence
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn with_nothing_left_out_the_additions_are_empty() {
+        let out = glob_verdict(
+            judged(false),
+            glob_reader(listing(&["src/a.rs"], &[]), "fn a() {}".to_string()),
+        )
+        .await;
+        assert!(out.refused.is_empty());
+        assert_eq!(out.refused_count, 0);
+        assert!(!out.evidence_reduced);
+        assert_eq!(out.evidence_note, "");
+    }
+
+    #[tokio::test]
+    async fn the_refused_list_holds_fifty_sorted_and_the_count_is_the_total() {
+        let refused: Vec<String> = (0..60).rev().map(|i| format!("src/k{i:02}.rs")).collect();
+        let refused: Vec<&str> = refused.iter().map(String::as_str).collect();
+        let out = glob_verdict(
+            judged(false),
+            glob_reader(listing(&["src/a.rs"], &refused), "fn a() {}".to_string()),
+        )
+        .await;
+        assert_eq!(out.refused.len(), 50);
+        assert_eq!(out.refused[0], "src/k00.rs");
+        assert_eq!(out.refused[49], "src/k49.rs");
+        assert_eq!(out.refused_count, 60);
+    }
+
+    fn counted() -> Vec<Value> {
+        vec![
+            gcompute("lines", ">", 1000, None),
+            gcompute("lines", ">", 1000, None),
+            gpass("supported", json!([]), json!([]), false),
+        ]
+    }
+
+    #[tokio::test]
+    async fn a_countable_claim_is_not_settled_when_a_file_was_left_out() {
+        let out = glob_verdict(
+            counted(),
+            glob_reader(listing(&["src/a.rs"], &["src/k.rs"]), "x\n".repeat(1224)),
+        )
+        .await;
+        assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
+        assert!(out.executed_form.is_none());
+        assert_eq!(out.evidence_note, format!("{LEFT_OUT_ONE}{CLOSING}"));
+        // One instruction, not two: the reason says the same as the notice.
+        assert_eq!(
+            out.reason.as_deref(),
+            Some(
+                "files were left out as likely secrets — name the file to count by its exact path"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn the_same_countable_claim_with_nothing_left_out_settles_as_before() {
+        let out = glob_verdict(
+            counted(),
+            glob_reader(listing(&["src/a.rs"], &[]), "x\n".repeat(1224)),
+        )
+        .await;
+        assert_eq!(out.verdict, GroundedVerdictKind::Supported);
+        assert_eq!(out.executed_form.as_deref(), Some("1224 > 1000"));
+        assert_eq!(out.evidence_note, "");
+    }
+
+    #[tokio::test]
+    async fn the_closing_sentence_appears_only_when_settling_would_have_worked() {
+        // Outside the settled class.
+        let out_of_class = glob_verdict(
+            vec![
+                gcompute("functions", ">", 5, None),
+                gcompute("functions", ">", 5, None),
+                gpass("supported", json!([]), json!([]), false),
+            ],
+            glob_reader(listing(&["src/a.rs"], &["src/k.rs"]), "x\n".repeat(10)),
+        )
+        .await;
+        assert_eq!(out_of_class.evidence_note, LEFT_OUT_ONE);
+        // Two files read: more than one source.
+        let two_read = glob_verdict(
+            counted(),
+            glob_reader(
+                listing(&["src/a.rs", "src/b.rs"], &["src/k.rs"]),
+                "x\n".repeat(1224),
+            ),
+        )
+        .await;
+        assert_eq!(two_read.evidence_note, LEFT_OUT_ONE);
+        // Compound: a computing pass also reports a judgment finding.
+        let mut compound = gcompute("lines", ">", 1000, None);
+        compound["findings"] = json!(["and the style is poor"]);
+        let compound = glob_verdict(
+            vec![
+                compound,
+                gcompute("lines", ">", 1000, None),
+                gpass("supported", json!([]), json!([]), false),
+            ],
+            glob_reader(listing(&["src/a.rs"], &["src/k.rs"]), "x\n".repeat(1224)),
+        )
+        .await;
+        assert_eq!(compound.evidence_note, LEFT_OUT_ONE);
+    }
+
     /// 038: the contract file and the derived schemas must agree.
     ///
     /// `grounded_verify` shipped without a contract, so for four of fifteen tools the

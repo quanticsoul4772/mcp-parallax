@@ -5,11 +5,14 @@
 //! text-only), and [`assemble::assemble`] resolves every locator all-or-nothing
 //! into the evidence the stance-blind ensemble judges. The model never authors
 //! the evidence — it is pulled from disk — so the caller cannot paraphrase or
-//! smuggle a conclusion into it.
+//! smuggle a conclusion into it. Since 055 a file whose name marks it as a
+//! likely secret is refused ([`secrets`]), and a glob's refused matches are the
+//! one exception to all-or-nothing.
 
 pub mod assemble;
 pub mod glob;
 pub mod reader;
+pub mod secrets;
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -112,4 +115,14 @@ pub struct AssemblyLimits {
     pub max_bytes: usize,
     /// `GROUNDED_VERIFY_MAX_LOCATORS` — locators accepted per call.
     pub max_locators: usize,
+    /// Which system's path rules the name rules apply (055); production
+    /// passes [`HOST_PLATFORM`].
+    pub platform: secrets::Platform,
 }
+
+/// The path rules of the system this server runs on (055).
+pub const HOST_PLATFORM: secrets::Platform = if cfg!(windows) {
+    secrets::Platform::Windows
+} else {
+    secrets::Platform::Other
+};

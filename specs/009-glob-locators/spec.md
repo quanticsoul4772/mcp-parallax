@@ -106,11 +106,11 @@ error and no verdict.
 - **FR-002**: The server MUST expand a glob, within the single configured source root, to the set of matching files, and treat each match as it treats an exact-path locator — read verbatim, judged as evidence, and recorded as its own manifest entry naming the concrete file (not the pattern).
 - **FR-003**: Glob expansion MUST be deterministic: the same pattern over an unchanged file set MUST yield the same ordered set, so assembled evidence is identical across repeated calls (preserving 008's determinism guarantee).
 - **FR-004**: Every expanded path MUST be confined to the configured root — re-checked against the canonicalized root so no match can escape via traversal or a symlinked directory — before it is read.
-- **FR-005**: A glob that matches zero files MUST be a loud error naming the pattern; no verdict is rendered.
-- **FR-006**: Glob expansion MUST be subject to the existing per-call ceilings, enforced at the stage each naturally applies: the **locator count** during expansion (the running total of expanded plus literal locators), and the **total evidence bytes** during the read of the expanded set (008's existing total-byte and per-file guards). Exceeding either MUST be a loud named error identifying the cause, never a silent truncation.
+- **FR-005**: A glob that matches zero files MUST be a loud error naming the pattern; no verdict is rendered. 055: a glob whose every match is refused as a likely secret is not a zero-match; it fails with its own error, `glob matched only files refused as likely secrets (<n>): <pattern>`.
+- **FR-006**: Glob expansion MUST be subject to the existing per-call ceilings, enforced at the stage each naturally applies: the **locator count** during expansion (the running total of expanded plus literal locators), and the **total evidence bytes** during the read of the expanded set (008's existing total-byte and per-file guards). Exceeding either MUST be a loud named error identifying the cause, never a silent truncation. 055: a match refused as a likely secret does not count toward the locator ceiling; one refused only when re-checked at read time has already been counted.
 - **FR-007**: A locator that is both a glob and a line range MUST be rejected with a loud named error (a range across multiple files is meaningless).
-- **FR-008**: The whole call remains all-or-nothing: if any expanded file fails to resolve (non-text, unreadable, or any ceiling breach), the entire call fails with a named error and renders no verdict.
-- **FR-009**: The feature MUST add only the new locator shape; the exact-path and line-range code paths, their behaviour, and their tests MUST be unchanged.
+- **FR-008**: The whole call remains all-or-nothing: if any expanded file fails to resolve (non-text, unreadable, or any ceiling breach), the entire call fails with a named error and renders no verdict. 055: except a match refused as a likely secret, which is left out and reported; if every match of a glob is refused, the call fails.
+- **FR-009**: The feature MUST add only the new locator shape; the exact-path and line-range code paths, their behaviour, and their tests MUST be unchanged. (Superseded by 055, which splits the reader into a check and a read and moves the exact-path code and its tests onto them.)
 - **FR-010**: Matching MUST be **case-sensitive** (matched against each file's root-relative path, predictable and platform-independent) and MUST **match dotfiles** — `*` and `**` match leading-dot files, since source evidence often lives in dotfiles (`.github/workflows/…`, `.cargo/config.toml`). Extglob groups are **segment-scoped**: an extglob operator (`@()`, `?()`, `*()`, `+()`, `!()`) matches within a single path segment and never crosses a `/`, and `!(p)` matches a segment that does not match `p` (cross-segment recursion is `**`).
 
 ### Key Entities
@@ -122,11 +122,11 @@ error and no verdict.
 
 ### Measurable Outcomes
 
-- **SC-001**: A glob matching N files produces a verdict over all N and a manifest with exactly N entries, each naming a concrete file with its bytes — 0% of matched files silently dropped.
+- **SC-001**: A glob matching N files produces a verdict over all N and a manifest with exactly N entries, each naming a concrete file with its bytes — 0% of matched files silently dropped. (055: a match refused as a likely secret is listed in `refused`, not dropped silently.)
 - **SC-002**: The same glob over an unchanged file set yields byte-identical assembled evidence on 100% of repeated calls.
 - **SC-003**: 100% of expanded paths that resolve outside the configured root (traversal or symlinked directory) are rejected before any read.
 - **SC-004**: A zero-match glob, an over-locator-ceiling glob, and an over-byte-ceiling glob each return a loud named error and produce a verdict in 0% of cases.
-- **SC-005**: The 008 exact-path and line-range behaviour is unchanged — 100% of the existing grounded-verify tests pass without modification.
+- **SC-005**: The 008 exact-path and line-range behaviour is unchanged — 100% of the existing grounded-verify tests pass without modification. (Superseded by 055: the exact-path tests moved onto the split reader, each keeping its assertions.)
 
 ## Assumptions
 

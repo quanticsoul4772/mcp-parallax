@@ -109,6 +109,21 @@ is the final list — the citations turn this from priors into something grounde
 > patterns) rather than hand-written into the context — closing
 > `verify`'s residual trust gap, where the caller curates (and can bias) the context.
 > Trace: [`specs/008-grounded-verify/`](../../specs/008-grounded-verify/).
+>
+> **2026-11-18 amendment (055, secret-named files in `grounded-verify`).**
+> `grounded-verify` now refuses files whose names mark them as likely secrets
+> (`.env`, private keys, credential files, anything under `.ssh`; the full list
+> is on the 055 contract page and bound to the code by a test). An exact path to
+> one fails the call before any file is read or any model is contacted. A glob
+> leaves such files out, lists them under `refused`, sets `evidence_reduced` and
+> adds a notice, and no claim is settled by arithmetic; `confidence` is not
+> changed. The server will not start with its root inside a secret folder. The
+> reason: the tool sends file text to the model, and a wide root had exposed
+> `.env` and key files. The glob leave-out is the one exception to 008's
+> all-or-nothing rule. This is a guard against accident and simple misdirection,
+> not a boundary: it does not catch a secret in an ordinarily named file, a
+> renamed copy, a hard link, or a swap in the instant between check and read.
+> Trace: [`specs/055-grounded-verify-secret-refusal/`](../../specs/055-grounded-verify-secret-refusal/).
 
 ---
 

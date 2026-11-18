@@ -152,8 +152,9 @@ presence enables the memory tools; absent, they are not in the catalog),
 fetches), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
 substrings extending the gate's built-in risk patterns),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
-tool; the single root that locators resolve within, confined at startup;
-absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
+tool; the single root that locators resolve within, confined at startup,
+and refused at startup when it is inside a folder whose files are refused as
+secrets (055); absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
 (default `262144`), `GROUNDED_VERIFY_MAX_LOCATORS` (default `64`),
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
@@ -251,7 +252,7 @@ src/
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
-├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009)
+├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009); secrets.rs = secret-name refusal (055)
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing
@@ -312,6 +313,14 @@ design document carries a dated amendment, and the evidence is in
 `claudedocs/experiments/decide-stability`. Deferred, each needing its own
 measurement first: running more than one pass, and any change to the
 confidence number.
+
+**055 (`055-grounded-verify-secret-refusal`) followed, as a full Spec Kit run;
+all 47 tasks closed.** `grounded_verify` now refuses files whose names mark
+them as secrets: an exact path fails the call, a glob leaves them out and
+reports them in four new result fields, and the server will not start with its
+root inside a secret folder. A live check on the rebuilt server passed (one
+refusal, one ordinary call). Deferred: the session-folder root, content-based
+detection, refusing hard links, and closing the check-to-open race.
 
 **The through-line of 040–045, worth carrying forward.** Every one of them was
 a check that passed for a reason unrelated to what it claimed to verify:

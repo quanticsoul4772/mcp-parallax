@@ -269,6 +269,20 @@ pub enum ConfigError {
     /// is discovered at runtime — a misspelled suffix is not a `&'static str`.
     #[error("invalid routing configuration: {0}")]
     Routing(String),
+
+    /// `GROUNDED_VERIFY_ROOT` is, or is inside, a folder whose files are all
+    /// refused as likely secrets (055 FR-003). Carries the folder (or the
+    /// pair of folders) as written and the root as a caller would type it.
+    #[error(
+        "GROUNDED_VERIFY_ROOT is, or is inside, {folder}, whose files are refused as likely \
+         secrets: {root}"
+    )]
+    SecretRoot {
+        /// The refused folder, or the two folders of a pair joined by `/`.
+        folder: String,
+        /// The root, as a caller would type it.
+        root: String,
+    },
 }
 
 #[cfg(test)]

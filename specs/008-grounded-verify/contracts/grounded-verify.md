@@ -32,7 +32,11 @@ is configured. Sibling of `verify`; distinct from `check`.
     "entries": [
       { "path": "src/server/record.rs", "start_line": 55, "end_line": 111, "bytes": 1840 }
     ]
-  }
+  },
+  "refused": ["..."],                // 055: glob matches refused as likely secrets; sorted, at most 50
+  "refused_count": 0,                // 055: how many in all
+  "evidence_reduced": false,         // 055: true when refused_count > 0
+  "evidence_note": ""                // 055: the notice, or empty
 }
 ```
 
@@ -68,9 +72,14 @@ drops length constraints).
 | non-text / invalid UTF-8 | `[invalid_input] source is not text: <path>` |
 | assembled bytes > ceiling | `[invalid_input] evidence exceeds <max> bytes` |
 | locator count > ceiling | `[invalid_input] too many locators (max <max>)` |
+| (055) an exact path whose name, as written or resolved, marks it as a likely secret | `[invalid_input] invalid input: locator refused: <path as written> - it is, or resolves to, a file whose name marks it as a likely secret` |
+| (055) on Windows, a colon in a path | `[invalid_input] invalid input: locator refused: <path as written> - a colon is not accepted in a path; give line numbers as start_line and end_line` |
+| (055) a glob that plainly starts in a secret folder | `[invalid_input] invalid input: glob refused: <pattern> - it searches a folder whose name marks its files as likely secrets` |
+| (055) a glob whose every match is refused | `[invalid_input] invalid input: glob matched only files refused as likely secrets (<n>): <pattern>` |
 
 Any single failure aborts the whole call; **no verdict** is rendered over a
-partial set, and **no model pass runs**.
+partial set, and **no model pass runs**. (055 exception: a glob's secret-named
+matches are left out and reported.)
 
 ## Behavior invariants
 

@@ -388,6 +388,7 @@ impl Parallax {
                 limits: crate::grounded::AssemblyLimits {
                     max_bytes: config.grounded_verify_max_bytes,
                     max_locators: config.grounded_verify_max_locators,
+                    platform: crate::grounded::HOST_PLATFORM,
                 },
                 max_claim_chars: config.input_max_chars,
             })),
@@ -643,8 +644,11 @@ impl Parallax {
         the source, a confidence from cross-pass agreement, an evidence manifest of exactly what \
         was read, and a completeness signal naming any evidence you did not provide. Locators \
         resolve inside one configured source root: give a path relative to it or an absolute \
-        path inside it (globs are always relative); an error names the root. Use when a claim must be checked against source \
-        you should not be trusted to summarize."
+        path inside it (globs are always relative); an error names the root. Files whose names \
+        mark them as secrets (for example .env, key files and credential files) are refused. An \
+        exact path to one fails the call. A glob leaves them out, lists them under refused and \
+        sets evidence_reduced; if every match is refused the call fails. Use when a claim must be \
+        checked against source you should not be trusted to summarize."
     )]
     pub async fn grounded_verify(
         &self,
@@ -1076,7 +1080,7 @@ impl ServerHandler for Parallax {
             instructions.push_str(
                 " Call `grounded_verify` to verify a claim against verbatim source you name \
                  (file paths or line ranges) - the server reads the exact text, so you cannot \
-                 paraphrase the evidence.",
+                 paraphrase the evidence. Files whose names mark them as secrets are refused.",
             );
         }
         instructions.push_str(

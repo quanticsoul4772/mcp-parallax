@@ -4,6 +4,8 @@
 //! temp-dir source root: gating, verbatim-grounded verdict + manifest,
 //! all-or-nothing named errors, root confinement, the completeness signal, and
 //! the 010 compute-or-abstain reproduction (a computable claim ⇒ inconclusive).
+//! Since 055 the reader also refuses secret-named files; that is covered by the
+//! unit, disk and integration tests, not here.
 //!
 //! Run: `cargo run --example acceptance_grounded_verify`
 
