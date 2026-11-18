@@ -34,6 +34,6 @@ the specification, not by its author.
 
 ## Notes
 
-- Second version. After two reviews of the first, the owner split the work: this specification is the secret-name refusal only; confining each session to its own project is deferred to its own specification.
-- The owner chose the extended list of refused names, and that a glob leaves refused files out and lists them instead of failing the whole call.
-- The specification names existing documents it must amend (FR-009). That is scope: each states something this feature makes untrue.
+- Fifth version of the specification. After review of the first, the owner split the work: this is the secret-name refusal only; confining each session to its own project is deferred to its own specification.
+- Owner's choices recorded in the specification: a fixed list of names with backup forms; a glob leaves refused files out and lists them; the confidence number is left alone and a flag says the evidence was reduced; the instant between check and read is stated as a limit and its closing deferred.
+- The specification names the documents it must amend (FR-012). That is scope: each states something this feature makes untrue.
