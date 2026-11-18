@@ -133,58 +133,7 @@ impl SystemSourceReader {
 }
 
 impl SourceReader for SystemSourceReader {
-    fn read(
-        &self,
-        path: &str,
-        start_line: Option<u32>,
-        end_line: Option<u32>,
-    ) -> Result<SourceContent, AppError> {
-        let range = match (start_line, end_line) {
-            (None, None) => None,
-            (Some(start), Some(end)) => Some((start, end)),
-            _ => {
-                return Err(AppError::InvalidInput(format!(
-                    "locator '{path}' must give both start_line and end_line, or neither"
-                )))
-            }
-        };
-
-        let resolved = self.resolve(path)?;
-        // Reject an oversized file by metadata before reading it into memory.
-        let on_disk = std::fs::metadata(&resolved)
-            .map_err(|_| self.not_found(path))?
-            .len();
-        if on_disk > self.max_file_bytes {
-            return Err(AppError::InvalidInput(format!(
-                "source '{path}' is {on_disk} bytes, over the per-file limit of {} \
-                 (GROUNDED_VERIFY_MAX_BYTES); raise the ceiling to read it",
-                self.max_file_bytes
-            )));
-        }
-        let raw = std::fs::read(&resolved).map_err(|_| self.not_found(path))?;
-        let text = String::from_utf8(raw)
-            .map_err(|_| AppError::InvalidInput(format!("source is not text: {path}")))?;
-        if text.is_empty() {
-            return Err(AppError::InvalidInput(format!("source is empty: {path}")));
-        }
-
-        let selected = match range {
-            None => text,
-            Some((start, end)) => slice_lines(&text, start, end, path)?,
-        };
-        if selected.is_empty() {
-            return Err(AppError::InvalidInput(format!(
-                "source range is empty: {path}"
-            )));
-        }
-        let bytes = selected.len() as u64;
-        Ok(SourceContent {
-            text: selected,
-            bytes,
-        })
-    }
-
-    fn list_files(&self, under: &str, recurse: bool) -> Result<Vec<String>, AppError> {
+    fn list_files(&self, under: &str, recurse: bool) -> Result<Vec<ListedFile>, AppError> {
         // Walk only the named folder. One that does not exist (or is a file)
         // lists nothing; one that resolves outside the root is refused by the
         // same canonicalize-then-prefix check as a read.
@@ -219,7 +168,10 @@ impl SourceReader for SystemSourceReader {
                 continue;
             }
             if let Ok(rel) = entry.path().strip_prefix(&self.root) {
-                files.push(rel.to_string_lossy().replace('\\', "/"));
+                files.push(ListedFile {
+                    path: rel.to_string_lossy().replace('\\', "/"),
+                    refused: refused_by(&entry.path().to_string_lossy()).is_some(),
+                });
             }
         }
         Ok(files)
@@ -257,24 +209,11 @@ impl SourceReader for SystemSourceReader {
         self.read_resolved(again.resolved(), path, start_line, end_line)
             .map_err(CheckFailure::Other)
     }
-
-    fn list_flagged(&self, under: &str, recurse: bool) -> Result<Vec<ListedFile>, AppError> {
-        Ok(self
-            .list_files(under, recurse)?
-            .into_iter()
-            .map(|path| {
-                let refused = refused_by(&self.root.join(&path).to_string_lossy()).is_some();
-                ListedFile { path, refused }
-            })
-            .collect())
-    }
 }
 
 impl SystemSourceReader {
     /// The size, text, empty and range checks a read makes, on a path already
-    /// resolved and confined (055's checked read). The same steps as
-    /// [`SourceReader::read`] after its `resolve`; `read` is removed when
-    /// every caller has moved to the checked read.
+    /// resolved, confined and checked (055's checked read).
     fn read_resolved(
         &self,
         resolved: &Path,
@@ -386,6 +325,43 @@ mod tests {
 
     fn reader(dir: &tempfile::TempDir) -> SystemSourceReader {
         SystemSourceReader::new(dir.path().to_str().unwrap(), 262_144).unwrap()
+    }
+
+    /// The checked read a call makes (055): `check`, then `read_checked`,
+    /// under the name the tests below used before the reader was split. A
+    /// refusal comes back as a validation failure, never as invalid input, so
+    /// no test of an ordinary fault can pass on a refusal.
+    trait CheckedRead {
+        fn read(
+            &self,
+            path: &str,
+            start_line: Option<u32>,
+            end_line: Option<u32>,
+        ) -> Result<SourceContent, AppError>;
+    }
+
+    impl CheckedRead for SystemSourceReader {
+        fn read(
+            &self,
+            path: &str,
+            start_line: Option<u32>,
+            end_line: Option<u32>,
+        ) -> Result<SourceContent, AppError> {
+            let as_app = |failure: CheckFailure| match failure {
+                CheckFailure::Other(err) => err,
+                CheckFailure::Refused(rule) => {
+                    AppError::ValidationFailure(format!("refused by rule {rule:?}"))
+                }
+            };
+            let checked = self.check(path).map_err(as_app)?;
+            self.read_checked(&checked, start_line, end_line)
+                .map_err(as_app)
+        }
+    }
+
+    /// The paths of a marked listing.
+    fn paths(listed: Vec<ListedFile>) -> Vec<String> {
+        listed.into_iter().map(|file| file.path).collect()
     }
 
     /// The root a caller should be shown for `dir`: its real path without the
@@ -640,13 +616,6 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_single_bound_is_rejected() {
-        let dir = root_with(&[("a.rs", "one\ntwo\n")]);
-        let err = reader(&dir).read("a.rs", Some(1), None).unwrap_err();
-        assert!(err.to_string().contains("both start_line and end_line"));
-    }
-
-    #[test]
     #[cfg(unix)]
     fn symlink_escape_is_rejected() {
         use std::os::unix::fs::symlink;
@@ -713,7 +682,7 @@ mod tests {
         fs::write(outside.path().join("secret.rs"), "x").unwrap();
         let dir = root_with(&[("top/a.rs", "x"), ("top/sub/b.rs", "y")]);
         symlink(outside.path(), dir.path().join("top").join("link")).unwrap();
-        let files = reader(&dir).list_files("top", true).unwrap();
+        let files = paths(reader(&dir).list_files("top", true).unwrap());
         assert!(files.iter().any(|f| f == "top/a.rs"));
         assert!(files.iter().any(|f| f == "top/sub/b.rs"));
         assert!(!files.iter().any(|f| f.contains("secret")));
@@ -730,10 +699,13 @@ mod tests {
             ("other/d.rs", "x"),
         ]);
         let reader = reader(&dir);
-        let mut files = reader.list_files("src", true).unwrap();
+        let mut files = paths(reader.list_files("src", true).unwrap());
         files.sort();
         assert_eq!(files, ["src/b.rs", "src/x/c.rs"]);
-        assert_eq!(reader.list_files("src/x", true).unwrap(), ["src/x/c.rs"]);
+        assert_eq!(
+            paths(reader.list_files("src/x", true).unwrap()),
+            ["src/x/c.rs"]
+        );
         assert!(reader.list_files("nope", true).unwrap().is_empty());
         // A file is not a folder to walk.
         assert!(reader.list_files("a.rs", true).unwrap().is_empty());
@@ -758,8 +730,11 @@ mod tests {
         // Without descent: only the files directly in the folder. For the
         // root itself that is its own files and nothing from the folders
         // below it.
-        assert_eq!(reader.list_files("", false).unwrap(), ["a.rs"]);
-        assert_eq!(reader.list_files("src", false).unwrap(), ["src/b.rs"]);
+        assert_eq!(paths(reader.list_files("", false).unwrap()), ["a.rs"]);
+        assert_eq!(
+            paths(reader.list_files("src", false).unwrap()),
+            ["src/b.rs"]
+        );
     }
 
     #[test]
@@ -770,7 +745,7 @@ mod tests {
         assert!(err.to_string().contains("per-file limit"), "{err}");
     }
 
-    // ---- 055: check / read_checked / list_flagged ----
+    // ---- 055: check / read_checked / the marked listing ----
 
     /// Make `link` a folder link to `target`: a junction on Windows (made
     /// with the system's `mklink /J`, which needs no special rights), a
@@ -824,15 +799,17 @@ mod tests {
     }
 
     #[test]
-    fn check_then_read_checked_returns_what_read_returns() {
+    fn check_then_read_checked_returns_the_file_and_its_lines() {
         let dir = root_with(&[("a.rs", "one\ntwo\nthree\n")]);
         let reader = reader(&dir);
         let checked: Checked = reader.check("a.rs").unwrap();
         assert_eq!(checked.spelling(), "a.rs");
         let whole = reader.read_checked(&checked, None, None).unwrap();
-        assert_eq!(whole, reader.read("a.rs", None, None).unwrap());
+        assert_eq!(whole.text, "one\ntwo\nthree\n");
+        assert_eq!(whole.bytes, 14);
         let part = reader.read_checked(&checked, Some(2), Some(3)).unwrap();
-        assert_eq!(part, reader.read("a.rs", Some(2), Some(3)).unwrap());
+        assert_eq!(part.text, "two\nthree");
+        assert_eq!(part.bytes, 9);
     }
 
     #[test]
@@ -958,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn list_flagged_marks_refused_files_and_does_not_follow_links() {
+    fn list_files_marks_refused_files_and_does_not_follow_links() {
         let dir = root_with(&[
             ("src/a.rs", "x"),
             ("src/.env", "KEY=1"),
@@ -968,7 +945,7 @@ mod tests {
             &dir.path().join("src").join("linked"),
             &dir.path().join("elsewhere"),
         );
-        let mut listed: Vec<ListedFile> = reader(&dir).list_flagged("src", true).unwrap();
+        let mut listed: Vec<ListedFile> = reader(&dir).list_files("src", true).unwrap();
         listed.sort_by(|a, b| a.path.cmp(&b.path));
         assert_eq!(
             listed,
@@ -986,14 +963,14 @@ mod tests {
     }
 
     #[test]
-    fn list_flagged_applies_folder_rules_that_span_the_root() {
+    fn list_files_applies_folder_rules_that_span_the_root() {
         let base = tempfile::tempdir().unwrap();
         let config = base.path().join(".config");
         fs::create_dir_all(config.join("gh")).unwrap();
         fs::write(config.join("gh/x"), "token").unwrap();
         let listed = SystemSourceReader::new(config.to_str().unwrap(), 262_144)
             .unwrap()
-            .list_flagged("gh", true)
+            .list_files("gh", true)
             .unwrap();
         assert_eq!(
             listed,
@@ -1007,7 +984,7 @@ mod tests {
         fs::write(repo.join("config"), "[remote]").unwrap();
         let listed = SystemSourceReader::new(repo.to_str().unwrap(), 262_144)
             .unwrap()
-            .list_flagged("", false)
+            .list_files("", false)
             .unwrap();
         assert_eq!(
             listed,

@@ -113,4 +113,14 @@ pub struct AssemblyLimits {
     pub max_bytes: usize,
     /// `GROUNDED_VERIFY_MAX_LOCATORS` — locators accepted per call.
     pub max_locators: usize,
+    /// Which system's path rules the name rules apply (055); production
+    /// passes [`HOST_PLATFORM`].
+    pub platform: secrets::Platform,
 }
+
+/// The path rules of the system this server runs on (055).
+pub const HOST_PLATFORM: secrets::Platform = if cfg!(windows) {
+    secrets::Platform::Windows
+} else {
+    secrets::Platform::Other
+};

@@ -50,7 +50,7 @@ pub enum CheckFailure {
     Other(AppError),
 }
 
-/// One file found by [`SourceReader::list_flagged`].
+/// One file found by [`SourceReader::list_files`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedFile {
     /// Root-relative, `/`-separated.
@@ -72,36 +72,6 @@ pub struct SourceContent {
 /// implementation.
 #[cfg_attr(test, mockall::automock)]
 pub trait SourceReader: Send + Sync {
-    /// Read `path` (relative to the configured root), optionally restricted to
-    /// the 1-based inclusive line range `[start_line, end_line]`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::InvalidInput`] naming the offending path for every
-    /// caller-fault case — outside the root, missing, empty, non-text, or a
-    /// line range whose start exceeds the file length. The error is loud and
-    /// named so the assembly stage can abort the whole call (008 FR-009).
-    fn read(
-        &self,
-        path: &str,
-        start_line: Option<u32>,
-        end_line: Option<u32>,
-    ) -> Result<SourceContent, AppError>;
-
-    /// List the regular files under the folder `under` (root-relative; empty
-    /// for the root itself), as root-relative, `/`-separated paths. With
-    /// `recurse` every file below it; without, only the files directly in it.
-    /// Used by glob expansion (009), which names the folder a glob starts with
-    /// so that only that folder is walked. Symlinks are not followed, so
-    /// nothing outside the root is listed; a folder that does not exist lists
-    /// nothing.
-    ///
-    /// # Errors
-    ///
-    /// [`AppError::InvalidInput`] if `under` resolves outside the root;
-    /// [`AppError::Storage`] if the folder cannot be walked.
-    fn list_files(&self, under: &str, recurse: bool) -> Result<Vec<String>, AppError>;
-
     /// Decide whether `path` may be read (055): the name rules on the path as
     /// written, then confinement to the root, then the name rules on the
     /// whole resolved path. Nothing is read.
@@ -127,13 +97,20 @@ pub trait SourceReader: Send + Sync {
         end_line: Option<u32>,
     ) -> Result<SourceContent, CheckFailure>;
 
-    /// As [`SourceReader::list_files`], with each file marked by whether the
-    /// name rules refuse its whole path (055).
+    /// List the regular files under the folder `under` (root-relative; empty
+    /// for the root itself), as root-relative, `/`-separated paths, each
+    /// marked by whether the name rules refuse its whole path (055). With
+    /// `recurse` every file below it; without, only the files directly in it.
+    /// Used by glob expansion (009), which names the folder a glob starts with
+    /// so that only that folder is walked. Symlinks are not followed, so
+    /// nothing outside the root is listed; a folder that does not exist lists
+    /// nothing.
     ///
     /// # Errors
     ///
-    /// As [`SourceReader::list_files`].
-    fn list_flagged(&self, under: &str, recurse: bool) -> Result<Vec<ListedFile>, AppError>;
+    /// [`AppError::InvalidInput`] if `under` resolves outside the root;
+    /// [`AppError::Storage`] if the folder cannot be walked.
+    fn list_files(&self, under: &str, recurse: bool) -> Result<Vec<ListedFile>, AppError>;
 
     /// The configured root as a caller should read it, for error messages.
     /// A caller working in another project cannot otherwise know where its
@@ -149,17 +126,6 @@ mod tests {
     #[test]
     fn mock_source_reader_honors_the_contract() {
         let mut mock = MockSourceReader::new();
-        mock.expect_read().returning(|path, _, _| {
-            Ok(SourceContent {
-                text: format!("contents of {path}"),
-                bytes: 10,
-            })
-        });
-
-        let got = mock.read("a.rs", None, None).unwrap();
-        assert!(got.text.contains("a.rs"));
-        assert_eq!(got.bytes, 10);
-
         mock.expect_check()
             .returning(|path| Ok(Checked::new(path.to_string(), PathBuf::from(path))));
         mock.expect_read_checked().returning(|checked, _, _| {
@@ -168,7 +134,7 @@ mod tests {
                 bytes: 10,
             })
         });
-        mock.expect_list_flagged().returning(|_, _| {
+        mock.expect_list_files().returning(|_, _| {
             Ok(vec![ListedFile {
                 path: ".env".to_string(),
                 refused: true,
@@ -178,6 +144,7 @@ mod tests {
         assert_eq!(checked.resolved(), Path::new("a.rs"));
         let got = mock.read_checked(&checked, None, None).unwrap();
         assert!(got.text.contains("a.rs"));
-        assert!(mock.list_flagged("", false).unwrap()[0].refused);
+        assert_eq!(got.bytes, 10);
+        assert!(mock.list_files("", false).unwrap()[0].refused);
     }
 }

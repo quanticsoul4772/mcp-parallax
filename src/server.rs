@@ -388,6 +388,7 @@ impl Parallax {
                 limits: crate::grounded::AssemblyLimits {
                     max_bytes: config.grounded_verify_max_bytes,
                     max_locators: config.grounded_verify_max_locators,
+                    platform: crate::grounded::HOST_PLATFORM,
                 },
                 max_claim_chars: config.input_max_chars,
             })),
