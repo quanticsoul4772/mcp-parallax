@@ -99,25 +99,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "mcp_tool",
-            "server": "parallax",
-            "tool": "checkpoint_turn",
-            "input": {
-              "session_id": "${session_id}",
-              "transcript_path": "${transcript_path}",
-              "final_message": "${last_assistant_message}",
-              "continuation": "${stop_hook_active}"
-            },
-            "timeout": 60,
-            "statusMessage": "checkpoint: end-of-turn review"
-          }
-        ]
-      }
     ]
   }
 }
