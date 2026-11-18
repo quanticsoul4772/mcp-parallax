@@ -312,6 +312,9 @@ fn check_claim(claim: &str, max_claim_chars: usize) -> Result<(), AppError> {
 /// Run one grounded-verify invocation: validate, assemble evidence
 /// all-or-nothing, k stance-blind passes, aggregate.
 ///
+/// Since 055 a file whose name marks it as a likely secret is refused, and a
+/// glob's refused matches are the one exception to all-or-nothing.
+///
 /// # Errors
 ///
 /// `InvalidInput` for a bad claim or any unresolvable locator (before any model

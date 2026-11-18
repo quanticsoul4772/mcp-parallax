@@ -5,7 +5,9 @@
 //! text-only), and [`assemble::assemble`] resolves every locator all-or-nothing
 //! into the evidence the stance-blind ensemble judges. The model never authors
 //! the evidence — it is pulled from disk — so the caller cannot paraphrase or
-//! smuggle a conclusion into it.
+//! smuggle a conclusion into it. Since 055 a file whose name marks it as a
+//! likely secret is refused ([`secrets`]), and a glob's refused matches are the
+//! one exception to all-or-nothing.
 
 pub mod assemble;
 pub mod glob;

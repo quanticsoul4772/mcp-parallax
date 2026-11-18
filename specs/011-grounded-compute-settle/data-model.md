@@ -55,7 +55,7 @@ header-framed `text`:
 | manifest | Vec`<ManifestEntry>` | unchanged (008/009); `bytes` per entry already present |
 | **units** | Vec`<RawUnit { text: String, bytes: u64 }>` | **NEW** — verbatim per-read-unit content, in order |
 
-- **Single-source gate**: the compute path engages only when `units.len() == 1`.
+- **Single-source gate**: the compute path engages only when `units.len() == 1` — and, since 055, only when no glob left a file out as a likely secret.
 
 ## Counting (server, pure)
 

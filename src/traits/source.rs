@@ -4,7 +4,9 @@
 //! prefix-check, defeating `../` and symlink escape), UTF-8/text-only, and
 //! line-range bounds — so the assembly stage never touches the filesystem and
 //! the whole feature tests through a mock. Reads are bounded and local, so the
-//! seam is synchronous.
+//! seam is synchronous. Since 055 a file whose name marks it as a likely secret
+//! is refused by `check`, and a glob's refused matches are the one exception to
+//! all-or-nothing.
 
 use crate::error::AppError;
 use crate::grounded::secrets::Rule;

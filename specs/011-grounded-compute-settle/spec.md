@@ -123,6 +123,9 @@ verdict over a value the server could not actually derive.
   several locators (e.g. "these files total more than N lines"). v1 does **not** settle
   aggregates — it abstains (`inconclusive`, route to `check`); only single-source counts
   are settled (clarification 2026-06-14). Aggregate counts are a later follow-up.
+- **Files left out of a glob (055)**: when a glob left any file out as a likely secret,
+  nothing is settled by arithmetic; the claim takes the abstain path, and the notice
+  says how to get it settled.
 - **The computed comparison and a judgment both matter** (compound claim — part
   countable, part judged): the server does **not** settle on the count alone. If the
   computable-flagged passes also report a substantive judgment finding, the claim is

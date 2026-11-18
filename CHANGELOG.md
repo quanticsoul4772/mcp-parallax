@@ -13,6 +13,18 @@ arc.
 
 ### Added
 
+* **`grounded_verify` refuses files whose names mark them as secrets** —
+  `.env`, private keys, credential files, anything under `.ssh`, and the rest
+  of the list in `specs/055-grounded-verify-secret-refusal/contracts/refusal.md`.
+  An exact path to one fails the call before anything is read or sent to the
+  model; a glob leaves them out, and the result gains `refused`,
+  `refused_count`, `evidence_reduced` and `evidence_note`, with no arithmetic
+  settlement when anything was left out. `confidence` is unchanged. The server
+  will not start with `GROUNDED_VERIFY_ROOT` inside such a folder. On Windows a
+  colon in a path is refused with its own message; before this, the name of a
+  hidden data stream was read. This is a guard against accident and
+  misdirection, not a boundary.
+
 * **`decide` reads `question` as a second name for `decision`** — in the
   calling agents' session transcripts, all 7 `decide` calls that failed for a
   missing `decision` field had written the question under `question` (such a

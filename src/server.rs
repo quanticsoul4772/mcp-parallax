@@ -1080,7 +1080,7 @@ impl ServerHandler for Parallax {
             instructions.push_str(
                 " Call `grounded_verify` to verify a claim against verbatim source you name \
                  (file paths or line ranges) - the server reads the exact text, so you cannot \
-                 paraphrase the evidence.",
+                 paraphrase the evidence. Files whose names mark them as secrets are refused.",
             );
         }
         instructions.push_str(

@@ -6,7 +6,9 @@
 //! mock. A single failing locator aborts the whole call (008 FR-009); no model
 //! pass ever runs on a partially-resolved evidence set. A glob locator (009) is
 //! expanded into its concrete files before the read loop, subject to the same
-//! locator-count and byte ceilings.
+//! locator-count and byte ceilings. Since 055 a file whose name marks it as a
+//! likely secret is refused, and a glob's refused matches are the one exception
+//! to all-or-nothing: they are left out and listed in `refused`.
 
 use crate::error::AppError;
 use crate::grounded::glob::expand::{expand, glob_text_check};

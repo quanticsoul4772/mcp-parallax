@@ -152,8 +152,9 @@ presence enables the memory tools; absent, they are not in the catalog),
 fetches), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
 substrings extending the gate's built-in risk patterns),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
-tool; the single root that locators resolve within, confined at startup;
-absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
+tool; the single root that locators resolve within, confined at startup,
+and refused at startup when it is inside a folder whose files are refused as
+secrets (055); absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
 (default `262144`), `GROUNDED_VERIFY_MAX_LOCATORS` (default `64`),
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
@@ -251,7 +252,7 @@ src/
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
 ├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
-├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009)
+├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009); secrets.rs = secret-name refusal (055)
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing

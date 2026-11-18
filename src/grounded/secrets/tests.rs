@@ -263,3 +263,84 @@ fn only_the_folder_rules_refuse_a_folder_and_it_is_named_as_written() {
         assert_eq!(refused(path), None, "{path}");
     }
 }
+
+/// 055 FR-013: the rule block on the contract page and the tables here are
+/// the same lists, in both directions, with the stated number of each kind.
+#[test]
+fn the_contract_page_lists_exactly_the_rules_in_the_code() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let page =
+        include_str!("../../../specs/055-grounded-verify-secret-refusal/contracts/refusal.md");
+    let open = page
+        .find("```text")
+        .expect("the rule block's opening fence");
+    let body = &page[open..];
+    let body = &body[body.find('\n').expect("a line after the fence") + 1..];
+    let body = &body[..body.find("```").expect("the rule block's closing fence")];
+
+    let mut block: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for line in body.lines() {
+        let split = line.trim_end_matches('\r').split_once(' ');
+        assert!(
+            split.is_some(),
+            "unreadable line in the rule block: {line:?}"
+        );
+        let (kind, value) = split.unwrap();
+        assert!(
+            matches!(
+                kind,
+                "exact"
+                    | "prefix"
+                    | "ending"
+                    | "contains"
+                    | "backup"
+                    | "part"
+                    | "gitconfig"
+                    | "sequence"
+            ),
+            "unknown kind in the rule block: {line:?}"
+        );
+        block.entry(kind).or_default().push(value);
+    }
+    let count = |kind: &str| block.get(kind).map_or(0, Vec::len);
+    for (kind, expected) in [
+        ("exact", 55),
+        ("prefix", 4),
+        ("ending", 20),
+        ("contains", 1),
+        ("backup", 6),
+        ("part", 10),
+        ("gitconfig", 2),
+        ("sequence", 2),
+    ] {
+        assert_eq!(count(kind), expected, "number of {kind} lines");
+    }
+    let page_set =
+        |kind: &str| -> BTreeSet<String> { block[kind].iter().map(|v| (*v).to_string()).collect() };
+    let code_set =
+        |table: &[&str]| -> BTreeSet<String> { table.iter().map(|v| (*v).to_string()).collect() };
+    assert_eq!(page_set("exact"), code_set(EXACT_NAMES));
+    assert_eq!(page_set("prefix"), code_set(NAME_PREFIXES));
+    assert_eq!(page_set("ending"), code_set(NAME_ENDINGS));
+    assert_eq!(page_set("contains"), code_set(NAME_CONTAINS));
+    assert_eq!(page_set("backup"), code_set(BACKUP_ENDINGS));
+    assert_eq!(page_set("part"), code_set(PART_NAMES));
+    assert_eq!(page_set("gitconfig"), code_set(GIT_CONFIG_NAMES));
+    let code_pairs: BTreeSet<String> = PATH_SEQUENCES
+        .iter()
+        .map(|(first, second)| format!("{first} {second}"))
+        .collect();
+    assert_eq!(page_set("sequence"), code_pairs);
+    // Each table has no repeats, so equal sets mean equal lists.
+    for (name, table) in [
+        ("EXACT_NAMES", EXACT_NAMES),
+        ("NAME_ENDINGS", NAME_ENDINGS),
+        ("PART_NAMES", PART_NAMES),
+    ] {
+        assert_eq!(
+            code_set(table).len(),
+            table.len(),
+            "{name} repeats an entry"
+        );
+    }
+}
