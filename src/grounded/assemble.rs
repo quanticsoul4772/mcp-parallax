@@ -340,6 +340,10 @@ fn header(path: &str, start: Option<u32>, end: Option<u32>) -> String {
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
+mod disk_tests;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::grounded::secrets::{Platform, Rule};

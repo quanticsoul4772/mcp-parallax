@@ -80,8 +80,11 @@ pub const GROUNDED_VERIFY_DESCRIPTION: &str = "Verify a claim against verbatim s
     findings citing the source, a confidence from cross-pass agreement, an evidence manifest of \
     exactly what was read, and a completeness signal naming any evidence you did not provide. \
     Locators resolve inside one configured source root: give a path relative to it or an \
-    absolute path inside it (globs are always relative); an error names the root. Use \
-    when a claim must be checked against source you should not be trusted to summarize.";
+    absolute path inside it (globs are always relative); an error names the root. Files whose \
+    names mark them as secrets (for example .env, key files and credential files) are refused. \
+    An exact path to one fails the call. A glob leaves them out, lists them under refused and \
+    sets evidence_reduced; if every match is refused the call fails. Use when a claim must be \
+    checked against source you should not be trusted to summarize.";
 
 /// The verifier prompt. Placeholders exist for the claim and the assembled
 /// evidence ONLY — no slot for caller stance or conversation (blindness is
