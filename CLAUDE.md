@@ -314,6 +314,14 @@ design document carries a dated amendment, and the evidence is in
 measurement first: running more than one pass, and any change to the
 confidence number.
 
+**055 (`055-grounded-verify-secret-refusal`) followed, as a full Spec Kit run;
+all 47 tasks closed.** `grounded_verify` now refuses files whose names mark
+them as secrets: an exact path fails the call, a glob leaves them out and
+reports them in four new result fields, and the server will not start with its
+root inside a secret folder. A live check on the rebuilt server passed (one
+refusal, one ordinary call). Deferred: the session-folder root, content-based
+detection, refusing hard links, and closing the check-to-open race.
+
 **The through-line of 040–045, worth carrying forward.** Every one of them was
 a check that passed for a reason unrelated to what it claimed to verify:
 
