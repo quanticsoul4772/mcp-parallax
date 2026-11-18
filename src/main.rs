@@ -217,7 +217,8 @@ CAPABILITY GATES (absent = the tools are not in the catalog at all):
     BRAVE_API_KEY                 Enables `research`
     GROUNDED_VERIFY_ROOT          Enables `grounded_verify`; the single root that
                                   locators resolve within, canonicalized at startup;
-                                  files named as secrets (.env, keys) are refused
+                                  files named as secrets (.env, keys) are refused;
+                                  `.` gives each session its own folder
 
 RESEARCH:
     FETCH_TIMEOUT_MS              Per-source fetch timeout in ms (default: 10000)
