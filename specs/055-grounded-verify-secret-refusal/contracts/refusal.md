@@ -2,14 +2,15 @@
 
 ## What a caller sees
 
-- **An exact path to a refused file** fails the whole call, before any file
-  is read and before any model is contacted:
+- **An exact path to a refused file** fails the whole call before any model
+  is contacted, and before any file is read unless it becomes refused only
+  when it is checked again at the moment of reading:
   `[invalid_input] invalid input: locator refused: <path as written> - it is, or resolves to, a file whose name marks it as a likely secret`
 - **A glob that plainly starts in a refused folder** (`.ssh/*`) fails the
   call from its text, before the disk is touched:
   `[invalid_input] invalid input: glob refused: <pattern> - it searches a folder whose name marks its files as likely secrets`
 - **On Windows, a path with a colon in it** (after any drive letter) fails
-  the call:
+  the call, with this message unless another rule refuses it first:
   `[invalid_input] invalid input: locator refused: <path as written> - a colon is not accepted in a path; give line numbers as start_line and end_line`
 - **Any other glob** leaves refused files out. The result then has:
   - `refused`: the paths left out, from the root, sorted, at most 50;
@@ -18,6 +19,7 @@
   - `evidence_note`: `N file(s) matching a glob were not read because their names mark them as likely secrets. The verdict covers only the files that were read.`
   - no arithmetic settlement: a countable claim returns `inconclusive`; when it would
     otherwise have been settled, the note ends, after a space, with `To have a countable claim settled, name the file to count by its exact path.`
+    and `reason` reads `files were left out as likely secrets — name the file to count by its exact path`
 - **A glob whose every match is refused** fails the call:
   `[invalid_input] invalid input: glob matched only files refused as likely secrets (<n>): <pattern>`
 - **When nothing was left out**, `refused` is empty, `refused_count` is 0,
@@ -31,7 +33,7 @@
 
 A path is refused when any rule holds for the path as written (after
 simplifying it on the text alone) or for the whole path it resolves to.
-Letter case is ignored. On Windows both slash directions separate folders.
+ASCII letter case is ignored. On Windows both slash directions separate folders.
 
 The block below is read by a test and compared with the tables in the code.
 Do not reformat it.
@@ -178,7 +180,7 @@ that part is not itself `..`, and is otherwise kept.
    the whole resolved path.
 4. Files are read in the order the locators were given. Each name is resolved and
    checked again immediately before it is read, and must lead to the same
-   file.
+   path.
 
 The first failure decides the error. Compared with before this feature, the
 error reported can differ when a call has more than one fault.
@@ -187,7 +189,7 @@ error reported can differ when a call has more than one fault.
 
 If the root is, or is inside, a folder the `part` or `sequence` rules refuse,
 the server does not start:
-`GROUNDED_VERIFY_ROOT is, or is inside, <name>, whose files are refused as likely secrets: <root>`
+`configuration error: GROUNDED_VERIFY_ROOT is, or is inside, <name>, whose files are refused as likely secrets: <root>`
 
 ## What this does not protect against
 
@@ -213,7 +215,9 @@ the folder the caller was allowed to search. Contents are never revealed.
 Templates such as `.env.example`; public certificates ending `.pem`; an
 `.npmrc` that only names a registry; AsciiDoc files ending `.asc`; a project
 folder named `.docker` or `secrets`; source files such as `client_secret.rs`; a file named `config` anywhere under
-a folder whose name ends in `.git`. There is no override.
+a folder whose name ends in `.git`; on Windows, any path with a colon after the
+drive letter, including an ordinary file's main stream (`a.rs::$DATA`). There is
+no override.
 
 ## Not verified
 

@@ -42,9 +42,8 @@ pub enum Rule {
     /// 3: the file name ends with one of [`NAME_ENDINGS`] or contains one of
     /// [`NAME_CONTAINS`].
     NameEnding,
-    /// 4: the backup reduction. It is applied to every part before the other
-    /// rules, so it is never itself the rule reported.
-    Backup,
+    // Rule 4, the backup reduction, has no variant: it is applied to every
+    // part before the other rules, so it is never itself the rule reported.
     /// 5: some part of the path is one of [`PART_NAMES`].
     PartName,
     /// 6: the file name is one of [`GIT_CONFIG_NAMES`] and a part above it

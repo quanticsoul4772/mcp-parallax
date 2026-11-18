@@ -371,6 +371,8 @@ struct Additions {
     refused: Vec<String>,
     count: u32,
     note: String,
+    /// Files were left out of a claim that would otherwise have been settled.
+    blocked_settling: bool,
 }
 
 impl Additions {
@@ -395,6 +397,7 @@ impl Additions {
             refused: refused.iter().take(50).cloned().collect(),
             count,
             note,
+            blocked_settling: !refused.is_empty() && would_have_settled,
         }
     }
 }
@@ -491,7 +494,12 @@ fn aggregate(
             passes: run.verdict.passes,
             missing_evidence,
             manifest,
-            reason: Some("computable property — route to `check`".to_string()),
+            reason: Some(if left_out.blocked_settling {
+                "files were left out as likely secrets — name the file to count by its exact path"
+                    .to_string()
+            } else {
+                "computable property — route to `check`".to_string()
+            }),
             executed_form: None,
             engine_result: None,
             refused: left_out.refused,
@@ -1280,6 +1288,13 @@ mod tests {
                 (reduced.confidence - whole.confidence).abs() < f64::EPSILON,
                 "split {split}"
             );
+            // The agreement ratio itself, so a change made to both runs is caught.
+            let expected = if split { 2.0 / 3.0 } else { 1.0 };
+            assert!(
+                (reduced.confidence - expected).abs() < 1e-9,
+                "split {split}: {}",
+                reduced.confidence
+            );
         }
     }
 
@@ -1329,6 +1344,13 @@ mod tests {
         assert_eq!(out.verdict, GroundedVerdictKind::Inconclusive);
         assert!(out.executed_form.is_none());
         assert_eq!(out.evidence_note, format!("{LEFT_OUT_ONE}{CLOSING}"));
+        // One instruction, not two: the reason says the same as the notice.
+        assert_eq!(
+            out.reason.as_deref(),
+            Some(
+                "files were left out as likely secrets — name the file to count by its exact path"
+            )
+        );
     }
 
     #[tokio::test]

@@ -334,8 +334,12 @@ fn the_contract_page_lists_exactly_the_rules_in_the_code() {
     // Each table has no repeats, so equal sets mean equal lists.
     for (name, table) in [
         ("EXACT_NAMES", EXACT_NAMES),
+        ("NAME_PREFIXES", NAME_PREFIXES),
         ("NAME_ENDINGS", NAME_ENDINGS),
+        ("NAME_CONTAINS", NAME_CONTAINS),
+        ("BACKUP_ENDINGS", BACKUP_ENDINGS),
         ("PART_NAMES", PART_NAMES),
+        ("GIT_CONFIG_NAMES", GIT_CONFIG_NAMES),
     ] {
         assert_eq!(
             code_set(table).len(),
@@ -343,4 +347,9 @@ fn the_contract_page_lists_exactly_the_rules_in_the_code() {
             "{name} repeats an entry"
         );
     }
+    assert_eq!(
+        code_pairs.len(),
+        PATH_SEQUENCES.len(),
+        "PATH_SEQUENCES repeats an entry"
+    );
 }

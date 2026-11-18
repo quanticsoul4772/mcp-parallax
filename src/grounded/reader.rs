@@ -7,16 +7,10 @@
 //! whole-file or a 1-based inclusive line range.
 
 use crate::error::{AppError, ConfigError};
-use crate::grounded::secrets::{refusal, refused_folder, simplify, Platform, Rule};
+use crate::grounded::secrets::{refusal, refused_folder, simplify, Rule};
+use crate::grounded::HOST_PLATFORM as PLATFORM;
 use crate::traits::source::{CheckFailure, Checked, ListedFile, SourceContent, SourceReader};
 use std::path::{Path, PathBuf};
-
-/// The path rules of the system this server runs on (055).
-const PLATFORM: Platform = if cfg!(windows) {
-    Platform::Windows
-} else {
-    Platform::Other
-};
 
 /// The rule that refuses `text` as a path, if any.
 fn refused_by(text: &str) -> Option<Rule> {
