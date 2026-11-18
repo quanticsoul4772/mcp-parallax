@@ -10,6 +10,7 @@
 pub mod assemble;
 pub mod glob;
 pub mod reader;
+pub mod secrets;
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};

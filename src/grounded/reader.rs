@@ -7,8 +7,21 @@
 //! whole-file or a 1-based inclusive line range.
 
 use crate::error::{AppError, ConfigError};
-use crate::traits::source::{SourceContent, SourceReader};
+use crate::grounded::secrets::{refusal, refused_folder, simplify, Platform, Rule};
+use crate::traits::source::{CheckFailure, Checked, ListedFile, SourceContent, SourceReader};
 use std::path::{Path, PathBuf};
+
+/// The path rules of the system this server runs on (055).
+const PLATFORM: Platform = if cfg!(windows) {
+    Platform::Windows
+} else {
+    Platform::Other
+};
+
+/// The rule that refuses `text` as a path, if any.
+fn refused_by(text: &str) -> Option<Rule> {
+    refusal(&simplify(text, PLATFORM), PLATFORM)
+}
 
 /// A source reader confined to one canonicalized root directory.
 #[derive(Debug, Clone)]
@@ -37,6 +50,13 @@ impl SystemSourceReader {
             return Err(AppError::Config(ConfigError::Invalid(
                 "GROUNDED_VERIFY_ROOT",
             )));
+        }
+        let parts = simplify(&canonical.to_string_lossy(), PLATFORM).parts;
+        if let Some(folder) = refused_folder(&parts) {
+            return Err(AppError::Config(ConfigError::SecretRoot {
+                folder,
+                root: display_path(&canonical),
+            }));
         }
         Ok(Self {
             root: canonical,
@@ -208,6 +228,100 @@ impl SourceReader for SystemSourceReader {
     fn root_display(&self) -> String {
         display_path(&self.root)
     }
+
+    fn check(&self, path: &str) -> Result<Checked, CheckFailure> {
+        if let Some(rule) = refused_by(path) {
+            return Err(CheckFailure::Refused(rule));
+        }
+        let resolved = self.resolve(path).map_err(CheckFailure::Other)?;
+        if let Some(rule) = refused_by(&resolved.to_string_lossy()) {
+            return Err(CheckFailure::Refused(rule));
+        }
+        Ok(Checked::new(path.to_string(), resolved))
+    }
+
+    fn read_checked(
+        &self,
+        checked: &Checked,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+    ) -> Result<SourceContent, CheckFailure> {
+        let path = checked.spelling();
+        let again = self.check(path)?;
+        if again.resolved() != checked.resolved() {
+            return Err(CheckFailure::Other(AppError::InvalidInput(format!(
+                "locator changed while being read: {path} - it no longer leads to the file \
+                 that was checked"
+            ))));
+        }
+        self.read_resolved(again.resolved(), path, start_line, end_line)
+            .map_err(CheckFailure::Other)
+    }
+
+    fn list_flagged(&self, under: &str, recurse: bool) -> Result<Vec<ListedFile>, AppError> {
+        Ok(self
+            .list_files(under, recurse)?
+            .into_iter()
+            .map(|path| {
+                let refused = refused_by(&self.root.join(&path).to_string_lossy()).is_some();
+                ListedFile { path, refused }
+            })
+            .collect())
+    }
+}
+
+impl SystemSourceReader {
+    /// The size, text, empty and range checks a read makes, on a path already
+    /// resolved and confined (055's checked read). The same steps as
+    /// [`SourceReader::read`] after its `resolve`; `read` is removed when
+    /// every caller has moved to the checked read.
+    fn read_resolved(
+        &self,
+        resolved: &Path,
+        path: &str,
+        start_line: Option<u32>,
+        end_line: Option<u32>,
+    ) -> Result<SourceContent, AppError> {
+        let range = match (start_line, end_line) {
+            (None, None) => None,
+            (Some(start), Some(end)) => Some((start, end)),
+            _ => {
+                return Err(AppError::InvalidInput(format!(
+                    "locator '{path}' must give both start_line and end_line, or neither"
+                )))
+            }
+        };
+        let on_disk = std::fs::metadata(resolved)
+            .map_err(|_| self.not_found(path))?
+            .len();
+        if on_disk > self.max_file_bytes {
+            return Err(AppError::InvalidInput(format!(
+                "source '{path}' is {on_disk} bytes, over the per-file limit of {} \
+                 (GROUNDED_VERIFY_MAX_BYTES); raise the ceiling to read it",
+                self.max_file_bytes
+            )));
+        }
+        let raw = std::fs::read(resolved).map_err(|_| self.not_found(path))?;
+        let text = String::from_utf8(raw)
+            .map_err(|_| AppError::InvalidInput(format!("source is not text: {path}")))?;
+        if text.is_empty() {
+            return Err(AppError::InvalidInput(format!("source is empty: {path}")));
+        }
+        let selected = match range {
+            None => text,
+            Some((start, end)) => slice_lines(&text, start, end, path)?,
+        };
+        if selected.is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "source range is empty: {path}"
+            )));
+        }
+        let bytes = selected.len() as u64;
+        Ok(SourceContent {
+            text: selected,
+            bytes,
+        })
+    }
 }
 
 /// A canonical path as a caller would type it. Windows canonical paths carry
@@ -254,6 +368,8 @@ impl AsRef<Path> for SystemSourceReader {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::grounded::secrets::Rule;
+    use crate::traits::source::{CheckFailure, Checked, ListedFile};
     use std::fs;
 
     fn root_with(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -552,6 +668,43 @@ mod tests {
         assert!(matches!(err, AppError::Config(_)));
     }
 
+    /// A root whose every file would be refused (055 FR-003) stops the
+    /// server at startup, naming the folder and the root.
+    #[test]
+    fn a_root_in_a_secret_folder_is_a_config_error() {
+        let base = tempfile::tempdir().unwrap();
+        for (sub, name) in [
+            (".ssh/proj", ".ssh"),
+            ("secrets", "secrets"),
+            (".config/gh/proj", ".config/gh"),
+            (".ssh.bak/proj", ".ssh.bak"),
+        ] {
+            let root = base.path().join(sub);
+            fs::create_dir_all(&root).unwrap();
+            let real = fs::canonicalize(&root).unwrap();
+            let real = real.to_str().unwrap();
+            let shown = real.strip_prefix(r"\\?\").unwrap_or(real);
+            let err = SystemSourceReader::new(root.to_str().unwrap(), 262_144).unwrap_err();
+            assert!(matches!(err, AppError::Config(_)), "{sub}: {err}");
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "configuration error: GROUNDED_VERIFY_ROOT is, or is inside, {name}, \
+                     whose files are refused as likely secrets: {shown}"
+                ),
+                "{sub}"
+            );
+        }
+        for sub in [".git/proj", ".config", "x.git"] {
+            let root = base.path().join(sub);
+            fs::create_dir_all(&root).unwrap();
+            assert!(
+                SystemSourceReader::new(root.to_str().unwrap(), 262_144).is_ok(),
+                "{sub}"
+            );
+        }
+    }
+
     #[test]
     #[cfg(unix)]
     fn list_files_does_not_follow_symlinked_directories() {
@@ -615,5 +768,253 @@ mod tests {
         let reader = SystemSourceReader::new(dir.path().to_str().unwrap(), 5).unwrap();
         let err = reader.read("big.rs", None, None).unwrap_err();
         assert!(err.to_string().contains("per-file limit"), "{err}");
+    }
+
+    // ---- 055: check / read_checked / list_flagged ----
+
+    /// Make `link` a folder link to `target`: a junction on Windows (made
+    /// with the system's `mklink /J`, which needs no special rights), a
+    /// symbolic link elsewhere. Fails the test with a message if it cannot.
+    fn dir_link(link: &Path, target: &Path) {
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("could not run mklink");
+            assert!(
+                out.status.success(),
+                "could not make a junction {} -> {}: {}",
+                link.display(),
+                target.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        #[cfg(unix)]
+        {
+            let made = std::os::unix::fs::symlink(target, link);
+            assert!(
+                made.is_ok(),
+                "could not make a symbolic link {} -> {}: {made:?}",
+                link.display(),
+                target.display()
+            );
+        }
+    }
+
+    /// Remove a folder link made by `dir_link`, leaving its target.
+    fn remove_dir_link(link: &Path) {
+        #[cfg(windows)]
+        fs::remove_dir(link).unwrap();
+        #[cfg(unix)]
+        fs::remove_file(link).unwrap();
+    }
+
+    fn other_text(failure: CheckFailure) -> String {
+        assert!(
+            matches!(failure, CheckFailure::Other(AppError::InvalidInput(_))),
+            "expected an invalid-input fault, got {failure:?}"
+        );
+        match failure {
+            CheckFailure::Other(err) => err.to_string(),
+            CheckFailure::Refused(rule) => format!("{rule:?}"),
+        }
+    }
+
+    #[test]
+    fn check_then_read_checked_returns_what_read_returns() {
+        let dir = root_with(&[("a.rs", "one\ntwo\nthree\n")]);
+        let reader = reader(&dir);
+        let checked: Checked = reader.check("a.rs").unwrap();
+        assert_eq!(checked.spelling(), "a.rs");
+        let whole = reader.read_checked(&checked, None, None).unwrap();
+        assert_eq!(whole, reader.read("a.rs", None, None).unwrap());
+        let part = reader.read_checked(&checked, Some(2), Some(3)).unwrap();
+        assert_eq!(part, reader.read("a.rs", Some(2), Some(3)).unwrap());
+    }
+
+    #[test]
+    fn check_refuses_a_file_reached_through_a_link_into_a_secret_folder() {
+        let dir = root_with(&[(".ssh/known_hosts", "host key"), ("README.md", "hi")]);
+        dir_link(&dir.path().join("docs"), &dir.path().join(".ssh"));
+        let reader = reader(&dir);
+        let failure = reader.check("docs/known_hosts").unwrap_err();
+        assert!(
+            matches!(failure, CheckFailure::Refused(Rule::PartName)),
+            "{failure:?}"
+        );
+        // Written as a secret name, refused before the disk is consulted.
+        assert!(matches!(
+            reader.check(".env").unwrap_err(),
+            CheckFailure::Refused(Rule::ExactName)
+        ));
+        // Entering and leaving the folder is not refused: what it resolves to
+        // is an ordinary file.
+        assert!(reader.check(".ssh/../README.md").is_ok());
+    }
+
+    #[test]
+    fn check_reports_todays_faults_as_other() {
+        let dir = root_with(&[("a.rs", "x")]);
+        let reader = reader(&dir);
+        let root = expected_root(&dir);
+        assert!(
+            other_text(reader.check("gone.rs").unwrap_err()).contains(&format!(
+                "source not found under the source root {root}: gone.rs"
+            ))
+        );
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("there.txt"), "top secret").unwrap();
+        let there = outside.path().join("there.txt");
+        assert!(
+            other_text(reader.check(there.to_str().unwrap()).unwrap_err())
+                .contains("locator escapes the source root")
+        );
+        let network = other_text(
+            reader
+                .check("//no-such-host.invalid/share/x.txt")
+                .unwrap_err(),
+        );
+        if cfg!(windows) {
+            assert!(
+                network.contains("locator escapes the source root"),
+                "{network}"
+            );
+        } else {
+            assert!(
+                network.contains("source not found")
+                    || network.contains("locator escapes the source root"),
+                "{network}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn check_reports_a_link_out_of_the_root_as_other() {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("there.txt"), "top secret").unwrap();
+        let dir = root_with(&[("a.rs", "x")]);
+        std::os::unix::fs::symlink(outside.path().join("there.txt"), dir.path().join("l.txt"))
+            .unwrap();
+        assert!(other_text(reader(&dir).check("l.txt").unwrap_err())
+            .contains("escapes the source root"));
+    }
+
+    #[test]
+    fn read_checked_fails_when_the_name_now_leads_elsewhere() {
+        let dir = root_with(&[
+            ("one/f.txt", "first"),
+            ("two/f.txt", "second"),
+            (".ssh/f.txt", "secret"),
+        ]);
+        let link = dir.path().join("docs");
+        dir_link(&link, &dir.path().join("one"));
+        let reader = reader(&dir);
+        let checked = reader.check("docs/f.txt").unwrap();
+
+        remove_dir_link(&link);
+        dir_link(&link, &dir.path().join("two"));
+        let changed = other_text(reader.read_checked(&checked, None, None).unwrap_err());
+        assert_eq!(
+            changed,
+            "invalid input: locator changed while being read: docs/f.txt - it no longer \
+             leads to the file that was checked"
+        );
+
+        remove_dir_link(&link);
+        dir_link(&link, &dir.path().join(".ssh"));
+        let failure = reader.read_checked(&checked, None, None).unwrap_err();
+        assert!(matches!(failure, CheckFailure::Refused(_)), "{failure:?}");
+    }
+
+    #[test]
+    fn read_checked_keeps_todays_size_text_empty_and_range_faults() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("big.rs"), "0123456789").unwrap();
+        fs::write(dir.path().join("b.bin"), [0xff, 0xfe, 0x00, 0x9c]).unwrap();
+        fs::write(dir.path().join("empty.rs"), "").unwrap();
+        fs::write(dir.path().join("a.rs"), "one\ntwo\n").unwrap();
+        let reader = SystemSourceReader::new(dir.path().to_str().unwrap(), 5).unwrap();
+        let fault = |path: &str, range: (Option<u32>, Option<u32>)| {
+            let checked = reader.check(path).unwrap();
+            other_text(reader.read_checked(&checked, range.0, range.1).unwrap_err())
+        };
+        assert!(fault("big.rs", (None, None)).contains("per-file limit"));
+        let reader_big = SystemSourceReader::new(dir.path().to_str().unwrap(), 262_144).unwrap();
+        let fault_big = |path: &str, range: (Option<u32>, Option<u32>)| {
+            let checked = reader_big.check(path).unwrap();
+            other_text(
+                reader_big
+                    .read_checked(&checked, range.0, range.1)
+                    .unwrap_err(),
+            )
+        };
+        assert!(fault_big("b.bin", (None, None)).contains("not text"));
+        assert!(fault_big("empty.rs", (None, None)).contains("source is empty"));
+        assert!(fault_big("a.rs", (Some(50), Some(60))).contains("past the end"));
+    }
+
+    #[test]
+    fn list_flagged_marks_refused_files_and_does_not_follow_links() {
+        let dir = root_with(&[
+            ("src/a.rs", "x"),
+            ("src/.env", "KEY=1"),
+            ("elsewhere/b.rs", "y"),
+        ]);
+        dir_link(
+            &dir.path().join("src").join("linked"),
+            &dir.path().join("elsewhere"),
+        );
+        let mut listed: Vec<ListedFile> = reader(&dir).list_flagged("src", true).unwrap();
+        listed.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            listed,
+            [
+                ListedFile {
+                    path: "src/.env".to_string(),
+                    refused: true
+                },
+                ListedFile {
+                    path: "src/a.rs".to_string(),
+                    refused: false
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn list_flagged_applies_folder_rules_that_span_the_root() {
+        let base = tempfile::tempdir().unwrap();
+        let config = base.path().join(".config");
+        fs::create_dir_all(config.join("gh")).unwrap();
+        fs::write(config.join("gh/x"), "token").unwrap();
+        let listed = SystemSourceReader::new(config.to_str().unwrap(), 262_144)
+            .unwrap()
+            .list_flagged("gh", true)
+            .unwrap();
+        assert_eq!(
+            listed,
+            [ListedFile {
+                path: "gh/x".to_string(),
+                refused: true
+            }]
+        );
+        let repo = base.path().join("x.git");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("config"), "[remote]").unwrap();
+        let listed = SystemSourceReader::new(repo.to_str().unwrap(), 262_144)
+            .unwrap()
+            .list_flagged("", false)
+            .unwrap();
+        assert_eq!(
+            listed,
+            [ListedFile {
+                path: "config".to_string(),
+                refused: true
+            }]
+        );
     }
 }
