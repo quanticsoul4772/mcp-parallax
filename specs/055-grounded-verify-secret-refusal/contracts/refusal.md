@@ -164,13 +164,18 @@ that part is not itself `..`, and is otherwise kept.
 
 ## Order of checks
 
-1. Without touching the disk, for every locator in order: its shape; a glob's
+1. Without touching the disk, for every locator in order: its shape,
+   including that start and end lines come together and form a valid range; a glob's
    text; then the rules on the text (all of them on the whole path for an
    exact path; only the folder rules on the starting folder or folders of a
    glob).
-2. For every exact path in order: confinement to the root, then the rules on
+2. For every locator in order: an exact path counts as one; a glob is
+   expanded, its refused matches set aside and the rest counted. After each
+   locator the running total is compared with the limit on the number of
+   locators, exactly as before. A glob that matches nothing, or only refused
+   files, fails the call.
+3. For every exact path in order: confinement to the root, then the rules on
    the whole resolved path.
-3. Globs are expanded; refused matches are set aside.
 4. Files are read in the order the locators were given. Each name is resolved and
    checked again immediately before it is read, and must lead to the same
    file.

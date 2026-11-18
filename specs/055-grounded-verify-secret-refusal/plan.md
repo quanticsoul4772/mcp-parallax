@@ -2,7 +2,7 @@
 
 **Branch**: `055-grounded-verify-secret-refusal` | **Date**: 2026-11-17 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/055-grounded-verify-secret-refusal/spec.md` (fifth version)
+**Input**: Feature specification from `/specs/055-grounded-verify-secret-refusal/spec.md` (sixth version; this plan was re-checked against it after the task-list review)
 
 **This is the second version of the plan**, corrected after two independent reviews of the first against the code.
 
@@ -107,8 +107,8 @@ SECURITY.md, README.md, CLAUDE.md, CHANGELOG.md
 - The rule tables are `pub const`: exact names, prefixes, endings, the one "contains" entry, backup endings, part names, the two git-configuration names, and the two path sequences.
 - `simplify(path, platform) -> Simplified` implements FR-001's simplification on text alone. `Simplified` holds the parts and whether a colon remains after the leading forms are set aside.
 - `refusal(&Simplified, platform) -> Option<Rule>` applies rules 1 to 8. It takes the whole `Simplified`, so the colon rule has what it needs.
-- `platform` is a two-valued enum passed by the caller. Production passes the real platform; tests pass both.
-- For a glob, a small function returns the folder or folders its text plainly starts in, and only the folder rules (5 and 7, after rule 4's reduction) are applied to each. Glob expansion is split into a text stage, which phase one runs, and a listing stage; the scope logic is private to expansion today and moves into the text stage.
+- `platform` is a two-valued enum passed by the caller. Production passes the real platform; tests pass both. Assembly takes it as a field of `AssemblyLimits` (`src/grounded/mod.rs`), set to the real platform where the limits are built in `src/server.rs`.
+- For a glob, a small function returns the folder or folders its text plainly starts in, and only the folder rules (5 and 7, after rule 4's reduction) are applied to each. Glob expansion is split into a text stage, which phase one runs, and a listing stage, which runs the text stage again itself before listing so its errors are unchanged; the scope logic is private to expansion today and moves into the text stage.
 
 ### 2. Startup (`src/error.rs`, `src/grounded/reader.rs`)
 
@@ -127,10 +127,10 @@ SECURITY.md, README.md, CLAUDE.md, CHANGELOG.md
 
 In the order FR-002 gives:
 
-1. **Phase one, no disk**: per locator its shape, a glob's text validity (the checks expansion makes today before listing), and the name rules on the text. First failure wins. The locator ceiling is not checked here; it stays exactly where it is today.
-2. **Phase two**: `check` on every exact path, in order.
-3. **Globs expanded** in locator order, building one list of read units **in the order the locators were given**, exactly as today. Refused matches go to the refused set and do not count toward the ceiling; the running total is checked against the ceiling as today, with the same error text. A glob whose matches are all refused fails the call.
-4. **Reads, in that same order**: exact paths through `read_checked` with the `Checked` from phase two; glob matches through `check` then `read_checked`. A glob match refused by a rule at this point is moved to the refused set; if that leaves its glob with nothing to read, the call fails with the all-refused error naming that glob. A glob match that fails in any other way at this point fails the call. Refused matches are separated only after the pattern has been applied, so a file the pattern does not match is never listed.
+1. **Phase one, no disk**: per locator its shape (including that start and end lines come together and form a valid range), a glob's text validity (the checks expansion makes today before listing), and the name rules on the text. First failure wins.
+2. **Phase two, listing only**: per locator in order, an exact path counts one and a glob is expanded on the flagged listing, building one list of read units **in the order the locators were given**, exactly as today. Refused matches go to the refused set and do not count toward the ceiling. After each locator the running total is checked against the ceiling exactly as today, with the same text and number. A glob that matches nothing, or only refused files, fails the call. No exact path is resolved here, so a call of exact paths only that exceeds the ceiling fails with no disk access, as today.
+3. **Phase three**: `check` on every exact path, in order.
+4. **Reads, in that same order**: exact paths through `read_checked` with the `Checked` from phase three; glob matches through `check` then `read_checked`. A glob match refused by a rule at this point is moved to the refused set; if that leaves its glob with nothing to read, the call fails with the all-refused error naming that glob. A glob match that fails in any other way at this point fails the call. Refused matches are separated only after the pattern has been applied, so a file the pattern does not match is never listed.
 
 `refused_count` is the number of distinct files in the refused set.
 
@@ -155,14 +155,14 @@ Pull-request checks run on Linux, so the Windows tests run only through the loca
 
 ## Existing tests the seam split touches
 
-Changing `read` and the return type of `list_files` breaks these at compile time. Each keeps proving what it proved; the task list carries them one by one (SC-007).
+Removing `read` and the old `list_files`, the last step of the work, breaks these at compile time; until then they keep running on the old calls. Each keeps proving what it proved; the task list carries them one by one (SC-007).
 
 | Where | Tests | What changes |
 |---|---|---|
 | `src/traits/source.rs` | the mock contract test | call shape |
 | `src/grounded/assemble.rs` | all ten | mock expectations move from `read` to `check` and `read_checked` |
 | `src/grounded/glob/expand.rs` | all | the listing mock returns flagged entries; assertions on the returned files compare the file half of the result |
-| `src/modes/grounded_verify.rs` | about seventeen | mock expectations, as for assembly |
+| `src/modes/grounded_verify.rs` | sixteen | mock expectations, as for assembly |
 | `src/grounded/reader.rs` | thirteen tests that call `read` directly | call shape, and where the asserted error comes from: not-found, escape, the network screen and the link escape now come from `check`; size, text, empty and range errors from `read_checked`. The task list names each test with the step its error comes from |
 | `src/grounded/reader.rs` | the two listing tests | compare the path half of the flagged entries |
 | `src/grounded/reader.rs` | the single-bound test | **meaning changes**: the pairing check moves to assembly, so this test moves there with it |
@@ -175,9 +175,9 @@ Changing `read` and the return type of `list_files` breaks these at compile time
 |---|---|---|
 | 1 | Rule tables and pure functions; tests from the tables, both platforms; the separately typed list; the must-read list | full gate |
 | 2 | The startup error kind and the startup refusal | full gate |
-| 3 | Split the reader seam; move the existing tests as the table above says | full gate; a per-file account that only call shapes moved, apart from the two named tests |
-| 4 | Assembly in the FR-002 order; glob text refusal; leave-out; the test that an ordinary file followed by a link into a refused folder reads nothing | full gate |
-| 5 | Result additions and settlement gate, **with the published contract file** | full gate. Steps 4 and 5 are committed together: between them a glob would drop files without saying so |
+| 3 | The new reader calls beside the old ones, with their own tests; no caller moves | full gate |
+| 4 | Globs and assembly move to the new calls in the FR-002 order; glob text refusal; leave-out; the test that an ordinary file followed by a link into a refused folder reads nothing; the tool's tests move | full gate; a per-file account that only call shapes moved, apart from the named test |
+| 5 | Result additions and settlement gate, **with the published contract file**; then the old calls are removed and the tests that used them move, each listed in the task list | full gate. Steps 4 and 5 are committed together: between them a glob would drop files without saying so |
 | 6 | Real-disk tests | full gate on Windows, and on Linux through the pull-request checks |
 | 7 | Description in both copies; end-to-end tests | full gate |
 | 8 | The contract page and its binding test; the documents of FR-012; change log | full gate and the markdown check |
