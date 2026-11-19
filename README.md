@@ -211,7 +211,7 @@ Every tool declares an output JSON Schema and the model is constrained to it via
 
 ```bash
 cargo build                                              # debug build
-cargo test --all-features                                # all tests
+cargo test --all-features --tests                        # all tests
 cargo fmt --all -- --check                               # formatting
 cargo clippy --all-features --all-targets -- -D warnings # lint (gating)
 cargo cov --summary-only                                 # coverage gate (90% line floor)

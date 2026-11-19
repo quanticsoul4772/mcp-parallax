@@ -8,7 +8,7 @@ surface the first failure with its output; do not "fix" unrelated code to make i
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-features --all-targets -- -D warnings
-cargo test --all-features
+cargo test --all-features --tests
 ```
 
 If all three pass, state that the gate is green. If any fail, show the failing

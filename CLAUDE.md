@@ -105,8 +105,8 @@ GA and supported on Opus 4.8. No `tool_choice` hack, no free-text parsing, no
 
 ```bash
 cargo build                       # debug build
-cargo test                        # all tests
-cargo fmt --check                 # formatting
+cargo test --all-features --tests # all tests
+cargo fmt --all -- --check        # formatting
 cargo clippy --all-features --all-targets -- -D warnings   # lint (gating)
 cargo test <module>               # e.g. cargo test config
 cargo test <name> -- --exact      # single test by full path
@@ -117,14 +117,16 @@ cargo lint                        # clippy --all-features --all-targets -- -D wa
 cargo cov                         # llvm-cov coverage report (no gate yet)
 
 # Full gate before every commit (also the /validate command):
-cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
+cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests
 ```
 
 Toolchain is pinned (`rust-toolchain.toml`: an exact version, 1.100.0, + clippy/rustfmt/llvm-tools;
 the workflows pin the same version — move all three together).
 MSRV is 1.94 (CI verifies it with a dedicated job — bump `Cargo.toml` `rust-version`
 and the CI job in lockstep). A separate weekly `cargo audit` workflow gates
-advisories. `pre-commit` hooks mirror the gate — `pre-commit install`.
+advisories. `pre-commit install` adds hooks that format the code and run clippy
+and the markdown and file checks; they run no tests, so the full gate is still
+run before each commit.
 
 ## Runtime configuration (`Config::from_env()`)
 
@@ -350,9 +352,9 @@ asymmetry is the argument for attacking a checker's parsing assumptions, not
 just its coverage.
 
 **What is still hand-written, in rough order of risk:** 034's variable-presence
-scan carries a fixture-exclusion list; the gate's fmt and test commands are
-declared in several files with nothing binding them (its clippy command is
-bound to `ci.yml` by `every_declared_clippy_command_matches_ci`).
+scan carries a fixture-exclusion list. (The gate's fmt, clippy and test
+commands are bound to `ci.yml` by the `every_declared_*` tests in
+`src/main.rs`.)
 <!-- SPECKIT END -->
 
 ## Working style

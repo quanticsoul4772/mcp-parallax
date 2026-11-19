@@ -107,11 +107,12 @@ accretion; small modules keep each corrective independently understandable.
 
 ## Quality Gates & Tooling
 
-The full local gate MUST pass before every commit (mirrored by pre-commit
-hooks and the `/validate` command, enforced again in CI):
+The full local gate MUST pass before every commit (run by the `/validate`
+command and enforced again in CI; pre-commit hooks format the code and run
+clippy, but run no tests):
 
 ```bash
-cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
+cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests
 ```
 
 - Clippy runs `all` + `pedantic` + `nursery`; warnings are denied in CI.
