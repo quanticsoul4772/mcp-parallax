@@ -225,6 +225,12 @@ arc.
 
 ### Fixed
 
+* **The documented lint command matches CI everywhere** — `CONTRIBUTING.md`,
+  the constitution, `/validate`, the code-reviewer agent and the pull request
+  template ran clippy without `--all-targets` (the template also without
+  `--all-features`), so `/validate` could pass while CI failed on a lint error
+  in a test. A test now requires every declared clippy command to equal the one
+  `ci.yml` runs.
 * **`check` arithmetic is exact** — evalexpr still parses the expression, but
   its tree is now evaluated over arbitrary-precision fractions
   (`src/deterministic/exact.rs`) instead of i64/f64. This removes four classes

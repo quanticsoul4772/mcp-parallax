@@ -16,7 +16,7 @@
 Every commit must pass the same gate CI enforces:
 
 ```bash
-cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test
+cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
 ```
 
 `pre-commit install` mirrors it locally. Tests are required, written through
