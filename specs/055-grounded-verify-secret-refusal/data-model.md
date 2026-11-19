@@ -31,7 +31,7 @@ every part of the path before any of rules 1 to 3 and 5 to 7 is applied to it.
 |---|---|---|---|
 | `Platform` | `secrets.rs` | `Windows`, `Other` | passed to the text functions; production passes the real one |
 | `Simplified` | `secrets.rs` | `parts: Vec<String>`, `colon_in_rest: bool` | the result of FR-001's simplification |
-| `Rule` | `secrets.rs` | one variant per rule 1 to 8 | used in tests and logs; the caller is told only "its name marks it as a likely secret" |
+| `Rule` | `secrets.rs` | one variant per reportable rule (rule 4 is a reduction and has none) | used in tests and logs; the caller is told only "its name marks it as a likely secret" |
 | `Checked` | `traits/source.rs` | the caller's spelling; the resolved path | constructor visible within the crate only; made by a reader's `check`, consumed by `read_checked` |
 | `CheckFailure` | `traits/source.rs` | `Refused(Rule)` or `Other(AppError)` | what `check` and `read_checked` return on failure; lets assembly tell a refusal from any other fault without reading its wording |
 | platform field | `AssemblyLimits` in `grounded/mod.rs` | `Platform` | set to the real platform where the limits are built in `server.rs`; tests set it explicitly |
@@ -65,7 +65,7 @@ Startup error (a configuration error, not `invalid_input`):
 
 | Condition | Text |
 |---|---|
-| the root is, or is inside, a refused folder | `GROUNDED_VERIFY_ROOT is, or is inside, <name>, whose files are refused as likely secrets: <root>`, where `<name>` is the refused folder, or the two folders of a pair |
+| the root is, or is inside, a refused folder | `configuration error: GROUNDED_VERIFY_ROOT is, or is inside, <name>, whose files are refused as likely secrets: <root>`, where `<name>` is the refused folder, or the two folders of a pair |
 
 ## Order of checks for one call
 

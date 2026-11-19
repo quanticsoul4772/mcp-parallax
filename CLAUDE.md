@@ -152,7 +152,8 @@ presence enables the memory tools; absent, they are not in the catalog),
 fetches), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
 substrings extending the gate's built-in risk patterns),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
-tool; the single root that locators resolve within, confined at startup,
+tool; the single root that locators resolve within (`.` means the folder the
+server was started in, so each session gets its own project folder), confined at startup,
 and refused at startup when it is inside a folder whose files are refused as
 secrets (055); absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
 (default `262144`), `GROUNDED_VERIFY_MAX_LOCATORS` (default `64`),
