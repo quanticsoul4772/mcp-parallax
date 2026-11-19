@@ -684,13 +684,14 @@ mod tests {
         );
     }
 
-    /// Every `cargo clippy …` command in `text`, cut where the command ends
-    /// in prose, markdown or shell (`&&`, a backtick, a quote, ` #`).
-    fn clippy_commands(text: &str) -> Vec<String> {
+    /// Every command starting with `prefix` (e.g. `cargo clippy`) in `text`,
+    /// cut where the command ends in prose, markdown or shell (`&&`, a
+    /// backtick, a quote, ` #`).
+    fn commands(prefix: &str, text: &str) -> Vec<String> {
         let mut found = Vec::new();
         for line in text.lines() {
             let mut rest = line;
-            while let Some(at) = rest.find("cargo clippy") {
+            while let Some(at) = rest.find(prefix) {
                 let tail = &rest[at..];
                 let end = ["&&", "`", "'", "\"", " #"]
                     .iter()
@@ -737,7 +738,7 @@ mod tests {
                 .any(|l| l.contains("cargo clippy") && l.trim_end().ends_with('\\')),
             "a ci.yml clippy command continues onto the next line; the reference would be cut short"
         );
-        clippy_commands(&ci_text)
+        commands("cargo clippy", &ci_text)
     }
 
     /// The lint gate is written in CI and again in every file that tells a
@@ -760,7 +761,8 @@ mod tests {
             .map(|v| vec![format!("cargo {v}")])
             .unwrap_or_default();
         // CLAUDE.md describes the alias as `cargo lint   # clippy …`.
-        let lint_line = clippy_commands(
+        let lint_line = commands(
+            "cargo clippy",
             &include_str!("../CLAUDE.md")
                 .lines()
                 .filter(|l| l.contains("cargo lint"))
@@ -772,34 +774,53 @@ mod tests {
                 .join("\n"),
         );
         let declared: [(&str, Vec<String>); 10] = [
-            ("CLAUDE.md", clippy_commands(include_str!("../CLAUDE.md"))),
+            (
+                "CLAUDE.md",
+                commands("cargo clippy", include_str!("../CLAUDE.md")),
+            ),
             ("CLAUDE.md (cargo lint line)", lint_line),
-            ("README.md", clippy_commands(include_str!("../README.md"))),
+            (
+                "README.md",
+                commands("cargo clippy", include_str!("../README.md")),
+            ),
             (
                 "CONTRIBUTING.md",
-                clippy_commands(include_str!("../CONTRIBUTING.md")),
+                commands("cargo clippy", include_str!("../CONTRIBUTING.md")),
             ),
             (
                 ".specify/memory/constitution.md",
-                clippy_commands(include_str!("../.specify/memory/constitution.md")),
+                commands(
+                    "cargo clippy",
+                    include_str!("../.specify/memory/constitution.md"),
+                ),
             ),
             (
                 ".claude/commands/validate.md",
-                clippy_commands(include_str!("../.claude/commands/validate.md")),
+                commands(
+                    "cargo clippy",
+                    include_str!("../.claude/commands/validate.md"),
+                ),
             ),
             (
                 ".claude/agents/code-reviewer.md",
-                clippy_commands(include_str!("../.claude/agents/code-reviewer.md")),
+                commands(
+                    "cargo clippy",
+                    include_str!("../.claude/agents/code-reviewer.md"),
+                ),
             ),
             (
                 ".github/pull_request_template.md",
-                clippy_commands(include_str!("../.github/pull_request_template.md")),
+                commands(
+                    "cargo clippy",
+                    include_str!("../.github/pull_request_template.md"),
+                ),
             ),
             // Its `name:` key is a display label that also reads
             // `cargo clippy`; only `entry:` is run.
             (
                 ".pre-commit-config.yaml",
-                clippy_commands(
+                commands(
+                    "cargo clippy",
                     &include_str!("../.pre-commit-config.yaml")
                         .lines()
                         .filter(|l| l.trim_start().starts_with("entry:"))
@@ -826,5 +847,82 @@ mod tests {
             "these differ from ci.yml's `{reference}`:\n{}",
             problems.join("\n")
         );
+    }
+
+    /// The gate's fmt and test commands, bound to ci.yml the same way as its
+    /// clippy command. CLAUDE.md's `cargo test <module>` and `cargo test
+    /// <name> -- --exact` lines are usage examples, not the gate, and the
+    /// pre-commit fmt hook formats rather than checks; neither is read.
+    #[test]
+    fn every_declared_fmt_and_test_command_matches_ci() {
+        let ci_text = include_str!("../.github/workflows/ci.yml");
+        let reference = |prefix: &str| {
+            let runs = commands(prefix, ci_text);
+            assert!(!runs.is_empty(), "no `{prefix}` run in ci.yml");
+            assert!(
+                !ci_text
+                    .lines()
+                    .any(|l| l.contains(prefix) && l.trim_end().ends_with('\\')),
+                "a ci.yml `{prefix}` command continues onto the next line; the reference would be cut short"
+            );
+            let first = runs[0].clone();
+            assert!(
+                runs.iter().all(|r| *r == first),
+                "ci.yml runs `{prefix}` two different ways: {runs:?}"
+            );
+            first
+        };
+        let fmt = reference("cargo fmt");
+        let test = reference("cargo test");
+
+        let claude: String = include_str!("../CLAUDE.md")
+            .lines()
+            .filter(|l| !l.contains("cargo test <"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let files: [(&str, &str, bool); 7] = [
+            ("CLAUDE.md", &claude, true),
+            ("README.md", include_str!("../README.md"), true),
+            ("CONTRIBUTING.md", include_str!("../CONTRIBUTING.md"), true),
+            (
+                ".specify/memory/constitution.md",
+                include_str!("../.specify/memory/constitution.md"),
+                true,
+            ),
+            (
+                ".claude/commands/validate.md",
+                include_str!("../.claude/commands/validate.md"),
+                true,
+            ),
+            (
+                ".claude/agents/code-reviewer.md",
+                include_str!("../.claude/agents/code-reviewer.md"),
+                false,
+            ),
+            (
+                ".github/pull_request_template.md",
+                include_str!("../.github/pull_request_template.md"),
+                true,
+            ),
+        ];
+
+        let mut problems = Vec::new();
+        // The bool says whether the file must declare an fmt command. A file
+        // that need not (code-reviewer.md) is still checked if it gains one.
+        for (file, text, declares_fmt) in files {
+            for (prefix, expected, required) in [
+                ("cargo test", &test, true),
+                ("cargo fmt", &fmt, declares_fmt),
+            ] {
+                let found = commands(prefix, text);
+                if required && found.is_empty() {
+                    problems.push(format!("{file}: no `{prefix}` command found"));
+                }
+                for command in found.iter().filter(|c| *c != expected) {
+                    problems.push(format!("{file}: `{command}` (ci.yml: `{expected}`)"));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 }

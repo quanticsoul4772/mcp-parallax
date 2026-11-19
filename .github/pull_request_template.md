@@ -38,7 +38,7 @@ Related to #
 
 - [ ] Unit tests added/updated
 - [ ] Integration tests added/updated
-- [ ] All existing tests pass (`cargo test`)
+- [ ] All existing tests pass (`cargo test --all-features --tests`)
 - [ ] Coverage maintained/improved
 
 ### Manual Testing
@@ -53,7 +53,7 @@ Related to #
 
 <!-- Ensure all items are checked before requesting review -->
 
-- [ ] Code follows the project's style guidelines (`cargo fmt --check`)
+- [ ] Code follows the project's style guidelines (`cargo fmt --all -- --check`)
 - [ ] Linter passes without warnings (`cargo clippy --all-features --all-targets -- -D warnings`)
 - [ ] Documentation updated (README, CLAUDE.md, docs/, etc.)
 - [ ] No new unwrap()/expect() in production code

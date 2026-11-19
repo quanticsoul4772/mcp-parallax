@@ -225,6 +225,15 @@ arc.
 
 ### Fixed
 
+* **The documented fmt and test commands match CI** — the gate line in
+  `CLAUDE.md`, `CONTRIBUTING.md` and the constitution, `/validate`, the README,
+  the code-reviewer agent and the pull request template ran tests as plain
+  `cargo test` or `cargo test --all-features` instead of CI's
+  `cargo test --all-features --tests`, and CLAUDE.md and the template gave
+  `cargo fmt --check` for CI's `cargo fmt --all -- --check`. A test now requires
+  each to equal what `ci.yml` runs; the documented gate no longer runs doc tests
+  (there are none) or builds the example programs (clippy still checks them),
+  as in CI.
 * **The documented lint command matches CI everywhere** — `CONTRIBUTING.md`,
   the constitution, `/validate`, the code-reviewer agent and the pull request
   template ran clippy without `--all-targets` (the template also without

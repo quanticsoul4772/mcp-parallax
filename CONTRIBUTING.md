@@ -16,10 +16,11 @@
 Every commit must pass the same gate CI enforces:
 
 ```bash
-cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
+cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests
 ```
 
-`pre-commit install` mirrors it locally. Tests are required, written through
+`pre-commit install` adds hooks that format the code and run clippy and the
+markdown and file checks; they do not run the tests. Tests are required, written through
 the trait seams (`ModelClient`, `Storage`, `Embedder`, …) so the suite runs
 without network, keys, or disk. MSRV is pinned in `Cargo.toml` and verified
 by CI.
