@@ -21,7 +21,8 @@ sessions, so its security posture is part of its design:
 - **Secret-named files**: `grounded_verify` refuses files whose names mark them
   as likely secrets (`.env`, private keys, credential files, anything under
   `.ssh`). An exact path to one fails the call; a glob leaves them out and says
-  so. The server will not start with its root inside such a folder. This
+  so. With its root inside such a folder, or at a drive root or the home
+  folder, the server leaves `grounded_verify` out. This
   guards against accident and misdirection; it is not a boundary, and a secret
   in an ordinarily named file is still read.
 - **No `unsafe`**, no `unwrap`/`expect` on production paths

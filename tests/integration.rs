@@ -3002,6 +3002,25 @@ async fn with_a_source_root_grounded_verify_joins_the_catalog() {
     client.cancel().await.unwrap();
 }
 
+// A root that is too wide (a drive root) or inside a secret folder leaves
+// grounded_verify out of the catalog; the server still starts with every
+// other tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_root_leaves_out_only_grounded_verify() {
+    let secret = tempfile::tempdir().unwrap();
+    let in_ssh = secret.path().join(".ssh").join("proj");
+    std::fs::create_dir_all(&in_ssh).unwrap();
+    let drive = if cfg!(windows) { "C:\\" } else { "/" };
+    for root in [drive, in_ssh.to_str().unwrap()] {
+        let mock = MockServer::start().await;
+        let (client, _storage, _server) = serve_with_grounded(&mock, root).await;
+        let names = tool_names(&client).await;
+        assert!(!names.contains(&"grounded_verify".to_string()), "{root}");
+        assert!(names.contains(&"verify".to_string()), "{root}");
+        client.cancel().await.unwrap();
+    }
+}
+
 // US1/US2 + SC-001/SC-002 + FR-007/M2: the verbatim source reaches the pass
 // (the mock matches only on the file's contents being in the request body), the
 // verdict is returned faithfully, the manifest mirrors the locator, the

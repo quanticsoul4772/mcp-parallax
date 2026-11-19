@@ -283,6 +283,20 @@ pub enum ConfigError {
         /// The root, as a caller would type it.
         root: String,
     },
+
+    /// `GROUNDED_VERIFY_ROOT` resolves to a folder too wide to read from: a
+    /// drive root or the user's home folder. With the root set to `.`, that
+    /// happens when a session is started there.
+    #[error(
+        "GROUNDED_VERIFY_ROOT resolves to {what} ({root}): grounded_verify would read every \
+         file under it - start the session inside a project folder"
+    )]
+    WideRoot {
+        /// "a drive root" or "the home folder".
+        what: &'static str,
+        /// The root, as a caller would type it.
+        root: String,
+    },
 }
 
 #[cfg(test)]

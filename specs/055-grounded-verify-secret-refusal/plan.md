@@ -57,7 +57,7 @@ The work is six pieces, each test-first, each ending with the full gate:
 |---|---|
 | I. Design-Corpus Fidelity | The tool stays a Verify-family corrective. The departure from all-or-nothing is named in the specification, and FR-012 item 1 amends the design document in the same change, with a dated block, as 054 did. |
 | II. Constrained-Output Contract | Untouched: `GroundedPass`, its schema and the prompt do not change. The additions are to the server-assembled result. |
-| III. Compiler-Enforced Discipline | No unsafe, no `unwrap` in production paths. Refusals are loud errors. The glob exception is reported four ways, never hidden. A root inside a refused folder is a startup error. |
+| III. Compiler-Enforced Discipline | No unsafe, no `unwrap` in production paths. Refusals are loud errors. The glob exception is reported four ways, never hidden. A root inside a refused folder is a startup error. (Since 2026-11-18: `grounded_verify` is left out of the catalog instead; the server starts.) |
 | IV. Seams, Composition, and Tests | The reader seam changes shape and stays mockable. The rule tables are tested from themselves, against the contract page, and against a separately typed list. |
 | V. Deterministic Over Probabilistic | The refusal is a deterministic name check. The flag and notice are server-assembled; the model is not asked whether evidence was left out, and the confidence number keeps its meaning. |
 | VI. Capabilities Off By Default | No capability added. The tool stays gated on `GROUNDED_VERIFY_ROOT`. |
@@ -113,7 +113,7 @@ SECURITY.md, README.md, CLAUDE.md, CHANGELOG.md
 ### 2. Startup (`src/error.rs`, `src/grounded/reader.rs`)
 
 - A new `ConfigError` variant carries the refused folder name (for a two-folder rule, both names) and the root. One existing variant carries free text, but under a prefix about routing, which would be wrong here.
-- `SystemSourceReader::new` applies rules 4, 5 and 7 to the root's resolved path and returns that error. The server already fails to start when the reader cannot be built; the existing test that a missing root is a configuration error is unchanged.
+- `SystemSourceReader::new` applies rules 4, 5 and 7 to the root's resolved path and returns that error. The server already fails to start when the reader cannot be built (Since 2026-11-18: `grounded_verify` is left out of the catalog instead; the server starts.); the existing test that a missing root is a configuration error is unchanged.
 
 ### 3. The reader seam (`src/traits/source.rs`, `src/grounded/reader.rs`)
 

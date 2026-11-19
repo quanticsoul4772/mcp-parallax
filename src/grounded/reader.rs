@@ -36,7 +36,10 @@ impl SystemSourceReader {
     ///
     /// Returns [`AppError::Config`] (`GROUNDED_VERIFY_ROOT`) when the root does
     /// not exist or is not a directory — a startup misconfiguration, loud and
-    /// named.
+    /// named. Returns [`ConfigError::SecretRoot`] when the root is inside a
+    /// folder whose files are all refused (055), and [`ConfigError::WideRoot`]
+    /// when it is a drive root, the home folder or a folder containing it; for
+    /// those two the server leaves `grounded_verify` out of the catalog.
     pub fn new(root: &str, max_file_bytes: usize) -> Result<Self, AppError> {
         let canonical = std::fs::canonicalize(root)
             .map_err(|_| AppError::Config(ConfigError::Invalid("GROUNDED_VERIFY_ROOT")))?;
@@ -49,6 +52,14 @@ impl SystemSourceReader {
         if let Some(folder) = refused_folder(&parts) {
             return Err(AppError::Config(ConfigError::SecretRoot {
                 folder,
+                root: display_path(&canonical),
+            }));
+        }
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .and_then(|h| std::fs::canonicalize(h).ok());
+        if let Some(what) = wide_root(&canonical, home.as_deref()) {
+            return Err(AppError::Config(ConfigError::WideRoot {
+                what,
                 root: display_path(&canonical),
             }));
         }
@@ -255,6 +266,22 @@ impl SystemSourceReader {
             bytes,
         })
     }
+}
+
+/// Whether a canonical root is too wide to read from: a drive root (no parent
+/// folder), the home folder, or a folder containing it. A folder inside the
+/// home folder is fine.
+fn wide_root(canonical: &Path, home: Option<&Path>) -> Option<&'static str> {
+    if canonical.parent().is_none() {
+        return Some("a drive root");
+    }
+    if home.is_some_and(|h| h == canonical) {
+        return Some("the home folder");
+    }
+    if home.is_some_and(|h| h.starts_with(canonical)) {
+        return Some("a folder containing the home folder");
+    }
+    None
 }
 
 /// A canonical path as a caller would type it. Windows canonical paths carry
@@ -631,8 +658,62 @@ mod tests {
         assert!(matches!(err, AppError::Config(_)));
     }
 
-    /// A root whose every file would be refused (055 FR-003) stops the
-    /// server at startup, naming the folder and the root.
+    /// A root too wide to read from: a drive root, the home folder, or a
+    /// folder containing the home folder. A project folder inside home is
+    /// fine.
+    #[test]
+    fn a_drive_root_or_the_home_folder_is_too_wide_to_be_the_root() {
+        let parent = tempfile::tempdir().unwrap();
+        let home = parent.path().join("home");
+        fs::create_dir_all(home.join("proj")).unwrap();
+        let parent = fs::canonicalize(parent.path()).unwrap();
+        let home = fs::canonicalize(&home).unwrap();
+        let project = fs::canonicalize(home.join("proj")).unwrap();
+        assert_eq!(wide_root(&home, Some(&home)), Some("the home folder"));
+        assert_eq!(
+            wide_root(&parent, Some(&home)),
+            Some("a folder containing the home folder")
+        );
+        assert_eq!(wide_root(&project, Some(&home)), None);
+        assert_eq!(wide_root(&home, None), None);
+        let drive = fs::canonicalize(if cfg!(windows) { "C:\\" } else { "/" }).unwrap();
+        assert_eq!(wide_root(&drive, None), Some("a drive root"));
+    }
+
+    /// The real home folder, found the way the server finds it, is refused.
+    #[test]
+    fn the_real_home_folder_is_refused_at_startup() {
+        let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let home = std::env::var(var).unwrap_or_else(|_| String::from("<unset>"));
+        assert_ne!(
+            home, "<unset>",
+            "{var} is not set, so the home refusal cannot be checked"
+        );
+        let err = SystemSourceReader::new(&home, 262_144).unwrap_err();
+        assert!(
+            err.to_string().contains("resolves to the home folder"),
+            "{home}: {err}"
+        );
+    }
+
+    #[test]
+    fn a_drive_root_is_refused_at_startup_naming_why() {
+        let drive = if cfg!(windows) { "C:\\" } else { "/" };
+        let err = SystemSourceReader::new(drive, 262_144).unwrap_err();
+        assert!(matches!(err, AppError::Config(_)), "{err}");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "configuration error: GROUNDED_VERIFY_ROOT resolves to a drive root ({drive}): \
+                 grounded_verify would read every file under it - start the session inside a \
+                 project folder"
+            )
+        );
+    }
+
+    /// A root inside a folder whose every file would be refused (055 FR-003)
+    /// is a configuration error naming the folder and the root; the server
+    /// then leaves `grounded_verify` out of the catalog.
     #[test]
     fn a_root_in_a_secret_folder_is_a_config_error() {
         let base = tempfile::tempdir().unwrap();
