@@ -188,8 +188,12 @@ error reported can differ when a call has more than one fault.
 ## At startup
 
 If the root is, or is inside, a folder the `part` or `sequence` rules refuse,
-the server does not start:
+`grounded_verify` is left out of the catalog, with this reason logged; every
+other tool still starts:
 `configuration error: GROUNDED_VERIFY_ROOT is, or is inside, <name>, whose files are refused as likely secrets: <root>`
+
+The same happens when the root is a drive root or the home folder:
+`configuration error: GROUNDED_VERIFY_ROOT resolves to <a drive root | the home folder> (<root>): grounded_verify would read every file under it - start the session inside a project folder`
 
 ## What this does not protect against
 

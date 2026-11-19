@@ -154,8 +154,8 @@ substrings extending the gate's built-in risk patterns),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
 tool; the single root that locators resolve within (`.` means the folder the
 server was started in, so each session gets its own project folder), confined at startup,
-and refused at startup when it is inside a folder whose files are refused as
-secrets (055); absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
+and left out of the catalog, with the reason logged, when it is inside a
+secret folder (055) or is a drive root or the home folder; absent, the tool is not in the catalog), `GROUNDED_VERIFY_MAX_BYTES`
 (default `262144`), `GROUNDED_VERIFY_MAX_LOCATORS` (default `64`),
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
@@ -318,8 +318,8 @@ confidence number.
 **055 (`055-grounded-verify-secret-refusal`) followed, as a full Spec Kit run;
 all 47 tasks closed.** `grounded_verify` now refuses files whose names mark
 them as secrets: an exact path fails the call, a glob leaves them out and
-reports them in four new result fields, and the server will not start with its
-root inside a secret folder. A live check on the rebuilt server passed (one
+reports them in four new result fields, and a root inside a secret folder
+leaves grounded_verify out of the catalog. A live check on the rebuilt server passed (one
 refusal, one ordinary call). Deferred: the session-folder root, content-based
 detection, refusing hard links, and closing the check-to-open race.
 

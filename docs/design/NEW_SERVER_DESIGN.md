@@ -117,7 +117,8 @@ is the final list — the citations turn this from priors into something grounde
 > one fails the call before any file is read or any model is contacted. A glob
 > leaves such files out, lists them under `refused`, sets `evidence_reduced` and
 > adds a notice, and no claim is settled by arithmetic; `confidence` is not
-> changed. The server will not start with its root inside a secret folder. The
+> changed. With its root inside a secret folder, a drive root or the home
+> folder, `grounded_verify` is left out of the catalog. The
 > reason: the tool sends file text to the model, and a wide root had exposed
 > `.env` and key files. The glob leave-out is the one exception to 008's
 > all-or-nothing rule. This is a guard against accident and simple misdirection,
