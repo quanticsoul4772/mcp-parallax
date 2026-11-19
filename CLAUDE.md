@@ -351,8 +351,7 @@ just its coverage.
 
 **What is still hand-written, in rough order of risk:** 034's variable-presence
 scan carries a fixture-exclusion list; five files declare the gate command with
-nothing binding them; the toolchain version is written in `rust-toolchain.toml`
-and two workflows with nothing binding them.
+nothing binding them.
 <!-- SPECKIT END -->
 
 ## Working style

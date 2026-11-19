@@ -621,4 +621,66 @@ mod tests {
             "README.md restates the version; point it at CHANGELOG.md instead"
         );
     }
+
+    /// The pinned toolchain is written in `rust-toolchain.toml` and again in
+    /// every workflow job, and the MSRV job pins `Cargo.toml`'s
+    /// `rust-version`. Nothing else binds them. Every workflow file is read
+    /// at test time, so one added later is covered too.
+    #[test]
+    fn every_workflow_pins_the_toolchain_files_version() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let quoted = |text: &str, key: &str| -> Option<String> {
+            let line = text.lines().find(|l| l.trim_start().starts_with(key))?;
+            line.split('"').nth(1).map(str::to_string)
+        };
+        let channel = quoted(include_str!("../rust-toolchain.toml"), "channel")
+            .expect("rust-toolchain.toml has no quoted channel");
+        let msrv = quoted(include_str!("../Cargo.toml"), "rust-version")
+            .expect("Cargo.toml has no quoted rust-version");
+        let msrv_pin = format!("{msrv}.0");
+
+        let marker = "dtolnay/rust-toolchain@";
+        let mut pins = 0;
+        let mut msrv_pins = 0;
+        let mut files: Vec<_> = std::fs::read_dir(root.join(".github/workflows"))
+            .expect("no .github/workflows folder")
+            .map(|entry| entry.expect("unreadable workflow entry").path())
+            .collect();
+        files.sort();
+        for path in files {
+            let text = std::fs::read_to_string(&path).expect("unreadable workflow file");
+            let name = path.display();
+            let mut file_pins = 0;
+            for (n, line) in text.lines().enumerate() {
+                let Some(at) = line.find(marker) else {
+                    continue;
+                };
+                let pin = line[at + marker.len()..].trim();
+                file_pins += 1;
+                if pin == msrv_pin {
+                    msrv_pins += 1;
+                } else {
+                    assert_eq!(
+                        pin,
+                        channel,
+                        "{name}:{} pins {pin}, but rust-toolchain.toml says {channel}",
+                        n + 1
+                    );
+                }
+            }
+            assert!(
+                file_pins > 0 || !text.contains("cargo "),
+                "{name} runs cargo but pins no toolchain"
+            );
+            pins += file_pins;
+        }
+        assert!(
+            pins > 0,
+            "no toolchain pin found in any workflow; the search is wrong"
+        );
+        assert_eq!(
+            msrv_pins, 1,
+            "expected exactly one pin of the MSRV {msrv_pin} (Cargo.toml rust-version {msrv})"
+        );
+    }
 }
