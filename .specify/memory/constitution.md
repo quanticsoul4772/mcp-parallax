@@ -111,7 +111,7 @@ The full local gate MUST pass before every commit (mirrored by pre-commit
 hooks and the `/validate` command, enforced again in CI):
 
 ```bash
-cargo fmt --all -- --check && cargo clippy --all-features -- -D warnings && cargo test
+cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test
 ```
 
 - Clippy runs `all` + `pedantic` + `nursery`; warnings are denied in CI.

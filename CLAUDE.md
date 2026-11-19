@@ -350,8 +350,9 @@ asymmetry is the argument for attacking a checker's parsing assumptions, not
 just its coverage.
 
 **What is still hand-written, in rough order of risk:** 034's variable-presence
-scan carries a fixture-exclusion list; five files declare the gate command with
-nothing binding them.
+scan carries a fixture-exclusion list; the gate's fmt and test commands are
+declared in several files with nothing binding them (its clippy command is
+bound to `ci.yml` by `every_declared_clippy_command_matches_ci`).
 <!-- SPECKIT END -->
 
 ## Working style

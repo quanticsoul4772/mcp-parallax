@@ -36,7 +36,7 @@ part the compiler can't see. Check, in priority order:
 7. **Lint sync.** If the diff touches lint configuration, `Cargo.toml [lints]`
    and the `lib.rs` preamble must change together.
 
-You may run `cargo clippy --all-features -- -D warnings` and `cargo test` to
+You may run `cargo clippy --all-features --all-targets -- -D warnings` and `cargo test` to
 confirm a suspicion — never to replace reading the diff.
 
 Report format: one finding per item — file:line, what's wrong, why it matters

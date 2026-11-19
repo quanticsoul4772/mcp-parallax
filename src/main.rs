@@ -683,4 +683,148 @@ mod tests {
             "expected exactly one pin of the MSRV {msrv_pin} (Cargo.toml rust-version {msrv})"
         );
     }
+
+    /// Every `cargo clippy …` command in `text`, cut where the command ends
+    /// in prose, markdown or shell (`&&`, a backtick, a quote, ` #`).
+    fn clippy_commands(text: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for line in text.lines() {
+            let mut rest = line;
+            while let Some(at) = rest.find("cargo clippy") {
+                let tail = &rest[at..];
+                let end = ["&&", "`", "'", "\"", " #"]
+                    .iter()
+                    .filter_map(|stop| tail.find(stop))
+                    .min()
+                    .unwrap_or(tail.len());
+                found.push(tail[..end].trim().to_string());
+                rest = &tail[end..];
+            }
+        }
+        found
+    }
+
+    /// ci.yml's clippy commands. Its header comment tells people to run
+    /// `cargo +<ver> clippy …` to reproduce the gate; that is read as
+    /// `cargo clippy …` so it is held to the same command as the jobs.
+    fn ci_clippy_commands() -> Vec<String> {
+        let mut pinned = 0;
+        let ci_text = include_str!("../.github/workflows/ci.yml")
+            .lines()
+            .map(|line| {
+                if let Some(at) = line.find("cargo +") {
+                    let after = &line[at + "cargo +".len()..];
+                    if let Some(space) = after.find(' ') {
+                        if after[space + 1..].starts_with("clippy") {
+                            pinned += 1;
+                            return format!("{}cargo {}", &line[..at], &after[space + 1..]);
+                        }
+                    }
+                }
+                line.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            pinned > 0,
+            "ci.yml's `cargo +<ver> clippy` reproduce line was not found"
+        );
+        // A command continued onto the next line would leave only its first
+        // line as the reference, and every document would be compared to that.
+        assert!(
+            !ci_text
+                .lines()
+                .any(|l| l.contains("cargo clippy") && l.trim_end().ends_with('\\')),
+            "a ci.yml clippy command continues onto the next line; the reference would be cut short"
+        );
+        clippy_commands(&ci_text)
+    }
+
+    /// The lint gate is written in CI and again in every file that tells a
+    /// person or an agent how to run it. 044 widened CI to `--all-targets`;
+    /// five of those files kept the narrower command, so `/validate` could
+    /// pass while CI failed on a lint error in a test. CI is the reference.
+    #[test]
+    fn every_declared_clippy_command_matches_ci() {
+        let ci = ci_clippy_commands();
+        let reference = ci.first().expect("no `cargo clippy` run in ci.yml").clone();
+        assert!(
+            ci.iter().all(|c| *c == reference),
+            "ci.yml runs clippy two different ways: {ci:?}"
+        );
+
+        let alias = include_str!("../.cargo/config.toml")
+            .lines()
+            .find(|l| l.split('=').next().is_some_and(|key| key.trim() == "lint"))
+            .and_then(|l| l.split('"').nth(1))
+            .map(|v| vec![format!("cargo {v}")])
+            .unwrap_or_default();
+        // CLAUDE.md describes the alias as `cargo lint   # clippy …`.
+        let lint_line = clippy_commands(
+            &include_str!("../CLAUDE.md")
+                .lines()
+                .filter(|l| l.contains("cargo lint"))
+                .filter_map(|l| {
+                    l.find("# clippy")
+                        .map(|at| format!("cargo {}", &l[at + 2..]))
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let declared: [(&str, Vec<String>); 10] = [
+            ("CLAUDE.md", clippy_commands(include_str!("../CLAUDE.md"))),
+            ("CLAUDE.md (cargo lint line)", lint_line),
+            ("README.md", clippy_commands(include_str!("../README.md"))),
+            (
+                "CONTRIBUTING.md",
+                clippy_commands(include_str!("../CONTRIBUTING.md")),
+            ),
+            (
+                ".specify/memory/constitution.md",
+                clippy_commands(include_str!("../.specify/memory/constitution.md")),
+            ),
+            (
+                ".claude/commands/validate.md",
+                clippy_commands(include_str!("../.claude/commands/validate.md")),
+            ),
+            (
+                ".claude/agents/code-reviewer.md",
+                clippy_commands(include_str!("../.claude/agents/code-reviewer.md")),
+            ),
+            (
+                ".github/pull_request_template.md",
+                clippy_commands(include_str!("../.github/pull_request_template.md")),
+            ),
+            // Its `name:` key is a display label that also reads
+            // `cargo clippy`; only `entry:` is run.
+            (
+                ".pre-commit-config.yaml",
+                clippy_commands(
+                    &include_str!("../.pre-commit-config.yaml")
+                        .lines()
+                        .filter(|l| l.trim_start().starts_with("entry:"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+            ),
+            (".cargo/config.toml (lint alias)", alias),
+        ];
+
+        let mut problems = Vec::new();
+        for (file, commands) in &declared {
+            if commands.is_empty() {
+                problems.push(format!("{file}: no clippy command found"));
+            }
+            for command in commands {
+                if *command != reference {
+                    problems.push(format!("{file}: `{command}`"));
+                }
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "these differ from ci.yml's `{reference}`:\n{}",
+            problems.join("\n")
+        );
+    }
 }
