@@ -179,6 +179,7 @@ fn variant_name(error: &AppError) -> &'static str {
         AppError::RetriesExhausted { .. } => "RetriesExhausted",
         AppError::InvalidInput(_) => "InvalidInput",
         AppError::ValidationFailure(_) => "ValidationFailure",
+        AppError::ProviderRejected { .. } => "ProviderRejected",
         AppError::Cancelled => "Cancelled",
         AppError::EmbeddingProvider(_) => "EmbeddingProvider",
         AppError::SearchProvider(_) => "SearchProvider",

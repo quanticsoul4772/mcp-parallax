@@ -934,6 +934,30 @@ mod tests {
         );
     }
 
+    /// 057 FR-007: a provider rejection is exported under its own outcome.
+    #[test]
+    fn a_provider_rejection_exports_its_own_outcome() {
+        let (spans, _, guard) = test_handles();
+        let mut record = sample_invocation(Outcome::ProviderRejected);
+        record.tool = "provider_rejected_probe".into();
+        emit_invocation(&record);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| s.name == "parallax.provider_rejected_probe")
+            .expect("span exported");
+        assert_eq!(
+            attr(&span.attributes, "parallax.outcome").unwrap().as_str(),
+            "provider_rejected"
+        );
+        assert_eq!(
+            attr(&span.attributes, "error.type").unwrap().as_str(),
+            "provider_rejected"
+        );
+    }
+
     #[test]
     fn voyage_models_attribute_the_voyage_provider() {
         // No reset(): the exporter is process-global and shared across
