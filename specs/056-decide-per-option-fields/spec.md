@@ -67,7 +67,7 @@ A maintainer reading 013's design documents learns why per-option data moved fro
 
 ### Functional Requirements
 
-- **FR-001**: `decide` MUST request an output format, built for each call, that contains exactly one required score field and one required rationale field for each option, named by the option's position (option 1, 2, ... N).
+- **FR-001**: `decide` MUST send, for each call, the output format registered for its option count: one per count 2 to 10, all fixed at startup, each containing exactly one required score field and one required rationale field per option, named by position (option 1, 2, … N).
 - **FR-002**: The per-call output format MUST NOT contain list fields for scores or rationales.
 - **FR-003**: The per-call output format MUST pass the existing flat-schema gate (flat, closed, no nested objects, no arrays of objects) for every option count `decide` accepts.
 - **FR-004**: Scores MUST keep their 0–100 range check, and a score outside it MUST keep feeding the existing single retry with the violation.
@@ -93,7 +93,7 @@ A maintainer reading 013's design documents learns why per-option data moved fro
 
 ## Assumptions
 
-- The model provider accepts a different output format per request; formats are compiled once per distinct shape and cached, so only the first call for a given option count pays a compile delay.
+- The model provider accepts a different output format per request; formats are compiled once per distinct shape and cached, so only the first call for a given option count pays a compile delay. The nine formats (2 to 10 options) are built and checked at startup; none is generated per call.
 - Naming fields by position (not by option label) avoids problems with repeated or unusual labels.
 - The billing error recorded as a `decide` validation failure on 2026-11-17 is a separate defect (outcome classification) and is out of scope here.
 - Other modes are not affected; they do not use per-option parallel lists.
