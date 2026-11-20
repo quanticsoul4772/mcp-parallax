@@ -47,8 +47,8 @@
 
 ## Phase 5: User Story 3 — the published surfaces state it (P3)
 
-- [ ] T012 [P] [US3] Add a dated 2026-11-20 amendment to `specs/001-core-layer/data-model.md` §6 adding `provider_rejected` to the taxonomy, with the reason (exact text asked)
-- [ ] T013 [P] [US3] Add a CHANGELOG entry under `[Unreleased]` → Changed in `CHANGELOG.md` (exact text asked)
+- [X] T012 [P] [US3] Add a dated 2026-11-20 amendment to `specs/001-core-layer/data-model.md` §6 adding `provider_rejected` to the taxonomy, with the reason (exact text asked)
+- [X] T013 [P] [US3] Add a CHANGELOG entry under `[Unreleased]` → Changed in `CHANGELOG.md` (exact text asked)
 
 ## Phase 6: Polish & cross-cutting
 

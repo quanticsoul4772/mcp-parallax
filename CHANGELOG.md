@@ -163,6 +163,16 @@ arc.
 
 ### Changed
 
+* **Provider rejections are recorded as `provider_rejected` (057)** — a
+  model-provider HTTP 4xx other than 429 (out of credit, bad key, no access,
+  unknown model, rejected request) was recorded as `validation_failure`, the
+  outcome for malformed model output, so a billing error counted as a decide
+  validation failure. It now has its own outcome on both model backends, and
+  the error reads `provider rejected the request: HTTP <status>: <message>`.
+  The invocation-record and telemetry contracts list the new value, and a test
+  reads both files and compares them with the code; the test it replaces
+  compared literals and never opened the record contract.
+
 * **`decide` takes two to ten options (056)** — 11 or more is rejected with
   `invalid_input` before any model call, naming the count and the limit;
   before, there was no upper limit. The description and the `options` field
