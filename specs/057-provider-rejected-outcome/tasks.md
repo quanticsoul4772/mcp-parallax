@@ -20,7 +20,7 @@
 ## Phase 2: Foundational (blocks every story)
 
 - [ ] T002 In `src/error.rs` tests, replace `outcome_strings_match_the_record_contract` (literals only; never opens the contract) with a test that reads the `outcome.enum` array from `specs/001-core-layer/contracts/invocation-record.schema.json` and the backticked values in the `parallax.outcome` row of `specs/007-observability-layer/contracts/telemetry.md`, and asserts each equals the recorded outcomes (`Outcome::ALL` minus `config_error`); plus a test that `Outcome::parse(o.as_str()) == Some(o)` for every `o` in `ALL`. Add `Outcome::ALL` (today's values). This passes on today's code by design: it pins what exists, and T004 makes it fail
-- [ ] T003 Write a failing test in `src/error.rs` tests: `AppError::ProviderRejected { status: 400, detail }` has outcome `Outcome::ProviderRejected`, whose string is `provider_rejected`, and its Display contains `HTTP 400` and the detail (fails to compile until T004)
+- [ ] T003 Write a failing test in `src/error.rs` tests: `AppError::ProviderRejected { status: 400, detail }` has outcome `Outcome::ProviderRejected`, whose string is `provider_rejected`, and its Display contains `HTTP 400` and the detail (fails to compile until T004); and a test in `src/observability.rs` tests that a record with outcome `provider_rejected` exports `parallax.outcome` and `error.type` equal to `provider_rejected`
 - [ ] T004 Add `AppError::ProviderRejected { status: u16, detail: String }` (Display `provider rejected the request: HTTP {status}: {detail}`), `Outcome::ProviderRejected`, its `as_str`/`parse` string `provider_rejected`, and the `ALL` entry, in `src/error.rs`; T003 passes and T002 fails on both contracts
 - [ ] T005 Add `provider_rejected` to the outcome enum in `specs/001-core-layer/contracts/invocation-record.schema.json` and to the `parallax.outcome` list in `specs/007-observability-layer/contracts/telemetry.md` (exact text asked); T002 and T003 pass
 
@@ -30,7 +30,8 @@
 
 **Independent test**: against a `wiremock` double, each of the five rejections gives `ProviderRejected` with its status; an out-of-contract 200 still gives `Client` / `validation_failure`.
 
-- [ ] T006 [US1] Write failing tests in `src/client/anthropic.rs` tests: a credit-balance 400, a 401, a 403, a 404 and a rejected-request 400 each give `AppError::ProviderRejected` with that status, outcome `provider_rejected`, and the provider's message in the text; the effort-rejection hint still appears for an effort 400. Existing tests that assert `AppError::Client` for a 4xx change to `ProviderRejected` (each named when the task runs; that change is what lets them pass)
+- [ ] T006 [US1] Write failing tests in `src/client/anthropic.rs` tests: a credit-balance 400, a 401, a 403, a 404 and a rejected-request 400 each give `AppError::ProviderRejected` with that status, outcome `provider_rejected`, and the provider's message in the text; `err.billed()` is (0, 0); the effort-rejection hint still appears for an effort 400. Existing tests that assert `AppError::Client` for a 4xx change to `ProviderRejected` (each named when the task runs; that change is what lets them pass)
+- [ ] T006a [US1] Write a failing integration test in `tests/integration.rs`: with the Anthropic double returning HTTP 401, a tool call's surfaced error starts with `[provider_rejected]` and contains `HTTP 401`, and its one invocation record has outcome `provider_rejected`
 - [ ] T007 [US1] In `src/client/anthropic.rs`, build `ProviderRejected { status, detail + effort hint }` in the non-success branch after the 429/5xx retry check; T006 passes
 - [ ] T008 [US1] Run the client and error tests; out-of-contract 200, 429 and 5xx tests unchanged and passing
 
@@ -40,7 +41,7 @@
 
 **Independent test**: the same five rejections against its double give `ProviderRejected`; a strategy-rejecting 400 still moves to the next rung.
 
-- [ ] T009 [US2] Write failing tests in `src/client/openai_compat.rs` tests: the same five rejections each give `AppError::ProviderRejected` with that status and outcome `provider_rejected`; existing tests asserting `AppError::Client` for a terminal 4xx change (each named when the task runs); the ladder and out-of-contract 200 tests stay as they are
+- [ ] T009 [US2] Write failing tests in `src/client/openai_compat.rs` tests: the same five rejections each give `AppError::ProviderRejected` with that status and outcome `provider_rejected` and `err.billed()` is (0, 0); existing tests asserting `AppError::Client` for a terminal 4xx change (each named when the task runs); the ladder and out-of-contract 200 tests stay as they are
 - [ ] T010 [US2] In `src/client/openai_compat.rs`, build `ProviderRejected` in the terminal branch after the strategy-ladder check; T009 passes
 - [ ] T011 [US2] Run the client tests; ladder, 429 and 5xx tests unchanged and passing
 

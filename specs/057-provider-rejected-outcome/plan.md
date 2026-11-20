@@ -75,6 +75,7 @@ specs/057-provider-rejected-outcome/
 src/error.rs                     # ProviderRejected variant, Outcome::ProviderRejected, Outcome::ALL, parse/as_str, contract-binding test
 src/client/anthropic.rs          # non-success, non-429/5xx response → ProviderRejected (effort hint kept)
 src/client/openai_compat.rs      # terminal 4xx → ProviderRejected (ladder and 200-malformed unchanged)
+src/observability.rs             # no code change; a test that provider_rejected is exported as parallax.outcome and error.type
 specs/001-core-layer/contracts/invocation-record.schema.json   # outcome enum gains provider_rejected
 specs/007-observability-layer/contracts/telemetry.md           # parallax.outcome list gains provider_rejected
 specs/001-core-layer/data-model.md                             # dated amendment to §6
