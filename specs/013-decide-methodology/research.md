@@ -116,3 +116,17 @@ manifest):
 
 No `verdict` (not `verify`), no single `next_step` (not `unstick`). The output is a
 recommendation with its full scored rationale.
+
+## Amendment 2026-11-20 (056) — D1 reversed: one field per option
+
+D1's parallel arrays could not be held to the option count: the grammar does not
+constrain array length, and the model returned lists of the wrong length often enough to
+fail calls after a paid retry (056's spec records 28 such failures since June, e.g. "3
+options but 3 scores / 4 rationales"). decide now registers one output format per option
+count, 2 to 10, each naming a required `option_<i>_score` (integer) and
+`option_<i>_rationale` (string) per position beside `methodology` and
+`deciding_factors`. A wrong count can no longer be produced, so the arity check is gone.
+The flat-schema gate still holds: every format is scalar fields and arrays of scalars,
+checked by `assert_flat` at registration. The 0–100 range check, the single retry and
+D2–D6 are unchanged. Options are capped at 10. Detail:
+`specs/056-decide-per-option-fields/`.

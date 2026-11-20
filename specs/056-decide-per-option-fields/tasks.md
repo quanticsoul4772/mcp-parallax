@@ -57,8 +57,8 @@
 
 ## Phase 5: User Story 3 — the design record explains the change (P3)
 
-- [ ] T015 [P] [US3] Add a dated 2026-11-20 amendment to `specs/013-decide-methodology/research.md` (D1 reversed: per-option fields, the 28 arity failures, the flat gate still holds per count)
-- [ ] T016 [P] [US3] Add a dated 2026-11-20 amendment to `specs/013-decide-methodology/data-model.md` (the pass format per count; the 2–10 option range)
+- [X] T015 [P] [US3] Add a dated 2026-11-20 amendment to `specs/013-decide-methodology/research.md` (D1 reversed: per-option fields, the 28 arity failures, the flat gate still holds per count)
+- [X] T016 [P] [US3] Add a dated 2026-11-20 amendment to `specs/013-decide-methodology/data-model.md` (the pass format per count; the 2–10 option range)
 
 ## Phase 6: Polish & cross-cutting
 
