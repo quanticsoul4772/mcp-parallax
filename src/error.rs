@@ -8,6 +8,27 @@
 
 use thiserror::Error;
 
+/// Declares [`Outcome`] and its `ALL` list from one variant list, so a variant
+/// cannot exist without being in `ALL` — and therefore cannot escape the test
+/// that binds `ALL` to the published outcome lists (057).
+macro_rules! outcomes {
+    (
+        $(#[$meta:meta])*
+        pub enum $name:ident { $( $(#[$vmeta:meta])* $variant:ident, )+ }
+    ) => {
+        $(#[$meta])*
+        pub enum $name { $( $(#[$vmeta])* $variant, )+ }
+
+        impl $name {
+            /// Every outcome, in declaration order, generated with the enum.
+            /// The contract-binding test compares it (minus `ConfigError`,
+            /// which is never recorded) with the published lists.
+            pub const ALL: &'static [Self] = &[ $( Self::$variant, )+ ];
+        }
+    };
+}
+
+outcomes! {
 /// Outcome classification for one tool invocation.
 ///
 /// `ConfigError` is error-surface-only: it occurs at startup, before any
@@ -30,6 +51,10 @@ pub enum Outcome {
     /// out-of-contract provider response (unexpected `stop_reason`, unparseable
     /// body).
     ValidationFailure,
+    /// The model provider refused the request with an HTTP 4xx other than
+    /// 429 (billing, authentication, access, unknown model, rejected request;
+    /// 057).
+    ProviderRejected,
     /// The search provider failed (research capability).
     SearchProvider,
     /// The embedding provider failed (memory capability).
@@ -38,6 +63,7 @@ pub enum Outcome {
     ConfigError,
     /// The client abandoned the invocation before it completed.
     Cancelled,
+}
 }
 
 impl Outcome {
@@ -52,6 +78,7 @@ impl Outcome {
             "retries_exhausted" => Some(Self::RetriesExhausted),
             "invalid_input" => Some(Self::InvalidInput),
             "validation_failure" => Some(Self::ValidationFailure),
+            "provider_rejected" => Some(Self::ProviderRejected),
             "search_provider" => Some(Self::SearchProvider),
             "embedding_provider" => Some(Self::EmbeddingProvider),
             "config_error" => Some(Self::ConfigError),
@@ -71,6 +98,7 @@ impl Outcome {
             Self::RetriesExhausted => "retries_exhausted",
             Self::InvalidInput => "invalid_input",
             Self::ValidationFailure => "validation_failure",
+            Self::ProviderRejected => "provider_rejected",
             Self::SearchProvider => "search_provider",
             Self::EmbeddingProvider => "embedding_provider",
             Self::ConfigError => "config_error",
@@ -136,6 +164,16 @@ pub enum AppError {
     /// tried item), or verification refuting a save.
     #[error("validation failure: {0}")]
     ValidationFailure(String),
+
+    /// The model provider refused the request with an HTTP 4xx other than
+    /// 429; terminal, not retried, not billed (057).
+    #[error("provider rejected the request: HTTP {status}: {detail}")]
+    ProviderRejected {
+        /// The provider's HTTP status.
+        status: u16,
+        /// The provider's response body, plus any remedy hint.
+        detail: String,
+    },
 
     /// The client abandoned the invocation.
     #[error("invocation cancelled by the client")]
@@ -241,6 +279,7 @@ impl AppError {
             Self::Metered { source, .. } => source.outcome(),
             Self::Config(_) | Self::Storage(_) => Outcome::ConfigError,
             Self::Client(_) | Self::ValidationFailure(_) => Outcome::ValidationFailure,
+            Self::ProviderRejected { .. } => Outcome::ProviderRejected,
             Self::Refusal(_) => Outcome::Refusal,
             Self::Truncation(_) => Outcome::Truncation,
             Self::Timeout { .. } => Outcome::Timeout,
@@ -343,6 +382,13 @@ mod tests {
                 "search provider",
             ),
             (
+                AppError::ProviderRejected {
+                    status: 401,
+                    detail: "invalid x-api-key".into(),
+                },
+                "provider rejected",
+            ),
+            (
                 AppError::Config(ConfigError::MissingRequired("ANTHROPIC_API_KEY")),
                 "configuration error",
             ),
@@ -414,29 +460,104 @@ mod tests {
             AppError::Storage(String::new()).outcome(),
             Outcome::ConfigError
         );
+        assert_eq!(
+            AppError::ProviderRejected {
+                status: 403,
+                detail: String::new()
+            }
+            .outcome(),
+            Outcome::ProviderRejected
+        );
     }
 
+    /// 057: a provider HTTP rejection is its own outcome, and its message
+    /// keeps the status and the provider's text.
     #[test]
-    fn outcome_strings_match_the_record_contract() {
-        // Must stay in sync with specs/001-core-layer/contracts/invocation-record.schema.json
-        assert_eq!(Outcome::Success.as_str(), "success");
-        assert_eq!(Outcome::Refusal.as_str(), "refusal");
-        assert_eq!(Outcome::Truncation.as_str(), "truncation");
-        assert_eq!(Outcome::Timeout.as_str(), "timeout");
-        assert_eq!(Outcome::RetriesExhausted.as_str(), "retries_exhausted");
-        assert_eq!(Outcome::InvalidInput.as_str(), "invalid_input");
-        assert_eq!(Outcome::ValidationFailure.as_str(), "validation_failure");
-        assert_eq!(Outcome::ConfigError.as_str(), "config_error");
-        assert_eq!(Outcome::Cancelled.as_str(), "cancelled");
-        assert_eq!(Outcome::EmbeddingProvider.as_str(), "embedding_provider");
-        assert_eq!(
-            Outcome::parse("embedding_provider"),
-            Some(Outcome::EmbeddingProvider)
+    fn a_provider_rejection_is_its_own_outcome() {
+        let err = AppError::ProviderRejected {
+            status: 400,
+            detail: "credit balance too low".into(),
+        };
+        assert_eq!(err.outcome(), Outcome::ProviderRejected);
+        assert_eq!(Outcome::ProviderRejected.as_str(), "provider_rejected");
+        let text = err.to_string();
+        assert!(
+            text.contains("HTTP 400") && text.contains("credit balance too low"),
+            "{text}"
         );
-        assert_eq!(Outcome::SearchProvider.as_str(), "search_provider");
+    }
+
+    /// The outcomes that can appear on a record: all of them except
+    /// `config_error`, which occurs at startup before any invocation exists.
+    fn recorded_outcomes() -> std::collections::BTreeSet<String> {
+        Outcome::ALL
+            .iter()
+            .filter(|o| **o != Outcome::ConfigError)
+            .map(|o| o.as_str().to_string())
+            .collect()
+    }
+
+    /// 057: the published outcome lists are read from the files and compared
+    /// with the code. The test this replaces compared `as_str()` with
+    /// literals and only claimed, in a comment, to stay in sync with the
+    /// record schema — it never opened it, so the schema could drift unseen.
+    #[test]
+    fn the_published_outcome_lists_equal_the_recorded_outcomes() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!(
+            "../specs/001-core-layer/contracts/invocation-record.schema.json"
+        ))
+        .unwrap();
+        let record: std::collections::BTreeSet<String> = schema["properties"]["outcome"]["enum"]
+            .as_array()
+            .expect("the record schema has an outcome enum")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            !record.is_empty(),
+            "the record schema's outcome enum is empty"
+        );
+        assert_eq!(record, recorded_outcomes(), "invocation-record.schema.json");
+
+        let telemetry = include_str!("../specs/007-observability-layer/contracts/telemetry.md");
+        let rows: Vec<&str> = telemetry
+            .lines()
+            .filter(|l| l.trim_start().starts_with("| `parallax.outcome`"))
+            .collect();
+        assert_eq!(rows.len(), 1, "telemetry.md has one parallax.outcome row");
+        let exported: std::collections::BTreeSet<String> = rows[0]
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .skip(1) // the attribute name itself
+            .map(str::to_string)
+            .collect();
+        assert!(
+            !exported.is_empty(),
+            "the parallax.outcome row lists no values"
+        );
         assert_eq!(
-            Outcome::parse("search_provider"),
-            Some(Outcome::SearchProvider)
+            exported,
+            recorded_outcomes(),
+            "telemetry.md parallax.outcome"
+        );
+    }
+
+    /// Every outcome round-trips through its stable string. `ALL` is
+    /// generated with the enum (the `outcomes!` macro), so it holds every
+    /// variant by construction; this checks the strings, which are written
+    /// by hand in `as_str` and `parse`.
+    #[test]
+    fn every_outcome_round_trips_through_its_string() {
+        for o in Outcome::ALL {
+            assert_eq!(Outcome::parse(o.as_str()), Some(*o), "{o:?}");
+        }
+        let strings: std::collections::BTreeSet<&str> =
+            Outcome::ALL.iter().map(|o| o.as_str()).collect();
+        assert_eq!(
+            strings.len(),
+            Outcome::ALL.len(),
+            "two outcomes share a string"
         );
     }
 }

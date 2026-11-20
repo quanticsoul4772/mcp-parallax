@@ -292,12 +292,18 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `056-decide-per-option-fields`; all 21 tasks closed**
+**Active Spec Kit feature: `057-provider-rejected-outcome`; all 17 tasks closed**
+([plan](specs/057-provider-rejected-outcome/plan.md)) — a model-provider HTTP
+4xx other than 429 is recorded as `provider_rejected` instead of
+`validation_failure`, on both backends; the outcome list is declared with the
+enum and bound by test to the record and telemetry contracts. `main` is at
+**v0.5.0** (tagged 2026-07-27).
+
+**056 (`056-decide-per-option-fields`); all 21 tasks closed**
 ([plan](specs/056-decide-per-option-fields/plan.md)) — decide's per-option
 scores and rationales moved from parallel lists to one required field per
 option (`option_01_score` …), registered per option count, with options capped
-at 10; a live check on the rebuilt server passed at 2, 4 and 6 options. `main`
-is at **v0.5.0** (tagged 2026-07-27).
+at 10; a live check on the rebuilt server passed at 2, 4 and 6 options.
 
 The last full Spec Kit run before 054 was `040-unresolvable-default-fails` — complete, all
 34 tasks closed

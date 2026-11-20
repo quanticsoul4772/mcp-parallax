@@ -92,6 +92,18 @@ uses.
   `timeout`; retries exhausted → `retries_exhausted`; local schema validation
   failure → `validation_failure`.
 
+**Amendment 2026-11-20 (057) — `provider_rejected`.** A model-provider HTTP
+4xx response other than 429 now maps
+to `provider_rejected`; through the client error it had been
+`validation_failure`. It covers billing, authentication, access, unknown-model
+and rejected-request responses on both model backends, including a pinned
+structured-output strategy the provider refuses. `validation_failure` now
+means only a failed contract check on a response the provider returned. The
+recorded error text keeps the status and the provider's message. The record
+and telemetry contracts list the new value, and a test binds both lists to the
+code. (The class list above predates `search_provider` and
+`embedding_provider`; `src/error.rs` holds the full list.)
+
 ## 7. Config (extended)
 
 | Var | Default | New? |

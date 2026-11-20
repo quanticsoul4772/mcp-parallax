@@ -298,11 +298,19 @@ impl ModelClient for AnthropicClient {
                 continue;
             }
             if !status.is_success() {
+                // 057: the provider refused the request outright — its own
+                // outcome, not a contract failure on a response it returned.
                 let detail = response.text().await.unwrap_or_default();
-                return Err(AppError::Client(format!(
-                    "HTTP {status}: {detail}{}",
-                    self.effort_rejection_hint(status, &detail)
-                )));
+                let hint = self.effort_rejection_hint(status, &detail);
+                if !status.is_client_error() {
+                    // A 1xx/3xx reaching here is out of contract, not a
+                    // refusal (057 review).
+                    return Err(AppError::Client(format!("HTTP {status}: {detail}{hint}")));
+                }
+                return Err(AppError::ProviderRejected {
+                    status: status.as_u16(),
+                    detail: format!("{detail}{hint}"),
+                });
             }
 
             // reqwest's .timeout() covers the body read too — a timeout that
@@ -582,6 +590,11 @@ mod tests {
             ..client_for(&mock)
         };
         let err = client.complete("p", &json!({})).await.unwrap_err();
+        // 057: the rejection is a provider rejection, hint and all.
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 400, .. }),
+            "{err:?}"
+        );
         let message = err.to_string();
 
         // FR-001: both facts the provider's message omits.
@@ -880,11 +893,77 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
+        // 057: a provider rejection is its own class, not `Client`.
         match err {
-            AppError::Client(msg) => {
-                assert!(msg.contains("400") && msg.contains("bad schema"), "{msg}");
+            AppError::ProviderRejected { status, detail } => {
+                assert_eq!(status, 400);
+                assert!(detail.contains("bad schema"), "{detail}");
             }
-            other => panic!("expected Client, got {other}"),
+            other => panic!("expected ProviderRejected, got {other}"),
+        }
+    }
+
+    /// 057 review: only a 4xx is a provider rejection; an unexpected 3xx is
+    /// an out-of-contract response, as before.
+    #[tokio::test]
+    async fn a_redirect_status_is_not_a_provider_rejection() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(300).set_body_string("multiple choices"))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let err = client_for(&mock)
+            .complete("p", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        assert_eq!(err.outcome(), crate::error::Outcome::ValidationFailure);
+    }
+
+    /// 057 US1: each provider rejection is recorded as `provider_rejected`,
+    /// keeps its status and message, and is not billed.
+    #[tokio::test]
+    async fn provider_rejections_are_their_own_outcome() {
+        let cases: [(u16, &str); 5] = [
+            (
+                400,
+                "Your credit balance is too low to access the Anthropic API.",
+            ),
+            (401, "invalid x-api-key"),
+            (
+                403,
+                "Your API key does not have permission to use the specified resource.",
+            ),
+            (404, "model: claude-nonexistent"),
+            (400, "messages: at least one message is required"),
+        ];
+        for (code, message) in cases {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(code).set_body_string(message))
+                .expect(1)
+                .mount(&mock)
+                .await;
+            let err = client_for(&mock)
+                .complete("p", &json!({}))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err.root(), AppError::ProviderRejected { status, .. } if *status == code),
+                "{code}: {err:?}"
+            );
+            assert_eq!(
+                err.outcome(),
+                crate::error::Outcome::ProviderRejected,
+                "{code}"
+            );
+            let text = err.to_string();
+            assert!(
+                text.contains(&format!("HTTP {code}")) && text.contains(message),
+                "{text}"
+            );
+            assert_eq!(err.billed(), (0, 0), "{code}: a rejection is not billed");
         }
     }
 

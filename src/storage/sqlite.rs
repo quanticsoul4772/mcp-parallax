@@ -1087,17 +1087,15 @@ mod tests {
     #[tokio::test]
     async fn every_recordable_outcome_round_trips() {
         let storage = SqliteStorage::connect(":memory:").await.unwrap();
-        let outcomes = [
-            Outcome::Success,
-            Outcome::Refusal,
-            Outcome::Truncation,
-            Outcome::Timeout,
-            Outcome::RetriesExhausted,
-            Outcome::InvalidInput,
-            Outcome::ValidationFailure,
-            Outcome::Cancelled,
-        ];
-        for outcome in outcomes {
+        // 057 review: every recordable outcome, from the generated list — the
+        // hand-written one had fallen behind (no provider, search or
+        // embedding outcomes). `config_error` never reaches a record.
+        let outcomes: Vec<Outcome> = Outcome::ALL
+            .iter()
+            .copied()
+            .filter(|o| *o != Outcome::ConfigError)
+            .collect();
+        for outcome in outcomes.iter().copied() {
             storage.record_invocation(&sample(outcome)).await.unwrap();
         }
 
