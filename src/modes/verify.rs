@@ -104,6 +104,7 @@ const LENSES: &[Lens] = &[
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct VerifyParams {
     /// The claim to verify, stated neutrally.
+    #[schemars(length(min = 1))]
     pub claim: String,
     /// Optional supporting context the verifier may consult. This is the only
     /// extra information a verification pass receives.

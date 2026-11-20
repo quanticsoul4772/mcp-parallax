@@ -90,8 +90,8 @@ margin→confidence form are code constants. No new gate (FR-009).
 ## Amendment 2026-11-20 (056) — pass format per option count
 
 `DecidePass` above is superseded as the model-facing format. For N options (N from 2 to
-10) the pass carries `methodology`, `deciding_factors`, and required `option_1_score` …
-`option_N_score` (integer) and `option_1_rationale` … `option_N_rationale` (string); one
+10) the pass carries `methodology`, `deciding_factors`, and required `option_01_score` …
+`option_NN_score` (integer) and `option_01_rationale` … `option_NN_rationale` (string); one
 format per N is registered at startup, each flat + closed. `DecideParams.options` now
 takes 2 to 10 options; 11 or more is `invalid_input` before any model call.
 Well-formedness is the 0–100 range and non-empty `deciding_factors`; the length check is

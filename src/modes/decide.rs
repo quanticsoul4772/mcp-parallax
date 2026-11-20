@@ -59,11 +59,11 @@ const PROMPT_TEMPLATE: &str = "You are an external decision aid. Someone must ch
     2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses \
     — the terms the decision actually turns on. Non-empty.\n\
     3. Score every option from 0 to 100 on its overall standing under your methodology: \
-    `option_1_score` and `option_1_rationale` are for option 1 as listed, `option_2_score` and \
-    `option_2_rationale` for option 2, and so on for every option. A score is an integer in \
-    0–100.\n\
-    4. Each `option_<i>_rationale` is one self-contained sentence on why option i scored as it \
-    did, in the methodology's terms.\n\
+    `option_01_score` and `option_01_rationale` are for option 1 as listed, `option_02_score` \
+    and `option_02_rationale` for option 2, and so on for every option. A score is an integer \
+    in 0–100.\n\
+    4. Each `option_<NN>_rationale` is one self-contained sentence on why that option scored as \
+    it did, in the methodology's terms; NN is the option's number as two digits.\n\
     5. Do not state a verdict, and do not name a single winner — only assess and score. The \
     higher score is the better option.\n\
     \n\
@@ -98,9 +98,10 @@ pub struct DecideParams {
     #[serde(alias = "question")]
     pub decision: String,
     /// The candidate options — two to ten. Order is the index basis for the
-    /// per-option fields (`option_1_score` is for the first). May be omitted when
+    /// per-option fields (`option_01_score` is for the first). May be omitted when
     /// `options_text` is supplied.
     #[serde(default)]
+    #[schemars(length(max = 10))]
     pub options: Vec<String>,
     /// Options as a single newline-delimited string (one per line) — an alternative to the `options`
     /// array for clients that cannot reliably serialize a multi-element array argument. Used when
@@ -154,7 +155,7 @@ pub struct DecidePass {
 }
 
 /// The model-facing format for `n` options: methodology, deciding factors, and
-/// one required `option_<i>_score` (integer) and `option_<i>_rationale`
+/// one required `option_<NN>_score` (integer) and `option_<NN>_rationale`
 /// (string) per position. Flat + closed; registered for every accepted count.
 fn pass_schema(n: usize) -> Value {
     let mut properties = serde_json::Map::new();
@@ -176,8 +177,8 @@ fn pass_schema(n: usize) -> Value {
         }),
     );
     for i in 1..=n {
-        let score = format!("option_{i}_score");
-        let rationale = format!("option_{i}_rationale");
+        let score = format!("option_{i:02}_score");
+        let rationale = format!("option_{i:02}_rationale");
         properties.insert(
             score.clone(),
             json!({ "description": format!("Score for option {i} (0–100)."), "type": "integer" }),
@@ -200,26 +201,40 @@ fn pass_schema(n: usize) -> Value {
     })
 }
 
-/// Read a validated answer for `n` options into a [`DecidePass`].
-fn parse_pass(value: &Value, n: usize) -> Result<DecidePass, AppError> {
+/// Read the per-option fields of an answer for `n` options, in option order.
+///
+/// A missing or wrong-type field is returned as a violation message, not an
+/// error, so it can feed the single retry: on backends that do not enforce the
+/// format (the OpenAI-compatible JSON-object and prompt-only modes) the model
+/// can still leave one out (review finding 2).
+fn read_option_fields(value: &Value, n: usize) -> Result<(Vec<i64>, Vec<String>), String> {
+    let mut option_scores = Vec::with_capacity(n);
+    let mut option_rationales = Vec::with_capacity(n);
+    for i in 1..=n {
+        let score = value[format!("option_{i:02}_score")]
+            .as_i64()
+            .ok_or_else(|| format!("option_{i:02}_score is missing or not an integer"))?;
+        let rationale = value[format!("option_{i:02}_rationale")]
+            .as_str()
+            .ok_or_else(|| format!("option_{i:02}_rationale is missing or not a string"))?;
+        option_scores.push(score);
+        option_rationales.push(rationale.to_string());
+    }
+    Ok((option_scores, option_rationales))
+}
+
+/// Combine a validated answer's methodology and factors with its per-option
+/// fields into a [`DecidePass`].
+fn parse_pass(
+    value: &Value,
+    (option_scores, option_rationales): (Vec<i64>, Vec<String>),
+) -> Result<DecidePass, AppError> {
     let shape =
         |what: String| AppError::ValidationFailure(format!("decide assessment shape: {what}"));
     let methodology: Methodology = serde_json::from_value(value["methodology"].clone())
         .map_err(|e| shape(format!("methodology: {e}")))?;
     let deciding_factors: Vec<String> = serde_json::from_value(value["deciding_factors"].clone())
         .map_err(|e| shape(format!("deciding_factors: {e}")))?;
-    let mut option_scores = Vec::with_capacity(n);
-    let mut option_rationales = Vec::with_capacity(n);
-    for i in 1..=n {
-        let score = value[format!("option_{i}_score")]
-            .as_i64()
-            .ok_or_else(|| shape(format!("option_{i}_score is missing or not an integer")))?;
-        let rationale = value[format!("option_{i}_rationale")]
-            .as_str()
-            .ok_or_else(|| shape(format!("option_{i}_rationale is missing or not a string")))?;
-        option_scores.push(score);
-        option_rationales.push(rationale.to_string());
-    }
     Ok(DecidePass {
         methodology,
         option_scores,
@@ -401,8 +416,12 @@ async fn run_spent(
     let params = &owned;
     check_input(params, max_chars)?;
     let n = params.options.len();
+    // `check_input` already admitted `n`, so a missing format is a server
+    // wiring fault, never the caller's (review finding 4).
     let (output_schema, sanitized_schema) = mode.schemas_for(n).ok_or_else(|| {
-        AppError::InvalidInput(format!("decide has no output format for {n} options"))
+        AppError::ValidationFailure(format!(
+            "decide has no registered output format for {n} options (server wiring fault)"
+        ))
     })?;
 
     let (mut input_tokens, mut output_tokens) = (0_u64, 0_u64);
@@ -415,11 +434,20 @@ async fn run_spent(
         output_tokens += completion.output_tokens;
         *spent = (input_tokens, output_tokens);
 
-        // The constrained-output contract itself (schema/shape) is a hard error,
-        // not retried — only a well-formed-but-malformed assessment (the factors
-        // / score checks the grammar can't express) feeds the retry.
+        // A missing or wrong-type per-option field feeds the retry (review
+        // finding 2). Any other breach of the constrained-output contract is a
+        // hard error, not retried — beyond that, only a well-formed-but-
+        // malformed assessment (the factors / score checks the grammar can't
+        // express) feeds the retry.
+        let options = match read_option_fields(&completion.value, n) {
+            Ok(options) => options,
+            Err(v) => {
+                violation = Some(v);
+                continue;
+            }
+        };
         validate(output_schema, &completion.value)?;
-        let pass = parse_pass(&completion.value, n)?;
+        let pass = parse_pass(&completion.value, options)?;
 
         match assemble(params, pass) {
             Ok(result) => {
@@ -527,15 +555,15 @@ mod tests {
         rationales: &[&str],
         factors: &[&str],
     ) -> Value {
-        // 056: the per-field shape — `option_<i>_score` / `option_<i>_rationale`.
+        // 056: the per-field shape — `option_<NN>_score` / `option_<NN>_rationale`.
         let mut answer = serde_json::Map::new();
         answer.insert("methodology".into(), json!(methodology));
         answer.insert("deciding_factors".into(), json!(factors));
         for (i, score) in scores.iter().enumerate() {
-            answer.insert(format!("option_{}_score", i + 1), json!(score));
+            answer.insert(format!("option_{:02}_score", i + 1), json!(score));
         }
         for (i, rationale) in rationales.iter().enumerate() {
-            answer.insert(format!("option_{}_rationale", i + 1), json!(rationale));
+            answer.insert(format!("option_{:02}_rationale", i + 1), json!(rationale));
         }
         Value::Object(answer)
     }
@@ -580,7 +608,7 @@ mod tests {
         // 056: per-option fields, one format per count; the mode's default
         // schema is the two-option one.
         assert_eq!(
-            mode.sanitized_schema["properties"]["option_1_score"]["type"],
+            mode.sanitized_schema["properties"]["option_01_score"]["type"],
             json!("integer")
         );
         assert!(mode.sanitized_schema["properties"]
@@ -674,16 +702,16 @@ mod tests {
 
     // ---- 056: per-option fields ------------------------------------------
 
-    /// A per-field answer: methodology, factors, and `option_<i>_score` /
-    /// `option_<i>_rationale` for each position.
+    /// A per-field answer: methodology, factors, and `option_<NN>_score` /
+    /// `option_<NN>_rationale` for each position.
     fn per_field_answer(scores: &[i64], factors: &[&str]) -> Value {
         let mut answer = serde_json::Map::new();
         answer.insert("methodology".into(), json!("weigh"));
         answer.insert("deciding_factors".into(), json!(factors));
         for (i, score) in scores.iter().enumerate() {
-            answer.insert(format!("option_{}_score", i + 1), json!(score));
+            answer.insert(format!("option_{:02}_score", i + 1), json!(score));
             answer.insert(
-                format!("option_{}_rationale", i + 1),
+                format!("option_{:02}_rationale", i + 1),
                 json!(format!("rationale {}", i + 1)),
             );
         }
@@ -716,8 +744,8 @@ mod tests {
                 assert!(required.contains(&field), "{n}: {field} not required");
             }
             for i in 1..=n {
-                let score = format!("option_{i}_score");
-                let rationale = format!("option_{i}_rationale");
+                let score = format!("option_{i:02}_score");
+                let rationale = format!("option_{i:02}_rationale");
                 assert_eq!(properties[&score]["type"], json!("integer"), "{n}: {score}");
                 assert_eq!(
                     properties[&rationale]["type"],
@@ -731,6 +759,26 @@ mod tests {
             assert_eq!(properties.len(), 2 + 2 * n, "{n}: no other fields");
         }
         assert!(mode.schemas_for(1).is_none() && mode.schemas_for(11).is_none());
+    }
+
+    /// Review finding 1: the model writes fields in the order the format lists
+    /// them, so the option fields must run option 1, 2 … N in that order. With
+    /// unpadded names, alphabetical key order put `option_10_*` second at 10.
+    #[test]
+    fn option_fields_are_sent_in_option_order_for_every_count() {
+        let mode = test_mode();
+        for n in 2..=10 {
+            let (_, sanitized) = mode.schemas_for(n).unwrap();
+            let sent: Vec<usize> = sanitized["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .filter_map(|k| k.strip_prefix("option_"))
+                .map(|rest| rest.split('_').next().unwrap().parse().unwrap())
+                .collect();
+            let expected: Vec<usize> = (1..=n).flat_map(|i| [i, i]).collect();
+            assert_eq!(sent, expected, "{n} options: option fields out of order");
+        }
     }
 
     /// T004(b): a call sends the format registered for its option count.
@@ -890,6 +938,33 @@ mod tests {
             .unwrap();
     }
 
+    /// Review finding 4: a mode wired without per-count formats is a server
+    /// fault, not the caller's — it must not be recorded as `invalid_input`.
+    #[tokio::test]
+    async fn a_mode_without_count_formats_is_a_server_fault_not_invalid_input() {
+        let mut registry = ModeRegistry::new();
+        registry
+            .register(
+                DECIDE_ID,
+                DECIDE_DESCRIPTION,
+                PROMPT_TEMPLATE,
+                pass_schema(2),
+                1,
+            )
+            .unwrap();
+        let mode = registry.get(DECIDE_ID).unwrap().clone();
+        let mut none = MockModelClient::new();
+        none.expect_complete().times(0);
+        let err = run(&none, &mode, &params("d", &["x", "y"]), 50_000)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err.root(), AppError::ValidationFailure(_)),
+            "{err}"
+        );
+        assert!(err.to_string().contains("server wiring fault"), "{err}");
+    }
+
     #[tokio::test]
     async fn fewer_than_two_options_is_rejected_before_any_model_call() {
         let mode = test_mode();
@@ -912,15 +987,15 @@ mod tests {
         assert!(matches!(err, AppError::InvalidInput(_)));
     }
 
-    /// 056: the old arity case (more or fewer scores than options) can no
-    /// longer be expressed. Its nearest successor — an answer missing a
-    /// required per-option field — is a contract violation the validator
-    /// rejects outright, as for any other schema breach (no retry).
+    /// Review finding 2: where the backend does not enforce the format (the
+    /// OpenAI-compatible JSON-object and prompt-only modes), the model can
+    /// still leave a per-option field out. That gets the single retry, as the
+    /// old list-length slip did; missing twice is a failed pass.
     #[tokio::test]
-    async fn a_missing_per_option_field_is_rejected_by_the_validator() {
+    async fn a_missing_per_option_field_twice_is_a_failed_pass_after_the_retry() {
         let mode = test_mode();
-        // 2 options, but option 2's score and rationale are absent.
-        let mock = client_returning(assessment("weigh", &[80], &["a"], &["f"]));
+        // 2 options, but option 2's score and rationale are absent — twice.
+        let mock = client_returning_twice(assessment("weigh", &[80], &["a"], &["f"]));
         let err = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
             .await
             .unwrap_err();
@@ -928,9 +1003,39 @@ mod tests {
             matches!(err.root(), AppError::ValidationFailure(_)),
             "{err}"
         );
-        // 020: the call was billed; a malformed answer is not free.
+        // 020: both calls were billed; a malformed answer is not free.
         assert!(err.billed().0 > 0, "spend lost on the failure path");
-        assert!(!err.to_string().contains("arity"), "{err}");
+        assert!(err.to_string().contains("after the retry"), "{err}");
+        assert!(err.to_string().contains("option_02_score"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_per_option_field_then_a_good_answer_succeeds() {
+        let mode = test_mode();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut mock = MockModelClient::new();
+        mock.expect_complete().times(2).returning(move |prompt, _| {
+            let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let value = if n == 0 {
+                assessment("weigh", &[80], &["a"], &["f"])
+            } else {
+                assert!(
+                    prompt.contains("WAS REJECTED") && prompt.contains("option_02_score"),
+                    "retry must carry the violation: {prompt}"
+                );
+                assessment("weigh", &[80, 40], &["a", "b"], &["f"])
+            };
+            Ok(Completion {
+                value,
+                input_tokens: 10,
+                output_tokens: 5,
+            })
+        });
+        let out = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
+            .await
+            .unwrap();
+        assert_eq!(out.result.recommended, "x");
+        assert_eq!(out.input_tokens, 20);
     }
 
     #[tokio::test]
@@ -1127,9 +1232,9 @@ mod tests {
 
     /// The prompt as built for one fixed input, the same with the retry
     /// wording, and the schema the request carries, as they were before 054.
-    const PIN_PROMPT: &str = "You are an external decision aid. Someone must choose among the options below and is either stalling or about to pick on a gut feel. Assess the options explicitly and score them; you do not pick the winner — the server does, from your scores.\n\nRules:\n1. Choose the decision methodology that fits this decision's shape and report it in `methodology`: \"weigh\" (the decision turns on several named criteria), \"causal\" (it turns on what each option causes or prevents downstream), or \"probabilistic\" (it turns on uncertainty about which outcome obtains).\n2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses — the terms the decision actually turns on. Non-empty.\n3. Score every option from 0 to 100 on its overall standing under your methodology: `option_1_score` and `option_1_rationale` are for option 1 as listed, `option_2_score` and `option_2_rationale` for option 2, and so on for every option. A score is an integer in 0–100.\n4. Each `option_<i>_rationale` is one self-contained sentence on why option i scored as it did, in the methodology's terms.\n5. Do not state a verdict, and do not name a single winner — only assess and score. The higher score is the better option.\n\nDecision:\nWhich database?\n\nOptions (score in this order):\n1. Postgres\n2. SQLite\n\nContext provided with the decision (may be empty):\nSingle user, local.\n";
-    const PIN_PROMPT_RETRY: &str = "You are an external decision aid. Someone must choose among the options below and is either stalling or about to pick on a gut feel. Assess the options explicitly and score them; you do not pick the winner — the server does, from your scores.\n\nRules:\n1. Choose the decision methodology that fits this decision's shape and report it in `methodology`: \"weigh\" (the decision turns on several named criteria), \"causal\" (it turns on what each option causes or prevents downstream), or \"probabilistic\" (it turns on uncertainty about which outcome obtains).\n2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses — the terms the decision actually turns on. Non-empty.\n3. Score every option from 0 to 100 on its overall standing under your methodology: `option_1_score` and `option_1_rationale` are for option 1 as listed, `option_2_score` and `option_2_rationale` for option 2, and so on for every option. A score is an integer in 0–100.\n4. Each `option_<i>_rationale` is one self-contained sentence on why option i scored as it did, in the methodology's terms.\n5. Do not state a verdict, and do not name a single winner — only assess and score. The higher score is the better option.\n\nDecision:\nWhich database?\n\nOptions (score in this order):\n1. Postgres\n2. SQLite\n\nContext provided with the decision (may be empty):\nSingle user, local.\n\nYOUR PREVIOUS ASSESSMENT WAS REJECTED for this exact reason: score 180 is outside the 0-100 range — a malformed assessment is a failed pass. Produce a corrected assessment — every score an integer 0-100, and non-empty deciding_factors.";
-    const PIN_SCHEMA: &str = "{\"additionalProperties\":false,\"description\":\"What the single pass is grammar-constrained to produce: one named score and rationale field per option (056).\",\"properties\":{\"deciding_factors\":{\"description\":\"The factors/criteria/effects/likelihoods the methodology used.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"methodology\":{\"description\":\"The methodology the model applied.\",\"enum\":[\"weigh\",\"causal\",\"probabilistic\"],\"type\":\"string\"},\"option_1_rationale\":{\"description\":\"One sentence on why option 1 scored as it did.\",\"type\":\"string\"},\"option_1_score\":{\"description\":\"Score for option 1 (0–100).\",\"type\":\"integer\"},\"option_2_rationale\":{\"description\":\"One sentence on why option 2 scored as it did.\",\"type\":\"string\"},\"option_2_score\":{\"description\":\"Score for option 2 (0–100).\",\"type\":\"integer\"}},\"required\":[\"deciding_factors\",\"methodology\",\"option_1_rationale\",\"option_1_score\",\"option_2_rationale\",\"option_2_score\"],\"type\":\"object\"}";
+    const PIN_PROMPT: &str = "You are an external decision aid. Someone must choose among the options below and is either stalling or about to pick on a gut feel. Assess the options explicitly and score them; you do not pick the winner — the server does, from your scores.\n\nRules:\n1. Choose the decision methodology that fits this decision's shape and report it in `methodology`: \"weigh\" (the decision turns on several named criteria), \"causal\" (it turns on what each option causes or prevents downstream), or \"probabilistic\" (it turns on uncertainty about which outcome obtains).\n2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses — the terms the decision actually turns on. Non-empty.\n3. Score every option from 0 to 100 on its overall standing under your methodology: `option_01_score` and `option_01_rationale` are for option 1 as listed, `option_02_score` and `option_02_rationale` for option 2, and so on for every option. A score is an integer in 0–100.\n4. Each `option_<NN>_rationale` is one self-contained sentence on why that option scored as it did, in the methodology's terms; NN is the option's number as two digits.\n5. Do not state a verdict, and do not name a single winner — only assess and score. The higher score is the better option.\n\nDecision:\nWhich database?\n\nOptions (score in this order):\n1. Postgres\n2. SQLite\n\nContext provided with the decision (may be empty):\nSingle user, local.\n";
+    const PIN_PROMPT_RETRY: &str = "You are an external decision aid. Someone must choose among the options below and is either stalling or about to pick on a gut feel. Assess the options explicitly and score them; you do not pick the winner — the server does, from your scores.\n\nRules:\n1. Choose the decision methodology that fits this decision's shape and report it in `methodology`: \"weigh\" (the decision turns on several named criteria), \"causal\" (it turns on what each option causes or prevents downstream), or \"probabilistic\" (it turns on uncertainty about which outcome obtains).\n2. In `deciding_factors`, name the factors/criteria/effects/likelihoods your methodology uses — the terms the decision actually turns on. Non-empty.\n3. Score every option from 0 to 100 on its overall standing under your methodology: `option_01_score` and `option_01_rationale` are for option 1 as listed, `option_02_score` and `option_02_rationale` for option 2, and so on for every option. A score is an integer in 0–100.\n4. Each `option_<NN>_rationale` is one self-contained sentence on why that option scored as it did, in the methodology's terms; NN is the option's number as two digits.\n5. Do not state a verdict, and do not name a single winner — only assess and score. The higher score is the better option.\n\nDecision:\nWhich database?\n\nOptions (score in this order):\n1. Postgres\n2. SQLite\n\nContext provided with the decision (may be empty):\nSingle user, local.\n\nYOUR PREVIOUS ASSESSMENT WAS REJECTED for this exact reason: score 180 is outside the 0-100 range — a malformed assessment is a failed pass. Produce a corrected assessment — every score an integer 0-100, and non-empty deciding_factors.";
+    const PIN_SCHEMA: &str = "{\"additionalProperties\":false,\"description\":\"What the single pass is grammar-constrained to produce: one named score and rationale field per option (056).\",\"properties\":{\"deciding_factors\":{\"description\":\"The factors/criteria/effects/likelihoods the methodology used.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"methodology\":{\"description\":\"The methodology the model applied.\",\"enum\":[\"weigh\",\"causal\",\"probabilistic\"],\"type\":\"string\"},\"option_01_rationale\":{\"description\":\"One sentence on why option 1 scored as it did.\",\"type\":\"string\"},\"option_01_score\":{\"description\":\"Score for option 1 (0–100).\",\"type\":\"integer\"},\"option_02_rationale\":{\"description\":\"One sentence on why option 2 scored as it did.\",\"type\":\"string\"},\"option_02_score\":{\"description\":\"Score for option 2 (0–100).\",\"type\":\"integer\"}},\"required\":[\"deciding_factors\",\"methodology\",\"option_01_rationale\",\"option_01_score\",\"option_02_rationale\",\"option_02_score\"],\"type\":\"object\"}";
 
     /// 054 changes words callers read, never what the model is sent. Nothing
     /// pinned the prompt text before (the existing prompt test only counts

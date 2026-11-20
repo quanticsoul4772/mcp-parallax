@@ -9,17 +9,17 @@ N = 3, before sanitizing:
   "additionalProperties": false,
   "required": [
     "methodology", "deciding_factors",
-    "option_1_score", "option_1_rationale",
-    "option_2_score", "option_2_rationale",
+    "option_01_score", "option_01_rationale",
+    "option_02_score", "option_02_rationale",
     "option_3_score", "option_3_rationale"
   ],
   "properties": {
     "methodology": { "type": "string", "enum": ["weigh", "causal", "probabilistic"] },
     "deciding_factors": { "type": "array", "items": { "type": "string" } },
-    "option_1_score": { "type": "integer" },
-    "option_1_rationale": { "type": "string" },
-    "option_2_score": { "type": "integer" },
-    "option_2_rationale": { "type": "string" },
+    "option_01_score": { "type": "integer" },
+    "option_01_rationale": { "type": "string" },
+    "option_02_score": { "type": "integer" },
+    "option_02_rationale": { "type": "string" },
     "option_3_score": { "type": "integer" },
     "option_3_rationale": { "type": "string" }
   }

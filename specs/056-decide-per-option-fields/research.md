@@ -14,8 +14,8 @@
 
 ## D1 — Per-option fields, not parallel arrays
 
-- **Decision**: one required integer `option_<i>_score` and one required string
-  `option_<i>_rationale` per option position, `i` from 1.
+- **Decision**: one required integer `option_<NN>_score` and one required string
+  `option_<NN>_rationale` per option position, `NN` the position as two digits from 01.
 - **Rationale**: a required named field cannot be omitted or repeated, so the
   answer has exactly one score and one rationale per option or it does not
   parse. The grammar enforces required properties; it does not enforce array
@@ -46,8 +46,8 @@
 
 ## D4 — Prompt wording follows the fields
 
-- **Decision**: the prompt names the fields (`option_1_score`,
-  `option_1_rationale`, …) and keeps the rules otherwise; the retry clause drops
+- **Decision**: the prompt names the fields (`option_01_score`,
+  `option_01_rationale`, …) and keeps the rules otherwise; the retry clause drops
   "exactly one score and one rationale per option" (now structural) and keeps
   the score-range and deciding-factors parts.
 - **Rationale**: model-facing text must match the schema it sees.

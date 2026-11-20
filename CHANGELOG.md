@@ -241,9 +241,12 @@ arc.
   pass returned scores and rationales as two lists the output grammar could
   not hold to the number of options, and 28 calls since June failed with
   errors such as "3 options but 3 scores / 4 rationales", after a paid retry.
-  It now asks for one required `option_<i>_score` and `option_<i>_rationale`
+  It now asks for one required `option_<NN>_score` and `option_<NN>_rationale`
   field per option, from a format registered for each option count, so a
-  mismatch cannot be produced. Results, confidence and records are unchanged.
+  mismatch cannot be produced where the backend enforces the format; where it
+  does not (the OpenAI-compatible backend's JSON-object and prompt-only
+  modes), a missing field gets the one retry. Results, confidence and records
+  are unchanged.
 
 * **research no longer calls unestablished claims refuted** — its
   verification passes refute whatever the excerpts cannot establish, so a

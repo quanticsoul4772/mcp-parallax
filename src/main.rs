@@ -281,11 +281,14 @@ fn active_block_problems(
     let mut checked = 0;
     let mut problems = Vec::new();
     for paragraph in block.split("\n\n") {
-        let mut links = Vec::new();
-        let mut rest = paragraph;
-        while let Some(at) = rest.find("specs/") {
-            rest = &rest[at + "specs/".len()..];
-            let name: String = rest
+        // Each link with its byte offset in the paragraph, so a claim can be
+        // paired with the link nearest it (review of 056).
+        let mut links: Vec<(usize, String)> = Vec::new();
+        let mut from = 0;
+        while let Some(found) = paragraph[from..].find("specs/") {
+            let at = from + found;
+            from = at + "specs/".len();
+            let name: String = paragraph[from..]
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
                 .collect();
@@ -296,24 +299,27 @@ fn active_block_problems(
                     ));
                 }
                 checked += 1;
-                links.push(name);
+                links.push((at, name));
             }
         }
 
-        let mut rest = paragraph;
-        while let Some(marker) = rest.find("tasks closed") {
-            let count: String = rest[..marker]
+        let mut from = 0;
+        while let Some(found) = paragraph[from..].find("tasks closed") {
+            let marker = from + found;
+            from = marker + "tasks closed".len();
+            // Only the digits directly before the claim, past whitespace, are
+            // its count: "055 followed; all tasks closed" has no number.
+            let count: String = paragraph[..marker]
                 .chars()
                 .rev()
-                .skip_while(|c| !c.is_ascii_digit())
+                .skip_while(|c| c.is_whitespace())
                 .take_while(char::is_ascii_digit)
                 .collect();
-            rest = &rest[marker + "tasks closed".len()..];
             let Ok(claimed) = count.chars().rev().collect::<String>().parse::<usize>() else {
                 problems.push("a \"tasks closed\" claim has no number before it".to_string());
                 continue;
             };
-            let Some(name) = links.first() else {
+            let Some((_, name)) = links.iter().min_by_key(|(at, _)| at.abs_diff(marker)) else {
                 problems.push(format!(
                     "the claim \"{claimed} tasks closed\" has no specs/ link in its paragraph"
                 ));
@@ -613,6 +619,30 @@ mod tests {
         let (checked, problems) = super::active_block_problems(block, &exists, &tasks);
         assert_eq!(checked, 2);
         assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    /// Review of 056: a paragraph linking two features is checked against the
+    /// link nearest each claim, not the paragraph's first link.
+    #[test]
+    fn a_claim_is_checked_against_the_nearest_link_in_its_paragraph() {
+        let block = "040 shipped ([plan](specs/040-x/plan.md)); 055 followed, all 2 tasks \
+                     closed ([plan](specs/055-y/plan.md)).";
+        let tasks = |name: &str| match name {
+            "055-y" => "- [X] a\n- [X] b\n".to_string(),
+            _ => "- [X] a\n".to_string(),
+        };
+        let (_, problems) = super::active_block_problems(block, &|_| true, &tasks);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    /// Review of 056: only the digits directly before "tasks closed" (past
+    /// whitespace) are the count; "055 ... all tasks closed" has none.
+    #[test]
+    fn a_number_far_before_the_claim_is_not_its_count() {
+        let block = "055 followed; all tasks closed ([plan](specs/055-y/plan.md)).";
+        let (_, problems) = super::active_block_problems(block, &|_| true, &|_| String::new());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("no number"), "{problems:?}");
     }
 
     /// A claim with no specs/ link in its paragraph cannot be checked, and is

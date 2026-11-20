@@ -3711,15 +3711,15 @@ fn decide_call(decision: &str, options: Value) -> CallToolRequestParams {
 }
 
 fn decide_assessment(methodology: &str, scores: Value, rationales: Value, factors: Value) -> Value {
-    // 056: the per-field shape — `option_<i>_score` / `option_<i>_rationale`.
+    // 056: the per-field shape — `option_<NN>_score` / `option_<NN>_rationale`.
     let mut answer = serde_json::Map::new();
     answer.insert("methodology".into(), json!(methodology));
     answer.insert("deciding_factors".into(), factors);
     for (i, score) in scores.as_array().unwrap().iter().enumerate() {
-        answer.insert(format!("option_{}_score", i + 1), score.clone());
+        answer.insert(format!("option_{:02}_score", i + 1), score.clone());
     }
     for (i, rationale) in rationales.as_array().unwrap().iter().enumerate() {
-        answer.insert(format!("option_{}_rationale", i + 1), rationale.clone());
+        answer.insert(format!("option_{:02}_rationale", i + 1), rationale.clone());
     }
     Value::Object(answer)
 }

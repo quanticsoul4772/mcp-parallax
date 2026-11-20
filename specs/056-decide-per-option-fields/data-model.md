@@ -6,8 +6,8 @@
 |---|---|---|---|
 | `methodology` | enum `weigh` / `causal` / `probabilistic` | yes | unchanged |
 | `deciding_factors` | array of strings | yes | unchanged; non-empty checked after parsing |
-| `option_<i>_score` for i in 1..=N | integer | yes | 0–100 checked after parsing |
-| `option_<i>_rationale` for i in 1..=N | string | yes | one sentence |
+| `option_<NN>_score` for each option (NN: its number, two digits) | integer | yes | 0–100 checked after parsing |
+| `option_<NN>_rationale` for each option | string | yes | one sentence |
 
 Flat and closed (`additionalProperties: false`); no arrays of objects; checked by
 `assert_flat` at startup for every N.
@@ -15,7 +15,7 @@ Flat and closed (`additionalProperties: false`); no arrays of objects; checked b
 ## Option assessment (server-assembled, unchanged)
 
 `{ option, score, rationale }` for option position i, from `options[i-1]`,
-`option_<i>_score`, `option_<i>_rationale`, in input order.
+`option_<NN>_score`, `option_<NN>_rationale`, in input order.
 
 ## Decide result (caller-facing, unchanged)
 
