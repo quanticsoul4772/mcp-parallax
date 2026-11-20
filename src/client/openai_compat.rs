@@ -266,12 +266,14 @@ impl ModelClient for OpenAiCompatClient {
         // 429/5xx and transport errors retry with exponential backoff; a
         // timeout is terminal (it consumed the whole budget); other 4xx are
         // terminal unless they reject the strategy parameter itself.
-        let mut last_capability: Option<String> = None;
+        // A strategy rejection keeps its status, so a pinned rung that ends
+        // the ladder is reported as the provider rejection it was (057).
+        let mut last_capability: Option<(u16, String)> = None;
         for rung in ladder_for(self.structured) {
             let body = self.build_body(prompt, schema, rung);
             let attempts_max = self.max_retries.saturating_add(1);
             let mut last_error = String::new();
-            let mut capability: Option<String> = None;
+            let mut capability: Option<(u16, String)> = None;
             let mut terminal: Option<AppError> = None;
 
             for attempt in 1..=attempts_max {
@@ -307,10 +309,15 @@ impl ModelClient for OpenAiCompatClient {
                     // Prompt-only sends nothing to reject, so its 400s are
                     // always terminal.
                     if rung != Rung::PromptOnly && is_capability_rejection(status, &detail) {
-                        capability = Some(detail);
+                        capability = Some((status.as_u16(), detail));
                         break;
                     }
-                    terminal = Some(AppError::Client(format!("HTTP {status}: {detail}")));
+                    // 057: the provider refused the request outright — its
+                    // own outcome, not a contract failure on a response.
+                    terminal = Some(AppError::ProviderRejected {
+                        status: status.as_u16(),
+                        detail,
+                    });
                     break;
                 }
 
@@ -335,8 +342,8 @@ impl ModelClient for OpenAiCompatClient {
             if let Some(error) = terminal {
                 return Err(error);
             }
-            if let Some(detail) = capability {
-                last_capability = Some(detail);
+            if let Some(rejection) = capability {
+                last_capability = Some(rejection);
                 continue;
             }
             return Err(AppError::RetriesExhausted {
@@ -346,14 +353,26 @@ impl ModelClient for OpenAiCompatClient {
         }
 
         // Only reachable for a pinned rung: `auto` always ends on prompt-only,
-        // which cannot be capability-rejected. Fail loud either way.
-        Err(AppError::Client(format!(
-            "out-of-contract provider response: `{}` rejected the {} structured-output \
-             strategy as unsupported; last rejection: {}",
-            self.model,
-            self.structured.as_str(),
-            last_capability.as_deref().unwrap_or("none")
-        )))
+        // which cannot be capability-rejected. Fail loud either way: the
+        // provider's 4xx is a provider rejection (057); with no rejection
+        // recorded there is no status to report, so the old error stands.
+        match last_capability {
+            Some((status, message)) => Err(AppError::ProviderRejected {
+                status,
+                detail: format!(
+                    "`{}` rejected the {} structured-output strategy as unsupported; \
+                     last rejection: {message}",
+                    self.model,
+                    self.structured.as_str(),
+                ),
+            }),
+            None => Err(AppError::Client(format!(
+                "out-of-contract provider response: `{}` rejected the {} structured-output \
+                 strategy as unsupported; last rejection: none",
+                self.model,
+                self.structured.as_str(),
+            ))),
+        }
     }
 }
 
@@ -906,6 +925,12 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("test-model"), "{message}");
         assert!(message.contains("json_schema"), "{message}");
+        // 057: the provider refused the pinned strategy with a 4xx — a
+        // provider rejection, carrying the last rejection's status.
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 400, .. }),
+            "{err:?}"
+        );
     }
 
     /// §3.3: a 400 the ladder cannot explain is terminal. A wrong API key
@@ -924,8 +949,55 @@ mod tests {
             .complete("p", &json!({}))
             .await
             .unwrap_err();
-        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        // 057: a provider rejection is its own class, not `Client`.
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 401, .. }),
+            "{err:?}"
+        );
         assert!(err.to_string().contains("Incorrect API key"), "{err}");
+    }
+
+    /// 057 US2: each provider rejection is recorded as `provider_rejected`,
+    /// keeps its status and message, and is not billed — as on the Anthropic
+    /// backend.
+    #[tokio::test]
+    async fn provider_rejections_are_their_own_outcome() {
+        let cases: [(u16, &str); 5] = [
+            (
+                400,
+                "You exceeded your current quota, please check your plan and billing details.",
+            ),
+            (401, "Incorrect API key provided"),
+            (403, "You are not allowed to sample from this model"),
+            (404, "The model `test-model` does not exist"),
+            (400, "messages: at least one message is required"),
+        ];
+        for (code, message) in cases {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(code)
+                        .set_body_json(json!({ "error": { "message": message } })),
+                )
+                .expect(1)
+                .mount(&mock)
+                .await;
+            let err = client_for(&mock)
+                .complete("p", &json!({"type": "object"}))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err.root(), AppError::ProviderRejected { status, .. } if *status == code),
+                "{code}: {err:?}"
+            );
+            assert_eq!(err.outcome(), Outcome::ProviderRejected, "{code}");
+            let text = err.to_string();
+            assert!(
+                text.contains(&format!("HTTP {code}")) && text.contains(message),
+                "{text}"
+            );
+            assert_eq!(err.billed(), (0, 0), "{code}: a rejection is not billed");
+        }
     }
 
     /// An auth failure phrased as "unsupported" must NOT be a ladder signal:
@@ -992,7 +1064,11 @@ mod tests {
             .complete("p", &json!({"type": "object"}))
             .await
             .unwrap_err();
-        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        // 057: a terminal provider 4xx is a provider rejection.
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 400, .. }),
+            "{err:?}"
+        );
         let requests = mock.received_requests().await.unwrap();
         assert_eq!(requests.len(), 1, "terminal: no ladder retries");
     }

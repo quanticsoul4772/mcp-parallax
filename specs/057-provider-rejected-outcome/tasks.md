@@ -41,9 +41,9 @@
 
 **Independent test**: the same five rejections against its double give `ProviderRejected`; a strategy-rejecting 400 still moves to the next rung.
 
-- [ ] T009 [US2] Write failing tests in `src/client/openai_compat.rs` tests: the same five rejections each give `AppError::ProviderRejected` with that status and outcome `provider_rejected` and `err.billed()` is (0, 0); existing tests asserting `AppError::Client` for a terminal 4xx change (each named when the task runs); the ladder and out-of-contract 200 tests stay as they are
-- [ ] T010 [US2] In `src/client/openai_compat.rs`, build `ProviderRejected` in the terminal branch after the strategy-ladder check; T009 passes
-- [ ] T011 [US2] Run the client tests; ladder, 429 and 5xx tests unchanged and passing
+- [X] T009 [US2] Write failing tests in `src/client/openai_compat.rs` tests: the same five rejections each give `AppError::ProviderRejected` with that status and outcome `provider_rejected` and `err.billed()` is (0, 0); existing tests asserting `AppError::Client` for a terminal 4xx change (each named when the task runs); the ladder and out-of-contract 200 tests stay as they are; and `a_rejected_pinned_rung_fails_loud_naming_model_and_strategy` gets `ProviderRejected` with the last rejection's status
+- [X] T010 [US2] In `src/client/openai_compat.rs`, build `ProviderRejected` in the terminal branch after the strategy-ladder check; T009 passes
+- [X] T011 [US2] Run the client tests; ladder, 429 and 5xx tests unchanged and passing
 
 ## Phase 5: User Story 3 — the published surfaces state it (P3)
 
