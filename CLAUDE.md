@@ -320,7 +320,8 @@ measurement first: running more than one pass, and any change to the
 confidence number.
 
 **055 (`055-grounded-verify-secret-refusal`) followed, as a full Spec Kit run;
-all 47 tasks closed.** `grounded_verify` now refuses files whose names mark
+all 47 tasks closed** ([plan](specs/055-grounded-verify-secret-refusal/plan.md)).
+`grounded_verify` now refuses files whose names mark
 them as secrets: an exact path fails the call, a glob leaves them out and
 reports them in four new result fields, and a root inside a secret folder
 leaves grounded_verify out of the catalog. A live check on the rebuilt server passed (one

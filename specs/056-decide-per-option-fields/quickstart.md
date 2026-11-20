@@ -6,6 +6,12 @@
 cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests
 ```
 
+Baseline (T001, 2026-11-20, before any decide change): 677 passed + 1 ignored
+(lib), 30 passed (bin), 82 passed (integration). The bin count includes three
+new unit tests for the CLAUDE.md active-feature checker, which now checks each
+"N tasks closed" claim against the link in its own paragraph; it had paired
+040's claim with every link and failed once 056's tasks.md existed.
+
 Tests to look for:
 
 - every count 2..=10 has a registered format that passes `assert_flat`, with
