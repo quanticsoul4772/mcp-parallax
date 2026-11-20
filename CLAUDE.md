@@ -292,10 +292,12 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `057-provider-rejected-outcome`**
-([plan](specs/057-provider-rejected-outcome/plan.md)) — provider HTTP
-rejections get their own recorded outcome, `provider_rejected`, instead of
-`validation_failure`. `main` is at **v0.5.0** (tagged 2026-07-27).
+**Active Spec Kit feature: `057-provider-rejected-outcome`; all 17 tasks closed**
+([plan](specs/057-provider-rejected-outcome/plan.md)) — a model-provider HTTP
+4xx other than 429 is recorded as `provider_rejected` instead of
+`validation_failure`, on both backends; the outcome list is declared with the
+enum and bound by test to the record and telemetry contracts. `main` is at
+**v0.5.0** (tagged 2026-07-27).
 
 **056 (`056-decide-per-option-fields`); all 21 tasks closed**
 ([plan](specs/056-decide-per-option-fields/plan.md)) — decide's per-option
