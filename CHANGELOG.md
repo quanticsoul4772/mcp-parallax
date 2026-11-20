@@ -163,6 +163,13 @@ arc.
 
 ### Changed
 
+* **verify's description asks for evidence on recent facts** — its passes
+  judge only from the claim, the context and the model's own training
+  knowledge. Measured 2026-11-19: with no context, verify refuted two true
+  facts newer than that training at confidence 1, at both medium and high
+  effort. The description now tells callers to pass the evidence as context.
+  Evidence: `claudedocs/experiments/verify-recent-facts`.
+
 * **A secret-folder `grounded_verify` root no longer stops the server** —
   it leaves `grounded_verify` out of the catalog with the reason logged, and
   every other tool starts. Before, the whole server refused to start.

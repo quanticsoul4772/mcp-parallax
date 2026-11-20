@@ -455,7 +455,11 @@ impl Parallax {
         that see only the claim and optional context - never the requester's stance or \
         conversation. Returns a structured verdict: supported or refuted, specific concrete \
         findings (every refutation names the exact error), and a confidence score derived from \
-        cross-pass agreement. Use when an assertion matters and being confidently wrong is costly."
+        cross-pass agreement. Passes judge from the claim, the context and the model's own \
+        training knowledge only, so for anything newer than that training (recent releases, \
+        versions, current status) pass the evidence as context; without it a true recent fact \
+        can be refuted with high confidence. Claim and context together are limited by \
+        INPUT_MAX_CHARS. Use when an assertion matters and being confidently wrong is costly."
     )]
     pub async fn verify(
         &self,

@@ -20,8 +20,11 @@ pub const VERIFY_DESCRIPTION: &str = "Independently verify a claim. Runs multipl
     verification passes that see only the claim and optional context - never the requester's \
     stance or conversation. Returns a structured verdict: supported or refuted, specific \
     concrete findings (every refutation names the exact error), and a confidence score derived \
-    from cross-pass agreement. Use when an assertion matters and being confidently wrong is \
-    costly.";
+    from cross-pass agreement. Passes judge from the claim, the context and the model's own \
+    training knowledge only, so for anything newer than that training (recent releases, \
+    versions, current status) pass the evidence as context; without it a true recent fact can \
+    be refuted with high confidence. Claim and context together are limited by INPUT_MAX_CHARS. \
+    Use when an assertion matters and being confidently wrong is costly.";
 
 /// The calibrated verifier profile (design §5): every refutation must name a
 /// specific concrete error, and the claim is steelmanned before judgment.
@@ -603,6 +606,19 @@ mod tests {
 
         // Description stays in sync with the routing text.
         assert_eq!(contract["description"], VERIFY_DESCRIPTION);
+    }
+
+    /// Measured 2026-11-19: with no context, verify refuted two true facts
+    /// newer than the model's training at confidence 1, at both effort
+    /// levels. Callers read the description, so it says so where they look.
+    #[test]
+    fn the_description_asks_for_evidence_as_context_on_recent_facts() {
+        let passage = "Passes judge from the claim, the context and the model's own training \
+                       knowledge only, so for anything newer than that training (recent \
+                       releases, versions, current status) pass the evidence as context; \
+                       without it a true recent fact can be refuted with high confidence. \
+                       Claim and context together are limited by INPUT_MAX_CHARS.";
+        assert_eq!(VERIFY_DESCRIPTION.matches(passage).count(), 1);
     }
 
     #[test]
