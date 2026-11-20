@@ -3781,6 +3781,32 @@ async fn decide_returns_margin_derived_recommendation_and_one_record() {
     client.cancel().await.unwrap();
 }
 
+// 057 US1: a provider rejection reaches the caller and the record under its
+// own outcome, not `validation_failure`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_provider_rejection_surfaces_as_provider_rejected_with_one_record() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("invalid x-api-key"))
+        .mount(&mock)
+        .await;
+    let (client, storage, _server) = serve(&mock, 2_000).await;
+
+    let err = client
+        .call_tool(decide_call("pick", json!(["a", "b"])))
+        .await
+        .unwrap_err();
+    let text = err.to_string();
+    assert!(text.contains("[provider_rejected]"), "{text}");
+    assert!(text.contains("HTTP 401"), "{text}");
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::ProviderRejected);
+    client.cancel().await.unwrap();
+}
+
 // 013 SC-005 / FR-008: fewer than two options is rejected, no model call.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn decide_rejects_fewer_than_two_options() {

@@ -30,10 +30,10 @@
 
 **Independent test**: against a `wiremock` double, each of the five rejections gives `ProviderRejected` with its status; an out-of-contract 200 still gives `Client` / `validation_failure`.
 
-- [ ] T006 [US1] Write failing tests in `src/client/anthropic.rs` tests: a credit-balance 400, a 401, a 403, a 404 and a rejected-request 400 each give `AppError::ProviderRejected` with that status, outcome `provider_rejected`, and the provider's message in the text; `err.billed()` is (0, 0); the effort-rejection hint still appears for an effort 400. Existing tests that assert `AppError::Client` for a 4xx change to `ProviderRejected` (each named when the task runs; that change is what lets them pass)
-- [ ] T006a [US1] Write a failing integration test in `tests/integration.rs`: with the Anthropic double returning HTTP 401, a tool call's surfaced error starts with `[provider_rejected]` and contains `HTTP 401`, and its one invocation record has outcome `provider_rejected`
-- [ ] T007 [US1] In `src/client/anthropic.rs`, build `ProviderRejected { status, detail + effort hint }` in the non-success branch after the 429/5xx retry check; T006 passes
-- [ ] T008 [US1] Run the client and error tests; out-of-contract 200, 429 and 5xx tests unchanged and passing
+- [X] T006 [US1] Write failing tests in `src/client/anthropic.rs` tests: a credit-balance 400, a 401, a 403, a 404 and a rejected-request 400 each give `AppError::ProviderRejected` with that status, outcome `provider_rejected`, and the provider's message in the text; `err.billed()` is (0, 0); the effort-rejection hint still appears for an effort 400. Existing tests that assert `AppError::Client` for a 4xx change to `ProviderRejected` (each named when the task runs; that change is what lets them pass)
+- [X] T006a [US1] Write a failing integration test in `tests/integration.rs`: with the Anthropic double returning HTTP 401, a tool call's surfaced error starts with `[provider_rejected]` and contains `HTTP 401`, and its one invocation record has outcome `provider_rejected`
+- [X] T007 [US1] In `src/client/anthropic.rs`, build `ProviderRejected { status, detail + effort hint }` in the non-success branch after the 429/5xx retry check; T006 passes
+- [X] T008 [US1] Run the client and error tests; out-of-contract 200, 429 and 5xx tests unchanged and passing
 
 ## Phase 4: User Story 2 — both backends agree (P2)
 
