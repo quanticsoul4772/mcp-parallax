@@ -28,12 +28,12 @@
 
 **Independent test**: with a mocked client, every count 2..=10 sends a format with exactly those fields and no score or rationale arrays, and a well-formed answer yields one assessment per option in input order.
 
-- [ ] T004 [US1] Write failing tests in `src/modes/decide.rs` tests: (a) for each count 2..=10 the registered format has required `option_<i>_score` (integer) and `option_<i>_rationale` (string) for i in 1..=N, `methodology`, `deciding_factors`, and no `option_scores`/`option_rationales`; (b) a call with N options sends the format for N (asserted through `MockModelClient`'s received schema), and one call through the OpenAI-compatible client's test double sends that same per-count format; (c) a well-formed per-field answer yields N assessments in input order
-- [ ] T005 [US1] Write a failing test in `src/modes/decide.rs` tests: 11 options is rejected with `InvalidInput` naming the count and the limit 10 before any model call; exactly 10 is accepted
-- [ ] T006 [US1] Implement the per-count pass schema builder and register decide's formats for counts 2..=10 via the T003 method in `src/modes/decide.rs`; replace `DecidePass`'s arrays with position-keyed parsing from the completion value
-- [ ] T007 [US1] Implement the 10-option cap in `check_input` in `src/modes/decide.rs` (`DECIDE_OPTIONS_MAX = 10`)
-- [ ] T008 [US1] Update `PROMPT_TEMPLATE` rules 3–4 and the violation clause in `src/modes/decide.rs` to name `option_<i>_score` / `option_<i>_rationale` and drop the now-structural "exactly one score and one rationale per option"; update the pinned-schema test (`PIN_SCHEMA`) to the new per-count format
-- [ ] T009 [US1] Remove the arity check and its message from `assemble` in `src/modes/decide.rs`, and change these existing tests (each change asked when the task runs, saying it is what lets them pass):
+- [X] T004 [US1] Write failing tests in `src/modes/decide.rs` tests: (a) for each count 2..=10 the registered format has required `option_<i>_score` (integer) and `option_<i>_rationale` (string) for i in 1..=N, `methodology`, `deciding_factors`, and no `option_scores`/`option_rationales`; (b) a call with N options sends the format for N (asserted through `MockModelClient`'s received schema), and one call through the OpenAI-compatible client's test double sends that same per-count format; (c) a well-formed per-field answer yields N assessments in input order
+- [X] T005 [US1] Write a failing test in `src/modes/decide.rs` tests: 11 options is rejected with `InvalidInput` naming the count and the limit 10 before any model call; exactly 10 is accepted
+- [X] T006 [US1] Implement the per-count pass schema builder and register decide's formats for counts 2..=10 via the T003 method in `src/modes/decide.rs`; replace `DecidePass`'s arrays with position-keyed parsing from the completion value
+- [X] T007 [US1] Implement the 10-option cap in `check_input` in `src/modes/decide.rs` (`DECIDE_OPTIONS_MAX = 10`)
+- [X] T008 [US1] Update `PROMPT_TEMPLATE` rules 3–4 and the violation clause in `src/modes/decide.rs` to name `option_<i>_score` / `option_<i>_rationale` and drop the now-structural "exactly one score and one rationale per option"; update the pinned-schema test (`PIN_SCHEMA`) to the new per-count format
+- [X] T009 [US1] Remove the arity check and its message from `assemble` in `src/modes/decide.rs`, and change these existing tests (each change asked when the task runs, saying it is what lets them pass):
   - `assessment()` helper: rewritten to build the per-field answer; every test that calls it follows unchanged in meaning
   - `arity_mismatch_after_retry_is_a_failed_pass`: rewritten as "a missing per-option field is rejected by the schema validator" (the arity case can no longer be expressed)
   - `a_malformed_assessment_triggers_one_retry_then_succeeds`: rewritten to use an out-of-range score as the malformed first answer instead of an arity mismatch
@@ -41,7 +41,7 @@
   - the pinned retry-prompt test (`PIN_PROMPT_RETRY` and its arity violation string): rewritten with a score violation and the new prompt wording
   - `mode_registers_flat_closed_with_single_pass`: rewritten to check the per-count formats instead of `option_scores` items
   - `margin_to_confidence_map`: rewritten to build the new pass shape instead of `option_scores`/`option_rationales`
-- [ ] T010 [US1] Run the decide tests and the full gate; T004 and T005 pass
+- [X] T010 [US1] Run the decide tests and the full gate; T004 and T005 pass
 
 ## Phase 4: User Story 2 — callers see no change (P2)
 

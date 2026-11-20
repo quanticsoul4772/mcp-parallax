@@ -137,7 +137,7 @@ pub async fn synthesize_grounded(
         // "the 1-based number of the sub-question", and a bulleted list makes
         // it count unlabelled lines to produce an index that determines a
         // published figure. `decide` numbers its options for the same reason
-        // (`decide.rs`, `option_scores` alignment). A wrong-but-in-range key
+        // (`decide.rs`: `option_1_score` is for option 1 as listed, 056). A wrong-but-in-range key
         // is the one failure here that nothing downstream can catch — it
         // passes the arity check and the range discard, and silently reports
         // the wrong sub-question as unsettled.
