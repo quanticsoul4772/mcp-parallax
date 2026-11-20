@@ -422,7 +422,8 @@ async fn run_metered_at(
             "No verifiable findings could be established from the web for this question."
                 .to_string()
         } else {
-            "Verification refuted the available claims for this question; nothing is asserted."
+            "The sources did not establish any of the claims checked for this question; nothing \
+             is asserted."
                 .to_string()
         };
         // Every sub-question is listed as a gap and keyed to itself: nothing

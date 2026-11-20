@@ -1,7 +1,7 @@
 {
   "$comment": "MCP tool contract for `research`. MCP-side only (no model hop for this shape - 003 D6 precedent). key_findings/disagreements/sources/stats are server-assembled; the model writes the answer prose, the gaps, and the sub-question each gap concerns (021 gap_targets). Every published number is computed by the server from that input - the model never emits a confidence, coverage, or rate directly. Every key finding cites at least one source; every cited id resolves in sources; the grounding gate enforces this before return.",
   "name": "research",
-  "description": "Offload a research question; get back a short, cited, adversarially-verified answer - not a pile of links. Runs scoped parallel searches, fetches and extracts sources, verifies every claim with independent refute-biased passes, and synthesizes a compact answer with inline citations, surfaced disagreements, and honest gaps. Depth scales rigor; budget and deadline ceilings synthesize early and say so. Every citation resolves to a source fetched during the run.",
+  "description": "Offload a research question; get back a short, cited, adversarially-verified answer - not a pile of links. Runs scoped parallel searches, fetches and extracts sources, verifies every claim with independent refute-biased passes, leaving out claims every verifier found the sources did not establish (which is not a finding that they are false), and surfacing split verdicts as contested, and synthesizes a compact answer with inline citations, surfaced disagreements, and honest gaps. Depth scales rigor; budget and deadline ceilings synthesize early and say so. Every citation resolves to a source fetched during the run.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -120,7 +120,7 @@
         "type": "number",
         "minimum": 0,
         "maximum": 1,
-        "description": "Proportion of verified claims that verification refuted. Reported beside confidence rather than folded into it, so a run whose evidence largely fell apart is distinguishable from one whose evidence held. 0 when no claim was verified. (021)"
+        "description": "Proportion of verified claims that verification refuted. Refuted here means the excerpts did not establish the claim, not that it was shown false. Reported beside confidence rather than folded into it, so a run whose evidence largely failed to establish its claims is distinguishable from one whose evidence held. 0 when no claim was verified. (021)"
       },
       "coverage": {
         "type": "number",

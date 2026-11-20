@@ -357,6 +357,33 @@ async fn single_fetch_failure_degrades_and_counts_never_fails_the_run() {
     assert_eq!(result.key_findings.len(), 1);
 }
 
+/// When every claim is refuted, synthesis is skipped and the server writes the
+/// answer itself. A refuted claim is one the excerpts did not establish, not
+/// one shown false (2026-11-19), so that answer must not say "refuted" either.
+#[tokio::test]
+async fn an_all_refuted_run_says_the_sources_did_not_establish_the_claims() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the first claim", "the second claim"] }),
+        |_, _| refuted("the excerpts do not establish it"),
+        |_| json!({ "answer": "unused", "gaps": [], "gap_targets": [] }),
+    );
+    let search = search_returning(&["https://example.com/one"]);
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+
+    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Standard)))
+        .await
+        .unwrap();
+
+    assert!(result.key_findings.is_empty());
+    assert!(
+        result.answer.contains("did not establish"),
+        "{}",
+        result.answer
+    );
+    assert!(!result.answer.contains("efuted"), "{}", result.answer);
+}
+
 #[tokio::test]
 async fn refuted_claims_are_dropped_and_contested_claims_surface() {
     // Standard depth → K=2. "contested" splits 1–1; "wrong" refutes 2–0;

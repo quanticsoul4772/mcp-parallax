@@ -232,6 +232,14 @@ arc.
 
 ### Fixed
 
+* **research no longer calls unestablished claims refuted** — its
+  verification passes refute whatever the excerpts cannot establish, so a
+  refuted claim was unestablished, not shown false; answers had still told
+  readers that claims their own sources stated, such as SEP-2577's one-year
+  support rule, "were refuted". The synthesis now words these as not established by the sources,
+  the tool description and `refutation_rate` say what the label means, and the
+  design doc carries a dated amendment. The refute bias itself is unchanged.
+
 * **The documented fmt and test commands match CI** — the gate line in
   `CLAUDE.md`, `CONTRIBUTING.md` and the constitution, `/validate`, the README,
   the code-reviewer agent and the pull request template ran tests as plain
