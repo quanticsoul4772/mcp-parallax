@@ -198,6 +198,17 @@ mean source credibility `c̄`:
 - `support = confirmed` if `r` small and `n ≥ 2` independent sources agree.
 - `support = unverified` if `n = 1` and verifiers are split → reported as a gap-ish low-confidence note, never stated as fact.
 
+> **Amendment 2026-11-19: `refuted` means unestablished.** Because verifiers
+> "default to refuted" when the excerpts cannot establish a claim, a refuted
+> claim has not been shown false; the sources did not establish it. Research
+> refuted SEP-2577's one-year support rule in several runs. An excerpt
+> reconstructed from the raw SEP text with a copy of the excerpt function
+> contained the supporting sentence and also the SEP's note that the timeline
+> assumes a hypothetical policy; a plain `verify` call given that reconstructed
+> excerpt supported the claim. The real runs' excerpts were not recorded. Answers had told readers such claims "were refuted".
+> The refute bias stays; the synthesis now words these claims as not
+> established by the sources, and the tool description says so.
+
 `confidence ≈ w1·(1 − r/v) + w2·agreement(sources) + w3·c̄ + w4·min(n, 3)/3`,
 clamped 0–1. Weights are config, tuned **offline** (parent §"improvement is
 offline"), never at runtime.

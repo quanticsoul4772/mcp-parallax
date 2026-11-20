@@ -65,8 +65,10 @@ pub struct ResearchResult {
     /// Proportion of verified claims that verification refuted (021 FR-009a).
     ///
     /// Beside `confidence` rather than inside it: the answer does not assert
-    /// refuted claims, but without this a run whose evidence largely fell
-    /// apart would be indistinguishable from one whose evidence held.
+    /// refuted claims, but without this a run whose evidence largely failed to
+    /// establish its claims would be indistinguishable from one whose evidence
+    /// held. Refuted here means the excerpts did not establish the claim, not
+    /// that it was shown false.
     pub refutation_rate: f32,
     /// Proportion of the run's scoped sub-questions that were settled (021
     /// FR-002) — breadth of resolution, which `confidence` used to be
@@ -242,6 +244,47 @@ pub fn effective_concurrency(
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    /// Callers read the description, so it says that a claim left out for
+    /// lack of support has not been shown false (2026-11-19; see
+    /// `prompts.rs`). The served description equals the contract's, which
+    /// `tests/integration.rs` already checks.
+    #[test]
+    fn the_description_says_unestablished_claims_are_not_shown_false() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../specs/004-research-layer/contracts/research.tool.json"
+        ))
+        .unwrap();
+        let clause = "leaving out claims every verifier found the sources did not establish \
+                      (which is not a finding that they are false), and surfacing split \
+                      verdicts as contested,";
+        assert_eq!(
+            contract["description"]
+                .as_str()
+                .unwrap()
+                .matches(clause)
+                .count(),
+            1
+        );
+    }
+
+    /// The published `refutation_rate` description says what the label means;
+    /// the property-set test below does not compare descriptions.
+    #[test]
+    fn the_contract_says_what_refuted_means_for_refutation_rate() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../specs/004-research-layer/contracts/research.tool.json"
+        ))
+        .unwrap();
+        let description = contract["outputSchema"]["properties"]["refutation_rate"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.contains(
+            "Refuted here means the excerpts did not establish the claim, not that it was shown \
+             false."
+        ));
+        assert!(!description.contains("fell apart"));
+    }
 
     /// The derived schemas and the checked-in contract file share exactly the
     /// same property sets, both directions (003 pattern).

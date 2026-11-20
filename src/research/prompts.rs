@@ -45,7 +45,7 @@ const SYNTH_PROMPT_TEMPLATE: &str = "\
 You are writing the executive synthesis of a completed research run. Use \
 ONLY the verified findings below — cite them inline with their source \
 tokens exactly as given (for example [s3]). Never cite a source not listed. \
-Surface uncertainty honestly; never state refuted or unverified content as \
+Surface uncertainty honestly; never state unestablished or unverified content as \
 fact. Keep the answer under 8000 characters. List what remains unanswered \
 as gaps (short phrases, each under 500 characters). For EVERY gap, \
 give the matching entry in gap_targets IN THE SAME ORDER: gap_targets[i] is \
@@ -54,8 +54,10 @@ sub-questions listed below from 1, or 0 when the gap concerns no single one \
 of them. The two arrays MUST be the same length.\
 <<retry_clause>>\n\nQuestion: <<question>>\n\nSub-questions a good answer \
 settles:\n<<sub_questions>>\n\nVerified findings (cite by token):\n\
-<<findings>>\n\nRefuted during verification (do NOT assert; you may note \
-the refutation):\n<<refuted>>";
+<<findings>>\n\nNot established by the sources (the checker could not confirm these \
+from the excerpts; that does not show them false). Do NOT assert them; \
+if you mention one, say the sources did not establish it, never that \
+it was refuted or is false:\n<<refuted>>";
 
 /// The scope call's constrained output (flat + closed).
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -143,6 +145,26 @@ pub fn research_verify_mode(verify_mode: &CorrectiveMode) -> CorrectiveMode {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// The verification step refutes whatever the excerpts cannot establish
+    /// (`RESEARCH_VERIFY_TEMPLATE`), so a "refuted" claim is unestablished,
+    /// not shown false. On 2026-11-19 the SEP-2577 one-year rule was refuted
+    /// although an excerpt reconstructed from the raw SEP text contained its
+    /// supporting sentence, and answers then told readers the claim "was
+    /// refuted". The synthesis must not pass that label on.
+    #[test]
+    fn the_synthesis_calls_unestablished_claims_not_established_not_refuted() {
+        assert!(!SYNTH_PROMPT_TEMPLATE.contains("Refuted during verification"));
+        assert!(!SYNTH_PROMPT_TEMPLATE.contains("never state refuted"));
+        assert!(SYNTH_PROMPT_TEMPLATE.contains("never state unestablished or unverified content"));
+        let header = "Not established by the sources (the checker could not confirm these \
+                      from the excerpts; that does not show them false). Do NOT assert them; \
+                      if you mention one, say the sources did not establish it, never that \
+                      it was refuted or is false:";
+        assert_eq!(SYNTH_PROMPT_TEMPLATE.matches(header).count(), 1);
+        // The unestablished claims are listed directly under that header.
+        assert!(SYNTH_PROMPT_TEMPLATE.contains(&format!("{header}\n<<refuted>>")));
+    }
 
     /// 021 FR-010: every published figure is computed by the server from run
     /// data, never accepted as a number the model reported about its own work.
