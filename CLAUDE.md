@@ -292,8 +292,10 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**No active Spec Kit feature.** `main` is at **v0.5.0** (tagged 2026-07-27),
-clean, no open PRs.
+**Active Spec Kit feature: `056-decide-per-option-fields`**
+([plan](specs/056-decide-per-option-fields/plan.md)) — decide's per-option
+scores and rationales move from parallel lists to one field per option. `main`
+is at **v0.5.0** (tagged 2026-07-27).
 
 The last full Spec Kit run before 054 was `040-unresolvable-default-fails` — complete, all
 34 tasks closed
