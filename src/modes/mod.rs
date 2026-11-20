@@ -37,6 +37,22 @@ pub struct CorrectiveMode {
     pub sanitized_schema: Value,
     /// Parallel passes per invocation.
     pub ensemble_k: u8,
+    /// For a mode whose output schema depends on a count (056: decide's
+    /// options): `(count, output_schema, sanitized_schema)` for each accepted
+    /// count, each gated at registration. Empty for every other mode.
+    pub count_schemas: Vec<(usize, Value, Value)>,
+}
+
+impl CorrectiveMode {
+    /// The output and sanitized schemas registered for `count`, or `None` when
+    /// the mode has no schema for that count.
+    #[must_use]
+    pub fn schemas_for(&self, count: usize) -> Option<(&Value, &Value)> {
+        self.count_schemas
+            .iter()
+            .find(|(n, _, _)| *n == count)
+            .map(|(_, output, sanitized)| (output, sanitized))
+    }
 }
 
 /// The set of registered modes. Registration enforces the schema invariant at
@@ -78,6 +94,7 @@ impl ModeRegistry {
                 output_schema,
                 sanitized_schema,
                 ensemble_k,
+                count_schemas: Vec::new(),
             },
         );
         if previous.is_some() {
@@ -85,6 +102,55 @@ impl ModeRegistry {
                 "duplicate mode id '{id}' would shadow an existing tool"
             )));
         }
+        Ok(())
+    }
+
+    /// Register a mode with one output schema per count in `counts` (056),
+    /// each checked by the flat + closed gate and sanitized now, at boot. The
+    /// mode's `output_schema`/`sanitized_schema` hold the smallest count's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::ValidationFailure`] if any count's schema is not
+    /// flat + closed, if `counts` is empty, or if the id is already registered.
+    pub fn register_counted(
+        &mut self,
+        id: &'static str,
+        description: &'static str,
+        prompt_template: &'static str,
+        counts: std::ops::RangeInclusive<usize>,
+        build: &dyn Fn(usize) -> Value,
+        ensemble_k: u8,
+    ) -> Result<(), AppError> {
+        let mut count_schemas = Vec::new();
+        for n in counts {
+            let output = build(n);
+            assert_flat(id, &output)?;
+            let sanitized = sanitize(&output);
+            count_schemas.push((n, output, sanitized));
+        }
+        let Some((_, output_schema, sanitized_schema)) = count_schemas.first().cloned() else {
+            return Err(AppError::ValidationFailure(format!(
+                "mode '{id}' was registered with an empty count range"
+            )));
+        };
+        if self.modes.contains_key(id) {
+            return Err(AppError::ValidationFailure(format!(
+                "duplicate mode id '{id}' would shadow an existing tool"
+            )));
+        }
+        self.modes.insert(
+            id,
+            CorrectiveMode {
+                id,
+                description,
+                prompt_template,
+                output_schema,
+                sanitized_schema,
+                ensemble_k,
+                count_schemas,
+            },
+        );
         Ok(())
     }
 
@@ -207,6 +273,49 @@ mod tests {
             },
             "required": ["verdict", "findings"]
         })
+    }
+
+    /// 056: a mode whose output schema depends on a count (decide's options)
+    /// registers one schema per count, each gated at boot like any other.
+    fn counted_schema(n: usize) -> Value {
+        let properties: serde_json::Map<String, Value> = (1..=n)
+            .map(|i| (format!("field_{i}"), json!({ "type": "string" })))
+            .collect();
+        json!({ "type": "object", "properties": properties })
+    }
+
+    #[test]
+    fn registers_one_gated_schema_per_count() {
+        let mut registry = ModeRegistry::new();
+        registry
+            .register_counted("counted", "d", "t", 2..=4, &counted_schema, 1)
+            .unwrap();
+        let mode = registry.get("counted").unwrap();
+        for n in 2..=4 {
+            let (output, sanitized) = mode.schemas_for(n).expect("count in range");
+            assert_eq!(output["properties"].as_object().unwrap().len(), n);
+            assert_eq!(sanitized["additionalProperties"], json!(false));
+        }
+        assert!(mode.schemas_for(1).is_none());
+        assert!(mode.schemas_for(5).is_none());
+    }
+
+    #[test]
+    fn one_illegal_count_variant_fails_registration() {
+        let build = |n: usize| {
+            if n == 3 {
+                json!({
+                    "type": "object",
+                    "properties": { "inner": { "type": "object" } }
+                })
+            } else {
+                counted_schema(n)
+            }
+        };
+        let err = ModeRegistry::new()
+            .register_counted("counted", "d", "t", 2..=4, &build, 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("not flat+closed"), "{err}");
     }
 
     #[test]

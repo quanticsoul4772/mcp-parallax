@@ -88,10 +88,11 @@ pub(crate) struct SynthOut {
     /// sub-question that `gaps[i]` concerns, or `0` for none (021 FR-003).
     ///
     /// Parallel arrays rather than a list of objects because Principle II
-    /// requires mode schemas to stay flat and closed — the same idiom
-    /// `decide` uses between `option_scores` and `option_rationales`. Arity
-    /// and range are checked at assembly, since JSON Schema cannot state a
-    /// relation between two arrays.
+    /// requires mode schemas to stay flat and closed — the idiom `decide`
+    /// used for its scores and rationales until 056, when it moved to one
+    /// named field per option because the model returned lists of the wrong
+    /// length. Arity and range are checked at assembly, since JSON Schema
+    /// cannot state a relation between two arrays.
     pub(crate) gap_targets: Vec<u32>,
 }
 

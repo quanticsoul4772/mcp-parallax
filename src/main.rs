@@ -267,6 +267,80 @@ A present-but-unparseable value is an error, never a silent fallback to the defa
     )
 }
 
+/// Checks CLAUDE.md's active-feature block, paragraph by paragraph. Every
+/// `specs/<name>` link must exist; every "N tasks closed" claim is checked
+/// against the link in its own paragraph (closed count equals N, none open),
+/// and a claim with no link in its paragraph is a problem, never skipped.
+/// Returns how many links were checked and the problems found.
+#[cfg(test)]
+fn active_block_problems(
+    block: &str,
+    exists: &dyn Fn(&str) -> bool,
+    tasks: &dyn Fn(&str) -> String,
+) -> (usize, Vec<String>) {
+    let mut checked = 0;
+    let mut problems = Vec::new();
+    for paragraph in block.split("\n\n") {
+        // Each link with its byte offset in the paragraph, so a claim can be
+        // paired with the link nearest it (review of 056).
+        let mut links: Vec<(usize, String)> = Vec::new();
+        let mut from = 0;
+        while let Some(found) = paragraph[from..].find("specs/") {
+            let at = from + found;
+            from = at + "specs/".len();
+            let name: String = paragraph[from..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                if !exists(&name) {
+                    problems.push(format!(
+                        "the block links `specs/{name}`, which does not exist"
+                    ));
+                }
+                checked += 1;
+                links.push((at, name));
+            }
+        }
+
+        let mut from = 0;
+        while let Some(found) = paragraph[from..].find("tasks closed") {
+            let marker = from + found;
+            from = marker + "tasks closed".len();
+            // Only the digits directly before the claim, past whitespace, are
+            // its count: "055 followed; all tasks closed" has no number.
+            let count: String = paragraph[..marker]
+                .chars()
+                .rev()
+                .skip_while(|c| c.is_whitespace())
+                .take_while(char::is_ascii_digit)
+                .collect();
+            let Ok(claimed) = count.chars().rev().collect::<String>().parse::<usize>() else {
+                problems.push("a \"tasks closed\" claim has no number before it".to_string());
+                continue;
+            };
+            let Some((_, name)) = links.iter().min_by_key(|(at, _)| at.abs_diff(marker)) else {
+                problems.push(format!(
+                    "the claim \"{claimed} tasks closed\" has no specs/ link in its paragraph"
+                ));
+                continue;
+            };
+            let text = tasks(name);
+            let closed = text.matches("- [X] ").count();
+            let open = text.matches("- [ ] ").count();
+            if closed != claimed {
+                problems.push(format!(
+                    "the block claims {claimed} tasks closed for {name}; tasks.md has {closed}"
+                ));
+            }
+            if open != 0 {
+                problems.push(format!("{name} has {open} tasks still open"));
+            }
+        }
+    }
+    (checked, problems)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -530,6 +604,70 @@ mod tests {
     /// Claiming otherwise would be worse than the gap. A check that appears to
     /// cover staleness while covering only link validity is the shape 036 and
     /// 039 shipped — partial derivation reported as derivation.
+    /// A claim belongs to its own paragraph's link, not to every link in the
+    /// block: a 056 pointer paragraph before 040's "all 34 tasks closed"
+    /// paragraph was checked against 040's count (2026-11-20).
+    #[test]
+    fn a_task_count_claim_is_checked_against_its_own_paragraphs_link() {
+        let block = "Active: `056` ([plan](specs/056-x/plan.md)).\n\n\
+                     The last run was 040 — all\n34 tasks closed ([plan](specs/040-y/plan.md)).";
+        let exists = |_: &str| true;
+        let tasks = |name: &str| match name {
+            "056-x" => "- [ ] T001 open\n".to_string(),
+            _ => "- [X] T\n".repeat(34),
+        };
+        let (checked, problems) = super::active_block_problems(block, &exists, &tasks);
+        assert_eq!(checked, 2);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    /// Review of 056: a paragraph linking two features is checked against the
+    /// link nearest each claim, not the paragraph's first link.
+    #[test]
+    fn a_claim_is_checked_against_the_nearest_link_in_its_paragraph() {
+        let block = "040 shipped ([plan](specs/040-x/plan.md)); 055 followed, all 2 tasks \
+                     closed ([plan](specs/055-y/plan.md)).";
+        let tasks = |name: &str| match name {
+            "055-y" => "- [X] a\n- [X] b\n".to_string(),
+            _ => "- [X] a\n".to_string(),
+        };
+        let (_, problems) = super::active_block_problems(block, &|_| true, &tasks);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    /// Review of 056: only the digits directly before "tasks closed" (past
+    /// whitespace) are the count; "055 ... all tasks closed" has none.
+    #[test]
+    fn a_number_far_before_the_claim_is_not_its_count() {
+        let block = "055 followed; all tasks closed ([plan](specs/055-y/plan.md)).";
+        let (_, problems) = super::active_block_problems(block, &|_| true, &|_| String::new());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("no number"), "{problems:?}");
+    }
+
+    /// A claim with no specs/ link in its paragraph cannot be checked, and is
+    /// reported rather than skipped.
+    #[test]
+    fn a_task_count_claim_without_a_link_in_its_paragraph_is_a_problem() {
+        let block = "055 followed; all 47 tasks closed.";
+        let (_, problems) = super::active_block_problems(block, &|_| true, &|_| String::new());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("47"), "{problems:?}");
+    }
+
+    /// A claimed count that differs from the linked tasks.md is a problem, and
+    /// so is an open task.
+    #[test]
+    fn a_wrong_task_count_or_an_open_task_is_a_problem() {
+        let block = "all 3 tasks closed ([plan](specs/040-y/plan.md)).";
+        let two = |_: &str| "- [X] a\n- [X] b\n".to_string();
+        let (_, problems) = super::active_block_problems(block, &|_| true, &two);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        let open = |_: &str| "- [X] a\n- [X] b\n- [X] c\n- [ ] d\n".to_string();
+        let (_, problems) = super::active_block_problems(block, &|_| true, &open);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
     #[test]
     fn the_active_feature_block_links_and_task_counts_are_real() {
         let claude_md = include_str!("../CLAUDE.md").replace("\r\n", "\n");
@@ -541,50 +679,13 @@ mod tests {
             .expect("the active-feature block is unterminated");
         let block = &claude_md[start..end];
 
-        // Every specs/<dir> path the block names must exist on disk.
-        let mut checked = 0;
-        let mut rest = block;
-        while let Some(at) = rest.find("specs/") {
-            rest = &rest[at..];
-            let name: String = rest["specs/".len()..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-                .collect();
-            rest = &rest["specs/".len()..];
-            if name.is_empty() {
-                continue;
-            }
-            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("specs")
-                .join(&name);
-            assert!(
-                dir.is_dir(),
-                "the active-feature block links `specs/{name}`, which does not exist"
-            );
-            checked += 1;
-
-            // "all N tasks closed" is derivable from that feature's tasks.md.
-            if let Some(marker) = block.find("tasks closed") {
-                let head = &block[..marker];
-                let count: String = head
-                    .chars()
-                    .rev()
-                    .skip_while(|c| !c.is_ascii_digit())
-                    .take_while(char::is_ascii_digit)
-                    .collect();
-                let claimed: usize = count.chars().rev().collect::<String>().parse().unwrap_or(0);
-                let tasks = std::fs::read_to_string(dir.join("tasks.md")).unwrap_or_default();
-                if claimed > 0 && !tasks.is_empty() {
-                    let closed = tasks.matches("- [X] ").count();
-                    let open = tasks.matches("- [ ] ").count();
-                    assert_eq!(
-                        closed, claimed,
-                        "the block claims {claimed} tasks closed for {name}; tasks.md has {closed}"
-                    );
-                    assert_eq!(open, 0, "{name} has {open} tasks still open");
-                }
-            }
-        }
+        let specs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("specs");
+        let exists = |name: &str| specs.join(name).is_dir();
+        let tasks = |name: &str| {
+            std::fs::read_to_string(specs.join(name).join("tasks.md")).unwrap_or_default()
+        };
+        let (checked, problems) = super::active_block_problems(block, &exists, &tasks);
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
         assert!(
             checked > 0,
             "no specs/ link found in the active-feature block; the search is wrong, not the block"

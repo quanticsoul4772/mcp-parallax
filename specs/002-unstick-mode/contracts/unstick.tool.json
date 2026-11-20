@@ -12,8 +12,7 @@
       },
       "blocked": {
         "type": "string",
-        "description": "Where you are stuck right now - the immediate blocker, error, or dead end. Advertised optional (arg-drop tolerance): the server recovers it from a `||BLOCKED||` block in `goal` when omitted, and still rejects a genuinely-empty blocker.",
-        "minLength": 1
+        "description": "Where you are stuck right now - the immediate blocker, error, or dead end. Advertised optional (arg-drop tolerance): the server recovers it from a `||BLOCKED||` block in `goal` when omitted, and still rejects a genuinely-empty blocker."
       },
       "tried": {
         "type": "array",

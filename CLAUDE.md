@@ -21,7 +21,7 @@ step, single pass), **`diverge`** (k stance-blind passes under distinct
 *generative* lenses — invert/actor/horizon/assumption/class — returning a
 deterministically deduplicated set of distinct problem framings; the
 divergence counterpart to verify, always on — 012), **`decide`** (single
-scored pass over ≥2 options — the model picks a methodology
+scored pass over 2 to 10 options — the model picks a methodology
 (weigh/causal/probabilistic) and scores each option, the server argmax-picks the
 top and derives confidence from the score margin; choose-among-options, always
 on — 013), **`elicit`** (the wrong-objective corrective: a single stance-blind
@@ -292,8 +292,12 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**No active Spec Kit feature.** `main` is at **v0.5.0** (tagged 2026-07-27),
-clean, no open PRs.
+**Active Spec Kit feature: `056-decide-per-option-fields`; all 21 tasks closed**
+([plan](specs/056-decide-per-option-fields/plan.md)) — decide's per-option
+scores and rationales moved from parallel lists to one required field per
+option (`option_01_score` …), registered per option count, with options capped
+at 10; a live check on the rebuilt server passed at 2, 4 and 6 options. `main`
+is at **v0.5.0** (tagged 2026-07-27).
 
 The last full Spec Kit run before 054 was `040-unresolvable-default-fails` — complete, all
 34 tasks closed
@@ -318,7 +322,8 @@ measurement first: running more than one pass, and any change to the
 confidence number.
 
 **055 (`055-grounded-verify-secret-refusal`) followed, as a full Spec Kit run;
-all 47 tasks closed.** `grounded_verify` now refuses files whose names mark
+all 47 tasks closed** ([plan](specs/055-grounded-verify-secret-refusal/plan.md)).
+`grounded_verify` now refuses files whose names mark
 them as secrets: an exact path fails the call, a glob leaves them out and
 reports them in four new result fields, and a root inside a secret folder
 leaves grounded_verify out of the catalog. A live check on the rebuilt server passed (one

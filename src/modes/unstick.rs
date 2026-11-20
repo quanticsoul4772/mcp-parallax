@@ -51,6 +51,7 @@ pub struct UnstickParams {
     /// What you are ultimately trying to accomplish. Arg-drop fallback: if your client cannot reliably
     /// serialize `blocked` (it arrives missing), append it here as `||BLOCKED|| <the blocker>` — the
     /// server recovers it and strips the block.
+    #[schemars(length(min = 1))]
     pub goal: String,
     /// Where you are stuck right now - the immediate blocker, error, or dead end.
     ///

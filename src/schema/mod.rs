@@ -62,7 +62,15 @@ pub fn assert_constraints_agree(contract: &Value, derived: &Value, what: &str) {
             );
         };
         let rendered = render_with_defs(actual, derived);
-        for key in ["minimum", "maximum", "enum"] {
+        for key in [
+            "minimum",
+            "maximum",
+            "enum",
+            "minItems",
+            "maxItems",
+            "minLength",
+            "maxLength",
+        ] {
             let Some(want) = spec.get(key) else { continue };
             let ok = if key == "enum" {
                 want.as_array().is_some_and(|vs| {
@@ -112,4 +120,47 @@ fn render_with_defs(property: &Value, root: &Value) -> String {
         }
     }
     rendered
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::assert_constraints_agree;
+    use serde_json::json;
+
+    fn options_with(constraints: &serde_json::Value) -> serde_json::Value {
+        let mut spec = json!({ "type": "array", "items": { "type": "string" } });
+        for (k, v) in constraints.as_object().unwrap() {
+            spec[k] = v.clone();
+        }
+        json!({ "properties": { "options": spec } })
+    }
+
+    /// Review of 056: a contract-only `maxItems` passed, because only
+    /// `minimum`, `maximum` and `enum` were compared.
+    #[test]
+    #[should_panic(expected = "maxItems")]
+    fn a_contract_only_max_items_is_a_disagreement() {
+        assert_constraints_agree(
+            &options_with(&json!({ "maxItems": 10 })),
+            &options_with(&json!({})),
+            "t",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "minLength")]
+    fn a_contract_only_min_length_is_a_disagreement() {
+        assert_constraints_agree(
+            &options_with(&json!({ "minLength": 1 })),
+            &options_with(&json!({})),
+            "t",
+        );
+    }
+
+    #[test]
+    fn matching_length_constraints_agree() {
+        let both = json!({ "minItems": 1, "maxItems": 10, "minLength": 1, "maxLength": 9 });
+        assert_constraints_agree(&options_with(&both), &options_with(&both), "t");
+    }
 }

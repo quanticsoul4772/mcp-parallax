@@ -137,7 +137,7 @@ pub async fn synthesize_grounded(
         // "the 1-based number of the sub-question", and a bulleted list makes
         // it count unlabelled lines to produce an index that determines a
         // published figure. `decide` numbers its options for the same reason
-        // (`decide.rs`, `option_scores` alignment). A wrong-but-in-range key
+        // (`decide.rs`: `option_01_score` is for option 1 as listed, 056). A wrong-but-in-range key
         // is the one failure here that nothing downstream can catch — it
         // passes the arity check and the range discard, and silently reports
         // the wrong sub-question as unsettled.
@@ -176,7 +176,7 @@ pub async fn synthesize_grounded(
 
         // 021 D2: the two parallel arrays must agree in length. JSON Schema
         // cannot state a relation between two arrays, so this is the local
-        // check — the same place `decide` validates its own arity. A mismatch
+        // check — the same assembly-time check `decide` used for its option lists before 056. A mismatch
         // feeds the retry rather than being absorbed: reading absent targets
         // as "concerns nothing" would report full coverage for a malformed
         // response, which is the server overstating what it established.

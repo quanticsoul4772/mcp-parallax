@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct CheckParams {
     /// The claim to check, in natural language. Best for arithmetic,
     /// quantitative comparisons, and logical/constraint consistency.
+    #[schemars(length(min = 1))]
     pub claim: String,
     /// Optional background the claim depends on (definitions, given values).
     pub context: Option<String>,

@@ -15,11 +15,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ResearchParams {
     /// The research question, in natural language.
+    #[schemars(length(min = 1))]
     pub question: String,
     /// Rigor tier; scales angles, sources, and verification votes. Default
     /// standard.
     pub depth: Option<Depth>,
     /// Optional angles to bias the search toward.
+    #[schemars(length(max = 8))]
     pub focus: Option<Vec<String>>,
     /// Optional hard constraints; explicit values override tier defaults.
     pub constraints: Option<Constraints>,

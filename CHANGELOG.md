@@ -163,6 +163,11 @@ arc.
 
 ### Changed
 
+* **`decide` takes two to ten options (056)** — 11 or more is rejected with
+  `invalid_input` before any model call, naming the count and the limit;
+  before, there was no upper limit. The description and the `options` field
+  say "two to ten".
+
 * **verify's description asks for evidence on recent facts** — its passes
   judge only from the claim, the context and the model's own training
   knowledge. Measured 2026-11-19: with no context, verify refuted two true
@@ -231,6 +236,17 @@ arc.
   its removal condition: a sqlx release that accepts `libsqlite3-sys >= 0.39`.
 
 ### Fixed
+
+* **`decide` can no longer fail on lists of the wrong length (056)** — its
+  pass returned scores and rationales as two lists the output grammar could
+  not hold to the number of options, and 28 calls since June failed with
+  errors such as "3 options but 3 scores / 4 rationales", after a paid retry.
+  It now asks for one required `option_<NN>_score` and `option_<NN>_rationale`
+  field per option, from a format registered for each option count, so a
+  mismatch cannot be produced where the backend enforces the format; where it
+  does not (the OpenAI-compatible backend's JSON-object and prompt-only
+  modes), a missing field gets the one retry. Results, confidence and records
+  are unchanged.
 
 * **research no longer calls unestablished claims refuted** — its
   verification passes refute whatever the excerpts cannot establish, so a

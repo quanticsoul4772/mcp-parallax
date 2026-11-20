@@ -1,9 +1,9 @@
 {
-  "$comment": "MCP tool contract for `decide`. inputSchema/outputSchema are what the server advertises in its tool catalog. Scored single pass over >=2 options; the server argmax-picks the winner and derives confidence from the score margin. The model never asserts the choice. BASELINE, captured from the derived schemas at 038 rather than authored ahead of the code - this tool shipped without a contract, so there is no earlier statement of intent to restore. Its value starts now: any change to the Rust types fails the contract test until this file is updated deliberately.",
+  "$comment": "MCP tool contract for `decide`. inputSchema/outputSchema are what the server advertises in its tool catalog. Scored single pass over 2 to 10 options; the server argmax-picks the winner and derives confidence from the score margin. The model never asserts the choice. BASELINE, captured from the derived schemas at 038 rather than authored ahead of the code - this tool shipped without a contract, so there is no earlier statement of intent to restore. Its value starts now: any change to the Rust types fails the contract test until this file is updated deliberately.",
   "name": "decide",
   "inputSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "Tool input: the decision, the candidate options (\u22652), and optional context.",
+    "description": "Tool input: the decision, the candidate options (2 to 10), and optional context.",
     "properties": {
       "context": {
         "description": "Optional neutral context/criteria \u2014 the only extra subject input.",
@@ -56,10 +56,11 @@
       },
       "options": {
         "default": [],
-        "description": "The candidate options \u2014 at least two. Order is the index basis for the\nper-option score arrays. May be omitted when `options_text` is supplied.",
+        "description": "The candidate options \u2014 two to ten. Order is the index basis for the\nper-option fields (`option_01_score` is for the first). May be omitted when\n`options_text` is supplied.",
         "items": {
           "type": "string"
         },
+        "maxItems": 10,
         "type": "array"
       },
       "options_text": {
