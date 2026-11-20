@@ -513,7 +513,7 @@ impl Parallax {
     /// and derives confidence from the score margin.
     #[tool(
         name = "decide",
-        description = "Choose among two or more options under tradeoffs, with the reasoning shown. \
+        description = "Choose among two to ten options under tradeoffs, with the reasoning shown. \
         Applies an explicit decision methodology (weigh named criteria, trace what each option \
         causes, or reason under uncertainty), scores every option, and returns the recommended \
         option, the runner-up and why it lost, the deciding factors, the methodology used, and a \

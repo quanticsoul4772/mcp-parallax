@@ -49,11 +49,11 @@
 
 **Independent test**: the existing result, confidence, runner-up and record tests pass, rewritten only for the new answer shape.
 
-- [ ] T011 [US2] Write a test in `src/modes/decide.rs` tests that feeds the same scores and rationales through the new shape and asserts the `DecideResult` (recommended, runner_up, runner_up_reason, confidence, methodology, deciding_factors, assessments) equals the values the pre-change tests expected
-- [ ] T012 [US2] Confirm a score outside 0–100 and empty `deciding_factors` still feed the single retry (existing tests, adapted to the new shape) in `src/modes/decide.rs`
-- [ ] T013a [US2] Change "two or more options" to "two to ten options" in `DECIDE_DESCRIPTION` and note the 2–10 range on the `options` field doc, both in `src/modes/decide.rs`
-- [ ] T013b [P] [US2] Make the same description change in the `#[tool]` literal in `src/server.rs` and in `specs/013-decide-methodology/contracts/decide.tool.json`; update CLAUDE.md's decide description ("≥2 options" to "2 to 10 options") and README if it states the range, each exact text asked when the task runs; after T013a and T013b the existing served-equals-contract and contract-equals-constant tests must pass
-- [ ] T014 [US2] Run the decide integration tests in `tests/integration.rs` and the full gate
+- [X] T011 [US2] Write a test in `src/modes/decide.rs` tests that feeds the same scores and rationales through the new shape and asserts the `DecideResult` (recommended, runner_up, runner_up_reason, confidence, methodology, deciding_factors, assessments) equals the values the pre-change tests expected
+- [X] T012 [US2] Confirm a score outside 0–100 and empty `deciding_factors` still feed the single retry (existing tests, adapted to the new shape) in `src/modes/decide.rs`
+- [X] T013a [US2] Change "two or more options" to "two to ten options" in `DECIDE_DESCRIPTION` and note the 2–10 range on the `options` field doc, both in `src/modes/decide.rs`
+- [X] T013b [P] [US2] Make the same description change in the `#[tool]` literal in `src/server.rs` and in `specs/013-decide-methodology/contracts/decide.tool.json`; update CLAUDE.md's decide description ("≥2 options" to "2 to 10 options") and README if it states the range, each exact text asked when the task runs; after T013a and T013b the existing served-equals-contract and contract-equals-constant tests must pass
+- [X] T014 [US2] Run the decide integration tests in `tests/integration.rs` and the full gate
 
 ## Phase 5: User Story 3 — the design record explains the change (P3)
 

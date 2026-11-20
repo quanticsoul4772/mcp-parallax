@@ -21,7 +21,7 @@ step, single pass), **`diverge`** (k stance-blind passes under distinct
 *generative* lenses — invert/actor/horizon/assumption/class — returning a
 deterministically deduplicated set of distinct problem framings; the
 divergence counterpart to verify, always on — 012), **`decide`** (single
-scored pass over ≥2 options — the model picks a methodology
+scored pass over 2 to 10 options — the model picks a methodology
 (weigh/causal/probabilistic) and scores each option, the server argmax-picks the
 top and derives confidence from the score margin; choose-among-options, always
 on — 013), **`elicit`** (the wrong-objective corrective: a single stance-blind

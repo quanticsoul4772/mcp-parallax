@@ -56,7 +56,7 @@
       },
       "options": {
         "default": [],
-        "description": "The candidate options \u2014 at least two. Order is the index basis for the\nper-option score arrays. May be omitted when `options_text` is supplied.",
+        "description": "The candidate options \u2014 two to ten. Order is the index basis for the\nper-option fields (`option_1_score` is for the first). May be omitted when\n`options_text` is supplied.",
         "items": {
           "type": "string"
         },

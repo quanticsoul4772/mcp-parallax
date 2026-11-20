@@ -31,7 +31,7 @@ pub const DECIDE_OPTIONS_MIN: usize = 2;
 pub const DECIDE_OPTIONS_MAX: usize = 10;
 
 /// The MCP tool description — the routing text (kept in sync with contracts/).
-pub const DECIDE_DESCRIPTION: &str = "Choose among two or more options under tradeoffs, with the \
+pub const DECIDE_DESCRIPTION: &str = "Choose among two to ten options under tradeoffs, with the \
     reasoning shown. Applies an explicit decision methodology (weigh named criteria, trace what \
     each option causes, or reason under uncertainty), scores every option, and returns the \
     recommended option, the runner-up and why it lost, the deciding factors, the methodology \
@@ -97,8 +97,9 @@ pub struct DecideParams {
     // name there would contradict it.
     #[serde(alias = "question")]
     pub decision: String,
-    /// The candidate options — at least two. Order is the index basis for the
-    /// per-option score arrays. May be omitted when `options_text` is supplied.
+    /// The candidate options — two to ten. Order is the index basis for the
+    /// per-option fields (`option_1_score` is for the first). May be omitted when
+    /// `options_text` is supplied.
     #[serde(default)]
     pub options: Vec<String>,
     /// Options as a single newline-delimited string (one per line) — an alternative to the `options`
@@ -819,6 +820,47 @@ mod tests {
             ]
         );
         assert_eq!(result.recommended, "option 2");
+    }
+
+    /// T011 (US2): callers see no change. The same scores and rationales,
+    /// sent in the per-field shape, give the whole `DecideResult` the
+    /// list-shaped pass gave before 056 — ranking out of input order,
+    /// runner-up reason, margin confidence, methodology, factors, and
+    /// assessments kept in input order.
+    #[tokio::test]
+    async fn the_per_field_shape_gives_the_same_result_as_before() {
+        let mode = test_mode();
+        let mock = client_returning(assessment(
+            "causal",
+            &[30, 90, 40],
+            &["all at once", "safe and reversible", "slow to learn"],
+            &["blast radius", "time to signal"],
+        ));
+        let out = run(
+            &mock,
+            &mode,
+            &params("how to ship?", &["big-bang", "ramp", "canary"]),
+            50_000,
+        )
+        .await
+        .unwrap()
+        .result;
+        assert_eq!(
+            serde_json::to_value(&out).unwrap(),
+            json!({
+                "recommended": "ramp",
+                "runner_up": "canary",
+                "runner_up_reason": "scored 50 below ramp: slow to learn",
+                "confidence": 0.75,
+                "methodology": "causal",
+                "deciding_factors": ["blast radius", "time to signal"],
+                "assessments": [
+                    { "option": "big-bang", "score": 30, "rationale": "all at once" },
+                    { "option": "ramp", "score": 90, "rationale": "safe and reversible" },
+                    { "option": "canary", "score": 40, "rationale": "slow to learn" }
+                ]
+            })
+        );
     }
 
     /// T005: more than ten options is rejected before any model call; ten is
