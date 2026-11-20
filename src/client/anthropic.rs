@@ -302,6 +302,11 @@ impl ModelClient for AnthropicClient {
                 // outcome, not a contract failure on a response it returned.
                 let detail = response.text().await.unwrap_or_default();
                 let hint = self.effort_rejection_hint(status, &detail);
+                if !status.is_client_error() {
+                    // A 1xx/3xx reaching here is out of contract, not a
+                    // refusal (057 review).
+                    return Err(AppError::Client(format!("HTTP {status}: {detail}{hint}")));
+                }
                 return Err(AppError::ProviderRejected {
                     status: status.as_u16(),
                     detail: format!("{detail}{hint}"),
@@ -585,6 +590,11 @@ mod tests {
             ..client_for(&mock)
         };
         let err = client.complete("p", &json!({})).await.unwrap_err();
+        // 057: the rejection is a provider rejection, hint and all.
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 400, .. }),
+            "{err:?}"
+        );
         let message = err.to_string();
 
         // FR-001: both facts the provider's message omits.
@@ -891,6 +901,24 @@ mod tests {
             }
             other => panic!("expected ProviderRejected, got {other}"),
         }
+    }
+
+    /// 057 review: only a 4xx is a provider rejection; an unexpected 3xx is
+    /// an out-of-contract response, as before.
+    #[tokio::test]
+    async fn a_redirect_status_is_not_a_provider_rejection() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(300).set_body_string("multiple choices"))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let err = client_for(&mock)
+            .complete("p", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        assert_eq!(err.outcome(), crate::error::Outcome::ValidationFailure);
     }
 
     /// 057 US1: each provider rejection is recorded as `provider_rejected`,

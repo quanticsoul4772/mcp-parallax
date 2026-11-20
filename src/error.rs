@@ -8,6 +8,27 @@
 
 use thiserror::Error;
 
+/// Declares [`Outcome`] and its `ALL` list from one variant list, so a variant
+/// cannot exist without being in `ALL` — and therefore cannot escape the test
+/// that binds `ALL` to the published outcome lists (057).
+macro_rules! outcomes {
+    (
+        $(#[$meta:meta])*
+        pub enum $name:ident { $( $(#[$vmeta:meta])* $variant:ident, )+ }
+    ) => {
+        $(#[$meta])*
+        pub enum $name { $( $(#[$vmeta])* $variant, )+ }
+
+        impl $name {
+            /// Every outcome, in declaration order, generated with the enum.
+            /// The contract-binding test compares it (minus `ConfigError`,
+            /// which is never recorded) with the published lists.
+            pub const ALL: &'static [Self] = &[ $( Self::$variant, )+ ];
+        }
+    };
+}
+
+outcomes! {
 /// Outcome classification for one tool invocation.
 ///
 /// `ConfigError` is error-surface-only: it occurs at startup, before any
@@ -31,8 +52,8 @@ pub enum Outcome {
     /// body).
     ValidationFailure,
     /// The model provider refused the request with an HTTP 4xx other than
-    /// 429 (billing, authentication, access, unknown model, rejected request)
-    /// - 057.
+    /// 429 (billing, authentication, access, unknown model, rejected request;
+    /// 057).
     ProviderRejected,
     /// The search provider failed (research capability).
     SearchProvider,
@@ -43,26 +64,9 @@ pub enum Outcome {
     /// The client abandoned the invocation before it completed.
     Cancelled,
 }
+}
 
 impl Outcome {
-    /// Every outcome, in declaration order. The contract-binding test compares
-    /// this list (minus `ConfigError`, which is never recorded) with the
-    /// published lists, so a new value cannot ship unlisted (057).
-    pub const ALL: [Self; 12] = [
-        Self::Success,
-        Self::Refusal,
-        Self::Truncation,
-        Self::Timeout,
-        Self::RetriesExhausted,
-        Self::InvalidInput,
-        Self::ValidationFailure,
-        Self::ProviderRejected,
-        Self::SearchProvider,
-        Self::EmbeddingProvider,
-        Self::ConfigError,
-        Self::Cancelled,
-    ];
-
     /// Parse the stable string form back into the taxonomy (storage read path).
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
@@ -378,6 +382,13 @@ mod tests {
                 "search provider",
             ),
             (
+                AppError::ProviderRejected {
+                    status: 401,
+                    detail: "invalid x-api-key".into(),
+                },
+                "provider rejected",
+            ),
+            (
                 AppError::Config(ConfigError::MissingRequired("ANTHROPIC_API_KEY")),
                 "configuration error",
             ),
@@ -448,6 +459,14 @@ mod tests {
         assert_eq!(
             AppError::Storage(String::new()).outcome(),
             Outcome::ConfigError
+        );
+        assert_eq!(
+            AppError::ProviderRejected {
+                status: 403,
+                detail: String::new()
+            }
+            .outcome(),
+            Outcome::ProviderRejected
         );
     }
 
@@ -524,30 +543,21 @@ mod tests {
         );
     }
 
-    /// Every outcome round-trips through its stable string, `ALL` holds each
-    /// once, and the exhaustive match below stops a new variant compiling
-    /// until it is given a place in `ALL`.
+    /// Every outcome round-trips through its stable string. `ALL` is
+    /// generated with the enum (the `outcomes!` macro), so it holds every
+    /// variant by construction; this checks the strings, which are written
+    /// by hand in `as_str` and `parse`.
     #[test]
-    fn every_outcome_round_trips_and_is_listed_once() {
-        const fn position(o: Outcome) -> usize {
-            match o {
-                Outcome::Success => 0,
-                Outcome::Refusal => 1,
-                Outcome::Truncation => 2,
-                Outcome::Timeout => 3,
-                Outcome::RetriesExhausted => 4,
-                Outcome::InvalidInput => 5,
-                Outcome::ValidationFailure => 6,
-                Outcome::ProviderRejected => 7,
-                Outcome::SearchProvider => 8,
-                Outcome::EmbeddingProvider => 9,
-                Outcome::ConfigError => 10,
-                Outcome::Cancelled => 11,
-            }
-        }
-        for (i, o) in Outcome::ALL.iter().enumerate() {
-            assert_eq!(position(*o), i, "{o:?} is out of place in ALL");
+    fn every_outcome_round_trips_through_its_string() {
+        for o in Outcome::ALL {
             assert_eq!(Outcome::parse(o.as_str()), Some(*o), "{o:?}");
         }
+        let strings: std::collections::BTreeSet<&str> =
+            Outcome::ALL.iter().map(|o| o.as_str()).collect();
+        assert_eq!(
+            strings.len(),
+            Outcome::ALL.len(),
+            "two outcomes share a string"
+        );
     }
 }

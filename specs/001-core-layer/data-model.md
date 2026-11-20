@@ -93,7 +93,7 @@ uses.
   failure → `validation_failure`.
 
 **Amendment 2026-11-20 (057) — `provider_rejected`.** A model-provider HTTP
-response that is unsuccessful and is neither 429 nor a server error now maps
+4xx response other than 429 now maps
 to `provider_rejected`; through the client error it had been
 `validation_failure`. It covers billing, authentication, access, unknown-model
 and rejected-request responses on both model backends, including a pinned

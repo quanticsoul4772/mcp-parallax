@@ -52,8 +52,8 @@
 
 ## Phase 6: Polish & cross-cutting
 
-- [ ] T014 Run the full gate and markdownlint on changed markdown
-- [ ] T015 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller of `AppError`, `Outcome` and the two changed sites; each finding asked one question per finding
+- [X] T014 Run the full gate and markdownlint on changed markdown
+- [X] T015 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller of `AppError`, `Outcome` and the two changed sites; each finding asked one question per finding
 - [ ] T016 Update the CLAUDE.md Spec Kit block when the feature closes (exact text asked)
 
 ## Dependencies

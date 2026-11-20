@@ -255,6 +255,50 @@ async fn every_taxonomy_row_maps_identically_on_both_backends() {
     }
 }
 
+/// 057: a provider rejection (HTTP 401) is the same class on both backends.
+/// The rows above all arrive as HTTP 200; this is the one non-200 row, kept
+/// as its own test rather than adding a status to every row.
+#[tokio::test]
+async fn a_provider_rejection_maps_identically_on_both_backends() {
+    async fn rejected(openai: bool) -> AppError {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(json!({ "error": { "message": "invalid api key" } })),
+            )
+            .mount(&mock)
+            .await;
+        let result = if openai {
+            OpenAiCompatClient::with_base_url(&openai_test_config(), &mock.uri())
+                .with_backoff_base_ms(1)
+                .complete("p", &json!({ "type": "object" }))
+                .await
+        } else {
+            AnthropicClient::with_base_url(&test_config(), &mock.uri())
+                .with_backoff_base_ms(1)
+                .complete("p", &json!({ "type": "object" }))
+                .await
+        };
+        result.unwrap_err()
+    }
+    let a = rejected(false).await;
+    let o = rejected(true).await;
+    assert_eq!(
+        variant_name(a.root()),
+        "ProviderRejected",
+        "anthropic: {a:?}"
+    );
+    assert_eq!(
+        variant_name(o.root()),
+        "ProviderRejected",
+        "openai_compat: {o:?}"
+    );
+    assert_eq!(a.outcome(), o.outcome());
+    assert_eq!(a.billed(), (0, 0));
+    assert_eq!(o.billed(), (0, 0));
+}
+
 /// Billed usage attaches to failures identically: the tokens were not free,
 /// and the adapters must not disagree about it.
 #[tokio::test]

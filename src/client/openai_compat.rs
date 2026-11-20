@@ -59,20 +59,35 @@ enum Rung {
     PromptOnly,
 }
 
-/// The rungs to try for a strategy selection, highest fidelity first.
-fn ladder_for(selection: StructuredOutput) -> Vec<Rung> {
+/// The rungs to try for a strategy selection, highest fidelity first, as
+/// the rungs before the last and the last rung itself — so a ladder cannot
+/// be empty, and the end of the ladder needs no "nothing was tried" case
+/// (057 review).
+const fn ladder_for(selection: StructuredOutput) -> (&'static [Rung], Rung) {
     match selection {
-        StructuredOutput::Auto => vec![
-            Rung::JsonSchema,
-            Rung::JsonObject,
-            Rung::ToolShim,
+        StructuredOutput::Auto => (
+            &[Rung::JsonSchema, Rung::JsonObject, Rung::ToolShim],
             Rung::PromptOnly,
-        ],
-        StructuredOutput::JsonSchema => vec![Rung::JsonSchema],
-        StructuredOutput::JsonObject => vec![Rung::JsonObject],
-        StructuredOutput::ToolShim => vec![Rung::ToolShim],
-        StructuredOutput::PromptOnly => vec![Rung::PromptOnly],
+        ),
+        StructuredOutput::JsonSchema => (&[], Rung::JsonSchema),
+        StructuredOutput::JsonObject => (&[], Rung::JsonObject),
+        StructuredOutput::ToolShim => (&[], Rung::ToolShim),
+        StructuredOutput::PromptOnly => (&[], Rung::PromptOnly),
     }
+}
+
+/// How one rung ended: a final answer or error, or a rejection of the
+/// strategy itself that the next rung may remedy.
+enum RungOutcome {
+    /// The call is over: a completion or a terminal error.
+    Done(Result<Completion, AppError>),
+    /// The provider rejected this rung's structured-output strategy.
+    StrategyRejected {
+        /// The rejection's HTTP status.
+        status: u16,
+        /// The provider's message.
+        message: String,
+    },
 }
 
 /// Thin `reqwest` client implementing [`ModelClient`] over Chat Completions.
@@ -266,98 +281,19 @@ impl ModelClient for OpenAiCompatClient {
         // 429/5xx and transport errors retry with exponential backoff; a
         // timeout is terminal (it consumed the whole budget); other 4xx are
         // terminal unless they reject the strategy parameter itself.
-        // A strategy rejection keeps its status, so a pinned rung that ends
-        // the ladder is reported as the provider rejection it was (057).
-        let mut last_capability: Option<(u16, String)> = None;
-        for rung in ladder_for(self.structured) {
-            let body = self.build_body(prompt, schema, rung);
-            let attempts_max = self.max_retries.saturating_add(1);
-            let mut last_error = String::new();
-            let mut capability: Option<(u16, String)> = None;
-            let mut terminal: Option<AppError> = None;
-
-            for attempt in 1..=attempts_max {
-                if attempt > 1 {
-                    let backoff = self
-                        .backoff_base_ms
-                        .saturating_mul(1 << (attempt - 2).min(8));
-                    tokio::time::sleep(Duration::from_millis(backoff)).await;
-                }
-
-                let response = match self.send_once(&body).await {
-                    Ok(r) => r,
-                    // A timeout consumed the full per-request budget — terminal.
-                    Err(timeout @ AppError::Timeout { .. }) => {
-                        terminal = Some(timeout);
-                        break;
-                    }
-                    Err(e) => {
-                        last_error = e.to_string();
-                        continue;
-                    }
-                };
-
-                let status = response.status();
-                if status.as_u16() == 429 || status.is_server_error() {
-                    last_error = format!("HTTP {status}");
-                    continue;
-                }
-                if !status.is_success() {
-                    let detail = response.text().await.unwrap_or_default();
-                    // A rejection of the *strategy parameter* is a ladder
-                    // signal, not a failure — the next rung is the remedy.
-                    // Prompt-only sends nothing to reject, so its 400s are
-                    // always terminal.
-                    if rung != Rung::PromptOnly && is_capability_rejection(status, &detail) {
-                        capability = Some((status.as_u16(), detail));
-                        break;
-                    }
-                    // 057: the provider refused the request outright — its
-                    // own outcome, not a contract failure on a response.
-                    terminal = Some(AppError::ProviderRejected {
-                        status: status.as_u16(),
-                        detail,
-                    });
-                    break;
-                }
-
-                let payload: ChatResponse = match response.json().await {
-                    Ok(payload) => payload,
-                    // reqwest's .timeout() covers the body read too.
-                    Err(e) if e.is_timeout() => {
-                        terminal = Some(AppError::Timeout {
-                            what: "request",
-                            ms: self.timeout_ms,
-                        });
-                        break;
-                    }
-                    Err(e) => {
-                        terminal = Some(AppError::Client(format!("response body unreadable: {e}")));
-                        break;
-                    }
-                };
-                return interpret(&payload, rung, &self.model);
+        let (earlier, last) = ladder_for(self.structured);
+        for rung in earlier {
+            if let RungOutcome::Done(result) = self.try_rung(prompt, schema, *rung).await {
+                return result;
             }
-
-            if let Some(error) = terminal {
-                return Err(error);
-            }
-            if let Some(rejection) = capability {
-                last_capability = Some(rejection);
-                continue;
-            }
-            return Err(AppError::RetriesExhausted {
-                attempts: attempts_max,
-                last: last_error,
-            });
         }
-
-        // Only reachable for a pinned rung: `auto` always ends on prompt-only,
-        // which cannot be capability-rejected. Fail loud either way: the
-        // provider's 4xx is a provider rejection (057); with no rejection
-        // recorded there is no status to report, so the old error stands.
-        match last_capability {
-            Some((status, message)) => Err(AppError::ProviderRejected {
+        match self.try_rung(prompt, schema, last).await {
+            RungOutcome::Done(result) => result,
+            // Only a pinned rung gets here: `auto` ends on prompt-only, which
+            // cannot be capability-rejected. The provider's 4xx is a provider
+            // rejection, carrying its status (057). Fail loud — never a
+            // silent fall-through to a rung the operator did not choose.
+            RungOutcome::StrategyRejected { status, message } => Err(AppError::ProviderRejected {
                 status,
                 detail: format!(
                     "`{}` rejected the {} structured-output strategy as unsupported; \
@@ -366,13 +302,86 @@ impl ModelClient for OpenAiCompatClient {
                     self.structured.as_str(),
                 ),
             }),
-            None => Err(AppError::Client(format!(
-                "out-of-contract provider response: `{}` rejected the {} structured-output \
-                 strategy as unsupported; last rejection: none",
-                self.model,
-                self.structured.as_str(),
-            ))),
         }
+    }
+}
+
+impl OpenAiCompatClient {
+    /// One rung: send with retries, and say how it ended.
+    async fn try_rung(&self, prompt: &str, schema: &Value, rung: Rung) -> RungOutcome {
+        let body = self.build_body(prompt, schema, rung);
+        let attempts_max = self.max_retries.saturating_add(1);
+        let mut last_error = String::new();
+
+        for attempt in 1..=attempts_max {
+            if attempt > 1 {
+                let backoff = self
+                    .backoff_base_ms
+                    .saturating_mul(1 << (attempt - 2).min(8));
+                tokio::time::sleep(Duration::from_millis(backoff)).await;
+            }
+
+            let response = match self.send_once(&body).await {
+                Ok(r) => r,
+                // A timeout consumed the full per-request budget — terminal.
+                Err(timeout @ AppError::Timeout { .. }) => return RungOutcome::Done(Err(timeout)),
+                Err(e) => {
+                    last_error = e.to_string();
+                    continue;
+                }
+            };
+
+            let status = response.status();
+            if status.as_u16() == 429 || status.is_server_error() {
+                last_error = format!("HTTP {status}");
+                continue;
+            }
+            if !status.is_success() {
+                let detail = response.text().await.unwrap_or_default();
+                // A rejection of the *strategy parameter* is a ladder
+                // signal, not a failure — the next rung is the remedy.
+                // Prompt-only sends nothing to reject, so its 400s are
+                // always terminal.
+                if rung != Rung::PromptOnly && is_capability_rejection(status, &detail) {
+                    return RungOutcome::StrategyRejected {
+                        status: status.as_u16(),
+                        message: detail,
+                    };
+                }
+                // 057: a 4xx is the provider refusing the request — its
+                // own outcome; a 1xx/3xx reaching here is out of contract.
+                return RungOutcome::Done(Err(if status.is_client_error() {
+                    AppError::ProviderRejected {
+                        status: status.as_u16(),
+                        detail,
+                    }
+                } else {
+                    AppError::Client(format!("HTTP {status}: {detail}"))
+                }));
+            }
+
+            let payload: ChatResponse = match response.json().await {
+                Ok(payload) => payload,
+                // reqwest's .timeout() covers the body read too.
+                Err(e) if e.is_timeout() => {
+                    return RungOutcome::Done(Err(AppError::Timeout {
+                        what: "request",
+                        ms: self.timeout_ms,
+                    }));
+                }
+                Err(e) => {
+                    return RungOutcome::Done(Err(AppError::Client(format!(
+                        "response body unreadable: {e}"
+                    ))));
+                }
+            };
+            return RungOutcome::Done(interpret(&payload, rung, &self.model));
+        }
+
+        RungOutcome::Done(Err(AppError::RetriesExhausted {
+            attempts: attempts_max,
+            last: last_error,
+        }))
     }
 }
 
@@ -955,6 +964,24 @@ mod tests {
             "{err:?}"
         );
         assert!(err.to_string().contains("Incorrect API key"), "{err}");
+    }
+
+    /// 057 review: only a 4xx is a provider rejection; an unexpected 3xx is
+    /// an out-of-contract response, as before.
+    #[tokio::test]
+    async fn a_redirect_status_is_not_a_provider_rejection() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(300).set_body_string("multiple choices"))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let err = client_for(&mock)
+            .complete("p", &json!({"type": "object"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err.root(), AppError::Client(_)), "{err:?}");
+        assert_eq!(err.outcome(), Outcome::ValidationFailure);
     }
 
     /// 057 US2: each provider rejection is recorded as `provider_rejected`,

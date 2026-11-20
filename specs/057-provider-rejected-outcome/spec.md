@@ -68,7 +68,7 @@ Anyone reading the invocation-record contract, the telemetry contract or the des
 
 ### Functional Requirements
 
-- **FR-001**: A model-provider HTTP response that is unsuccessful and is neither 429 nor a server error MUST be recorded with the outcome `provider_rejected`, on both model backends.
+- **FR-001**: A model-provider HTTP 4xx response other than 429 MUST be recorded with the outcome `provider_rejected`, on both model backends.
 - **FR-002**: The recorded error text for such a call MUST contain the HTTP status and the provider's message, as it does today; no new record field is added.
 - **FR-003**: A successful provider response whose content breaks the output contract MUST keep the outcome `validation_failure`.
 - **FR-004**: Retry behaviour for HTTP 429, server errors and transport errors MUST be unchanged.
