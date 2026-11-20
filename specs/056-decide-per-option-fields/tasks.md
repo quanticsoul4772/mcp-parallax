@@ -65,7 +65,7 @@
 - [X] T017 Add CHANGELOG entries in `CHANGELOG.md` under `[Unreleased]`: Fixed (arity mismatches impossible) and Changed (10-option cap)
 - [X] T018 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller; each finding asked one question per finding
 - [X] T019 Live check (paid, asked with price): after the owner rebuilds, call `decide` through the running server with 2, 4 and 6 options; record counts, results and cost in `specs/056-decide-per-option-fields/quickstart.md`
-- [ ] T020 Update the CLAUDE.md Spec Kit block when the feature closes (exact text asked)
+- [X] T020 Update the CLAUDE.md Spec Kit block when the feature closes (exact text asked)
 
 ## Dependencies
 
