@@ -19,8 +19,8 @@
 
 ## Phase 2: Foundational (blocks every story)
 
-- [ ] T002 Write a failing unit test in `src/modes/mod.rs` tests: a registry method that registers one mode with one output schema per count in a given range runs `assert_flat` on every variant (an illegal variant fails registration) and returns the variant for a requested count, with none for a count outside the range
-- [ ] T003 Implement that registry method in `src/modes/mod.rs` (per-count `output_schema` and `sanitized_schema`, each gated by `assert_flat` at registration; existing `register` unchanged for other modes); T002 passes
+- [X] T002 Write a failing unit test in `src/modes/mod.rs` tests: a registry method that registers one mode with one output schema per count in a given range runs `assert_flat` on every variant (an illegal variant fails registration) and returns the variant for a requested count, with none for a count outside the range
+- [X] T003 Implement that registry method in `src/modes/mod.rs` (per-count `output_schema` and `sanitized_schema`, each gated by `assert_flat` at registration; existing `register` unchanged for other modes); T002 passes
 
 ## Phase 3: User Story 1 — no list-length mismatch is possible (P1, MVP)
 
