@@ -27,3 +27,18 @@ Tests to look for:
 Call `decide` through the running server with 2, 4 and 6 options. Each result
 must list one assessment per option in input order. Record the counts, results
 and cost here when run.
+
+Run 2026-11-20 on the rebuilt release binary (built 10:59:13; all four server
+processes started after it), through `decide` on claude-sonnet-5, one request
+per call, no retry:
+
+- 2 options: 2 assessments in input order; SQLite 94, PostgreSQL 22;
+  recommended SQLite.
+- 4 options: 4 in input order; every merge 45, weekly 78, monthly 72,
+  milestone 58; recommended weekly (lead 6).
+- 6 options: 6 in input order; email 40, chat bot 68, dashboard 88, shared
+  drive 45, issue tracker 60, stand-up 25; recommended dashboard (lead 20).
+
+Each rationale described its own option, so no answer was shifted by position.
+Tokens and cost were not read: the servers' invocation database is set by a
+`DATABASE_PATH` this check could not locate.
