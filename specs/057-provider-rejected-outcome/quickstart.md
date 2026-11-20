@@ -6,6 +6,8 @@
 cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests
 ```
 
+Baseline (T001, 2026-11-20, before any code change): 691 passed + 1 ignored (lib), 32 passed (bin), 82 passed (integration).
+
 Tests to look for:
 
 - on both clients, a credit-balance 400, a 401, a 403, a 404 and a

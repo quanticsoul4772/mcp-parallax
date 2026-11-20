@@ -15,7 +15,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Run the full gate on branch `057-provider-rejected-outcome` before any code change and record the passing test counts as the baseline in `specs/057-provider-rejected-outcome/quickstart.md`
+- [X] T001 Run the full gate on branch `057-provider-rejected-outcome` before any code change and record the passing test counts as the baseline in `specs/057-provider-rejected-outcome/quickstart.md`
 
 ## Phase 2: Foundational (blocks every story)
 
