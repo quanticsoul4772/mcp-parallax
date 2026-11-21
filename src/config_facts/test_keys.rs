@@ -20,9 +20,7 @@ const TEST_MARKER: &str = "#[cfg(test)]";
 /// `TEST_MODULE_NOT_LAST` when the last marker does not open a block that
 /// closes at the end of the file — production code after it would otherwise be
 /// read as test code and excused. Clippy's `items_after_test_module` catches
-/// the same shape at the gate and is the backstop: this check trusts
-/// `strip_comments`, which misreads a `'"'` char literal, a raw string ending
-/// in a backslash (`r"C:\"`), and a raw string containing a quote. A key
+/// the same shape at the gate and is the backstop. A key
 /// quoted only inside a raw-string snippet is not derived, though the
 /// extractor still reads it; a document check then fails naming it. It also
 /// panics, wrongly, when the marked item's header holds a `;` inside brackets

@@ -247,6 +247,14 @@ arc.
 
 ### Fixed
 
+* **The config scans' comment stripper reads char literals and raw strings** —
+  `strip_comments` knew only `"…"` strings, so a `'"'` char literal, or a raw
+  string that ends in a backslash (`r"C:\"`) or holds a quote, flipped its idea
+  of string and code: a later `//` inside a real string was deleted as a
+  comment, and a comment could survive as code. All five scans that use it
+  were exposed; `config.rs` has none of these shapes, so its results are
+  unchanged.
+
 * **The no-default scan excuses test-only reads by where they are read** —
   `variables_without_defaults` skipped any name starting `PARALLAX_TEST`. The
   rule excused nothing today, but it would have dropped a real variable with
@@ -260,9 +268,7 @@ arc.
   variable that took a fixture's name would have been dropped from the
   `--help` and README checks silently. `test_only_keys` now derives the list:
   names quoted only after `config.rs`'s last top-level `#[cfg(test)]`. It fails if code
-  follows the test module, unless a literal the comment stripper misreads
-  hides it; clippy's `items_after_test_module` rejects that shape at the gate
-  regardless.
+  follows the test module, as clippy's `items_after_test_module` does at the gate.
 
 * **`decide` can no longer fail on lists of the wrong length (056)** — its
   pass returned scores and rationales as two lists the output grammar could
