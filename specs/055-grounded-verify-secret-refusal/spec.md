@@ -250,11 +250,11 @@ only when all passes agreed would not do what was intended, and one that
 always changed it would stop it meaning what every document says it means.
 The flag carries the fact instead.
 
-## Deferred (named, not built here)
+## Deferred or not pursued (named, not built here)
 
 - **Confining each session to its own project.** A separate specification. It must begin with a test against the real client program to establish how the server can learn the folder a session is working in. Review of this specification's first version fixed three requirements for it in advance: the folder must come from the client program and never from anything the calling agent writes; there must be no default mode, so that setting the root to a folder of projects without choosing a mode stops the server at startup; and "the session's folder" must be defined against the cases found in review (several folders, a folder that changes, links, a session started above several projects).
 - Detecting secrets by content.
-- Refusing files that have more than one hard link.
+- Refusing files that have more than one hard link. Considered on 2026-11-21 and not pursued. For a link an agent makes, copying the file to an ordinary name is as easy, and no link-count check catches a copy. For a link that already exists, refusing every file with more than one link would refuse legitimate ones, such as a pnpm store's. And the Windows link count (`MetadataExt::number_of_links`) is unstable in the pinned toolchain, so it would need a new direct dependency.
 - Closing the instant between a file's last check and its being opened, by checking the file once it is open. Named as part of the session-folder specification, where confinement between projects is the goal and a race matters; it needs a new dependency, which that work must justify.
 - Matching by word (any name containing "secret" or "token"), which the owner considered and set aside in favour of a fixed list with backup forms.
 - An operator-editable list, or an override.
