@@ -34,7 +34,7 @@ caller through the SDK's default parent-based sampler. Nothing is stored.
 
 **Constraints**: telemetry failures never propagate (007 FR-006); "one measurement, two sinks" stays one door (`InvocationRecord::publish`); results and records byte-identical (FR-006)
 
-**Scale/Scope**: `src/observability.rs`, `src/telemetry.rs`, `src/server.rs` and `src/server/record.rs` (every tool handler passes the request's trace context), the checkpoint run path, the telemetry contract, a dated amendment to 007's spec, CHANGELOG
+**Scale/Scope**: `src/observability.rs`, `src/telemetry.rs`, `src/server.rs` and `src/server/record.rs` (every tool handler passes the request's trace context), the checkpoint run path, the telemetry contract (007's spec needed no amendment, T014), CHANGELOG
 
 ## Constitution Check
 
@@ -42,7 +42,7 @@ caller through the SDK's default parent-based sampler. Nothing is stored.
 
 | Principle | Status | Note |
 |---|---|---|
-| I. Design-Corpus Fidelity | Pass, with amendment | 007 named trace-context propagation as a deferral; its spec and `contracts/telemetry.md` get a dated amendment in this change (FR-008). |
+| I. Design-Corpus Fidelity | Pass, with amendment | 007's `contracts/telemetry.md` named trace-context propagation as a deferral and is amended in this change (FR-008); 007's spec never named it (T014). |
 | II. Constrained-Output Contract | N/A | No mode schema or prompt changes. |
 | III. Compiler-Enforced Discipline | Pass | The parent travels as a typed value; no new lint exceptions. |
 | IV. Seams, Composition, Tests | Pass | Tests first through the in-memory exporter seam; no new dependency. |
@@ -72,17 +72,18 @@ specs/058-otel-trace-context/
 ### Source Code (repository root)
 
 ```text
-src/observability.rs     # CallerTrace (parse from _meta), emit_invocation/emit_checkpoint start under it
+src/observability.rs     # emit_invocation/emit_checkpoint/emit_push/emit_consolidation start under the caller trace
+src/observability/trace_context.rs  # CallerTrace (parse from _meta) and the parent context
+src/memory/push.rs, src/memory/tools.rs  # surface and save pass the caller trace to the push and consolidation spans
 src/telemetry.rs         # publish takes the caller trace; still the only door
 src/server/record.rs     # RecordGuard carries the caller trace to finish() and Drop
 src/server.rs            # each tool handler reads context.meta once and passes it on
 src/checkpoint/run.rs    # the checkpoint path passes the caller trace to emit_checkpoint
 specs/007-observability-layer/contracts/telemetry.md   # parenting rule; deferral removed
-specs/007-observability-layer/spec.md                  # dated amendment to the FR-011 deferral list
 CHANGELOG.md             # Added entry
 ```
 
-**Structure Decision**: Parse at the edge (the handler, where `_meta` is), carry a typed value, and change only the parent at the two emit points that serve tool calls. Consolidation and push spans keep the empty context.
+**Structure Decision**: Parse at the edge (the handler, where `_meta` is), carry a typed value, and change only the parent at the emit points that serve tool calls: invocation and checkpoint spans, and (review R1) the push and consolidation spans emitted inside `surface`, `save` and `checkpoint_turn`.
 
 ## Complexity Tracking
 

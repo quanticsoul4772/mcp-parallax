@@ -37,5 +37,6 @@
   library or code structure is named.
 - FR-005 extends "every tool's invocation span" to the checkpoint evaluation
   span a checkpoint tool call exports, since it is also emitted per tool call;
-  consolidation and push spans stay root (no request to take context from).
+  review finding R1 (2026-11-21) extended it to the push and consolidation
+  spans, which are emitted inside tool calls too.
 - SEP-414 was not read; recorded under Assumptions.

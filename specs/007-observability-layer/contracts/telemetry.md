@@ -121,8 +121,9 @@ per-boundary checkpoint flag/hold/suppression/fail-open rates.
 ## Trace context (058)
 
 When a tool request carries W3C trace context in `_meta` (`traceparent`,
-optionally `tracestate`; MCP 2026-07-28), the invocation span and a
-checkpoint tool's evaluation span start as children of it. Without a valid
+optionally `tracestate`; MCP 2026-07-28), the invocation span, a
+checkpoint tool's evaluation span, and the push and consolidation spans a
+call emits start as children of it. Without a valid
 `traceparent` they are root spans, as before; `baggage` is never read; a
 sampled-off `traceparent` exports no span, while metrics still count the
 call. The full rule: `specs/058-otel-trace-context/contracts/trace-context.md`.

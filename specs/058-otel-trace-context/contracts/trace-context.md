@@ -20,12 +20,15 @@ request's `_meta` (MCP 2026-07-28; W3C Trace Context format).
 
 ## Scope
 
-- Spans covered: every tool's invocation span (`parallax.<tool>`) and a
-  checkpoint tool call's evaluation span.
-- Not covered: consolidation and push spans (no request); child spans inside
-  an invocation (still deferred).
+- Spans covered: every tool's invocation span (`parallax.<tool>`), a
+  checkpoint tool call's evaluation span, and the push and consolidation
+  spans emitted during a tool call (`surface`, `save`, `checkpoint_turn`).
+- Not covered: child spans inside an invocation (still deferred).
 - `baggage` is never read.
 - Span name, kind, attributes and status are the same as without a parent.
 - Outgoing calls Parallax makes do not carry the context onward.
 - Operators who want every span regardless of the caller's flag set
   `OTEL_TRACES_SAMPLER=always_on`.
+- With a parent-based sampler (the default, or `parentbased_traceidratio`),
+  a parented call follows the caller's sampled flag; ratio sampling applies
+  only to calls that carry no trace context.

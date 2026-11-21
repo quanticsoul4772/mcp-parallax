@@ -90,7 +90,8 @@ variable); parenting only sampled contexts (orphan root spans).
   give a root span identical to today's;
 - a sampled-off flag gives no span and one metric count;
 - one test per tool (SC-003), driven through the MCP client in
-  `tests/integration.rs`, plus the checkpoint span.
+  `tests/trace_context.rs` (helpers shared from `tests/common/mod.rs`), plus
+  the checkpoint span.
 
 **Rationale**: SC-001 to SC-004 are each checked by a named test.
 
@@ -99,7 +100,7 @@ variable); parenting only sampled contexts (orphan root spans).
 **Decision**: add `specs/058-otel-trace-context/contracts/trace-context.md`;
 add a "Trace context" section to `specs/007-observability-layer/contracts/telemetry.md`
 that states the rule and links it; remove "trace-context propagation from the
-calling harness" from that contract's deferrals; add a dated amendment to 007's
-spec where FR-011 names the deferral.
+calling harness" from that contract's deferrals. (A dated amendment to 007's
+spec was planned and dropped: its FR-011 never named this deferral, T014.)
 
 **Rationale**: Constitution I and FR-008.

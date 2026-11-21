@@ -14,7 +14,8 @@ The 15 tools: `verify`, `unstick`, `diverge`, `decide`, `elicit`, `check`,
 `save`, `recall`, `forget`, `surface`, `research`, `grounded_verify`,
 `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn`. The gated ones are
 served in tests through the existing helpers (`serve_with_memory`,
-`serve_with_research`, `serve_with_grounded` in `tests/integration.rs`).
+`serve_with_research`, `serve_with_grounded` in `tests/common/mod.rs`, moved
+there from `tests/integration.rs`).
 
 ## Phase 1: Setup
 
@@ -36,7 +37,7 @@ provides the W3C propagator, research D2).
 
 **Independent test**: call a tool with a `traceparent` in `_meta` against the in-memory exporter and read the span's trace id and parent.
 
-- [x] T005 [US1] Create `tests/trace_context.rs` (its own process, so its own `init_with_exporters`): call each of the 15 tools through the MCP client with a distinct `traceparent` in `_meta`, using the same doubles and helpers as `tests/integration.rs`, and assert each `parallax.<tool>` span (and the checkpoint evaluation span for the three checkpoint tools) has that trace id and parent; write it to fail
+- [x] T005 [US1] Create `tests/trace_context.rs` (its own process, so its own `init_with_exporters`): call each of the 15 tools through the MCP client with a distinct `traceparent` in `_meta`, using the doubles and helpers shared in `tests/common/mod.rs`, and assert each `parallax.<tool>` span (and the checkpoint evaluation span for the three checkpoint tools) has that trace id and parent; write it to fail
 - [x] T006 [US1] Carry `Option<CallerTrace>` in `RecordGuard` in `src/server/record.rs` and pass it to `publish` from both `finish()` and the cancelled-on-drop path
 - [x] T007 [US1] In `src/server.rs`, have every tool handler build `CallerTrace::from_meta(&context.meta)` once and pass it through `run_recorded` / `run_recorded_usage` to `RecordGuard`
 - [x] T008 [US1] Pass the caller trace from the checkpoint tool handlers through `src/checkpoint/run.rs` to `emit_checkpoint` (research D4)
@@ -54,7 +55,7 @@ provides the W3C propagator, research D2).
 - [x] T011 [US2] Add a unit test in src/observability.rs that a sampled-off `traceparent` exports no span while `parallax.invocations` still counts the call (FR-009)
 - [x] T012 [US2] Add a test that tool results and the stored invocation record are identical with and without trace context (SC-004)
 - [x] T012a [US2] Create tests/trace_context_export_off.rs (its own process, never initializes telemetry): a call with traceparent returns the same result and stores the same record as one without (FR-007)
-- [x] T012b [US2] Add a unit test in src/observability.rs that consolidation and push spans have no parent (spec edge case)
+- [x] T012b [US2] Add a unit test in src/observability.rs that consolidation and push spans start under a given caller trace (spec edge case; flipped from "have no parent" by review R1, with an end-to-end test in tests/trace_context.rs)
 
 **Checkpoint**: US2 complete.
 
@@ -64,7 +65,7 @@ provides the W3C propagator, research D2).
 - [x] T014 Add a dated amendment to `specs/007-observability-layer/spec.md` where FR-011 names the deferral — not needed: FR-011 never named trace-context propagation; only the telemetry contract did, and T013 amends it.
 - [x] T015 Add an "Added" entry to `CHANGELOG.md` under Unreleased
 - [x] T016 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
-- [ ] T017 Independent review of the branch diff by a fresh subagent; act on findings
+- [x] T017 Independent review of the branch diff by a fresh subagent; act on findings
 - [ ] T018 Update the CLAUDE.md active-feature block for 058 (exact text approved first)
 - [ ] T019 Optional live check (`quickstart.md`): with a collector configured, see whether a Claude Code session sends `traceparent`; record the result in `quickstart.md`
 

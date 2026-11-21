@@ -27,4 +27,5 @@ The same rule, for a checkpoint tool call's evaluation span.
 - Tool results and error messages.
 - Metrics: every call is still counted, including calls whose span the
   caller's sampled-off flag suppresses.
-- Consolidation and push spans: root spans (not tied to a request).
+- Push and consolidation spans: emitted inside a tool call (`surface`;
+  `save`, `checkpoint_turn`), so they start under that call's caller trace.

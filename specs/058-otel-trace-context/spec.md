@@ -72,8 +72,10 @@ root trace with the same attributes it has today.
   still parented to the `traceparent`; the bad `tracestate` is dropped.
 - A sampled-off flag in `traceparent`: the caller chose not to record this
   trace, so no span is exported for the call; metrics still count it.
-- Spans not tied to a tool request (memory consolidation, memory push) stay
-  root traces: there is no request to take context from.
+- Spans a tool call emits besides its invocation span (memory push inside
+  `surface`; memory consolidation inside `save` and `checkpoint_turn`) start
+  under the same caller trace, so one call's telemetry stays in one trace and
+  follows one sampling decision.
 
 ## Requirements *(mandatory)*
 
@@ -89,7 +91,8 @@ root trace with the same attributes it has today.
   span exported before this feature.
 - **FR-004**: `baggage` MUST NOT be read.
 - **FR-005**: FR-001 to FR-004 MUST hold for every tool's invocation span,
-  and for the checkpoint evaluation span exported by a checkpoint tool call.
+  for the checkpoint evaluation span exported by a checkpoint tool call, and
+  for the push and consolidation spans emitted during a tool call.
 - **FR-006**: Tool results, errors, and stored invocation and checkpoint
   records MUST be unchanged; no stored schema changes.
 - **FR-007**: When export is not configured, behavior MUST be identical to
