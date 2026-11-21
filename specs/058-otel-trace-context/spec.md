@@ -70,8 +70,8 @@ root trace with the same attributes it has today.
   any span.
 - A `tracestate` that is malformed while `traceparent` is valid: the span is
   still parented to the `traceparent`; the bad `tracestate` is dropped.
-- A sampled-off flag in `traceparent`: the server's own export decision is
-  unchanged by this feature (see Assumptions).
+- A sampled-off flag in `traceparent`: the caller chose not to record this
+  trace, so no span is exported for the call; metrics still count it.
 - Spans not tied to a tool request (memory consolidation, memory push) stay
   root traces: there is no request to take context from.
 
@@ -96,6 +96,8 @@ root trace with the same attributes it has today.
   today's, whatever the request carries.
 - **FR-008**: The published telemetry contract MUST describe the parenting
   rule and remove trace-context propagation from its named deferrals.
+- **FR-009**: A valid `traceparent` whose sampled flag is off MUST result in
+  no exported span for that call; the call MUST still be counted in metrics.
 
 ### Key Entities
 
@@ -125,9 +127,10 @@ root trace with the same attributes it has today.
   (`traceparent`, `tracestate`, `baggage`)") and the W3C Trace Context format
   those names come from. SEP-414 was not read; if it adds requirements this
   spec misses, that is a follow-up.
-- The server's export and sampling behavior is unchanged: a sampled-off flag
-  from the caller does not suppress export. Following the caller's sampling
-  decision is out of scope.
+- Sampling follows the caller: the tracer's sampler is the SDK default, which
+  follows the parent, so a sampled-off `traceparent` means no span for that
+  call while metrics still count it. An operator who wants every span sets the
+  standard `OTEL_TRACES_SAMPLER=always_on`.
 - Whether Claude Code sends these keys is unknown; the feature is useful to any
   harness that does, and inert otherwise.
 - Child spans inside an invocation (verify passes, research phases) remain out
