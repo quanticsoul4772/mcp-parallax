@@ -89,8 +89,8 @@ fn tool_calls(transcript: &str) -> Vec<(&'static str, Value)> {
             json!({
                 "session_id": "tc-action",
                 "transcript_path": "unused.jsonl",
-                "tool_name": "Read",
-                "tool_input": "src/main.rs"
+                "tool_name": "Bash",
+                "tool_input": "git push --force"
             }),
         ),
         (
@@ -103,7 +103,7 @@ fn tool_calls(transcript: &str) -> Vec<(&'static str, Value)> {
                 "session_id": "tc-turn",
                 "transcript_path": "unused.jsonl",
                 "final_message": "done",
-                "continuation": true
+                "continuation": false
             }),
         ),
         (
@@ -133,7 +133,7 @@ fn tool_calls(transcript: &str) -> Vec<(&'static str, Value)> {
 }
 
 /// Every call whose span is missing from its trace or has another parent,
-/// plus `checkpoint_batch`'s evaluation span.
+/// plus each checkpoint tool's evaluation span.
 fn unparented(spans: &[SpanData], calls: &[(&str, Value)], ids: &[String]) -> Vec<String> {
     let mut wrong = Vec::new();
     for ((name, _), id) in calls.iter().zip(ids) {
@@ -147,16 +147,15 @@ fn unparented(spans: &[SpanData], calls: &[(&str, Value)], ids: &[String]) -> Ve
             None => wrong.push(format!("{name}: no span in trace {id}")),
         }
     }
-    let batch = calls
-        .iter()
-        .position(|(n, _)| *n == "checkpoint_batch")
-        .unwrap();
-    if !spans.iter().any(|s| {
-        s.name.starts_with("parallax.checkpoint.")
-            && s.span_context.trace_id().to_string() == ids[batch]
-            && s.parent_span_id.to_string() == PARENT_SPAN
-    }) {
-        wrong.push("checkpoint_batch: no checkpoint span under the caller".into());
+    for tool in ["checkpoint_action", "checkpoint_batch", "checkpoint_turn"] {
+        let at = calls.iter().position(|(n, _)| *n == tool).unwrap();
+        if !spans.iter().any(|s| {
+            s.name.starts_with("parallax.checkpoint.")
+                && s.span_context.trace_id().to_string() == ids[at]
+                && s.parent_span_id.to_string() == PARENT_SPAN
+        }) {
+            wrong.push(format!("{tool}: no checkpoint span under the caller"));
+        }
     }
     wrong
 }
@@ -236,6 +235,58 @@ async fn a_failing_call_with_tracestate_is_parented_and_carries_it() {
         .expect("a span in the caller's trace");
     assert_eq!(span.parent_span_id.to_string(), PARENT_SPAN);
     assert_eq!(span.span_context.trace_state().header(), "vendor=abc");
+}
+
+/// Review R5: contract rows beside a valid `traceparent`. A non-string or
+/// invalid `tracestate` is dropped and the parent kept; `baggage` is never
+/// read, so it reaches neither the span's attributes nor its trace state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tracestate_and_baggage_rows_keep_the_parent() {
+    telemetry();
+    let mock = MockServer::start().await;
+    generic_model(&mock).await;
+    let (client, _storage, _server) = serve(&mock, 2_000).await;
+    let cases: [(&str, Value); 3] = [
+        ("non-string tracestate", json!(42)),
+        ("invalid tracestate", json!("not a valid tracestate=,,=")),
+        ("baggage", json!("tenant=acme,user=r5-baggage")),
+    ];
+    let mut ids = Vec::new();
+    for (n, (label, value)) in cases.iter().enumerate() {
+        let id = trace_id(200 + n);
+        let mut params = traced("verify", &json!({ "claim": *label }), &id);
+        let key = if *label == "baggage" {
+            "baggage"
+        } else {
+            "tracestate"
+        };
+        params
+            .meta
+            .as_mut()
+            .unwrap()
+            .0
+             .0
+            .insert(key.to_string(), value.clone());
+        let _ = client.call_tool(params).await;
+        ids.push(id);
+    }
+
+    let spans = exported();
+    for ((label, _), id) in cases.iter().zip(&ids) {
+        let found = spans
+            .iter()
+            .find(|s| s.name == "parallax.verify" && s.span_context.trace_id().to_string() == *id);
+        assert!(found.is_some(), "{label}: no span in the caller's trace");
+        let span = found.unwrap();
+        assert_eq!(span.parent_span_id.to_string(), PARENT_SPAN, "{label}");
+        assert_eq!(span.span_context.trace_state().header(), "", "{label}");
+        assert!(
+            !span.attributes.iter().any(|kv| {
+                kv.key.as_str().contains("baggage") || kv.value.as_str().contains("r5-baggage")
+            }),
+            "{label}: baggage must not reach the span"
+        );
+    }
 }
 
 /// A request `_meta` holding one string key.
@@ -351,4 +402,68 @@ async fn trace_context_changes_neither_result_nor_record() {
         ));
     }
     assert_eq!(outcomes[0], outcomes[1]);
+}
+
+/// Review R1: the push span a `surface` call emits, and the consolidation
+/// span a `save` call emits, belong to that call's trace too. The same
+/// content saved twice embeds identically, and the judge replies `updates`,
+/// so the second save supersedes the first and records a consolidation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn push_and_consolidation_spans_join_the_callers_trace() {
+    use wiremock::matchers::body_string_contains;
+
+    telemetry();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(body_string_contains("Classify the relation"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(end_turn(&json!({
+            "relation": "updates", "basis": "newer"
+        }))))
+        .mount(&mock)
+        .await;
+    generic_model(&mock).await;
+    mount_embeddings(&mock).await;
+    let (client, _storage, _server) = serve_with_memory(&mock, ":memory:").await;
+
+    let save = json!({
+        "content": "the deploy target is staging-2",
+        "kind": "fact",
+        "origin": "this session",
+        "external": false
+    });
+    client.call_tool(tool_call("save", &save)).await.unwrap();
+    let save_trace = trace_id(300);
+    client
+        .call_tool(traced("save", &save, &save_trace))
+        .await
+        .unwrap();
+    let surface_trace = trace_id(301);
+    let _ = client
+        .call_tool(traced(
+            "surface",
+            &json!({ "session_id": "tc-push", "prompt": "deploy target" }),
+            &surface_trace,
+        ))
+        .await;
+
+    let spans = exported();
+    for (name, id) in [
+        ("parallax.consolidation", &save_trace),
+        ("parallax.push", &surface_trace),
+    ] {
+        let found = spans
+            .iter()
+            .find(|s| s.name == name && s.span_context.trace_id().to_string() == *id);
+        let anywhere = spans.iter().filter(|s| s.name == name).count();
+        assert!(
+            found.is_some(),
+            "{name}: no span in trace {id} ({anywhere} such spans exported elsewhere)"
+        );
+        assert_eq!(
+            found.unwrap().parent_span_id.to_string(),
+            PARENT_SPAN,
+            "{name}"
+        );
+    }
 }

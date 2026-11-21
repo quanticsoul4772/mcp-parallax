@@ -13,7 +13,7 @@ use crate::error::{ConfigError, Outcome};
 use crate::telemetry::InvocationRecord;
 use opentelemetry::metrics::{Counter, Histogram, MeterProvider as _};
 use opentelemetry::trace::{Span, SpanKind, Status, Tracer, TracerProvider as _};
-use opentelemetry::{Array, Context, KeyValue, StringValue, Value};
+use opentelemetry::{Array, KeyValue, StringValue, Value};
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, SpanExporter};
@@ -21,6 +21,11 @@ use opentelemetry_sdk::Resource;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
+
+mod trace_context;
+
+use trace_context::parent_context;
+pub use trace_context::CallerTrace;
 
 /// Bound on the per-provider shutdown flush (FR-010).
 pub const FLUSH_TIMEOUT_MS: u64 = 5_000;
@@ -325,12 +330,6 @@ fn record_window(
     (start, end)
 }
 
-/// The context a tool call's span starts under: the caller's trace when the
-/// request carried one (058), otherwise empty, which makes a root span.
-fn parent_context(caller: Option<&CallerTrace>) -> Context {
-    caller.map_or_else(Context::new, |trace| trace.context.clone())
-}
-
 /// Export one invocation record (data-model §3). Fire-and-forget; a single
 /// atomic load when telemetry is disabled. The span starts under `caller`'s
 /// trace when given (058).
@@ -559,7 +558,10 @@ pub fn emit_checkpoint(record: &CheckpointRecord, caller: Option<&CallerTrace>) 
 /// Mirror one consolidation audit record (017) as a span + counter at the
 /// same exit point as the store write (007 FR-009). Attributes carry ids,
 /// action, and session only — never memory content.
-pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationRecord) {
+pub fn emit_consolidation(
+    record: &crate::memory::consolidate::ConsolidationRecord,
+    caller: Option<&CallerTrace>,
+) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -586,7 +588,7 @@ pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationReco
         .with_kind(SpanKind::Internal)
         .with_start_time(start)
         .with_attributes(attributes)
-        .start_with_context(&handles.tracer, &Context::new());
+        .start_with_context(&handles.tracer, &parent_context(caller));
     span.set_status(Status::Ok);
     span.end_with_timestamp(end);
     handles
@@ -599,7 +601,7 @@ pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationReco
 /// Emitted at the same exit point as the store write (007 FR-009 — the
 /// surfaces cannot disagree). Attributes carry counts and outcomes only —
 /// never memory content or ids (the checkpoint no-evidence rule).
-pub fn emit_push(record: &crate::memory::push::PushRecord) {
+pub fn emit_push(record: &crate::memory::push::PushRecord, caller: Option<&CallerTrace>) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -626,7 +628,7 @@ pub fn emit_push(record: &crate::memory::push::PushRecord) {
         .with_kind(SpanKind::Internal)
         .with_start_time(start)
         .with_attributes(attributes)
-        .start_with_context(&handles.tracer, &Context::new());
+        .start_with_context(&handles.tracer, &parent_context(caller));
     // Fail-open is data, not an error: the evaluation completed.
     span.set_status(Status::Ok);
     span.end_with_timestamp(end);
@@ -643,50 +645,26 @@ pub fn emit_push(record: &crate::memory::push::PushRecord) {
         .add(1, &[KeyValue::new("parallax.push.outcome", outcome)]);
 }
 
-/// The caller's trace context, read from a tool request's `_meta` (058).
-///
-/// MCP 2026-07-28 carries W3C Trace Context in `_meta` as `traceparent` and
-/// `tracestate`. A span started under this context joins the caller's trace;
-/// with no valid `traceparent` there is no `CallerTrace` and the span stays a
-/// root trace, as before. `baggage` is never read. Never stored or logged.
-#[derive(Debug, Clone)]
-pub struct CallerTrace {
-    context: Context,
-}
-
-impl CallerTrace {
-    /// Parse the caller's trace context, or `None` without a valid
-    /// `traceparent`.
-    ///
-    /// rmcp's accessors return `None` for a non-string value, and the SDK's
-    /// W3C propagator rejects malformed and all-zero ids and drops an invalid
-    /// `tracestate` while keeping the parent.
-    #[must_use]
-    pub fn from_meta(meta: &rmcp::model::MetaObject) -> Option<Self> {
-        use opentelemetry::propagation::TextMapPropagator as _;
-        use opentelemetry::trace::TraceContextExt as _;
-
-        let traceparent = meta.get_traceparent()?;
-        let mut carrier = std::collections::HashMap::with_capacity(2);
-        carrier.insert("traceparent".to_string(), traceparent.to_string());
-        if let Some(tracestate) = meta.get_tracestate() {
-            carrier.insert("tracestate".to_string(), tracestate.to_string());
-        }
-        let context = opentelemetry_sdk::propagation::TraceContextPropagator::new()
-            .extract_with_context(&Context::new(), &carrier);
-        context
-            .span()
-            .span_context()
-            .is_valid()
-            .then_some(Self { context })
-    }
-
-    /// The caller's span, as a remote span context.
-    #[must_use]
-    pub fn span_context(&self) -> opentelemetry::trace::SpanContext {
-        use opentelemetry::trace::TraceContextExt as _;
-        self.context.span().span_context().clone()
-    }
+/// One shared global init for the library's test binary (`OnceLock`
+/// semantics); tests find their own spans by a unique name or trace id.
+/// Crate-visible so `server`'s tests can read spans too (058 review R4).
+#[cfg(test)]
+pub(crate) fn test_exporters() -> (
+    &'static opentelemetry_sdk::trace::InMemorySpanExporter,
+    &'static opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter,
+    &'static Guard,
+) {
+    use opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
+    static EXPORTERS: OnceLock<(InMemorySpanExporter, InMemoryMetricExporter, Guard)> =
+        OnceLock::new();
+    let (spans, metrics, guard) = EXPORTERS.get_or_init(|| {
+        let spans = InMemorySpanExporter::default();
+        let metrics = InMemoryMetricExporter::default();
+        let guard = init_with_exporters(spans.clone(), metrics.clone(), "test-instance");
+        (spans, metrics, guard)
+    });
+    (spans, metrics, guard)
 }
 
 #[cfg(test)]
@@ -695,8 +673,6 @@ mod tests {
     use super::*;
     use crate::checkpoint::{Boundary, Signal, SignalKind, Verdict};
     use chrono::{DateTime, Utc};
-    use opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter;
-    use opentelemetry_sdk::trace::InMemorySpanExporter;
 
     fn lookup<'a>(map: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
@@ -804,23 +780,8 @@ mod tests {
         }
     }
 
-    /// One shared global init for this test binary (OnceLock semantics);
-    /// individual tests reset the exporters and assert their own slices.
-    fn test_handles() -> (
-        &'static InMemorySpanExporter,
-        &'static InMemoryMetricExporter,
-        &'static Guard,
-    ) {
-        static EXPORTERS: OnceLock<(InMemorySpanExporter, InMemoryMetricExporter, Guard)> =
-            OnceLock::new();
-        let (spans, metrics, guard) = EXPORTERS.get_or_init(|| {
-            let spans = InMemorySpanExporter::default();
-            let metrics = InMemoryMetricExporter::default();
-            let guard = init_with_exporters(spans.clone(), metrics.clone(), "test-instance");
-            (spans, metrics, guard)
-        });
-        (spans, metrics, guard)
-    }
+    use super::test_exporters as test_handles;
+    use super::trace_context::tests::{meta, text};
 
     fn attr<'a>(attrs: &'a [KeyValue], key: &str) -> Option<&'a opentelemetry::Value> {
         attrs
@@ -1090,7 +1051,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
         };
-        emit_push(&record);
+        emit_push(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1159,104 +1120,6 @@ mod tests {
                 "missing {expected}: {names:?}"
             );
         }
-    }
-
-    // ---- 058: the caller's trace context from request `_meta` -------------
-
-    const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-
-    fn meta(pairs: &[(&str, serde_json::Value)]) -> rmcp::model::MetaObject {
-        let mut meta = rmcp::model::MetaObject::new();
-        for (key, value) in pairs {
-            meta.0.insert((*key).to_string(), value.clone());
-        }
-        meta
-    }
-
-    fn text(value: &str) -> serde_json::Value {
-        serde_json::Value::String(value.to_string())
-    }
-
-    /// T001: a valid `traceparent` gives the caller's span as a remote parent.
-    #[test]
-    fn a_valid_traceparent_is_the_parent() {
-        let trace = CallerTrace::from_meta(&meta(&[("traceparent", text(TRACEPARENT))]))
-            .expect("a valid traceparent parses");
-        let span = trace.span_context();
-        assert_eq!(
-            span.trace_id().to_string(),
-            "4bf92f3577b34da6a3ce929d0e0e4736"
-        );
-        assert_eq!(span.span_id().to_string(), "00f067aa0ba902b7");
-        assert!(span.is_remote());
-        assert!(span.is_sampled());
-    }
-
-    /// T001: a valid `tracestate` travels with the parent.
-    #[test]
-    fn a_valid_tracestate_is_carried() {
-        let trace = CallerTrace::from_meta(&meta(&[
-            ("traceparent", text(TRACEPARENT)),
-            ("tracestate", text("vendor=abc")),
-        ]))
-        .expect("parses");
-        assert_eq!(trace.span_context().trace_state().header(), "vendor=abc");
-    }
-
-    /// T001: an invalid `tracestate` is dropped; the parent still holds.
-    #[test]
-    fn an_invalid_tracestate_is_dropped_but_the_parent_holds() {
-        let trace = CallerTrace::from_meta(&meta(&[
-            ("traceparent", text(TRACEPARENT)),
-            ("tracestate", text("not a valid tracestate!")),
-        ]))
-        .expect("the traceparent alone is enough");
-        assert_eq!(trace.span_context().trace_state().header(), "");
-        assert_eq!(
-            trace.span_context().trace_id().to_string(),
-            "4bf92f3577b34da6a3ce929d0e0e4736"
-        );
-    }
-
-    /// T001: malformed and all-zero values give no parent.
-    #[test]
-    fn a_malformed_or_zero_traceparent_gives_no_parent() {
-        for bad in [
-            "garbage",
-            "00-4bf92f3577b34da6a3ce929d0e0e4736",
-            "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
-            "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
-        ] {
-            assert!(
-                CallerTrace::from_meta(&meta(&[("traceparent", text(bad))])).is_none(),
-                "{bad}"
-            );
-        }
-    }
-
-    /// T001: a value that is not a string is absent.
-    #[test]
-    fn a_non_string_traceparent_is_absent() {
-        assert!(CallerTrace::from_meta(&meta(&[("traceparent", serde_json::json!(42))])).is_none());
-    }
-
-    /// T001: `tracestate` or `baggage` without a `traceparent` parents nothing,
-    /// and `baggage` is never read.
-    #[test]
-    fn tracestate_or_baggage_alone_gives_no_parent() {
-        assert!(CallerTrace::from_meta(&meta(&[("tracestate", text("vendor=abc"))])).is_none());
-        assert!(CallerTrace::from_meta(&meta(&[("baggage", text("user=x"))])).is_none());
-        assert!(CallerTrace::from_meta(&meta(&[])).is_none());
-    }
-
-    /// T001: a sampled-off flag is kept, so the parent-based sampler can follow
-    /// the caller's decision (FR-009).
-    #[test]
-    fn a_sampled_off_flag_is_kept() {
-        let off = TRACEPARENT.replace("-01", "-00");
-        let trace = CallerTrace::from_meta(&meta(&[("traceparent", text(&off))]))
-            .expect("a sampled-off traceparent is still valid");
-        assert!(!trace.span_context().is_sampled());
     }
 
     fn probe(tool: &str) -> InvocationRecord {
@@ -1359,6 +1222,14 @@ mod tests {
                 .any(|s| s.span_context.trace_id().to_string() == trace_id),
             "a sampled-off caller's trace must get no span"
         );
+        // Review R6: a span that lost its parent would be a root in a fresh
+        // trace and slip past the check above; no probe span may exist at all.
+        assert!(
+            !exported
+                .iter()
+                .any(|s| s.name == "parallax.sampled_off_probe"),
+            "a sampled-off call must not be exported as a root either"
+        );
 
         let counted: u64 = metrics
             .get_finished_metrics()
@@ -1386,50 +1257,56 @@ mod tests {
         assert!(counted >= 1, "the call must still be counted");
     }
 
-    /// T012b (pin): consolidation and push spans are not tied to a tool
-    /// request, so they stay root traces.
+    /// T012b, flipped by review R1: push and consolidation spans are emitted
+    /// inside tool calls (`surface`, `save`, `checkpoint_turn`), so given the
+    /// call's caller trace they start under it, like the invocation span.
     #[test]
-    fn consolidation_and_push_spans_stay_roots() {
+    fn consolidation_and_push_spans_start_under_the_caller_trace() {
         let (spans, _, guard) = test_handles();
         let at = DateTime::parse_from_rfc3339("2026-11-21T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        emit_push(&crate::memory::push::PushRecord {
-            id: "p-058".into(),
-            session_id: "058-root-push".into(),
-            surfaced_ids: vec![],
-            latency_ms: 5,
-            fail_open: false,
-            input_tokens: 1,
-            created_at: at,
-        });
-        emit_consolidation(&crate::memory::consolidate::ConsolidationRecord {
-            id: "c-058".into(),
-            session_id: Some("058-root-consolidation".into()),
-            action: crate::memory::consolidate::ConsolidationAction::Supersede,
-            source_id: "m-old".into(),
-            target_id: Some("m-new".into()),
-            basis: "newer".into(),
-            created_at: at,
-        });
+        let push_trace = "55555555555555555555555555555555";
+        let consolidation_trace = "66666666666666666666666666666666";
+        emit_push(
+            &crate::memory::push::PushRecord {
+                id: "p-058".into(),
+                session_id: "058-push".into(),
+                surfaced_ids: vec![],
+                latency_ms: 5,
+                fail_open: false,
+                input_tokens: 1,
+                created_at: at,
+            },
+            Some(&caller(push_trace)),
+        );
+        emit_consolidation(
+            &crate::memory::consolidate::ConsolidationRecord {
+                id: "c-058".into(),
+                session_id: Some("058-consolidation".into()),
+                action: crate::memory::consolidate::ConsolidationAction::Supersede,
+                source_id: "m-old".into(),
+                target_id: Some("m-new".into()),
+                basis: "newer".into(),
+                created_at: at,
+            },
+            Some(&caller(consolidation_trace)),
+        );
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
-        for (name, session) in [
-            ("parallax.push", "058-root-push"),
-            ("parallax.consolidation", "058-root-consolidation"),
+        for (name, trace_id) in [
+            ("parallax.push", push_trace),
+            ("parallax.consolidation", consolidation_trace),
         ] {
-            let found = exported.iter().find(|s| {
-                s.name == name
-                    && attr(&s.attributes, "parallax.session_id")
-                        .is_some_and(|v| v.as_str() == session)
-            });
-            assert!(found.is_some(), "{name} span exported");
-            let span = found.unwrap();
+            let found = exported
+                .iter()
+                .find(|s| s.name == name && s.span_context.trace_id().to_string() == trace_id);
+            assert!(found.is_some(), "{name} span in the caller's trace");
             assert_eq!(
-                span.parent_span_id,
-                opentelemetry::trace::SpanId::INVALID,
-                "{name} must stay a root"
+                found.unwrap().parent_span_id.to_string(),
+                "00f067aa0ba902b7",
+                "{name}"
             );
         }
     }

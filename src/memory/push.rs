@@ -167,6 +167,7 @@ pub fn advisory_context(surfaced: &[SurfacedMemory]) -> String {
 pub async fn run(
     deps: &MemoryDeps,
     params: &SurfaceParams,
+    caller: Option<&crate::observability::CallerTrace>,
 ) -> Result<(SurfaceResult, u64, u64), AppError> {
     let started = Instant::now();
 
@@ -212,7 +213,7 @@ pub async fn run(
         created_at: deps.clock.now(),
     };
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
-    crate::observability::emit_push(&record);
+    crate::observability::emit_push(&record, caller);
     deps.storage.record_push(&record).await?;
     // 017 research D5: being surfaced refreshes the decay clock —
     // fire-and-forget, failures never affect the response.
@@ -375,7 +376,7 @@ mod tests {
         }
     }
 
-    // ---- T003/T007/T009: run() orchestration ------------------------------
+    // ---- T003/T007/T009: run(, None) orchestration ------------------------------
 
     struct DepsBuilder {
         embedder: MockEmbedder,
@@ -454,9 +455,13 @@ mod tests {
             .withf(|ids, _| ids == ["mem-1".to_string()])
             .returning(|_, _| Ok(()));
 
-        let (result, inp, out) = run(&b.build(), &surface_params("a clearly related prompt"))
-            .await
-            .unwrap();
+        let (result, inp, out) = run(
+            &b.build(),
+            &surface_params("a clearly related prompt"),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.surfaced.len(), 1);
         assert_eq!(result.surfaced[0].id, "mem-1");
         assert!(!result.fail_open);
@@ -487,9 +492,13 @@ mod tests {
             .withf(|r| r.surfaced_ids.is_empty() && !r.fail_open)
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run(&b.build(), &surface_params("an unrelated prompt entirely"))
-            .await
-            .unwrap();
+        let (result, _, _) = run(
+            &b.build(),
+            &surface_params("an unrelated prompt entirely"),
+            None,
+        )
+        .await
+        .unwrap();
         assert!(result.surfaced.is_empty());
         assert!(result.hook_specific_output.is_none());
         // SC-002: silence injects nothing — the serialized result has no
@@ -510,7 +519,7 @@ mod tests {
             .withf(|r| r.fail_open && r.surfaced_ids.is_empty() && r.input_tokens == 0)
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run(&b.build(), &surface_params("any prompt at all here"))
+        let (result, _, _) = run(&b.build(), &surface_params("any prompt at all here"), None)
             .await
             .unwrap();
         assert!(result.fail_open);
@@ -551,7 +560,7 @@ mod tests {
         let mut deps = b.build();
         deps.embedder = Arc::new(SlowEmbedder);
 
-        let (result, _, _) = run(&deps, &surface_params("a prompt that will time out"))
+        let (result, _, _) = run(&deps, &surface_params("a prompt that will time out"), None)
             .await
             .unwrap();
         assert!(result.fail_open);
@@ -568,7 +577,7 @@ mod tests {
             .withf(|r| r.surfaced_ids.is_empty() && !r.fail_open)
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run(&b.build(), &surface_params("   ")).await.unwrap();
+        let (result, _, _) = run(&b.build(), &surface_params("   "), None).await.unwrap();
         assert!(result.surfaced.is_empty());
         assert!(!result.fail_open);
     }
@@ -596,9 +605,13 @@ mod tests {
             .withf(|r| r.surfaced_ids.is_empty())
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run(&b.build(), &surface_params("the same related prompt again"))
-            .await
-            .unwrap();
+        let (result, _, _) = run(
+            &b.build(),
+            &surface_params("the same related prompt again"),
+            None,
+        )
+        .await
+        .unwrap();
         assert!(result.surfaced.is_empty());
         assert!(result.hook_specific_output.is_none());
     }

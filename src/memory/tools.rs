@@ -62,11 +62,12 @@ pub fn save_runs_verification(params: &SaveParams) -> bool {
 pub async fn save(
     deps: &MemoryDeps,
     params: &SaveParams,
+    caller: Option<&crate::observability::CallerTrace>,
 ) -> Result<(SaveResult, u64, u64), AppError> {
     // 020: a refuted save runs the whole verify ensemble and then fails. That
     // is the most expensive failure this tool has, and it recorded zero.
     let mut spent = (0_u64, 0_u64);
-    let outcome = save_spent(deps, params, &mut spent).await;
+    let outcome = save_spent(deps, params, &mut spent, caller).await;
     outcome.map_err(|error| error.metered(spent.0, spent.1))
 }
 
@@ -74,6 +75,7 @@ async fn save_spent(
     deps: &MemoryDeps,
     params: &SaveParams,
     spent: &mut (u64, u64),
+    caller: Option<&crate::observability::CallerTrace>,
 ) -> Result<(SaveResult, u64, u64), AppError> {
     check_text("content", &params.content, deps.input_max_chars)?;
     check_text("origin", &params.origin, deps.input_max_chars)?;
@@ -140,7 +142,7 @@ async fn save_spent(
 
     // 017: admission-time consolidation — fail-open (any failure ⇒ keep
     // both, which is the decline-biased outcome anyway).
-    let (cons_in, cons_out) = consolidate_admission(deps, &memory, None).await;
+    let (cons_in, cons_out) = consolidate_admission(deps, &memory, None, caller).await;
     input_tokens += cons_in;
     output_tokens += cons_out;
 
@@ -314,6 +316,7 @@ pub async fn consolidate_admission(
     deps: &MemoryDeps,
     new_memory: &Memory,
     session_id: Option<&str>,
+    caller: Option<&crate::observability::CallerTrace>,
 ) -> (u64, u64) {
     use crate::memory::consolidate::{self, ConsolidationRecord};
 
@@ -344,7 +347,7 @@ pub async fn consolidate_admission(
             basis: out.basis,
             created_at: deps.clock.now(),
         };
-        crate::observability::emit_consolidation(&record);
+        crate::observability::emit_consolidation(&record, caller);
         deps.storage.record_consolidation(&record).await?;
         Ok((input_tokens, output_tokens))
     };
@@ -487,7 +490,7 @@ mod tests {
         let deps = deps_with(embedder, no_model_calls()).await;
 
         let (saved, in_tokens, out_tokens) =
-            save(&deps, &save_params("CI debugging skill", false, None))
+            save(&deps, &save_params("CI debugging skill", false, None), None)
                 .await
                 .unwrap();
         assert_eq!(saved.trust, Trust::FirstHand);
@@ -516,10 +519,10 @@ mod tests {
         // 017 FR-011: only active records participate in retrieval.
         let embedder = embedder_returning(vec![1.0, 0.0], vec![1.0, 0.0]);
         let deps = deps_with(embedder, distinct_judgments()).await;
-        let (old_save, _, _) = save(&deps, &save_params("stale fact", false, None))
+        let (old_save, _, _) = save(&deps, &save_params("stale fact", false, None), None)
             .await
             .unwrap();
-        let (new_save, _, _) = save(&deps, &save_params("current fact", false, None))
+        let (new_save, _, _) = save(&deps, &save_params("current fact", false, None), None)
             .await
             .unwrap();
         deps.storage
@@ -579,13 +582,17 @@ mod tests {
 
         // Three skills + one lesson.
         for i in 0..3 {
-            save(&deps, &save_params(&format!("skill {i}"), false, None))
-                .await
-                .unwrap();
+            save(
+                &deps,
+                &save_params(&format!("skill {i}"), false, None),
+                None,
+            )
+            .await
+            .unwrap();
         }
         let mut lesson = save_params("a lesson", false, None);
         lesson.kind = Kind::Lesson;
-        save(&deps, &lesson).await.unwrap();
+        save(&deps, &lesson, None).await.unwrap();
 
         let (lessons_only, _, _) = recall(
             &deps,
@@ -633,14 +640,14 @@ mod tests {
         embedder.expect_embed_query().times(0);
         let deps = deps_with(embedder, no_model_calls()).await;
 
-        let err = save(&deps, &save_params("   ", false, None))
+        let err = save(&deps, &save_params("   ", false, None), None)
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
 
         let mut oversized = save_params("ok", false, None);
         oversized.content = "x".repeat(50_001);
-        let err = save(&deps, &oversized).await.unwrap_err();
+        let err = save(&deps, &oversized, None).await.unwrap_err();
         assert!(err.to_string().contains("INPUT_MAX_CHARS"));
 
         let err = recall(
@@ -664,7 +671,7 @@ mod tests {
         // times(0) on the model client is the assertion.
         let deps = deps_with(embedder, no_model_calls()).await;
 
-        let (saved, _, _) = save(&deps, &save_params("mine", false, Some(true)))
+        let (saved, _, _) = save(&deps, &save_params("mine", false, Some(true)), None)
             .await
             .unwrap();
         assert_eq!(saved.trust, Trust::FirstHand);
@@ -675,7 +682,7 @@ mod tests {
         let embedder = embedder_returning(vec![1.0], vec![1.0]);
         let deps = deps_with(embedder, no_model_calls()).await;
 
-        let (saved, _, _) = save(&deps, &save_params("from the web", true, None))
+        let (saved, _, _) = save(&deps, &save_params("from the web", true, None), None)
             .await
             .unwrap();
         assert_eq!(saved.trust, Trust::Untrusted);
@@ -702,6 +709,7 @@ mod tests {
         let (saved, in_tokens, out_tokens) = save(
             &deps,
             &save_params("sqlx hooks run per connection", true, Some(true)),
+            None,
         )
         .await
         .unwrap();
@@ -720,9 +728,13 @@ mod tests {
         );
         let deps = deps_with(embedder, client).await;
 
-        let err = save(&deps, &save_params("a poisoned claim", true, Some(true)))
-            .await
-            .unwrap_err();
+        let err = save(
+            &deps,
+            &save_params("a poisoned claim", true, Some(true)),
+            None,
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err.root(), AppError::ValidationFailure(_)),
             "{err}"
@@ -757,7 +769,7 @@ mod tests {
         let embedder = embedder_returning(vec![1.0], vec![1.0]);
         let deps = deps_with(embedder, no_model_calls()).await;
 
-        let (saved, _, _) = save(&deps, &save_params("to be forgotten", false, None))
+        let (saved, _, _) = save(&deps, &save_params("to be forgotten", false, None), None)
             .await
             .unwrap();
         let (forgotten, _, _) = forget(
@@ -798,17 +810,17 @@ mod tests {
 
         let mut too_many = save_params("ok", false, None);
         too_many.tags = Some(vec!["t".to_string(); MAX_TAGS + 1]);
-        let err = save(&deps, &too_many).await.unwrap_err();
+        let err = save(&deps, &too_many, None).await.unwrap_err();
         assert!(err.to_string().contains("maximum of"), "{err}");
 
         let mut blank = save_params("ok", false, None);
         blank.tags = Some(vec!["  ".to_string()]);
-        let err = save(&deps, &blank).await.unwrap_err();
+        let err = save(&deps, &blank, None).await.unwrap_err();
         assert!(err.to_string().contains("empty or whitespace"), "{err}");
 
         let mut oversized = save_params("ok", false, None);
         oversized.tags = Some(vec!["x".repeat(MAX_TAG_CHARS + 1)]);
-        let err = save(&deps, &oversized).await.unwrap_err();
+        let err = save(&deps, &oversized, None).await.unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
     }
 

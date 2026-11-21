@@ -636,9 +636,14 @@ impl Parallax {
         let deps = Arc::clone(self.memory_deps()?);
         // Attribution: the embed lookup is the only metered call on this path.
         let model = deps.embedder.model_id().to_string();
-        self.run_recorded("surface", model, RecordDims::default(), ct, caller, async {
-            memory_push::run(&deps, &params).await
-        })
+        self.run_recorded(
+            "surface",
+            model,
+            RecordDims::default(),
+            ct,
+            caller.clone(),
+            async { memory_push::run(&deps, &params, caller.as_ref()).await },
+        )
         .await
     }
 
@@ -838,9 +843,14 @@ impl Parallax {
         } else {
             deps.embedder.model_id().to_string()
         };
-        self.run_recorded("save", model, RecordDims::default(), ct, caller, async {
-            memory_tools::save(&deps, &params).await
-        })
+        self.run_recorded(
+            "save",
+            model,
+            RecordDims::default(),
+            ct,
+            caller.clone(),
+            async { memory_tools::save(&deps, &params, caller.as_ref()).await },
+        )
         .await
     }
 
@@ -2109,5 +2119,66 @@ mod tests {
         assert_eq!(out.0.verdict, crate::modes::verify::VerdictKind::Supported);
         let records = storage.list_invocations().await.unwrap();
         assert_eq!(records.len(), 2);
+    }
+
+    /// 058 review R4: a traced call whose future is dropped mid-flight is
+    /// published from `RecordGuard`'s `Drop`, not `finish()`; its cancelled
+    /// span still belongs to the caller's trace.
+    #[tokio::test]
+    async fn a_dropped_traced_call_exports_its_cancelled_span_under_the_caller() {
+        let (spans, _, guard) = crate::observability::test_exporters();
+        let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+        let server = Parallax::new(
+            Arc::new(HangThenSucceed {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+            storage,
+            Arc::new(SystemClock),
+            &test_config(),
+        )
+        .unwrap();
+        let trace_id = "77777777777777777777777777777777";
+        let mut meta = rmcp::model::MetaObject::new();
+        meta.0.insert(
+            "traceparent".into(),
+            json!(format!("00-{trace_id}-00f067aa0ba902b7-01")),
+        );
+        let caller = CallerTrace::from_meta(&meta);
+        assert!(caller.is_some(), "the traceparent parses");
+
+        // The token is never cancelled: the timeout drops the future, so the
+        // guard is dropped unfinished.
+        let dropped = tokio::time::timeout(
+            Duration::from_millis(50),
+            server.verify_with_ct(
+                VerifyParams {
+                    claim: "dropped".into(),
+                    context: None,
+                    effort: None,
+                    passes: None,
+                },
+                tokio_util::sync::CancellationToken::new(),
+                caller,
+            ),
+        )
+        .await;
+        assert!(dropped.is_err(), "the call must still be in flight");
+        guard.flush();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let found = exported
+            .iter()
+            .find(|s| s.span_context.trace_id().to_string() == trace_id);
+        assert!(
+            found.is_some(),
+            "the dropped call's span is in the caller's trace"
+        );
+        let span = found.unwrap();
+        assert_eq!(span.name, "parallax.verify");
+        assert_eq!(span.parent_span_id.to_string(), "00f067aa0ba902b7");
+        assert!(span
+            .attributes
+            .iter()
+            .any(|kv| kv.key.as_str() == "parallax.outcome" && kv.value.as_str() == "cancelled"));
     }
 }

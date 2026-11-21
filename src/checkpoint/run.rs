@@ -341,7 +341,7 @@ pub async fn run_turn(
         // 017: store an accepted capture proposal — entirely fail-open; the
         // turn's verdict is never affected by capture (FR-008).
         if let Some(proposal) = proposal {
-            if let Err(error) = store_capture(deps, &params.session_id, proposal).await {
+            if let Err(error) = store_capture(deps, &params.session_id, proposal, caller).await {
                 tracing::warn!(%error, "capture storage failed open");
             }
         }
@@ -419,6 +419,7 @@ async fn store_capture(
     deps: &CheckpointDeps,
     session_id: &str,
     proposal: review::CaptureProposal,
+    caller: Option<&CallerTrace>,
 ) -> Result<(), AppError> {
     use crate::memory::consolidate::{
         ConsolidationAction, ConsolidationRecord, CAPTURE_SESSION_CAP,
@@ -439,7 +440,7 @@ async fn store_capture(
             basis: proposal.basis,
             created_at: deps.clock.now(),
         };
-        crate::observability::emit_consolidation(&record);
+        crate::observability::emit_consolidation(&record, caller);
         return deps.storage.record_consolidation(&record).await;
     }
 
@@ -473,7 +474,7 @@ async fn store_capture(
         basis: proposal.basis,
         created_at: now,
     };
-    crate::observability::emit_consolidation(&record);
+    crate::observability::emit_consolidation(&record, caller);
     deps.storage.record_consolidation(&record).await
 }
 
