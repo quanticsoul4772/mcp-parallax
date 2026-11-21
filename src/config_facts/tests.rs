@@ -864,6 +864,17 @@ fn strip_comments_reads_a_lifetime_as_code() {
     assert!(!out.contains("gone"), "{out}");
 }
 
+/// A block comment is whitespace to Rust. Deleted outright it glues the
+/// tokens around it, so a second pass can read `returnr"\"` as an ordinary
+/// string and delete code. Stripping twice must equal stripping once.
+#[test]
+fn strip_comments_twice_is_the_same_as_once() {
+    let source = "return/**/r\"\\\"; let u = \"http://x\";\n";
+    let once = strip_comments(source);
+    assert!(once.contains("\"http://x\""), "{once}");
+    assert_eq!(strip_comments(&once), once);
+}
+
 /// The shapes 045 handled: line comments, nested block comments, and a `//`
 /// inside a string, which is not a comment.
 #[test]

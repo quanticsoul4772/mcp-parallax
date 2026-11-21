@@ -247,8 +247,9 @@ pub(super) fn classify(expr: &str, constant_sources: &[(&str, &str)]) -> Resolut
 /// comment at all.
 ///
 /// Char literals (`'"'`) and raw strings (`r"C:\"`, `r#"a "b"#`) are copied
-/// whole for the same reason; a `'` with no closing quote one character later
-/// is a lifetime or label, read as code.
+/// whole for the same reason; a `'` that does not open a char literal (one
+/// character, or an escape, then a closing quote) is a lifetime or label, read
+/// as code.
 pub fn strip_comments(source: &str) -> String {
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
@@ -301,6 +302,9 @@ pub fn strip_comments(source: &str) -> String {
                 }
             }
             ('/', Some('*')) => {
+                // Whitespace to Rust: a space keeps the tokens either side
+                // apart, so a second pass reads them as the first did.
+                out.push(' ');
                 depth = 1;
                 i += 2;
             }
@@ -498,6 +502,7 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     // From the unstripped source: `test_only_keys` strips comments itself, and
     // a second pass can read some literals differently from the first.
     let test_only = super::test_keys::test_only_keys(source);
+    let original = source;
     let source = strip_comments(source);
     let mut bearing = 0;
     let mut unrecognised = Vec::new();
@@ -530,8 +535,9 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     // whose name is test-only. Counting keys instead undercounts a fixture key
     // read twice, read through `env::var`, or split across lines. Only
     // test-only names are subtracted, so a production pair the extractor drops
-    // still unbalances the count.
-    let skipped = extract_pairs(&source)
+    // still unbalances the count. Counted on the unstripped source, which
+    // `extract_pairs` strips itself, so nothing is stripped twice.
+    let skipped = extract_pairs(original)
         .iter()
         .filter(|(name, _)| test_only.contains(name))
         .count();
