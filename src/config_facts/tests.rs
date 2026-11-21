@@ -824,3 +824,54 @@ fn the_real_config_has_test_only_keys() {
         "config.rs's tests carry fixture keys, but none were derived"
     );
 }
+
+/// A `"` inside a char literal opens no string. Read as one, the scanner's
+/// idea of string and code flips, and a later `//` inside a real string is
+/// deleted as a comment, closing quote and all.
+#[test]
+fn strip_comments_does_not_open_a_string_at_a_quote_char_literal() {
+    for quote in ["'\"'", "b'\"'"] {
+        let source = format!("let q = {quote};\nlet u = \"http://x\"; // note\n");
+        let out = strip_comments(&source);
+        assert!(out.contains("\"http://x\""), "{quote}: {out}");
+        assert!(!out.contains("note"), "{quote}: {out}");
+    }
+}
+
+/// A raw string's backslash escapes nothing, so it closes at its quote.
+#[test]
+fn strip_comments_closes_a_raw_string_that_ends_in_a_backslash() {
+    let out = strip_comments("let p = r\"C:\\\"; // gone\nlet k = 1;\n");
+    assert!(out.contains("r\"C:\\\";"), "{out}");
+    assert!(!out.contains("gone"), "{out}");
+}
+
+/// A raw string closes only at `"` plus its own number of `#`, so a quote
+/// and a `//` inside it are text.
+#[test]
+fn strip_comments_keeps_a_raw_string_holding_a_quote_and_slashes_whole() {
+    let out = strip_comments("let s = r#\"a \"b // c\"#; // gone\n");
+    assert!(out.contains("r#\"a \"b // c\"#;"), "{out}");
+    assert!(!out.contains("gone"), "{out}");
+}
+
+/// A lifetime is not a char literal: no closing quote follows one character.
+#[test]
+fn strip_comments_reads_a_lifetime_as_code() {
+    let out = strip_comments("fn f<'a>(x: &'a str) {} // gone\nlet s = \"keep\";\n");
+    assert!(out.contains("fn f<'a>(x: &'a str) {}"), "{out}");
+    assert!(out.contains("\"keep\""), "{out}");
+    assert!(!out.contains("gone"), "{out}");
+}
+
+/// The shapes 045 handled: line comments, nested block comments, and a `//`
+/// inside a string, which is not a comment.
+#[test]
+fn strip_comments_still_handles_line_and_nested_block_comments() {
+    let out = strip_comments("let a = 1; // x\n/* y /* z */ w */ let b = \"//keep\";\n");
+    assert!(out.contains("let a = 1;"), "{out}");
+    assert!(out.contains("let b = \"//keep\";"), "{out}");
+    for gone in ["x\n", "y", "z", "w */"] {
+        assert!(!out.contains(gone), "{gone:?} survived: {out}");
+    }
+}
