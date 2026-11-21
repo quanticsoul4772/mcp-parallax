@@ -36,10 +36,10 @@ provides the W3C propagator, research D2).
 
 **Independent test**: call a tool with a `traceparent` in `_meta` against the in-memory exporter and read the span's trace id and parent.
 
-- [ ] T005 [US1] Create `tests/trace_context.rs` (its own process, so its own `init_with_exporters`): call each of the 15 tools through the MCP client with a distinct `traceparent` in `_meta`, using the same doubles and helpers as `tests/integration.rs`, and assert each `parallax.<tool>` span (and the checkpoint evaluation span for the three checkpoint tools) has that trace id and parent; write it to fail
-- [ ] T006 [US1] Carry `Option<CallerTrace>` in `RecordGuard` in `src/server/record.rs` and pass it to `publish` from both `finish()` and the cancelled-on-drop path
-- [ ] T007 [US1] In `src/server.rs`, have every tool handler build `CallerTrace::from_meta(&context.meta)` once and pass it through `run_recorded` / `run_recorded_usage` to `RecordGuard`
-- [ ] T008 [US1] Pass the caller trace from the checkpoint tool handlers through `src/checkpoint/run.rs` to `emit_checkpoint` (research D4)
+- [x] T005 [US1] Create `tests/trace_context.rs` (its own process, so its own `init_with_exporters`): call each of the 15 tools through the MCP client with a distinct `traceparent` in `_meta`, using the same doubles and helpers as `tests/integration.rs`, and assert each `parallax.<tool>` span (and the checkpoint evaluation span for the three checkpoint tools) has that trace id and parent; write it to fail
+- [x] T006 [US1] Carry `Option<CallerTrace>` in `RecordGuard` in `src/server/record.rs` and pass it to `publish` from both `finish()` and the cancelled-on-drop path
+- [x] T007 [US1] In `src/server.rs`, have every tool handler build `CallerTrace::from_meta(&context.meta)` once and pass it through `run_recorded` / `run_recorded_usage` to `RecordGuard`
+- [x] T008 [US1] Pass the caller trace from the checkpoint tool handlers through `src/checkpoint/run.rs` to `emit_checkpoint` (research D4)
 - [ ] T009 [US1] Add tests to `tests/trace_context.rs` that a failing call (e.g. invalid input) and a `tracestate`-carrying call are parented, and that the `tracestate` is on the span context; make T005 and T009 pass
 
 **Checkpoint**: US1 complete; every tool joins the caller's trace.

@@ -2,6 +2,7 @@
 //! around one invocation and the failure-class → MCP error mapping.
 
 use crate::error::{AppError, Outcome};
+use crate::observability::CallerTrace;
 use crate::telemetry::{InvocationRecord, ModelUsage};
 use crate::traits::clock::TimeProvider;
 use crate::traits::storage::Storage;
@@ -41,6 +42,10 @@ pub(super) struct RecordGuard {
     effort: Option<crate::routing::Effort>,
     /// The caller's pass-count override (028), or `None`.
     passes: Option<u32>,
+    /// The trace context the request carried (058), or `None`. Held until the
+    /// record is published so every exit, cancellation included, exports its
+    /// span under the caller's trace. Never stored.
+    caller: Option<CallerTrace>,
     started_at: DateTime<Utc>,
     done: bool,
 }
@@ -53,6 +58,7 @@ impl RecordGuard {
         tool: String,
         model: String,
         dims: super::RecordDims,
+        caller: Option<CallerTrace>,
     ) -> Self {
         let started_at = clock.now();
         Self {
@@ -64,6 +70,7 @@ impl RecordGuard {
             depth: dims.depth.map(|d| d.as_str().to_string()),
             effort: dims.effort,
             passes: dims.passes,
+            caller,
             started_at,
             done: false,
         }
@@ -87,7 +94,7 @@ impl RecordGuard {
         .with_passes(self.passes);
         // One measurement, two sinks (007 FR-009): tracing + telemetry, both
         // derived from this record value via the single publish() door.
-        record.publish(None);
+        record.publish(self.caller.as_ref());
         if let Err(e) = self.storage.record_invocation(&record).await {
             // The record write itself failed — surface loudly on the
             // diagnostic stream; never on the protocol channel.
@@ -115,7 +122,7 @@ impl Drop for RecordGuard {
         .with_depth(self.depth.as_deref())
         .with_effort(self.effort)
         .with_passes(self.passes);
-        record.publish(None);
+        record.publish(self.caller.as_ref());
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
