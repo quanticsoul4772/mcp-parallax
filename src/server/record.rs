@@ -87,7 +87,7 @@ impl RecordGuard {
         .with_passes(self.passes);
         // One measurement, two sinks (007 FR-009): tracing + telemetry, both
         // derived from this record value via the single publish() door.
-        record.publish();
+        record.publish(None);
         if let Err(e) = self.storage.record_invocation(&record).await {
             // The record write itself failed — surface loudly on the
             // diagnostic stream; never on the protocol channel.
@@ -115,7 +115,7 @@ impl Drop for RecordGuard {
         .with_depth(self.depth.as_deref())
         .with_effort(self.effort)
         .with_passes(self.passes);
-        record.publish();
+        record.publish(None);
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {

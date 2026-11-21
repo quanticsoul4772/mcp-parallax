@@ -23,10 +23,10 @@ provides the W3C propagator, research D2).
 
 ## Phase 2: Foundational (blocks both stories)
 
-- [ ] T001 Write failing unit tests for `CallerTrace` parsing from a request `_meta` map in `src/observability.rs`: valid `traceparent`; valid `traceparent` + valid `tracestate`; valid `traceparent` + invalid `tracestate` (kept parent, dropped state); malformed and all-zero `traceparent`; non-string values; `tracestate` only; `baggage` only (all of these `None` or root); sampled-off flag preserved in the parsed context
-- [ ] T002 Implement `CallerTrace::from_meta` in `src/observability.rs` with `opentelemetry_sdk::propagation::TraceContextPropagator` over the two keys only (research D1, D2)
-- [ ] T003 Write failing unit tests in `src/observability.rs` that `emit_invocation` and `emit_checkpoint` start their span under a given `CallerTrace` (same trace id, parent span id), and that with none the span is identical to today's (name, kind, attributes, status)
-- [ ] T004 Add a caller-trace parameter to `emit_invocation` and `emit_checkpoint` in `src/observability.rs` and to `InvocationRecord::publish` in `src/telemetry.rs` (still the only door, research D3); every existing caller passes none, so behavior is unchanged
+- [x] T001 Write failing unit tests for `CallerTrace` parsing from a request `_meta` map in `src/observability.rs`: valid `traceparent`; valid `traceparent` + valid `tracestate`; valid `traceparent` + invalid `tracestate` (kept parent, dropped state); malformed and all-zero `traceparent`; non-string values; `tracestate` only; `baggage` only (all of these `None` or root); sampled-off flag preserved in the parsed context
+- [x] T002 Implement `CallerTrace::from_meta` in `src/observability.rs` with `opentelemetry_sdk::propagation::TraceContextPropagator` over the two keys only (research D1, D2)
+- [x] T003 Write failing unit tests in `src/observability.rs` that `emit_invocation` and `emit_checkpoint` start their span under a given `CallerTrace` (same trace id, parent span id), and that with none the span is identical to today's (name, kind, attributes, status)
+- [x] T004 Add a caller-trace parameter to `emit_invocation` and `emit_checkpoint` in `src/observability.rs` and to `InvocationRecord::publish` in `src/telemetry.rs` (still the only door, research D3); every existing caller passes none, so behavior is unchanged
 
 **Checkpoint**: parsing and parenting work at the emit level; no tool passes a parent yet.
 

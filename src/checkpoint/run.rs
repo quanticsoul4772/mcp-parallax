@@ -521,7 +521,7 @@ async fn record(
         created_at: deps.clock.now(),
     };
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
-    crate::observability::emit_checkpoint(&row);
+    crate::observability::emit_checkpoint(&row, None);
     deps.storage.record_checkpoint(&row).await
 }
 

@@ -119,7 +119,7 @@ async fn main() {
     };
     let started = Instant::now();
     for _ in 0..100_000 {
-        mcp_parallax::observability::emit_invocation(&probe);
+        mcp_parallax::observability::emit_invocation(&probe, None);
     }
     let per_call_ns = started.elapsed().as_nanos() / 100_000;
     println!("SC-003 disabled fast path: {per_call_ns} ns/call (bound: 1000 ns)");
