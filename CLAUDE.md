@@ -363,10 +363,12 @@ asymmetry is the argument for attacking a checker's parsing assumptions, not
 just its coverage.
 
 **What is still hand-written, in rough order of risk:** `EXCLUSIONS` and
-`SOURCES` in `src/config_facts/mod.rs`, by design and each guarded (a liveness
-check; enumerated, never searched). All four config scans excuse fixtures
-through `test_only_keys`. (The gate's fmt, clippy and test commands are bound
-to `ci.yml` by the `every_declared_*` tests in `src/main.rs`.)
+`SOURCES` in `src/config_facts/mod.rs`, by design: a stale `EXCLUSIONS` entry
+fails its liveness check, and a constant whose file is missing from `SOURCES`
+fails `assert_all_resolved` as not found. All four config scans excuse
+test-module keys through `test_only_keys`, within the limits its doc states.
+(The gate's fmt, clippy and test commands are bound to `ci.yml` by the
+`every_declared_*` tests in `src/main.rs`.)
 <!-- SPECKIT END -->
 
 ## Working style
