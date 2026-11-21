@@ -253,8 +253,9 @@ arc.
   variable that took a fixture's name would have been dropped from the
   `--help` and README checks silently. `test_only_keys` now derives the list:
   names quoted only after `config.rs`'s last `#[cfg(test)]`. It fails if code
-  follows the test module, as clippy's `items_after_test_module` does at the
-  gate. The `PARALLAX_TEST` prefix skip in `variables_without_defaults` is a
+  follows the test module, unless a literal the comment stripper misreads
+  hides it; clippy's `items_after_test_module` rejects that shape at the gate
+  regardless. The `PARALLAX_TEST` prefix skip in `variables_without_defaults` is a
   separate rule and is unchanged.
 
 * **`decide` can no longer fail on lists of the wrong length (056)** — its

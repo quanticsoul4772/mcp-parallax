@@ -643,6 +643,26 @@ mod tests {
     assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
 }
 
+/// A raw C string (`cr"..."`, stable since Rust 1.77) is raw: its backslash
+/// escapes nothing. Read as an ordinary string, `\"` would run the literal on
+/// to the next quote and hide the code that follows the module.
+#[test]
+#[should_panic(expected = "TEST_MODULE_NOT_LAST")]
+fn test_only_keys_reads_a_raw_c_string_as_raw() {
+    let source = r#"
+#[cfg(test)]
+mod tests {
+    const P: &core::ffi::CStr = cr"C:\";
+}
+
+pub fn later() {
+    let c = '"';
+    let k = parse_env("LATE_REAL_KEY", 1);
+}
+"#;
+    let _ = test_only_keys(source);
+}
+
 /// A name quoted in a production comment is not a production use.
 #[test]
 fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {

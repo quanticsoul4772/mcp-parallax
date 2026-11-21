@@ -510,7 +510,8 @@ const TEST_MARKER: &str = "#[cfg(test)]";
 /// `TEST_MODULE_NOT_LAST` when the last marker does not open a block that
 /// closes at the end of the file — production code after it would otherwise be
 /// read as test code and excused. Clippy's `items_after_test_module` catches
-/// the same shape at the gate; this gives the derivation its own check.
+/// the same shape at the gate and is the backstop: this check trusts
+/// `strip_comments`, which misreads a `'"'` char literal.
 #[must_use]
 pub fn test_only_keys(source: &str) -> Vec<String> {
     let source = strip_comments(source);
@@ -618,7 +619,9 @@ fn literal_spans(source: &str) -> Vec<(usize, usize)> {
                 spans.push((at, end));
                 at = end;
             }
-            b'r' if !ident_before || (at > 1 && bytes[at - 1] == b'b') => {
+            // `br"…"` and `cr"…"` are raw too: the prefix letter sits just
+            // before the `r`.
+            b'r' if !ident_before || matches!(bytes[at - 1], b'b' | b'c') => {
                 let hashes = bytes[at + 1..].iter().take_while(|&&b| b == b'#').count();
                 if bytes.get(at + 1 + hashes) == Some(&b'"') {
                     let open = at + 1 + hashes;
