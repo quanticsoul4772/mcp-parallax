@@ -60,9 +60,9 @@ provides the W3C propagator, research D2).
 
 ## Phase 5: Polish & Cross-Cutting
 
-- [ ] T013 Add a "Trace context" section to `specs/007-observability-layer/contracts/telemetry.md` linking `specs/058-otel-trace-context/contracts/trace-context.md`, and remove "trace-context propagation from the calling harness" from its deferrals (FR-008)
-- [ ] T014 Add a dated amendment to `specs/007-observability-layer/spec.md` where FR-011 names the deferral
-- [ ] T015 Add an "Added" entry to `CHANGELOG.md` under Unreleased
+- [x] T013 Add a "Trace context" section to `specs/007-observability-layer/contracts/telemetry.md` linking `specs/058-otel-trace-context/contracts/trace-context.md`, and remove "trace-context propagation from the calling harness" from its deferrals (FR-008)
+- [x] T014 Add a dated amendment to `specs/007-observability-layer/spec.md` where FR-011 names the deferral — not needed: FR-011 never named trace-context propagation; only the telemetry contract did, and T013 amends it.
+- [x] T015 Add an "Added" entry to `CHANGELOG.md` under Unreleased
 - [ ] T016 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
 - [ ] T017 Independent review of the branch diff by a fresh subagent; act on findings
 - [ ] T018 Update the CLAUDE.md active-feature block for 058 (exact text approved first)

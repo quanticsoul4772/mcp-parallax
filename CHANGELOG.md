@@ -13,6 +13,15 @@ arc.
 
 ### Added
 
+* **Spans join the caller's trace (058)** — when a tool request carries W3C
+  trace context in `_meta` (`traceparent`, optionally `tracestate`), as MCP
+  2026-07-28 defines, the exported span for that call is a child of the
+  caller's span instead of a new root trace, so a Parallax call appears inside
+  the agent step that made it. No trace context, or an invalid one, leaves
+  telemetry exactly as before; `baggage` is not read; a sampled-off caller gets
+  no span, though metrics still count the call. Only applies when OTLP export
+  is configured.
+
 * **`grounded_verify` refuses a root that is too wide** — a drive root, the
   home folder, or a folder containing it (such as `C:\Users` or `/home`). With
   `GROUNDED_VERIFY_ROOT` set to `.`, this covers a session started in one of
