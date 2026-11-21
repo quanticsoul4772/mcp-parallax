@@ -227,8 +227,8 @@ arc.
   contacted; every other path is resolved on disk and then checked, as
   before.
 
-* **Dependency and toolchain refresh (2026-11)** — `rmcp` 3.4.0 → 3.10.0 with
-  the manifest floor raised to 3.10.0, clearing RUSTSEC-2026-0457, -0461 and
+* **Dependency and toolchain refresh (2026-11)** — `rmcp` 3.4.0 → 3.11.0 with
+  the manifest floor raised to 3.11.0, clearing RUSTSEC-2026-0457, -0461 and
   -0462 (all in transports this server does not enable, but the floor now
   refuses the affected versions). rmcp 3.9 generates `Json<T>` output schemas
   under the serialize contract, so bare `Option` result fields (`unstick`'s
@@ -241,6 +241,9 @@ arc.
   update, which clears the `quinn-udp`, `rustls-webpki`, `webpki-root-certs`,
   `rustix` and `tokio` advisories. The pinned toolchain moves 1.98.0 → 1.100.0
   in `rust-toolchain.toml` and both workflows together; MSRV stays 1.94.
+  rmcp 3.11 answers `resources/list`, `resources/templates/list`,
+  `prompts/list` and `completion/complete`, which this server does not
+  advertise, with method-not-found; before, they returned an empty result.
 
 * **`opentelemetry-semantic-conventions` removed** — cargo 1.100's
   `unused_dependencies` lint reported it; nothing in the crate imported it
