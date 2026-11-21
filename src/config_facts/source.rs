@@ -245,6 +245,11 @@ pub(super) fn classify(expr: &str, constant_sources: &[(&str, &str)]) -> Resolut
 /// inside a line comment opens a block that was never there. Rust's block
 /// comments nest, and a `/*`, `*/` or `//` inside a string literal is not a
 /// comment at all.
+///
+/// Char literals (`'"'`) and raw strings (`r"C:\"`, `r#"a "b"#`) are copied
+/// whole for the same reason; a `'` that does not open a char literal (one
+/// character, or an escape, then a closing quote) is a lifetime or label, read
+/// as code.
 pub fn strip_comments(source: &str) -> String {
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
@@ -297,8 +302,53 @@ pub fn strip_comments(source: &str) -> String {
                 }
             }
             ('/', Some('*')) => {
+                // Whitespace to Rust: a space keeps the tokens either side
+                // apart, so a second pass reads them as the first did.
+                out.push(' ');
                 depth = 1;
                 i += 2;
+            }
+            ('\'', _) => {
+                // A char literal is copied whole, so a `"` inside it opens no
+                // string. Anything else is a lifetime or label: code.
+                let end = if next == Some('\\') {
+                    // Skip the escaped character: in `'\''` it is a quote.
+                    chars
+                        .get(i + 3..)
+                        .and_then(|rest| rest.iter().position(|&ch| ch == '\''))
+                        .map(|rel| i + 3 + rel + 1)
+                } else if chars.get(i + 2) == Some(&'\'') {
+                    Some(i + 3)
+                } else {
+                    None
+                };
+                let end = end.unwrap_or(i + 1);
+                out.extend(&chars[i..end]);
+                i = end;
+            }
+            ('r', _) => {
+                if let Some(hashes) = raw_string_hashes(&chars, i) {
+                    // Copied whole: a backslash escapes nothing, and only `"`
+                    // plus the same number of `#` closes it.
+                    let mut end = chars.len();
+                    let mut j = i + hashes + 2;
+                    while j < chars.len() {
+                        if chars[j] == '"'
+                            && chars
+                                .get(j + 1..j + 1 + hashes)
+                                .is_some_and(|tail| tail.iter().all(|&ch| ch == '#'))
+                        {
+                            end = j + 1 + hashes;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    out.extend(&chars[i..end]);
+                    i = end;
+                } else {
+                    out.push(c);
+                    i += 1;
+                }
             }
             _ => {
                 out.push(c);
@@ -307,6 +357,26 @@ pub fn strip_comments(source: &str) -> String {
         }
     }
     out
+}
+
+/// The number of `#` in a raw string opening at `chars[at]` (an `r`), or
+/// `None` when that `r` does not open one.
+///
+/// The `r` must start a token, alone or after a `b` or `c` prefix that does;
+/// otherwise it ends an identifier. A raw identifier (`r#type`) has no quote
+/// after its `#`, so it is not a raw string.
+fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let starts_token = match at.checked_sub(1).map(|p| chars[p]) {
+        None => true,
+        Some('b' | 'c') => at < 2 || !ident(chars[at - 2]),
+        Some(prev) => !ident(prev),
+    };
+    if !starts_token {
+        return None;
+    }
+    let hashes = chars[at + 1..].iter().take_while(|&&ch| ch == '#').count();
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some(hashes)
 }
 
 /// Value of a literal that is the **entire** expression, or `None`.
@@ -432,6 +502,7 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     // From the unstripped source: `test_only_keys` strips comments itself, and
     // a second pass can read some literals differently from the first.
     let test_only = super::test_keys::test_only_keys(source);
+    let original = source;
     let source = strip_comments(source);
     let mut bearing = 0;
     let mut unrecognised = Vec::new();
@@ -464,8 +535,9 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     // whose name is test-only. Counting keys instead undercounts a fixture key
     // read twice, read through `env::var`, or split across lines. Only
     // test-only names are subtracted, so a production pair the extractor drops
-    // still unbalances the count.
-    let skipped = extract_pairs(&source)
+    // still unbalances the count. Counted on the unstripped source, which
+    // `extract_pairs` strips itself, so nothing is stripped twice.
+    let skipped = extract_pairs(original)
         .iter()
         .filter(|(name, _)| test_only.contains(name))
         .count();
