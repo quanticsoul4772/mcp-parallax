@@ -333,8 +333,10 @@ all 47 tasks closed** ([plan](specs/055-grounded-verify-secret-refusal/plan.md))
 them as secrets: an exact path fails the call, a glob leaves them out and
 reports them in four new result fields, and a root inside a secret folder
 leaves grounded_verify out of the catalog. A live check on the rebuilt server passed (one
-refusal, one ordinary call). Deferred: the session-folder root, content-based
-detection, refusing hard links, and closing the check-to-open race.
+refusal, one ordinary call). Deferred, among others: the session-folder root,
+content-based detection, and closing the check-to-open race. Refusing hard
+links was considered and not pursued (2026-11-21; the reasons are in the
+spec's Deferred list).
 
 **The through-line of 040–045, worth carrying forward.** Every one of them was
 a check that passed for a reason unrelated to what it claimed to verify:
