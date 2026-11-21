@@ -454,14 +454,18 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     }
 
     // `parse_env` call sites, minus the helper's declaration and the test-only
-    // keys `resolve_from` skips, so both sides count the same population.
+    // pairs `resolve_from` skips, so both sides count the same population.
     let parse_env_calls =
         source.matches("parse_env(").count() - source.matches("fn parse_env(").count();
-    // Both sides derive the test-only keys from the same source with the same
-    // function, so they cannot disagree.
-    let skipped = test_only_keys(&source)
+    // Subtract exactly what `resolve_from` skips: every pair, in both shapes,
+    // whose name is test-only. Counting keys instead undercounts a fixture key
+    // read twice, read through `env::var`, or split across lines. Only
+    // test-only names are subtracted, so a production pair the extractor drops
+    // still unbalances the count.
+    let test_only = test_only_keys(&source);
+    let skipped = extract_pairs(&source)
         .iter()
-        .filter(|k| source.contains(&format!("parse_env(\"{k}\"")))
+        .filter(|(name, _)| test_only.contains(name))
         .count();
     (bearing + parse_env_calls - skipped, unrecognised)
 }

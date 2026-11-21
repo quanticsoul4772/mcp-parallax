@@ -663,6 +663,30 @@ pub fn later() {
     let _ = test_only_keys(source);
 }
 
+/// The resolver skips every test-only pair, in both shapes; the counter must
+/// subtract that same population, or the balance fires blaming the extractor
+/// for a fixture it was right to skip.
+#[test]
+fn repeated_and_env_var_fixtures_keep_extraction_balanced() {
+    let source = r#"
+pub fn from_env() {
+    let a = parse_env("REAL_KEY", 1);
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIX_KEY", 2);
+        let c = parse_env("FIX_KEY", 3);
+        let d = std::env::var("FIX_ENV").unwrap_or_else(|_| "x".to_string());
+    }
+}
+"#;
+    let facts = resolve_from(source, &[("fixture", source)]);
+    assert_eq!(facts.len(), 1, "only REAL_KEY carries a production default");
+    assert_extraction_is_complete(source, &facts);
+}
+
 /// A name quoted in a production comment is not a production use.
 #[test]
 fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {
