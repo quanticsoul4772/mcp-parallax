@@ -40,7 +40,7 @@ provides the W3C propagator, research D2).
 - [x] T006 [US1] Carry `Option<CallerTrace>` in `RecordGuard` in `src/server/record.rs` and pass it to `publish` from both `finish()` and the cancelled-on-drop path
 - [x] T007 [US1] In `src/server.rs`, have every tool handler build `CallerTrace::from_meta(&context.meta)` once and pass it through `run_recorded` / `run_recorded_usage` to `RecordGuard`
 - [x] T008 [US1] Pass the caller trace from the checkpoint tool handlers through `src/checkpoint/run.rs` to `emit_checkpoint` (research D4)
-- [ ] T009 [US1] Add tests to `tests/trace_context.rs` that a failing call (e.g. invalid input) and a `tracestate`-carrying call are parented, and that the `tracestate` is on the span context; make T005 and T009 pass
+- [x] T009 [US1] Add tests to `tests/trace_context.rs` that a failing call (e.g. invalid input) and a `tracestate`-carrying call are parented, and that the `tracestate` is on the span context; make T005 and T009 pass
 
 **Checkpoint**: US1 complete; every tool joins the caller's trace.
 
@@ -50,11 +50,11 @@ provides the W3C propagator, research D2).
 
 **Independent test**: calls with no or invalid keys produce root spans identical to before.
 
-- [ ] T010 [US2] Add tests to `tests/trace_context.rs` (pins after US1): no `_meta`, `_meta` without `traceparent`, malformed and all-zero `traceparent`, and `tracestate`/`baggage` alone each give a root span whose attributes match an unparented call of the same tool
-- [ ] T011 [US2] Add a test that a sampled-off `traceparent` exports no span for the call while `parallax.invocations` still counts it (FR-009)
-- [ ] T012 [US2] Add a test that tool results and the stored invocation record are identical with and without trace context (SC-004)
-- [ ] T012a [US2] Create tests/trace_context_export_off.rs (its own process, never initializes telemetry): a call with traceparent returns the same result and stores the same record as one without (FR-007)
-- [ ] T012b [US2] Add a unit test in src/observability.rs that consolidation and push spans have no parent (spec edge case)
+- [x] T010 [US2] Add tests to `tests/trace_context.rs` (pins after US1): no `_meta`, `_meta` without `traceparent`, malformed and all-zero `traceparent`, and `tracestate`/`baggage` alone each give a root span whose attributes match an unparented call of the same tool
+- [x] T011 [US2] Add a unit test in src/observability.rs that a sampled-off `traceparent` exports no span while `parallax.invocations` still counts the call (FR-009)
+- [x] T012 [US2] Add a test that tool results and the stored invocation record are identical with and without trace context (SC-004)
+- [x] T012a [US2] Create tests/trace_context_export_off.rs (its own process, never initializes telemetry): a call with traceparent returns the same result and stores the same record as one without (FR-007)
+- [x] T012b [US2] Add a unit test in src/observability.rs that consolidation and push spans have no parent (spec edge case)
 
 **Checkpoint**: US2 complete.
 

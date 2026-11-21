@@ -1333,4 +1333,104 @@ mod tests {
         assert_eq!(root.status, parented.status);
         assert_eq!(root.attributes, parented.attributes);
     }
+
+    /// T011 (FR-009): a caller that sampled its trace off gets no span from
+    /// the parent-based sampler, but the call is still counted. A tool name no
+    /// other test uses keeps the count free of parallel emissions.
+    #[test]
+    fn a_sampled_off_caller_gets_no_span_but_the_call_is_counted() {
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+
+        let (spans, metrics, guard) = test_handles();
+        let trace_id = "44444444444444444444444444444444";
+        let off = CallerTrace::from_meta(&meta(&[(
+            "traceparent",
+            text(&format!("00-{trace_id}-00f067aa0ba902b7-00")),
+        )]))
+        .unwrap();
+        emit_invocation(&probe("sampled_off_probe"), Some(&off));
+        guard.tracer_provider.force_flush().unwrap();
+        guard.meter_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        assert!(
+            !exported
+                .iter()
+                .any(|s| s.span_context.trace_id().to_string() == trace_id),
+            "a sampled-off caller's trace must get no span"
+        );
+
+        let counted: u64 = metrics
+            .get_finished_metrics()
+            .unwrap()
+            .iter()
+            .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+            .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+            .filter(|m| m.name() == "parallax.invocations")
+            .filter_map(|m| match m.data() {
+                AggregatedMetrics::U64(MetricData::Sum(sum)) => Some(
+                    sum.data_points()
+                        .filter(|p| {
+                            p.attributes().any(|kv| {
+                                kv.key.as_str() == "parallax.tool"
+                                    && kv.value.as_str() == "sampled_off_probe"
+                            })
+                        })
+                        .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+                        .sum::<u64>(),
+                ),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        assert!(counted >= 1, "the call must still be counted");
+    }
+
+    /// T012b (pin): consolidation and push spans are not tied to a tool
+    /// request, so they stay root traces.
+    #[test]
+    fn consolidation_and_push_spans_stay_roots() {
+        let (spans, _, guard) = test_handles();
+        let at = DateTime::parse_from_rfc3339("2026-11-21T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        emit_push(&crate::memory::push::PushRecord {
+            id: "p-058".into(),
+            session_id: "058-root-push".into(),
+            surfaced_ids: vec![],
+            latency_ms: 5,
+            fail_open: false,
+            input_tokens: 1,
+            created_at: at,
+        });
+        emit_consolidation(&crate::memory::consolidate::ConsolidationRecord {
+            id: "c-058".into(),
+            session_id: Some("058-root-consolidation".into()),
+            action: crate::memory::consolidate::ConsolidationAction::Supersede,
+            source_id: "m-old".into(),
+            target_id: Some("m-new".into()),
+            basis: "newer".into(),
+            created_at: at,
+        });
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        for (name, session) in [
+            ("parallax.push", "058-root-push"),
+            ("parallax.consolidation", "058-root-consolidation"),
+        ] {
+            let found = exported.iter().find(|s| {
+                s.name == name
+                    && attr(&s.attributes, "parallax.session_id")
+                        .is_some_and(|v| v.as_str() == session)
+            });
+            assert!(found.is_some(), "{name} span exported");
+            let span = found.unwrap();
+            assert_eq!(
+                span.parent_span_id,
+                opentelemetry::trace::SpanId::INVALID,
+                "{name} must stay a root"
+            );
+        }
+    }
 }
