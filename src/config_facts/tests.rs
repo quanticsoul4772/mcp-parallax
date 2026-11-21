@@ -552,7 +552,7 @@ fn a_drifted_default_is_detected_for_every_shape() {
     }
 }
 
-/// A name used only below the first `#[cfg(test)]` is a fixture; one also
+/// A name used only below the last top-level `#[cfg(test)]` is a fixture; one also
 /// used above it is a real variable and must not be excused.
 #[test]
 fn test_only_keys_returns_names_used_only_in_test_code() {
@@ -583,7 +583,7 @@ pub fn from_env() {
     assert!(test_only_keys(source).is_empty());
 }
 
-/// Everything below the first `#[cfg(test)]` is treated as test code, so
+/// Everything below the last top-level `#[cfg(test)]` is treated as test code, so
 /// production code placed after the test module would be excused from every
 /// document. That must fail, not pass.
 #[test]
@@ -698,6 +698,27 @@ pub fn from_env() {}
 mod tests {
     #[cfg(test)]
     fn helper() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// A `#[cfg(test)]` helper above the module counts as production: splitting
+/// at the last marker can only excuse fewer names, never more. A split at the
+/// first marker would fail this, whatever `config.rs` happens to contain.
+#[test]
+fn a_test_helper_above_the_module_is_not_excused() {
+    let source = r#"
+#[cfg(test)]
+fn helper() {
+    let k = parse_env("HELPER_KEY", 1);
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
         let b = parse_env("FIXTURE_ONLY_KEY", 2);
     }
 }
