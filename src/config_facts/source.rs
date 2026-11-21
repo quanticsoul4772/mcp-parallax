@@ -467,7 +467,15 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
         .iter()
         .filter(|(name, _)| test_only.contains(name))
         .count();
-    (bearing + parse_env_calls - skipped, unrecognised)
+    let counted = bearing + parse_env_calls;
+    assert!(
+        skipped <= counted,
+        "SKIP_EXCEEDS_COUNT: {skipped} test-only pairs were extracted but only {counted} calls \
+         supplying a default were counted, so extraction and this counter read a call shape \
+         differently. Statements the counter did not recognize:\n  {}",
+        unrecognised.join("\n  ")
+    );
+    (counted - skipped, unrecognised)
 }
 
 /// Every variable `source` reads that carries **no** default.

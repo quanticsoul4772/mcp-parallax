@@ -726,6 +726,24 @@ mod tests {
     assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
 }
 
+/// When the extractor skips more test-only pairs than the counter counted,
+/// the two disagree on a call shape. That must say so, not underflow.
+#[test]
+#[should_panic(expected = "SKIP_EXCEEDS_COUNT")]
+fn a_shape_only_the_extractor_reads_is_named_not_underflowed() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let d = std::env::var("FIX_ENV"). unwrap_or_else(|_| "x".to_string());
+    }
+}
+"#;
+    let _ = classify_call_sites(source);
+}
+
 /// A name quoted in a production comment is not a production use.
 #[test]
 fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {
