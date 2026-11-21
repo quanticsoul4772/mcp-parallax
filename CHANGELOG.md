@@ -252,7 +252,7 @@ arc.
   `config.rs` contained a name anywhere, production code included, so a real
   variable that took a fixture's name would have been dropped from the
   `--help` and README checks silently. `test_only_keys` now derives the list:
-  names quoted only after `config.rs`'s last `#[cfg(test)]`. It fails if code
+  names quoted only after `config.rs`'s last top-level `#[cfg(test)]`. It fails if code
   follows the test module, unless a literal the comment stripper misreads
   hides it; clippy's `items_after_test_module` rejects that shape at the gate
   regardless. The `PARALLAX_TEST` prefix skip in `variables_without_defaults` is a

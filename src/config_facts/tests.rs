@@ -744,6 +744,22 @@ mod tests {
     let _ = classify_call_sites(source);
 }
 
+/// A source ending in an unterminated literal fails by name before any token
+/// is read, so the one-byte span it produces is never sliced.
+#[test]
+#[should_panic(expected = "TEST_MODULE_NOT_LAST")]
+fn a_lone_trailing_quote_fails_by_name_not_by_slice() {
+    let source = r#"
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+""#;
+    let _ = test_only_keys(source);
+}
+
 /// A name quoted in a production comment is not a production use.
 #[test]
 fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {

@@ -21,7 +21,12 @@ const TEST_MARKER: &str = "#[cfg(test)]";
 /// closes at the end of the file — production code after it would otherwise be
 /// read as test code and excused. Clippy's `items_after_test_module` catches
 /// the same shape at the gate and is the backstop: this check trusts
-/// `strip_comments`, which misreads a `'"'` char literal.
+/// `strip_comments`, which misreads a `'"'` char literal, a raw string ending
+/// in a backslash (`r"C:\"`), and a raw string containing a quote. A key
+/// quoted only inside a raw-string snippet is not derived, though the
+/// extractor still reads it; a document check then fails naming it. It also
+/// panics, wrongly, when the marked item's header holds a `;` inside brackets
+/// before its `{` (`fn f() -> [u8; 2] {`).
 #[must_use]
 pub fn test_only_keys(source: &str) -> Vec<String> {
     let source = strip_comments(source);
