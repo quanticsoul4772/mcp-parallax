@@ -487,6 +487,9 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
 #[must_use]
 pub fn variables_without_defaults(source: &str, facts: &[Fact]) -> Vec<String> {
     let source = strip_comments(source);
+    // The same derived rule the resolver, the counter and the `--help` scan
+    // use, so a fixture is excused by where it is read, not by its name.
+    let test_only = super::test_keys::test_only_keys(&source);
     let mut out: Vec<String> = Vec::new();
     let mut rest = source.as_str();
     while let Some(at) = rest.find("env::var(") {
@@ -494,9 +497,7 @@ pub fn variables_without_defaults(source: &str, facts: &[Fact]) -> Vec<String> {
         let Some((name, _)) = quoted_first(rest) else {
             continue;
         };
-        if name.starts_with("PARALLAX_TEST")
-            || facts.iter().any(|f| f.name == name)
-            || out.contains(&name)
+        if test_only.contains(&name) || facts.iter().any(|f| f.name == name) || out.contains(&name)
         {
             continue;
         }
