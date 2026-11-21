@@ -52,11 +52,13 @@
 
 pub mod documents;
 pub mod source;
+mod test_keys;
 
 pub use documents::{
     assert_no_contradictory_defaults, assert_no_phantom_defaults, stated_in_help, stated_in_table,
 };
-pub use source::{resolve, strip_comments, test_only_keys, variables_without_defaults};
+pub use source::{resolve, strip_comments, variables_without_defaults};
+pub use test_keys::test_only_keys;
 
 /// Source files this module reads to resolve a named constant.
 ///
