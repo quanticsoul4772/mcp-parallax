@@ -114,7 +114,8 @@ root trace with the same attributes it has today.
 - **SC-001**: For a request carrying a valid trace context, 100% of exported
   invocation spans share its trace id and name its span as parent.
 - **SC-002**: For requests with no or invalid trace context, exported spans
-  match today's spans attribute for attribute in every tested case.
+  match the span of the same call made without trace context, attribute for
+  attribute, in every tested case.
 - **SC-003**: Every tool (all of them, not a sample) is covered by a test that
   checks the parenting rule.
 - **SC-004**: Tool results and stored records are byte-identical with and
