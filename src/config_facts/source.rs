@@ -39,8 +39,9 @@ pub const FIXTURE: &str = r#"
 #[must_use]
 pub fn resolve_from(source: &str, constant_sources: &[(&str, &str)]) -> Vec<Fact> {
     let mut facts = Vec::new();
+    let test_only = super::test_keys::test_only_keys(source);
     for (name, expr) in extract_pairs(source) {
-        if super::TEST_ONLY_KEYS.contains(&name.as_str()) {
+        if test_only.contains(&name) {
             continue;
         }
         let resolution = if let Some((_, reason)) = EXCLUSIONS.iter().find(|(n, _)| *n == name) {
@@ -452,18 +453,29 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
         }
     }
 
-    // `parse_env` call sites, minus the helper's declaration and the one
-    // test-only key `resolve_from` skips, so both sides count the same
-    // population.
+    // `parse_env` call sites, minus the helper's declaration and the test-only
+    // pairs `resolve_from` skips, so both sides count the same population.
     let parse_env_calls =
         source.matches("parse_env(").count() - source.matches("fn parse_env(").count();
-    // Which fixture keys are `parse_env` calls is derived, not listed again:
-    // a second list would have to agree with the first, which is the defect.
-    let skipped = super::TEST_ONLY_KEYS
+    // Subtract exactly what `resolve_from` skips: every pair, in both shapes,
+    // whose name is test-only. Counting keys instead undercounts a fixture key
+    // read twice, read through `env::var`, or split across lines. Only
+    // test-only names are subtracted, so a production pair the extractor drops
+    // still unbalances the count.
+    let test_only = super::test_keys::test_only_keys(&source);
+    let skipped = extract_pairs(&source)
         .iter()
-        .filter(|k| source.contains(&format!("parse_env(\"{k}\"")))
+        .filter(|(name, _)| test_only.contains(name))
         .count();
-    (bearing + parse_env_calls - skipped, unrecognised)
+    let counted = bearing + parse_env_calls;
+    assert!(
+        skipped <= counted,
+        "SKIP_EXCEEDS_COUNT: {skipped} test-only pairs were extracted but only {counted} calls \
+         supplying a default were counted, so extraction and this counter read a call shape \
+         differently. Statements the counter did not recognize:\n  {}",
+        unrecognised.join("\n  ")
+    );
+    (counted - skipped, unrecognised)
 }
 
 /// Every variable `source` reads that carries **no** default.

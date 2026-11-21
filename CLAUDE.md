@@ -362,10 +362,11 @@ merely unchecked; this leaves them actively wrong with a green suite. That
 asymmetry is the argument for attacking a checker's parsing assumptions, not
 just its coverage.
 
-**What is still hand-written, in rough order of risk:** 034's variable-presence
-scan carries a fixture-exclusion list. (The gate's fmt, clippy and test
-commands are bound to `ci.yml` by the `every_declared_*` tests in
-`src/main.rs`.)
+**What is still hand-written, in rough order of risk:** the `PARALLAX_TEST`
+prefix skip in `variables_without_defaults` (`src/config_facts/source.rs`);
+034's fixture-exclusion list is now derived by `test_only_keys`. (The gate's
+fmt, clippy and test commands are bound to `ci.yml` by the `every_declared_*`
+tests in `src/main.rs`.)
 <!-- SPECKIT END -->
 
 ## Working style

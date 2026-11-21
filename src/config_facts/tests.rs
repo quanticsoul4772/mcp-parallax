@@ -360,8 +360,8 @@ fn the_real_config_has_no_unresolvable_default() {
 /// reason, and is not offered for comparison.
 #[test]
 fn an_excluded_variable_is_reported_with_its_reason() {
-    // Exercised through the fixture rather than by adding a real exclusion,
-    // so the production EXCLUSIONS list stays empty and honest.
+    // Exercised through the fixture rather than through the real
+    // EXCLUSIONS list, so the test does not depend on what that list holds.
     let facts = resolve_from(FIXTURE, &[("fixture", FIXTURE)]);
     let unresolved: Vec<&Fact> = facts
         .iter()
@@ -550,4 +550,240 @@ fn a_drifted_default_is_detected_for_every_shape() {
             "{name} ({shape})"
         );
     }
+}
+
+/// A name used only below the last top-level `#[cfg(test)]` is a fixture; one also
+/// used above it is a real variable and must not be excused.
+#[test]
+fn test_only_keys_returns_names_used_only_in_test_code() {
+    let source = r#"
+pub fn from_env() {
+    let a = parse_env("SHARED_KEY", 1);
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+        let c = "SHARED_KEY";
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// No test code, so nothing is excused.
+#[test]
+fn test_only_keys_is_empty_without_a_test_module() {
+    let source = r#"
+pub fn from_env() {
+    let a = parse_env("SOME_KEY", 1);
+}
+"#;
+    assert!(test_only_keys(source).is_empty());
+}
+
+/// Everything below the last top-level `#[cfg(test)]` is treated as test code, so
+/// production code placed after the test module would be excused from every
+/// document. That must fail, not pass.
+#[test]
+#[should_panic(expected = "TEST_MODULE_NOT_LAST")]
+fn test_only_keys_refuses_code_after_the_test_module() {
+    let source = r#"
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+
+pub fn later() {
+    let a = parse_env("LATE_REAL_KEY", 1);
+}
+"#;
+    let _ = test_only_keys(source);
+}
+
+/// Braces inside string literals are not code. A matcher that counted them
+/// would close the module at the lone `"}"` and then report the rest of the
+/// module as code after it.
+#[test]
+fn test_only_keys_is_not_misled_by_braces_inside_strings() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let key = parse_env("FIXTURE_ONLY_KEY", 2);
+        let s = format!("{key}");
+        let lone = "}";
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// An escaped quote inside a char literal does not end it. Measured one byte
+/// short, the literal's real closing quote pairs with the next `'` and swallows
+/// the `,` between them, leaving the `{` of `'{'` to be counted as code.
+#[test]
+fn test_only_keys_measures_an_escaped_quote_char_literal() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+        let pair = ['\'','{'];
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// A raw C string (`cr"..."`, stable since Rust 1.77) is raw: its backslash
+/// escapes nothing. Read as an ordinary string, `\"` would run the literal on
+/// to the next quote and hide the code that follows the module.
+#[test]
+#[should_panic(expected = "TEST_MODULE_NOT_LAST")]
+fn test_only_keys_reads_a_raw_c_string_as_raw() {
+    let source = r#"
+#[cfg(test)]
+mod tests {
+    const P: &core::ffi::CStr = cr"C:\";
+}
+
+pub fn later() {
+    let c = '"';
+    let k = parse_env("LATE_REAL_KEY", 1);
+}
+"#;
+    let _ = test_only_keys(source);
+}
+
+/// The resolver skips every test-only pair, in both shapes; the counter must
+/// subtract that same population, or the balance fires blaming the extractor
+/// for a fixture it was right to skip.
+#[test]
+fn repeated_and_env_var_fixtures_keep_extraction_balanced() {
+    let source = r#"
+pub fn from_env() {
+    let a = parse_env("REAL_KEY", 1);
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIX_KEY", 2);
+        let c = parse_env("FIX_KEY", 3);
+        let d = std::env::var("FIX_ENV").unwrap_or_else(|_| "x".to_string());
+    }
+}
+"#;
+    let facts = resolve_from(source, &[("fixture", source)]);
+    assert_eq!(facts.len(), 1, "only REAL_KEY carries a production default");
+    assert_extraction_is_complete(source, &facts);
+}
+
+/// A `#[cfg(test)]` nested inside the test module is legal. Splitting there
+/// would leave the module's own closing brace looking like code after it.
+#[test]
+fn test_only_keys_splits_at_the_last_top_level_marker() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(test)]
+    fn helper() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// A `#[cfg(test)]` helper above the module counts as production: splitting
+/// at the last marker can only excuse fewer names, never more. A split at the
+/// first marker would fail this, whatever `config.rs` happens to contain.
+#[test]
+fn a_test_helper_above_the_module_is_not_excused() {
+    let source = r#"
+#[cfg(test)]
+fn helper() {
+    let k = parse_env("HELPER_KEY", 1);
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// When the extractor skips more test-only pairs than the counter counted,
+/// the two disagree on a call shape. That must say so, not underflow.
+#[test]
+#[should_panic(expected = "SKIP_EXCEEDS_COUNT")]
+fn a_shape_only_the_extractor_reads_is_named_not_underflowed() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let d = std::env::var("FIX_ENV"). unwrap_or_else(|_| "x".to_string());
+    }
+}
+"#;
+    let _ = classify_call_sites(source);
+}
+
+/// A source ending in an unterminated literal fails by name before any token
+/// is read, so the one-byte span it produces is never sliced.
+#[test]
+#[should_panic(expected = "TEST_MODULE_NOT_LAST")]
+fn a_lone_trailing_quote_fails_by_name_not_by_slice() {
+    let source = r#"
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+""#;
+    let _ = test_only_keys(source);
+}
+
+/// A name quoted in a production comment is not a production use.
+#[test]
+fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {
+    let source = r#"
+// "FIXTURE_ONLY_KEY" is read only by the tests below.
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// A floor, not a pin: `config.rs`'s tests carry fixture keys, so deriving
+/// none means the derivation stopped seeing them.
+#[test]
+fn the_real_config_has_test_only_keys() {
+    let keys = test_only_keys(SOURCES[0].1);
+    assert!(
+        !keys.is_empty(),
+        "config.rs's tests carry fixture keys, but none were derived"
+    );
 }
