@@ -247,6 +247,16 @@ arc.
 
 ### Fixed
 
+* **The test-only variable list is derived (048 follow-up)** — `TEST_ONLY_KEYS`
+  named two fixture keys by hand, and its liveness check passed whenever
+  `config.rs` contained a name anywhere, production code included, so a real
+  variable that took a fixture's name would have been dropped from the
+  `--help` and README checks silently. `test_only_keys` now derives the list:
+  names quoted only after `config.rs`'s last `#[cfg(test)]`. It fails if code
+  follows the test module, as clippy's `items_after_test_module` does at the
+  gate. The `PARALLAX_TEST` prefix skip in `variables_without_defaults` is a
+  separate rule and is unchanged.
+
 * **`decide` can no longer fail on lists of the wrong length (056)** — its
   pass returned scores and rationales as two lists the output grammar could
   not hold to the number of options, and 28 calls since June failed with
@@ -558,7 +568,7 @@ arc.
   (from 034) reads `config.rs` independently and stripped nothing at all, so a
   variable *name* mentioned in any comment became one `--help` was required to
   document. It now shares the stripper. 040 unified two scans; this was the one
-  it did not reach, and it still carries a hand-written fixture-exclusion list.
+  it did not reach.
 
   Verified by mutation in both directions: four comment shapes plus a string
   containing an unterminated delimiter all pass, and disabling the block-comment
