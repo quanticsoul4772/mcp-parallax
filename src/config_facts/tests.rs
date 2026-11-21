@@ -687,6 +687,24 @@ mod tests {
     assert_extraction_is_complete(source, &facts);
 }
 
+/// A `#[cfg(test)]` nested inside the test module is legal. Splitting there
+/// would leave the module's own closing brace looking like code after it.
+#[test]
+fn test_only_keys_splits_at_the_last_top_level_marker() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(test)]
+    fn helper() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
 /// A name quoted in a production comment is not a production use.
 #[test]
 fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {

@@ -501,7 +501,8 @@ pub fn variables_without_defaults(source: &str, facts: &[Fact]) -> Vec<String> {
 const TEST_MARKER: &str = "#[cfg(test)]";
 
 /// Env-style names `source` uses only in its test module: quoted `UPPER_SNAKE`
-/// tokens after the **last** `#[cfg(test)]` and in no literal before it.
+/// tokens after the **last** top-level `#[cfg(test)]` and in no literal before
+/// it.
 ///
 /// Derived, so a fixture key cannot outlive its fixture and a real variable
 /// cannot inherit a fixture's exemption. Splitting at the last marker rather
@@ -524,10 +525,25 @@ pub fn test_only_keys(source: &str) -> Vec<String> {
     for &(start, end) in &spans {
         code[start..end].iter_mut().for_each(|c| *c = false);
     }
+    // Only a marker outside every brace opens an item at file level; one
+    // nested inside the test module belongs to it.
+    let mut depth = 0usize;
+    let mut top_level = vec![false; source.len()];
+    for (at, &b) in source.as_bytes().iter().enumerate() {
+        if !code[at] {
+            continue;
+        }
+        top_level[at] = depth == 0;
+        match b {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
     let Some(split) = source
         .match_indices(TEST_MARKER)
         .map(|(at, _)| at)
-        .filter(|&at| code[at])
+        .filter(|&at| code[at] && top_level[at])
         .last()
     else {
         return Vec::new();
