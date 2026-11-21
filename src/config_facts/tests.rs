@@ -760,6 +760,43 @@ mod tests {
     let _ = test_only_keys(source);
 }
 
+/// A production read is listed whatever its name: a prefix is not evidence
+/// that a variable is a fixture.
+#[test]
+fn a_production_read_named_like_a_fixture_is_still_listed() {
+    let source = r#"
+pub fn from_env() {
+    let k = std::env::var("PARALLAX_TEST_X").ok();
+}
+"#;
+    assert_eq!(
+        variables_without_defaults(source, &[]),
+        vec!["PARALLAX_TEST_X".to_string()]
+    );
+}
+
+/// A read only the test module makes is a fixture, not a variable the
+/// documents must list.
+#[test]
+fn a_test_module_read_is_not_listed() {
+    let source = r#"
+pub fn from_env() {
+    let k = std::env::var("REAL_GATE").ok();
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let v = std::env::var("FIX_ENV").ok();
+    }
+}
+"#;
+    assert_eq!(
+        variables_without_defaults(source, &[]),
+        vec!["REAL_GATE".to_string()]
+    );
+}
+
 /// A name quoted in a production comment is not a production use.
 #[test]
 fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {

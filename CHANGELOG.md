@@ -247,6 +247,13 @@ arc.
 
 ### Fixed
 
+* **The no-default scan excuses test-only reads by where they are read** —
+  `variables_without_defaults` skipped any name starting `PARALLAX_TEST`. The
+  rule excused nothing today, but it would have dropped a real variable with
+  that prefix from the document checks silently, while still demanding that a
+  test-module read be documented. It now uses `test_only_keys`, like the
+  resolver, the call-site counter and the `--help` scan.
+
 * **The test-only variable list is derived (048 follow-up)** — `TEST_ONLY_KEYS`
   named two fixture keys by hand, and its liveness check passed whenever
   `config.rs` contained a name anywhere, production code included, so a real
@@ -255,8 +262,7 @@ arc.
   names quoted only after `config.rs`'s last top-level `#[cfg(test)]`. It fails if code
   follows the test module, unless a literal the comment stripper misreads
   hides it; clippy's `items_after_test_module` rejects that shape at the gate
-  regardless. The `PARALLAX_TEST` prefix skip in `variables_without_defaults` is a
-  separate rule and is unchanged.
+  regardless.
 
 * **`decide` can no longer fail on lists of the wrong length (056)** — its
   pass returned scores and rationales as two lists the output grammar could

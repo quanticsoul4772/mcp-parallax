@@ -429,6 +429,9 @@ pub(super) fn lookup_constant(
 /// to extraction and to its own cross-check at once, which is the 036 defect
 /// rebuilt one level up.
 pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
+    // From the unstripped source: `test_only_keys` strips comments itself, and
+    // a second pass can read some literals differently from the first.
+    let test_only = super::test_keys::test_only_keys(source);
     let source = strip_comments(source);
     let mut bearing = 0;
     let mut unrecognised = Vec::new();
@@ -462,7 +465,6 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
     // read twice, read through `env::var`, or split across lines. Only
     // test-only names are subtracted, so a production pair the extractor drops
     // still unbalances the count.
-    let test_only = super::test_keys::test_only_keys(&source);
     let skipped = extract_pairs(&source)
         .iter()
         .filter(|(name, _)| test_only.contains(name))
@@ -484,8 +486,18 @@ pub(super) fn classify_call_sites(source: &str) -> (usize, Vec<String>) {
 /// startup rather than selecting a value, so there is nothing to compare — but
 /// both documents must still list them, and that list has to be derived or a
 /// new gate is checked by nothing.
+///
+/// A test-module read whose name is not env-shaped (`HOME`), is also quoted above the test module, or sits inside a raw-string snippet is not excused, and a document check then fails naming it.
+///
+/// # Panics
+///
+/// `TEST_MODULE_NOT_LAST`, from [`test_only_keys`](super::test_keys::test_only_keys), when code follows `source`'s test module.
 #[must_use]
 pub fn variables_without_defaults(source: &str, facts: &[Fact]) -> Vec<String> {
+    // The same derived rule the resolver, the counter and the `--help` scan
+    // use, so a fixture is excused by where it is read, not by its name. From
+    // the unstripped source, so comments are stripped once.
+    let test_only = super::test_keys::test_only_keys(source);
     let source = strip_comments(source);
     let mut out: Vec<String> = Vec::new();
     let mut rest = source.as_str();
@@ -494,9 +506,7 @@ pub fn variables_without_defaults(source: &str, facts: &[Fact]) -> Vec<String> {
         let Some((name, _)) = quoted_first(rest) else {
             continue;
         };
-        if name.starts_with("PARALLAX_TEST")
-            || facts.iter().any(|f| f.name == name)
-            || out.contains(&name)
+        if test_only.contains(&name) || facts.iter().any(|f| f.name == name) || out.contains(&name)
         {
             continue;
         }
