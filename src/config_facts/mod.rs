@@ -56,7 +56,7 @@ pub mod source;
 pub use documents::{
     assert_no_contradictory_defaults, assert_no_phantom_defaults, stated_in_help, stated_in_table,
 };
-pub use source::{resolve, strip_comments, variables_without_defaults};
+pub use source::{resolve, strip_comments, test_only_keys, variables_without_defaults};
 
 /// Source files this module reads to resolve a named constant.
 ///
@@ -73,54 +73,13 @@ pub const SOURCES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Names that look like configuration variables but exist only to test
-/// handling of absent or invalid values.
-///
-/// **These were three separate literals, and two of them were skip rules that
-/// had to agree.** `resolve_from` skipped one name; the call-site counter
-/// subtracted the same name in a different function; `--help`'s
-/// variable-presence scan excluded both names in a third. Adding a second
-/// fixture key and updating only one of those makes the counter and the
-/// resolver disagree, and `COVERAGE_UNBALANCED` then fires naming a count
-/// mismatch rather than the fixture nobody excluded — a failure pointing away
-/// from its cause, inside the module written to stop exactly that.
-///
-/// Which of these is a `parse_env` call is **derived** rather than listed
-/// again: a second list would reintroduce the problem one level up.
-/// [`assert_test_keys_are_live`] fails if an entry outlives the fixture it
-/// names.
-pub const TEST_ONLY_KEYS: &[&str] = &[
-    "PARALLAX_TEST_DEFINITELY_UNSET_KEY",
-    "PARALLAX_MODEL_NOT_A_CALL_SITE",
-];
-
-/// Fail if a [`TEST_ONLY_KEYS`] entry names a fixture that no longer exists.
-///
-/// Without this an exclusion added for one test becomes permanent by
-/// inattention, and a real variable could later take that name and be excused
-/// from every document silently.
-///
-/// # Panics
-///
-/// Panics naming the stale entry.
-pub fn assert_test_keys_are_live(sources: &[(&str, &str)]) {
-    for key in TEST_ONLY_KEYS {
-        assert!(
-            sources.iter().any(|(_, text)| text.contains(key)),
-            "TEST_KEY_STALE: TEST_ONLY_KEYS names `{key}`, which no source contains. Remove the \
-             entry — an exclusion that outlives its fixture would silently excuse a real \
-             variable that later takes the name."
-        );
-    }
-}
-
 /// Variables deliberately not resolved, each with the reason.
 ///
 /// An entry is a decision someone made and wrote down, not a suppression. A
 /// reason like "does not parse" is the defect this module exists to prevent
 /// wearing the fix as a costume.
 ///
-/// Empty today, and [`assert_exclusions_are_live`] fails if an entry outlives
+/// One entry today, and [`assert_exclusions_are_live`] fails if an entry outlives
 /// the variable it excuses — that is how a suppression list quietly becomes
 /// permanent.
 pub const EXCLUSIONS: &[(&str, &str)] = &[(

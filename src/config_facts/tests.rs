@@ -360,8 +360,8 @@ fn the_real_config_has_no_unresolvable_default() {
 /// reason, and is not offered for comparison.
 #[test]
 fn an_excluded_variable_is_reported_with_its_reason() {
-    // Exercised through the fixture rather than by adding a real exclusion,
-    // so the production EXCLUSIONS list stays empty and honest.
+    // Exercised through the fixture rather than through the real
+    // EXCLUSIONS list, so the test does not depend on what that list holds.
     let facts = resolve_from(FIXTURE, &[("fixture", FIXTURE)]);
     let unresolved: Vec<&Fact> = facts
         .iter()
@@ -550,4 +550,123 @@ fn a_drifted_default_is_detected_for_every_shape() {
             "{name} ({shape})"
         );
     }
+}
+
+/// A name used only below the first `#[cfg(test)]` is a fixture; one also
+/// used above it is a real variable and must not be excused.
+#[test]
+fn test_only_keys_returns_names_used_only_in_test_code() {
+    let source = r#"
+pub fn from_env() {
+    let a = parse_env("SHARED_KEY", 1);
+}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+        let c = "SHARED_KEY";
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// No test code, so nothing is excused.
+#[test]
+fn test_only_keys_is_empty_without_a_test_module() {
+    let source = r#"
+pub fn from_env() {
+    let a = parse_env("SOME_KEY", 1);
+}
+"#;
+    assert!(test_only_keys(source).is_empty());
+}
+
+/// Everything below the first `#[cfg(test)]` is treated as test code, so
+/// production code placed after the test module would be excused from every
+/// document. That must fail, not pass.
+#[test]
+#[should_panic(expected = "TEST_MODULE_NOT_LAST")]
+fn test_only_keys_refuses_code_after_the_test_module() {
+    let source = r#"
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+
+pub fn later() {
+    let a = parse_env("LATE_REAL_KEY", 1);
+}
+"#;
+    let _ = test_only_keys(source);
+}
+
+/// Braces inside string literals are not code. A matcher that counted them
+/// would close the module at the lone `"}"` and then report the rest of the
+/// module as code after it.
+#[test]
+fn test_only_keys_is_not_misled_by_braces_inside_strings() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let key = parse_env("FIXTURE_ONLY_KEY", 2);
+        let s = format!("{key}");
+        let lone = "}";
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// An escaped quote inside a char literal does not end it. Measured one byte
+/// short, the literal's real closing quote pairs with the next `'` and swallows
+/// the `,` between them, leaving the `{` of `'{'` to be counted as code.
+#[test]
+fn test_only_keys_measures_an_escaped_quote_char_literal() {
+    let source = r#"
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+        let pair = ['\'','{'];
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// A name quoted in a production comment is not a production use.
+#[test]
+fn test_only_keys_ignores_a_name_quoted_only_in_a_production_comment() {
+    let source = r#"
+// "FIXTURE_ONLY_KEY" is read only by the tests below.
+pub fn from_env() {}
+
+#[cfg(test)]
+mod tests {
+    fn t() {
+        let b = parse_env("FIXTURE_ONLY_KEY", 2);
+    }
+}
+"#;
+    assert_eq!(test_only_keys(source), vec!["FIXTURE_ONLY_KEY".to_string()]);
+}
+
+/// A floor, not a pin: `config.rs`'s tests carry fixture keys, so deriving
+/// none means the derivation stopped seeing them.
+#[test]
+fn the_real_config_has_test_only_keys() {
+    let keys = test_only_keys(SOURCES[0].1);
+    assert!(
+        !keys.is_empty(),
+        "config.rs's tests carry fixture keys, but none were derived"
+    );
 }

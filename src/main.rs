@@ -367,9 +367,8 @@ mod tests {
         let config = crate::config_facts::strip_comments(include_str!("config.rs"));
         let help = help_text();
 
-        // Fixtures that exist only to prove absent/invalid handling, and the
-        // alias the help mentions by name but does not advertise as canonical.
-        let fixtures = crate::config_facts::TEST_ONLY_KEYS;
+        // Keys used only by config.rs's own tests, derived from its test module.
+        let fixtures = crate::config_facts::test_only_keys(include_str!("config.rs"));
 
         let mut missing = Vec::new();
         let mut rest = config.as_str();
@@ -383,7 +382,7 @@ mod tests {
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
                 && token.contains('_');
-            if looks_like_env && !fixtures.contains(&token) && !help.contains(token) {
+            if looks_like_env && !fixtures.iter().any(|f| f == token) && !help.contains(token) {
                 missing.push(token.to_string());
             }
         }
@@ -460,7 +459,6 @@ mod tests {
 
         crate::config_facts::assert_all_resolved(&facts);
         crate::config_facts::assert_exclusions_are_live(&facts);
-        crate::config_facts::assert_test_keys_are_live(crate::config_facts::SOURCES);
         crate::config_facts::assert_coverage_balances(&facts);
         crate::config_facts::assert_extraction_is_complete(
             crate::config_facts::SOURCES[0].1,
