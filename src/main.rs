@@ -326,7 +326,7 @@ fn active_block_problems(
                 continue;
             };
             let text = tasks(name);
-            let closed = text.matches("- [X] ").count();
+            let closed = text.matches("- [X] ").count() + text.matches("- [x] ").count();
             let open = text.matches("- [ ] ").count();
             if closed != claimed {
                 problems.push(format!(
@@ -664,6 +664,16 @@ mod tests {
         let open = |_: &str| "- [X] a\n- [X] b\n- [X] c\n- [ ] d\n".to_string();
         let (_, problems) = super::active_block_problems(block, &|_| true, &open);
         assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    /// 058: GitHub task lists accept `[x]` as well as `[X]`; a lowercase tick
+    /// is a closed task, not a missing one.
+    #[test]
+    fn a_lowercase_tick_counts_as_closed() {
+        let block = "all 2 tasks closed ([plan](specs/058-y/plan.md)).";
+        let mixed = |_: &str| "- [x] a\n- [X] b\n".to_string();
+        let (_, problems) = super::active_block_problems(block, &|_| true, &mixed);
+        assert!(problems.is_empty(), "{problems:?}");
     }
 
     #[test]
