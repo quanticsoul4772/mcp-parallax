@@ -292,12 +292,20 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `057-provider-rejected-outcome`; all 17 tasks closed**
+**Active Spec Kit feature: `058-otel-trace-context`; all 20 tasks closed,
+the optional live check (T019) deferred**
+([plan](specs/058-otel-trace-context/plan.md)) — when a tool request carries
+W3C trace context in `_meta` (`traceparent`, optionally `tracestate`; MCP
+2026-07-28), every span the call exports (invocation, checkpoint evaluation,
+push, consolidation) joins the caller's trace; without it, telemetry is
+unchanged, `baggage` is not read, and a sampled-off caller gets no span.
+`main` is at **v0.5.0** (tagged 2026-07-27) plus rmcp 3.11 (#151).
+
+**057 (`057-provider-rejected-outcome`); all 17 tasks closed**
 ([plan](specs/057-provider-rejected-outcome/plan.md)) — a model-provider HTTP
 4xx other than 429 is recorded as `provider_rejected` instead of
 `validation_failure`, on both backends; the outcome list is declared with the
-enum and bound by test to the record and telemetry contracts. `main` is at
-**v0.5.0** (tagged 2026-07-27).
+enum and bound by test to the record and telemetry contracts.
 
 **056 (`056-decide-per-option-fields`); all 21 tasks closed**
 ([plan](specs/056-decide-per-option-fields/plan.md)) — decide's per-option

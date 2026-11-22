@@ -319,10 +319,12 @@ impl InvocationRecord {
     /// "one measurement, two sinks" contract (007 FR-009) — both surfaces
     /// derive from the same record value here, so an exit point cannot wire up
     /// one sink and silently forget the other. [`Self::emit`] is private for
-    /// exactly this reason: `publish` is the only door.
-    pub fn publish(&self) {
+    /// exactly this reason: `publish` is the only door. `caller` is the trace
+    /// context the request carried, if any (058); the exported span starts
+    /// under it.
+    pub fn publish(&self, caller: Option<&crate::observability::CallerTrace>) {
         self.emit();
-        crate::observability::emit_invocation(self);
+        crate::observability::emit_invocation(self, caller);
     }
 
     /// Emit the record as a structured tracing event with GenAI

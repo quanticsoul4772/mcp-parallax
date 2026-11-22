@@ -24,12 +24,14 @@ use crate::modes::diverge::{self, DivergeParams, DivergeResult};
 use crate::modes::elicit::{self, ElicitParams, ElicitResult};
 use crate::modes::unstick::{self, NextStep, UnstickParams};
 use crate::modes::verify::{self, Verdict, VerifyParams};
+use crate::observability::CallerTrace;
 
 impl Parallax {
     pub(super) async fn verify_with_ct(
         &self,
         params: VerifyParams,
         ct: tokio_util::sync::CancellationToken,
+        caller: Option<CallerTrace>,
     ) -> Result<Json<Verdict>, ErrorData> {
         let effort = params.effort;
         let mode = self.registry.get(VERIFY_ID).ok_or_else(|| {
@@ -40,6 +42,7 @@ impl Parallax {
             self.attributed(CallSite::Verify),
             RecordDims::ensemble(effort, params.passes.map(u32::from)),
             ct,
+            caller,
             async {
                 verify::run(
                     self.pool
@@ -60,6 +63,7 @@ impl Parallax {
         &self,
         params: UnstickParams,
         ct: tokio_util::sync::CancellationToken,
+        caller: Option<CallerTrace>,
     ) -> Result<Json<NextStep>, ErrorData> {
         let effort = params.effort;
         let mode = self.registry.get(UNSTICK_ID).ok_or_else(|| {
@@ -70,6 +74,7 @@ impl Parallax {
             self.attributed(CallSite::Unstick),
             RecordDims::effort(effort),
             ct,
+            caller,
             async {
                 unstick::run(
                     self.pool
@@ -90,6 +95,7 @@ impl Parallax {
         &self,
         params: DecideParams,
         ct: tokio_util::sync::CancellationToken,
+        caller: Option<CallerTrace>,
     ) -> Result<Json<DecideResult>, ErrorData> {
         let effort = params.effort;
         let mode = self.registry.get(DECIDE_ID).ok_or_else(|| {
@@ -100,6 +106,7 @@ impl Parallax {
             self.attributed(CallSite::Decide),
             RecordDims::effort(effort),
             ct,
+            caller,
             async {
                 decide::run(
                     self.pool
@@ -120,6 +127,7 @@ impl Parallax {
         &self,
         params: ElicitParams,
         ct: tokio_util::sync::CancellationToken,
+        caller: Option<CallerTrace>,
     ) -> Result<Json<ElicitResult>, ErrorData> {
         let effort = params.effort;
         let mode = self.registry.get(ELICIT_ID).ok_or_else(|| {
@@ -132,6 +140,7 @@ impl Parallax {
             self.attributed(CallSite::Elicit),
             RecordDims::effort(effort),
             ct,
+            caller,
             async {
                 elicit::run(
                     self.pool
@@ -153,6 +162,7 @@ impl Parallax {
         &self,
         params: DivergeParams,
         ct: tokio_util::sync::CancellationToken,
+        caller: Option<CallerTrace>,
     ) -> Result<Json<DivergeResult>, ErrorData> {
         let effort = params.effort;
         let mode = self.registry.get(DIVERGE_ID).ok_or_else(|| {
@@ -163,6 +173,7 @@ impl Parallax {
             self.attributed(CallSite::Diverge),
             RecordDims::ensemble(effort, params.passes.map(u32::from)),
             ct,
+            caller,
             async {
                 diverge::run(
                     self.pool

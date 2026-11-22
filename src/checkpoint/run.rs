@@ -15,6 +15,7 @@ use crate::checkpoint::{
 };
 use crate::error::AppError;
 use crate::modes::CorrectiveMode;
+use crate::observability::CallerTrace;
 use crate::telemetry;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
@@ -84,6 +85,7 @@ impl Evaluated {
 pub async fn run_batch(
     deps: &CheckpointDeps,
     params: &CheckpointBatchParams,
+    caller: Option<&CallerTrace>,
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
     let evaluated_kinds = vec![SignalKind::Repetition, SignalKind::RepeatedFailure];
@@ -124,7 +126,14 @@ pub async fn run_batch(
     .await;
 
     let evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_batch");
-    record(deps, Boundary::Batch, &params.session_id, &evaluation).await?;
+    record(
+        deps,
+        Boundary::Batch,
+        &params.session_id,
+        &evaluation,
+        caller,
+    )
+    .await?;
     Ok((
         evaluation.result,
         evaluation.input_tokens,
@@ -141,6 +150,7 @@ pub async fn run_batch(
 pub async fn run_action(
     deps: &CheckpointDeps,
     params: &CheckpointActionParams,
+    caller: Option<&CallerTrace>,
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
 
@@ -155,7 +165,14 @@ pub async fn run_action(
             vec![],
             CheckpointResult::silence(elapsed_ms(started)),
         );
-        record(deps, Boundary::Action, &params.session_id, &evaluation).await?;
+        record(
+            deps,
+            Boundary::Action,
+            &params.session_id,
+            &evaluation,
+            caller,
+        )
+        .await?;
         return Ok((evaluation.result, 0, 0));
     }
 
@@ -215,7 +232,14 @@ pub async fn run_action(
     .await;
 
     let evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_action");
-    record(deps, Boundary::Action, &params.session_id, &evaluation).await?;
+    record(
+        deps,
+        Boundary::Action,
+        &params.session_id,
+        &evaluation,
+        caller,
+    )
+    .await?;
     Ok((
         evaluation.result,
         evaluation.input_tokens,
@@ -232,6 +256,7 @@ pub async fn run_action(
 pub async fn run_turn(
     deps: &CheckpointDeps,
     params: &CheckpointTurnParams,
+    caller: Option<&CallerTrace>,
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
 
@@ -243,7 +268,14 @@ pub async fn run_turn(
             vec![],
             CheckpointResult::silence(elapsed_ms(started)),
         );
-        record(deps, Boundary::Turn, &params.session_id, &evaluation).await?;
+        record(
+            deps,
+            Boundary::Turn,
+            &params.session_id,
+            &evaluation,
+            caller,
+        )
+        .await?;
         return Ok((evaluation.result, 0, 0));
     }
 
@@ -309,7 +341,7 @@ pub async fn run_turn(
         // 017: store an accepted capture proposal — entirely fail-open; the
         // turn's verdict is never affected by capture (FR-008).
         if let Some(proposal) = proposal {
-            if let Err(error) = store_capture(deps, &params.session_id, proposal).await {
+            if let Err(error) = store_capture(deps, &params.session_id, proposal, caller).await {
                 tracing::warn!(%error, "capture storage failed open");
             }
         }
@@ -330,7 +362,14 @@ pub async fn run_turn(
     .await;
 
     let evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_turn");
-    record(deps, Boundary::Turn, &params.session_id, &evaluation).await?;
+    record(
+        deps,
+        Boundary::Turn,
+        &params.session_id,
+        &evaluation,
+        caller,
+    )
+    .await?;
     Ok((
         evaluation.result,
         evaluation.input_tokens,
@@ -380,6 +419,7 @@ async fn store_capture(
     deps: &CheckpointDeps,
     session_id: &str,
     proposal: review::CaptureProposal,
+    caller: Option<&CallerTrace>,
 ) -> Result<(), AppError> {
     use crate::memory::consolidate::{
         ConsolidationAction, ConsolidationRecord, CAPTURE_SESSION_CAP,
@@ -400,7 +440,7 @@ async fn store_capture(
             basis: proposal.basis,
             created_at: deps.clock.now(),
         };
-        crate::observability::emit_consolidation(&record);
+        crate::observability::emit_consolidation(&record, caller);
         return deps.storage.record_consolidation(&record).await;
     }
 
@@ -434,7 +474,7 @@ async fn store_capture(
         basis: proposal.basis,
         created_at: now,
     };
-    crate::observability::emit_consolidation(&record);
+    crate::observability::emit_consolidation(&record, caller);
     deps.storage.record_consolidation(&record).await
 }
 
@@ -504,6 +544,7 @@ async fn record(
     boundary: Boundary,
     session_id: &str,
     evaluation: &Evaluated,
+    caller: Option<&CallerTrace>,
 ) -> Result<(), AppError> {
     let row = CheckpointRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -521,7 +562,7 @@ async fn record(
         created_at: deps.clock.now(),
     };
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
-    crate::observability::emit_checkpoint(&row);
+    crate::observability::emit_checkpoint(&row, caller);
     deps.storage.record_checkpoint(&row).await
 }
 
@@ -655,7 +696,7 @@ mod tests {
             })
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run_batch(&b.build(), &batch_params()).await.unwrap();
+        let (result, _, _) = run_batch(&b.build(), &batch_params(), None).await.unwrap();
         assert_eq!(result.verdict, Verdict::Flag);
         let message = result.message.unwrap();
         assert!(message.contains("cargo test"), "{message}");
@@ -679,7 +720,7 @@ mod tests {
             .withf(|r| r.verdict == Verdict::Silence && r.suppressed)
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run_batch(&b.build(), &batch_params()).await.unwrap();
+        let (result, _, _) = run_batch(&b.build(), &batch_params(), None).await.unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
         assert!(result.suppressed);
         assert!(result.message.is_none());
@@ -697,7 +738,7 @@ mod tests {
             .withf(|r| r.fail_open && r.verdict == Verdict::Silence)
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run_batch(&b.build(), &batch_params()).await.unwrap();
+        let (result, _, _) = run_batch(&b.build(), &batch_params(), None).await.unwrap();
         assert!(result.fail_open);
         assert_eq!(result.verdict, Verdict::Silence);
     }
@@ -739,6 +780,7 @@ mod tests {
                 "On reflection the database migration is not reversible in practice.",
                 false,
             ),
+            None,
         )
         .await
         .unwrap();
@@ -817,10 +859,13 @@ mod tests {
             .withf(|r| r.boundary == Boundary::Action && r.verdict == Verdict::Hold)
             .returning(|_| Ok(()));
 
-        let (result, inp, _) =
-            run_action(&b.build(), &action_params("bash", "deploy to production"))
-                .await
-                .unwrap();
+        let (result, inp, _) = run_action(
+            &b.build(),
+            &action_params("bash", "deploy to production"),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(result.verdict, Verdict::Hold);
         assert!(result.message.unwrap().contains("staging first"));
         assert_eq!(inp, 6); // embed usage attributed
@@ -838,7 +883,7 @@ mod tests {
             .withf(|r| r.verdict == Verdict::Silence && r.signals_evaluated.is_empty())
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run_action(&b.build(), &action_params("read", "src/main.rs"))
+        let (result, _, _) = run_action(&b.build(), &action_params("read", "src/main.rs"), None)
             .await
             .unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
@@ -877,9 +922,10 @@ mod tests {
             .withf(|r| r.fail_open)
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run_action(&b.build(), &action_params("bash", "git push --force"))
-            .await
-            .unwrap();
+        let (result, _, _) =
+            run_action(&b.build(), &action_params("bash", "git push --force"), None)
+                .await
+                .unwrap();
         assert!(result.fail_open);
         assert_eq!(result.verdict, Verdict::Silence);
     }
@@ -898,9 +944,10 @@ mod tests {
             })
             .returning(|_| Ok(()));
 
-        let (result, _, _) = run_action(&b.build(), &action_params("bash", "git push --force"))
-            .await
-            .unwrap();
+        let (result, _, _) =
+            run_action(&b.build(), &action_params("bash", "git push --force"), None)
+                .await
+                .unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
         assert!(!result.fail_open);
     }
@@ -968,6 +1015,7 @@ mod tests {
                 "After checking, the database migration is not reversible after all.",
                 false,
             ),
+            None,
         )
         .await
         .unwrap();
@@ -997,6 +1045,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("Everything completed without surprises today.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1040,6 +1089,7 @@ mod tests {
                 "On reflection the database migration is not reversible in practice.",
                 false,
             ),
+            None,
         )
         .await
         .unwrap();
@@ -1165,6 +1215,7 @@ mod tests {
         let (result, inp, out) = run_turn(
             &b.build(),
             &turn_params("Let me delve into the details of this fix.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1235,6 +1286,7 @@ mod tests {
                 "I must delve deeper: the database migration is not reversible after all.",
                 false,
             ),
+            None,
         )
         .await
         .unwrap();
@@ -1267,6 +1319,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("Everything completed without surprises today.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1292,6 +1345,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("A perfectly ordinary final message for the turn.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1349,6 +1403,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("Let me delve into the details of this fix.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1439,6 +1494,7 @@ mod tests {
                 "Fixed it: the cache had to be cleared before the deploy.",
                 false,
             ),
+            None,
         )
         .await
         .unwrap();
@@ -1476,6 +1532,7 @@ mod tests {
                 "Another fix worth remembering, but the cap is reached.",
                 false,
             ),
+            None,
         )
         .await
         .unwrap();
@@ -1507,6 +1564,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("A fix that would be captured if embedding worked.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1551,6 +1609,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("Let me delve into the details of this fix.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1588,6 +1647,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("Let me delve into the details of this fix.", false),
+            None,
         )
         .await
         .unwrap();
@@ -1608,6 +1668,7 @@ mod tests {
         let (result, _, _) = run_turn(
             &b.build(),
             &turn_params("Reconciled: the migration is not reversible.", true),
+            None,
         )
         .await
         .unwrap();

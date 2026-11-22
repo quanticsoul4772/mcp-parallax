@@ -13,7 +13,7 @@ use crate::error::{ConfigError, Outcome};
 use crate::telemetry::InvocationRecord;
 use opentelemetry::metrics::{Counter, Histogram, MeterProvider as _};
 use opentelemetry::trace::{Span, SpanKind, Status, Tracer, TracerProvider as _};
-use opentelemetry::{Array, Context, KeyValue, StringValue, Value};
+use opentelemetry::{Array, KeyValue, StringValue, Value};
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, SpanExporter};
@@ -21,6 +21,11 @@ use opentelemetry_sdk::Resource;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
+
+mod trace_context;
+
+use trace_context::parent_context;
+pub use trace_context::CallerTrace;
 
 /// Bound on the per-provider shutdown flush (FR-010).
 pub const FLUSH_TIMEOUT_MS: u64 = 5_000;
@@ -326,8 +331,9 @@ fn record_window(
 }
 
 /// Export one invocation record (data-model §3). Fire-and-forget; a single
-/// atomic load when telemetry is disabled.
-pub fn emit_invocation(record: &InvocationRecord) {
+/// atomic load when telemetry is disabled. The span starts under `caller`'s
+/// trace when given (058).
+pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -394,7 +400,7 @@ pub fn emit_invocation(record: &InvocationRecord) {
         .with_kind(SpanKind::Client)
         .with_start_time(start)
         .with_attributes(attributes)
-        .start_with_context(&handles.tracer, &Context::new());
+        .start_with_context(&handles.tracer, &parent_context(caller));
     span.set_status(if record.outcome == Outcome::Success {
         Status::Ok
     } else {
@@ -486,8 +492,9 @@ fn emit_invocation_metrics(
 }
 
 /// Export one checkpoint record (data-model §4). Signal KINDS only — never
-/// evidence strings (FR-008).
-pub fn emit_checkpoint(record: &CheckpointRecord) {
+/// evidence strings (FR-008). The span starts under `caller`'s trace when
+/// given (058).
+pub fn emit_checkpoint(record: &CheckpointRecord, caller: Option<&CallerTrace>) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -524,7 +531,7 @@ pub fn emit_checkpoint(record: &CheckpointRecord) {
         .with_kind(SpanKind::Internal)
         .with_start_time(start)
         .with_attributes(attributes)
-        .start_with_context(&handles.tracer, &Context::new());
+        .start_with_context(&handles.tracer, &parent_context(caller));
     // Fail-open is data, not an error: the evaluation completed (data-model §4).
     span.set_status(Status::Ok);
     span.end_with_timestamp(end);
@@ -551,7 +558,10 @@ pub fn emit_checkpoint(record: &CheckpointRecord) {
 /// Mirror one consolidation audit record (017) as a span + counter at the
 /// same exit point as the store write (007 FR-009). Attributes carry ids,
 /// action, and session only — never memory content.
-pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationRecord) {
+pub fn emit_consolidation(
+    record: &crate::memory::consolidate::ConsolidationRecord,
+    caller: Option<&CallerTrace>,
+) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -578,7 +588,7 @@ pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationReco
         .with_kind(SpanKind::Internal)
         .with_start_time(start)
         .with_attributes(attributes)
-        .start_with_context(&handles.tracer, &Context::new());
+        .start_with_context(&handles.tracer, &parent_context(caller));
     span.set_status(Status::Ok);
     span.end_with_timestamp(end);
     handles
@@ -591,7 +601,7 @@ pub fn emit_consolidation(record: &crate::memory::consolidate::ConsolidationReco
 /// Emitted at the same exit point as the store write (007 FR-009 — the
 /// surfaces cannot disagree). Attributes carry counts and outcomes only —
 /// never memory content or ids (the checkpoint no-evidence rule).
-pub fn emit_push(record: &crate::memory::push::PushRecord) {
+pub fn emit_push(record: &crate::memory::push::PushRecord, caller: Option<&CallerTrace>) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -618,7 +628,7 @@ pub fn emit_push(record: &crate::memory::push::PushRecord) {
         .with_kind(SpanKind::Internal)
         .with_start_time(start)
         .with_attributes(attributes)
-        .start_with_context(&handles.tracer, &Context::new());
+        .start_with_context(&handles.tracer, &parent_context(caller));
     // Fail-open is data, not an error: the evaluation completed.
     span.set_status(Status::Ok);
     span.end_with_timestamp(end);
@@ -635,14 +645,34 @@ pub fn emit_push(record: &crate::memory::push::PushRecord) {
         .add(1, &[KeyValue::new("parallax.push.outcome", outcome)]);
 }
 
+/// One shared global init for the library's test binary (`OnceLock`
+/// semantics); tests find their own spans by a unique name or trace id.
+/// Crate-visible so `server`'s tests can read spans too (058 review R4).
+#[cfg(test)]
+pub(crate) fn test_exporters() -> (
+    &'static opentelemetry_sdk::trace::InMemorySpanExporter,
+    &'static opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter,
+    &'static Guard,
+) {
+    use opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter;
+    use opentelemetry_sdk::trace::InMemorySpanExporter;
+    static EXPORTERS: OnceLock<(InMemorySpanExporter, InMemoryMetricExporter, Guard)> =
+        OnceLock::new();
+    let (spans, metrics, guard) = EXPORTERS.get_or_init(|| {
+        let spans = InMemorySpanExporter::default();
+        let metrics = InMemoryMetricExporter::default();
+        let guard = init_with_exporters(spans.clone(), metrics.clone(), "test-instance");
+        (spans, metrics, guard)
+    });
+    (spans, metrics, guard)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::checkpoint::{Boundary, Signal, SignalKind, Verdict};
     use chrono::{DateTime, Utc};
-    use opentelemetry_sdk::metrics::in_memory_exporter::InMemoryMetricExporter;
-    use opentelemetry_sdk::trace::InMemorySpanExporter;
 
     fn lookup<'a>(map: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |key| {
@@ -750,23 +780,8 @@ mod tests {
         }
     }
 
-    /// One shared global init for this test binary (OnceLock semantics);
-    /// individual tests reset the exporters and assert their own slices.
-    fn test_handles() -> (
-        &'static InMemorySpanExporter,
-        &'static InMemoryMetricExporter,
-        &'static Guard,
-    ) {
-        static EXPORTERS: OnceLock<(InMemorySpanExporter, InMemoryMetricExporter, Guard)> =
-            OnceLock::new();
-        let (spans, metrics, guard) = EXPORTERS.get_or_init(|| {
-            let spans = InMemorySpanExporter::default();
-            let metrics = InMemoryMetricExporter::default();
-            let guard = init_with_exporters(spans.clone(), metrics.clone(), "test-instance");
-            (spans, metrics, guard)
-        });
-        (spans, metrics, guard)
-    }
+    use super::test_exporters as test_handles;
+    use super::trace_context::tests::{meta, text};
 
     fn attr<'a>(attrs: &'a [KeyValue], key: &str) -> Option<&'a opentelemetry::Value> {
         attrs
@@ -783,7 +798,7 @@ mod tests {
         // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
         let record = sample_invocation(Outcome::Success);
-        emit_invocation(&record);
+        emit_invocation(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -856,7 +871,7 @@ mod tests {
         record.model = "claude-haiku-4-5".into();
         record.usage_by_model = usage;
 
-        emit_invocation(&record);
+        emit_invocation(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -895,7 +910,7 @@ mod tests {
         record.cost_estimated = usage.cost_estimated();
         record.usage_by_model = usage;
 
-        emit_invocation(&record);
+        emit_invocation(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -919,7 +934,7 @@ mod tests {
         let (spans, _, guard) = test_handles();
         let mut record = sample_invocation(Outcome::Timeout);
         record.tool = "research".into();
-        emit_invocation(&record);
+        emit_invocation(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -940,7 +955,7 @@ mod tests {
         let (spans, _, guard) = test_handles();
         let mut record = sample_invocation(Outcome::ProviderRejected);
         record.tool = "provider_rejected_probe".into();
-        emit_invocation(&record);
+        emit_invocation(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -967,7 +982,7 @@ mod tests {
         let mut record = sample_invocation(Outcome::Success);
         record.tool = "recall".into();
         record.model = "voyage-4".into();
-        emit_invocation(&record);
+        emit_invocation(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -991,7 +1006,7 @@ mod tests {
         // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
         let record = sample_checkpoint();
-        emit_checkpoint(&record);
+        emit_checkpoint(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1036,7 +1051,7 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
         };
-        emit_push(&record);
+        emit_push(&record, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1081,8 +1096,8 @@ mod tests {
     #[test]
     fn metrics_reflect_emissions() {
         let (_, metrics, guard) = test_handles();
-        emit_invocation(&sample_invocation(Outcome::Success));
-        emit_checkpoint(&sample_checkpoint());
+        emit_invocation(&sample_invocation(Outcome::Success), None);
+        emit_checkpoint(&sample_checkpoint(), None);
         guard.meter_provider.force_flush().unwrap();
 
         let exported = metrics.get_finished_metrics().unwrap();
@@ -1103,6 +1118,195 @@ mod tests {
             assert!(
                 names.contains(&expected.to_string()),
                 "missing {expected}: {names:?}"
+            );
+        }
+    }
+
+    fn probe(tool: &str) -> InvocationRecord {
+        let mut record = sample_invocation(Outcome::Success);
+        record.tool = tool.into();
+        record
+    }
+
+    fn caller(trace_id: &str) -> CallerTrace {
+        let traceparent = format!("00-{trace_id}-00f067aa0ba902b7-01");
+        CallerTrace::from_meta(&meta(&[("traceparent", text(&traceparent))])).unwrap()
+    }
+
+    // The exporter is process-global and shared by parallel tests, so each of
+    // these finds its spans by a trace id or tool name no other test uses.
+
+    /// T003: an invocation span starts under the caller's trace.
+    #[test]
+    fn an_invocation_span_starts_under_the_caller_trace() {
+        let (spans, _, guard) = test_handles();
+        let trace_id = "11111111111111111111111111111111";
+        emit_invocation(&probe("trace_parent_probe"), Some(&caller(trace_id)));
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| s.span_context.trace_id().to_string() == trace_id)
+            .expect("parented invocation span exported");
+        assert_eq!(span.name, "parallax.trace_parent_probe");
+        assert_eq!(span.parent_span_id.to_string(), "00f067aa0ba902b7");
+    }
+
+    /// T003: a checkpoint span starts under the caller's trace.
+    #[test]
+    fn a_checkpoint_span_starts_under_the_caller_trace() {
+        let (spans, _, guard) = test_handles();
+        let trace_id = "22222222222222222222222222222222";
+        emit_checkpoint(&sample_checkpoint(), Some(&caller(trace_id)));
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| s.span_context.trace_id().to_string() == trace_id)
+            .expect("parented checkpoint span exported");
+        assert_eq!(span.parent_span_id.to_string(), "00f067aa0ba902b7");
+    }
+
+    /// T003: without a caller trace the span is a root, otherwise identical to
+    /// the parented one: same name, kind, status and attributes.
+    #[test]
+    fn without_a_caller_trace_the_span_is_an_unchanged_root() {
+        let (spans, _, guard) = test_handles();
+        let trace_id = "33333333333333333333333333333333";
+        emit_invocation(&probe("trace_parity_probe"), Some(&caller(trace_id)));
+        emit_invocation(&probe("trace_parity_probe"), None);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let parented = exported
+            .iter()
+            .find(|s| s.span_context.trace_id().to_string() == trace_id)
+            .expect("parented span exported");
+        let root = exported
+            .iter()
+            .find(|s| {
+                s.name == "parallax.trace_parity_probe"
+                    && s.span_context.trace_id().to_string() != trace_id
+            })
+            .expect("root span exported");
+        assert_eq!(root.parent_span_id, opentelemetry::trace::SpanId::INVALID);
+        assert_eq!(root.span_kind, parented.span_kind);
+        assert_eq!(root.status, parented.status);
+        assert_eq!(root.attributes, parented.attributes);
+    }
+
+    /// T011 (FR-009): a caller that sampled its trace off gets no span from
+    /// the parent-based sampler, but the call is still counted. A tool name no
+    /// other test uses keeps the count free of parallel emissions.
+    #[test]
+    fn a_sampled_off_caller_gets_no_span_but_the_call_is_counted() {
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+
+        let (spans, metrics, guard) = test_handles();
+        let trace_id = "44444444444444444444444444444444";
+        let off = CallerTrace::from_meta(&meta(&[(
+            "traceparent",
+            text(&format!("00-{trace_id}-00f067aa0ba902b7-00")),
+        )]))
+        .unwrap();
+        emit_invocation(&probe("sampled_off_probe"), Some(&off));
+        guard.tracer_provider.force_flush().unwrap();
+        guard.meter_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        assert!(
+            !exported
+                .iter()
+                .any(|s| s.span_context.trace_id().to_string() == trace_id),
+            "a sampled-off caller's trace must get no span"
+        );
+        // Review R6: a span that lost its parent would be a root in a fresh
+        // trace and slip past the check above; no probe span may exist at all.
+        assert!(
+            !exported
+                .iter()
+                .any(|s| s.name == "parallax.sampled_off_probe"),
+            "a sampled-off call must not be exported as a root either"
+        );
+
+        let counted: u64 = metrics
+            .get_finished_metrics()
+            .unwrap()
+            .iter()
+            .flat_map(opentelemetry_sdk::metrics::data::ResourceMetrics::scope_metrics)
+            .flat_map(opentelemetry_sdk::metrics::data::ScopeMetrics::metrics)
+            .filter(|m| m.name() == "parallax.invocations")
+            .filter_map(|m| match m.data() {
+                AggregatedMetrics::U64(MetricData::Sum(sum)) => Some(
+                    sum.data_points()
+                        .filter(|p| {
+                            p.attributes().any(|kv| {
+                                kv.key.as_str() == "parallax.tool"
+                                    && kv.value.as_str() == "sampled_off_probe"
+                            })
+                        })
+                        .map(opentelemetry_sdk::metrics::data::SumDataPoint::value)
+                        .sum::<u64>(),
+                ),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        assert!(counted >= 1, "the call must still be counted");
+    }
+
+    /// T012b, flipped by review R1: push and consolidation spans are emitted
+    /// inside tool calls (`surface`, `save`, `checkpoint_turn`), so given the
+    /// call's caller trace they start under it, like the invocation span.
+    #[test]
+    fn consolidation_and_push_spans_start_under_the_caller_trace() {
+        let (spans, _, guard) = test_handles();
+        let at = DateTime::parse_from_rfc3339("2026-11-21T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let push_trace = "55555555555555555555555555555555";
+        let consolidation_trace = "66666666666666666666666666666666";
+        emit_push(
+            &crate::memory::push::PushRecord {
+                id: "p-058".into(),
+                session_id: "058-push".into(),
+                surfaced_ids: vec![],
+                latency_ms: 5,
+                fail_open: false,
+                input_tokens: 1,
+                created_at: at,
+            },
+            Some(&caller(push_trace)),
+        );
+        emit_consolidation(
+            &crate::memory::consolidate::ConsolidationRecord {
+                id: "c-058".into(),
+                session_id: Some("058-consolidation".into()),
+                action: crate::memory::consolidate::ConsolidationAction::Supersede,
+                source_id: "m-old".into(),
+                target_id: Some("m-new".into()),
+                basis: "newer".into(),
+                created_at: at,
+            },
+            Some(&caller(consolidation_trace)),
+        );
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        for (name, trace_id) in [
+            ("parallax.push", push_trace),
+            ("parallax.consolidation", consolidation_trace),
+        ] {
+            let found = exported
+                .iter()
+                .find(|s| s.name == name && s.span_context.trace_id().to_string() == trace_id);
+            assert!(found.is_some(), "{name} span in the caller's trace");
+            assert_eq!(
+                found.unwrap().parent_span_id.to_string(),
+                "00f067aa0ba902b7",
+                "{name}"
             );
         }
     }

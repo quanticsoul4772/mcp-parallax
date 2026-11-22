@@ -208,6 +208,7 @@ async fn main() {
                 session_id: session.clone(),
                 transcript_path: path.clone(),
             },
+            None,
         )
         .await
         .unwrap();
@@ -220,6 +221,7 @@ async fn main() {
                 tool_name: tool.into(),
                 tool_input: input.into(),
             },
+            None,
         )
         .await
         .unwrap();
@@ -232,6 +234,7 @@ async fn main() {
                 final_message: benign_finals[(i as usize) % benign_finals.len()].into(),
                 continuation: false,
             },
+            None,
         )
         .await
         .unwrap();
@@ -285,6 +288,7 @@ async fn main() {
                 session_id: session.clone(),
                 transcript_path: path,
             },
+            None,
         )
         .await
         .unwrap();
@@ -312,6 +316,7 @@ async fn main() {
                 session_id: session.clone(),
                 transcript_path: path,
             },
+            None,
         )
         .await
         .unwrap();
@@ -349,6 +354,7 @@ async fn main() {
                 tool_name: (*tool).into(),
                 tool_input: (*input).into(),
             },
+            None,
         )
         .await
         .unwrap();
@@ -401,6 +407,7 @@ async fn main() {
                 final_message: (*final_message).to_string(),
                 continuation: false,
             },
+            None,
         )
         .await
         .unwrap();
@@ -440,6 +447,7 @@ async fn main() {
                 .into(),
             continuation: false,
         },
+        None,
     )
     .await
     .unwrap();
@@ -462,6 +470,7 @@ async fn main() {
                 session_id: format!("gone-{i}"),
                 transcript_path: "missing/never.jsonl".into(),
             },
+            None,
         )
         .await
         .unwrap();
