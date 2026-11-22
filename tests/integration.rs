@@ -337,6 +337,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
         // capability-OFF catalog (FR-007).
         .env_remove("VOYAGE_API_KEY")
         .env_remove("BRAVE_API_KEY")
+        .env_remove("EXA_API_KEY")
         .env("DATABASE_PATH", db.to_string_lossy().to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1002,7 +1003,7 @@ const RESEARCH_CONTRACT: &str =
 // ---- T017: catalog gating ---------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
+async fn with_an_exa_key_the_catalog_matches_the_research_contract() {
     let mock = MockServer::start().await;
     let (client, _storage, _server) = serve_with_research(&mock).await;
 
@@ -1050,6 +1051,64 @@ async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
 
 // ---- T014: full round trip ----------------------------------------------------
 
+/// 059 T018 (SC-003, SC-004): the first Exa search is rate-limited with a
+/// `Retry-After`; the run still succeeds, and its record carries the summed
+/// Exa cost of every search and the contents call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rate_limited_research_run_succeeds_and_records_its_exa_cost() {
+    let mock = MockServer::start().await;
+    let page_url = "https://docs.example/page1";
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [ { "id": page_url, "url": page_url, "title": "Doc" } ],
+            "costDollars": { "total": 0.007 }
+        })))
+        .with_priority(2)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/contents"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [ { "id": page_url, "url": page_url, "title": "Doc",
+                           "text": "The documented claim holds." } ],
+            "costDollars": { "total": 0.005 }
+        })))
+        .mount(&mock)
+        .await;
+    mount_research_llm(&mock, "The claim holds [s1].").await;
+    let (client, storage, _server) = serve_with_research(&mock).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "research",
+            &json!({ "question": "does the documented claim hold?", "depth": "quick" }),
+        ))
+        .await
+        .unwrap();
+    let searches = result.structured_content.as_ref().unwrap()["stats"]["searches"]
+        .as_f64()
+        .unwrap();
+    assert!(searches >= 1.0);
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success);
+    let expected = 0.007f64.mul_add(searches, 0.005);
+    let recorded = records[0].search_cost_usd.unwrap();
+    assert!(
+        (recorded - expected).abs() < 1e-9,
+        "recorded {recorded}, expected {expected}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn research_round_trip_returns_grounded_citations_and_one_record() {
     let mock = MockServer::start().await;
@@ -1077,7 +1136,7 @@ async fn research_round_trip_returns_grounded_citations_and_one_record() {
     assert_eq!(sources[0]["id"], "s1");
     assert!(sources[0]["url"].as_str().unwrap().ends_with("/page1"));
     let wire = structured.to_string();
-    assert!(!wire.contains("running text for extraction"));
+    assert!(!wire.contains("as this page explains at length"));
 
     let findings = structured["key_findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1);
@@ -1192,13 +1251,14 @@ async fn tiny_budget_returns_a_well_formed_early_synthesized_result() {
 // ---- T018: failure parity -----------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn search_provider_outage_surfaces_named_with_one_record() {
+async fn search_provider_rejection_surfaces_named_with_one_record() {
     let mock = MockServer::start().await;
     mount_research_llm(&mock, "n/a").await;
-    // Terminal 422 from Brave (e.g. an invalid subscription token).
-    Mock::given(method("GET"))
-        .and(path("/res/v1/web/search"))
-        .respond_with(ResponseTemplate::new(422).set_body_string("SUBSCRIPTION_TOKEN_INVALID"))
+    // Terminal 422 from Exa (e.g. an invalid request): the provider refused
+    // the request, recorded as provider_rejected (059 D9, 057's rule).
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(422).set_body_string("INVALID_REQUEST"))
         .mount(&mock)
         .await;
     let (client, storage, _server) = serve_with_research(&mock).await;
@@ -1207,11 +1267,14 @@ async fn search_provider_outage_surfaces_named_with_one_record() {
         .call_tool(tool_call("research", &json!({ "question": "q?" })))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("[search_provider]"), "got: {err}");
+    assert!(
+        err.to_string().contains("[provider_rejected]"),
+        "got: {err}"
+    );
 
     let records = storage.list_invocations().await.unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].outcome, Outcome::SearchProvider);
+    assert_eq!(records[0].outcome, Outcome::ProviderRejected);
 
     client.cancel().await.unwrap();
 }
@@ -2549,6 +2612,7 @@ fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
         .env("ANTHROPIC_API_KEY", "dummy-key-no-model-call-happens")
         .env_remove("VOYAGE_API_KEY")
         .env_remove("BRAVE_API_KEY")
+        .env_remove("EXA_API_KEY")
         // Telemetry ON, collector unreachable (nothing listens on port 9).
         .env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
         .env("DATABASE_PATH", db.to_string_lossy().to_string())

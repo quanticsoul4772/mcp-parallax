@@ -526,7 +526,8 @@ fn a_drifted_default_is_detected_for_every_shape() {
             "named string constant",
         ),
         ("LOG_LEVEL", "info", "debug", "inline string literal"),
-        ("FETCH_ALLOW_PRIVATE", "false", "true", "boolean"),
+        // No configuration variable has a boolean default since 059; the
+        // shape stays covered by the classify test above.
     ];
     for (name, applies, doc_says, shape) in cases {
         let block = format!("    {name}   something (default: {doc_says})");

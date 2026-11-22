@@ -113,6 +113,7 @@ async fn main() {
         depth: None,
         effort: None,
         passes: None,
+        search_cost_usd: None,
         latency_ms: 1,
         outcome: mcp_parallax::error::Outcome::Success,
         created_at: chrono::Utc::now(),

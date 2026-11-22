@@ -173,6 +173,58 @@ impl ModelUsage {
     }
 }
 
+/// One research run's Exa cost (059 FR-010).
+///
+/// The sum of what each Exa call reported, shared by the pipeline (which
+/// records each call) and the record guard (which reads on every exit,
+/// failures and cancellations included). A call is opened with
+/// [`Self::begin`] and closed with [`Self::end`]; one never closed (the run
+/// was cancelled mid-call) or closed without a cost may still have been
+/// billed, so the total becomes unknown (059 review finding 4).
+#[derive(Debug, Default)]
+pub struct SearchCost {
+    state: std::sync::Mutex<CostState>,
+}
+
+#[derive(Debug, Default)]
+struct CostState {
+    sum: f64,
+    calls: u32,
+    open: u32,
+    unreported: bool,
+}
+
+impl SearchCost {
+    /// An Exa call is starting.
+    pub fn begin(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.open += 1;
+        }
+    }
+
+    /// An Exa call finished, with the cost it reported — `None` when it
+    /// failed or reported none.
+    pub fn end(&self, cost: Option<f64>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.open = state.open.saturating_sub(1);
+            state.calls += 1;
+            match cost {
+                Some(usd) => state.sum += usd,
+                None => state.unreported = true,
+            }
+        }
+    }
+
+    /// The run's total: `None` when no Exa call was made, when one is still
+    /// open, or when any reported no cost — unknown, never understated as a
+    /// partial sum.
+    #[must_use]
+    pub fn total(&self) -> Option<f64> {
+        let state = self.state.lock().ok()?;
+        (state.calls > 0 && state.open == 0 && !state.unreported).then_some(state.sum)
+    }
+}
+
 /// The observability record of one tool call (data-model.md §5; contract:
 /// `specs/001-core-layer/contracts/invocation-record.schema.json`).
 #[derive(Debug, Clone)]
@@ -227,6 +279,10 @@ pub struct InvocationRecord {
     ///
     /// `None` means the configured count ran.
     pub passes: Option<u32>,
+    /// The run's Exa cost in USD (059 FR-010): `research` only, and only when
+    /// every Exa call reported a cost. Separate from [`Self::cost_usd`],
+    /// which stays the summed model cost.
+    pub search_cost_usd: Option<f64>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -278,10 +334,18 @@ impl InvocationRecord {
             // the same reason as `depth` (028).
             effort: None,
             passes: None,
+            search_cost_usd: None,
             latency_ms,
             outcome,
             created_at,
         }
+    }
+
+    /// Stamp the run's Exa cost onto the record (059 FR-010).
+    #[must_use]
+    pub const fn with_search_cost(mut self, search_cost_usd: Option<f64>) -> Self {
+        self.search_cost_usd = search_cost_usd;
+        self
     }
 
     /// Stamp the research rigor tier onto the record (019).
@@ -357,6 +421,59 @@ impl InvocationRecord {
 mod tests {
     use super::*;
     use crate::traits::clock::MockTimeProvider;
+
+    /// 059 T015 (FR-010): the run's Exa cost is the sum of what each call
+    /// reported; one call without a cost makes the total unknown, not lower;
+    /// a run that made no Exa call has no cost to state.
+    #[test]
+    fn search_cost_sums_reported_costs_and_an_unreported_one_makes_it_unknown() {
+        let cost = SearchCost::default();
+        assert_eq!(cost.total(), None);
+        cost.begin();
+        cost.end(Some(0.007));
+        cost.begin();
+        cost.end(Some(0.005));
+        let total = cost.total().unwrap();
+        assert!((total - 0.012).abs() < 1e-9, "{total}");
+        // A call that failed or reported nothing may still have been billed.
+        cost.begin();
+        cost.end(None);
+        assert_eq!(cost.total(), None);
+        cost.begin();
+        cost.end(Some(0.007));
+        assert_eq!(cost.total(), None, "unknown stays unknown");
+    }
+
+    /// 059 review finding 4: a call still in flight when the run ends (a
+    /// cancellation drops it mid-await) may have been billed, so the total
+    /// is unknown.
+    #[test]
+    fn a_call_still_in_flight_makes_the_cost_unknown() {
+        let cost = SearchCost::default();
+        cost.begin();
+        cost.end(Some(0.007));
+        cost.begin();
+        assert_eq!(cost.total(), None);
+    }
+
+    #[test]
+    fn a_record_carries_the_search_cost_only_when_stamped() {
+        let clock = crate::traits::clock::SystemClock;
+        let record = InvocationRecord::create(
+            &clock,
+            "s",
+            "verify",
+            "claude-opus-4-8",
+            &ModelUsage::default(),
+            Outcome::Success,
+            clock.now(),
+        );
+        assert_eq!(record.search_cost_usd, None);
+        assert_eq!(
+            record.with_search_cost(Some(0.012)).search_cost_usd,
+            Some(0.012)
+        );
+    }
 
     fn fixed(rfc3339: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(rfc3339)

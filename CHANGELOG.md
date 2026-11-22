@@ -175,6 +175,17 @@ arc.
 
 ### Changed
 
+* **`research` runs on Exa (059)** — Exa replaces Brave as the research
+  provider: one Exa search per angle finds sources, and one contents request
+  returns the text of the sources kept, so Parallax no longer downloads or
+  parses pages. `EXA_API_KEY` enables `research`; `EXA_MAX_AGE_HOURS`
+  (default 168) limits how old the page text may be. Each source in the
+  result gains `truncated`, set when its text reached the 16,000-character
+  cap. The run's Exa cost is recorded as `search_cost_usd` on the invocation
+  record and as `parallax.search.cost_usd` on the research span. Exa requests
+  retry on network errors, 429 and 5xx, honoring `Retry-After`; other 4xx are
+  recorded as `provider_rejected`.
+
 * **Provider rejections are recorded as `provider_rejected` (057)** — a
   model-provider HTTP 4xx other than 429 (out of credit, bad key, no access,
   unknown model, rejected request) was recorded as `validation_failure`, the
@@ -259,6 +270,16 @@ arc.
   0.39. The bundled SQLite is unchanged; exposure needs a database file and
   `-wal` written by a less trusted party at `DATABASE_PATH`. The entry states
   its removal condition: a sqlx release that accepts `libsqlite3-sys >= 0.39`.
+
+### Removed
+
+* **Brave and the page fetcher (059)** — `BRAVE_API_KEY`, `FETCH_TIMEOUT_MS`
+  and `FETCH_ALLOW_PRIVATE` no longer configure anything. Breaking:
+  `FETCH_TIMEOUT_MS` or `FETCH_ALLOW_PRIVATE` set is a startup error, and so
+  is `BRAVE_API_KEY` when `EXA_API_KEY` is unset; with `EXA_API_KEY` set,
+  `BRAVE_API_KEY` is ignored so other tools can keep using it. The local
+  fetcher (robots.txt handling, the private-address guard, HTML readability)
+  and the `rs-trafilatura` and `robotstxt` dependencies are gone.
 
 ### Fixed
 

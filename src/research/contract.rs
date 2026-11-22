@@ -148,14 +148,17 @@ pub struct Position {
 pub struct SourceRef {
     /// Run-scoped id (`s1`, `s2`, …).
     pub id: String,
-    /// Final URL after redirects.
+    /// The source URL as the provider returned it.
     pub url: String,
-    /// Page title (extraction metadata; may be the URL when absent).
+    /// Page title (provider metadata; the URL when absent).
     pub title: String,
-    /// RFC 3339 fetch time.
+    /// RFC 3339 time Parallax received the source's text.
     pub fetched_at: String,
     /// Heuristic credibility (0..=1) — conservative and explainable.
     pub credibility: f32,
+    /// The source's text reached the character cap, so the page continues
+    /// past what was read (059 FR-007).
+    pub truncated: bool,
 }
 
 /// Honest run accounting (FR-007: no silent truncation).
@@ -167,7 +170,7 @@ pub struct Stats {
     pub searches: u32,
     /// Candidate sources found across angles (post URL dedup).
     pub sources_found: u32,
-    /// Sources successfully fetched and extracted.
+    /// Sources whose text was received and extracted.
     pub sources_fetched: u32,
     /// Claims extracted across sources.
     pub claims_extracted: u32,

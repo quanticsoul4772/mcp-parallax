@@ -10,8 +10,9 @@ use crate::research::contract::Constraints;
 use crate::research::Depth;
 use crate::traits::client::Completion;
 use crate::traits::clock::{MockTimeProvider, SystemClock};
-use crate::traits::fetcher::MockFetcher;
-use crate::traits::search::{MockSearchProvider, SearchHit};
+use crate::traits::search::{
+    ContentsResults, MockSearchProvider, Page, SearchHit, SearchResults, SearchType,
+};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
@@ -135,6 +136,7 @@ fn deps_with_client(
         verify_mode,
         input_max_chars: 50_000,
         concurrency: 4,
+        max_age_hours: 168,
         // These fixtures share one scripted client, so every call site reports
         // the same model and existing token assertions are unchanged.
         routing: crate::routing::RoutingTable::single(
@@ -144,38 +146,39 @@ fn deps_with_client(
     }
 }
 
-fn article_html(text: &str) -> String {
-    format!(
-        "<html><head><title>Page</title></head><body><article><h1>Heading</h1>\
-         <p>{text} This paragraph carries enough running text for the extractor \
-         to classify it as main content rather than boilerplate.</p></article></body></html>"
-    )
-}
-
-fn search_returning(urls: &'static [&'static str]) -> MockSearchProvider {
+/// A search mock returning `urls` as hits; contents left to the test.
+fn search_hits(urls: &'static [&'static str]) -> MockSearchProvider {
     let mut search = MockSearchProvider::new();
-    search.expect_search().returning(move |_, _| {
-        Ok(urls
-            .iter()
-            .map(|u| SearchHit {
-                url: (*u).to_string(),
-                title: format!("title of {u}"),
-                snippet: String::new(),
-            })
-            .collect())
+    search.expect_search().returning(move |_| {
+        Ok(SearchResults {
+            hits: urls
+                .iter()
+                .map(|u| SearchHit {
+                    url: (*u).to_string(),
+                    title: format!("title of {u}"),
+                })
+                .collect(),
+            cost_usd: None,
+        })
     });
     search
 }
 
-fn fetcher_ok() -> MockFetcher {
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().returning(|url| {
-        Ok(crate::traits::fetcher::FetchedPage {
-            url: url.to_string(),
-            html: article_html(&format!("Content of {url}.")),
+/// [`search_hits`] whose contents call returns readable text for every
+/// requested URL (what `fetcher_ok` did before 059).
+fn search_returning(urls: &'static [&'static str]) -> MockSearchProvider {
+    let mut search = search_hits(urls);
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| page(u, &format!("Content of {u}."), false))
+                .collect(),
+            cost_usd: None,
         })
     });
-    fetcher
+    search
 }
 
 fn params(question: &str, depth: Option<Depth>) -> ResearchParams {
@@ -192,6 +195,577 @@ fn scope_value() -> Value {
         "angles": ["angle one", "angle two"],
         "sub_questions": ["does it hold?", "since when?"]
     })
+}
+
+/// A page as Exa would return it for `url`.
+fn page(url: &str, text: &str, truncated: bool) -> Page {
+    Page {
+        requested_url: url.to_string(),
+        url: url.to_string(),
+        title: format!("title of {url}"),
+        text: text.to_string(),
+        truncated,
+    }
+}
+
+// ---- 059 T006: text comes from one contents call -----------------------------
+
+/// The search carries the depth's type and the caller's domain lists; the
+/// local filter still drops what Exa returned anyway; one contents call asks
+/// for exactly the kept URLs with the freshness limit and the cap; and the
+/// extraction reads that text.
+#[tokio::test]
+async fn text_comes_from_one_contents_call_for_the_kept_urls_only() {
+    let client = scripted(
+        scope_value(),
+        |prompt| {
+            assert!(prompt.contains("Exa text for"), "{prompt}");
+            json!({ "claims": [] })
+        },
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let mut search = MockSearchProvider::new();
+    search
+        .expect_search()
+        .withf(|req| {
+            req.search_type == SearchType::DeepLite
+                && req.include_domains.is_empty()
+                && req.exclude_domains == vec!["evil.example".to_string()]
+        })
+        .returning(|_| {
+            Ok(SearchResults {
+                hits: [
+                    "https://evil.example/x",
+                    "https://good.example/a",
+                    "https://good.example/b",
+                ]
+                .iter()
+                .map(|u| SearchHit {
+                    url: (*u).to_string(),
+                    title: (*u).to_string(),
+                })
+                .collect(),
+                cost_usd: None,
+            })
+        });
+    search
+        .expect_contents()
+        .times(1)
+        .withf(|req| {
+            req.urls == ["https://good.example/a", "https://good.example/b"]
+                && req.max_age_hours == 168
+                && req.max_characters == extract::EXTRACT_TEXT_MAX_CHARS
+        })
+        .returning(|req| {
+            Ok(ContentsResults {
+                pages: req
+                    .urls
+                    .iter()
+                    .map(|u| page(u, &format!("Exa text for {u}."), false))
+                    .collect(),
+                cost_usd: None,
+            })
+        });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let p = ResearchParams {
+        constraints: Some(Constraints {
+            domains_deny: Some(vec!["evil.example".into()]),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(Depth::Deep))
+    };
+    let (result, _) = run(&deps, &p).await.unwrap();
+    assert_eq!(result.stats.sources_found, 3);
+}
+
+/// A kept URL that Exa returned no page for is dropped and counted; the
+/// other source carries the run.
+#[tokio::test]
+async fn a_page_missing_from_contents_is_dropped_and_counted() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["good claim"] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "Good [s2].", "gaps": [], "gap_targets": [] }),
+    );
+    let mut search = search_hits(&["https://gone.example/x", "https://example.com/ok"]);
+    search.expect_contents().returning(|_| {
+        Ok(ContentsResults {
+            pages: vec![page("https://example.com/ok", "Readable.", false)],
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
+    assert_eq!(result.stats.sources_found, 2);
+    assert_eq!(result.stats.sources_fetched, 1);
+    assert_eq!(result.key_findings.len(), 1);
+}
+
+/// A page returned under another address still pairs with its source by the
+/// address that was requested; the result shows the page's own address.
+#[tokio::test]
+async fn a_redirected_page_still_pairs_with_its_source() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["a claim"] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "Holds [s1].", "gaps": [], "gap_targets": [] }),
+    );
+    let mut search = search_hits(&["http://example.com/old"]);
+    search.expect_contents().returning(|req| {
+        let mut moved = page("https://example.com/new", "Moved text.", false);
+        moved.requested_url = req.urls[0].clone();
+        Ok(ContentsResults {
+            pages: vec![moved],
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
+    assert_eq!(result.stats.sources_fetched, 1);
+    assert_eq!(result.sources[0].url, "https://example.com/new");
+}
+
+/// 059 T015: the run's Exa cost is every search's reported cost plus the
+/// contents call's (two angles at 0.007, contents at 0.005).
+#[tokio::test]
+async fn the_runs_exa_cost_sums_every_search_and_the_contents_call() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(|_| {
+        Ok(SearchResults {
+            hits: vec![SearchHit {
+                url: "https://example.com/a".into(),
+                title: "A".into(),
+            }],
+            cost_usd: Some(0.007),
+        })
+    });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Text.", false)],
+            cost_usd: Some(0.005),
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let cost = crate::telemetry::SearchCost::default();
+    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
+        .await
+        .unwrap();
+    let total = cost.total().unwrap();
+    assert!((total - 0.019).abs() < 1e-9, "{total}");
+}
+
+// ---- 059 review findings 1-4 ---------------------------------------------------
+
+/// A clock fixed at the run start until `flag` is set, then ten minutes on —
+/// so a stand-in call can make the deadline pass while it is running.
+fn clock_passing_the_deadline_when(
+    flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Arc<dyn TimeProvider> {
+    let started = DateTime::parse_from_rfc3339("2026-11-22T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let mut clock = MockTimeProvider::new();
+    clock.expect_now().returning(move || {
+        if flag.load(std::sync::atomic::Ordering::SeqCst) {
+            started + chrono::Duration::seconds(600)
+        } else {
+            started
+        }
+    });
+    Arc::new(clock)
+}
+
+fn with_deadline(ms: u64) -> ResearchParams {
+    ResearchParams {
+        constraints: Some(Constraints {
+            deadline_ms: Some(ms),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(Depth::Quick))
+    }
+}
+
+/// Finding 1: every Exa call is bounded by the time left before the deadline.
+#[tokio::test]
+async fn each_exa_call_carries_the_time_left_before_the_deadline() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let thirty = Some(std::time::Duration::from_secs(30));
+    let mut search = MockSearchProvider::new();
+    search
+        .expect_search()
+        .withf(move |req| req.time_left == thirty)
+        .returning(|_| {
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/a".into(),
+                    title: "A".into(),
+                }],
+                cost_usd: None,
+            })
+        });
+    search
+        .expect_contents()
+        .withf(move |req| req.time_left == thirty)
+        .returning(|req| {
+            Ok(ContentsResults {
+                pages: vec![page(&req.urls[0], "Text.", false)],
+                cost_usd: None,
+            })
+        });
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    run(&deps, &with_deadline(30_000)).await.unwrap();
+}
+
+/// Finding 1: a search cut off because the deadline arrived stops the run
+/// early (the deadline's usual outcome), not as a provider failure.
+#[tokio::test]
+async fn a_search_cut_off_by_the_deadline_stops_the_run_early() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("no extraction"),
+        |_, _| panic!("no verification"),
+        |_| panic!("nothing verified"),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(move |_| {
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Err(AppError::Timeout {
+            what: "research deadline",
+            ms: 0,
+        })
+    });
+    let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    let (result, _) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert!(result.stats.stopped_early);
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
+}
+
+/// Finding 1: the same for the contents call.
+#[tokio::test]
+async fn a_contents_call_cut_off_by_the_deadline_stops_the_run_early() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("no extraction"),
+        |_, _| panic!("no verification"),
+        |_| panic!("nothing verified"),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = search_hits(&["https://example.com/a"]);
+    search.expect_contents().returning(move |_| {
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Err(AppError::Timeout {
+            what: "research deadline",
+            ms: 0,
+        })
+    });
+    let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    let (result, _) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert!(result.stats.stopped_early);
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
+    assert!(result.sources.is_empty());
+}
+
+/// Finding 2: a page Exa returns under a denied domain (a redirect) is
+/// dropped as filtered — never extracted, never cited.
+#[tokio::test]
+async fn a_redirect_into_a_denied_domain_is_dropped() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("a denied page must not be extracted"),
+        |_, _| supported(),
+        |_| panic!("nothing to synthesize"),
+    );
+    let mut search = search_hits(&["https://good.example/x"]);
+    search.expect_contents().returning(|req| {
+        let mut moved = page("https://evil.example/y", "Denied text.", false);
+        moved.requested_url = req.urls[0].clone();
+        Ok(ContentsResults {
+            pages: vec![moved],
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let p = ResearchParams {
+        constraints: Some(Constraints {
+            domains_deny: Some(vec!["evil.example".into()]),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(Depth::Quick))
+    };
+    let (result, _) = run(&deps, &p).await.unwrap();
+    assert!(result.sources.is_empty());
+    assert_eq!(result.stats.sources_fetched, 0);
+}
+
+/// Finding 3: pages pair with sources by the echoed address, then by the
+/// page's own address, then — only when exactly one of each is left — the
+/// two leftovers; anything else stays unpaired.
+#[test]
+fn pages_pair_by_id_then_url_then_a_single_leftover() {
+    let mk = |requested: &str, url: &str| {
+        let mut p = page(url, "t", false);
+        p.requested_url = requested.to_string();
+        p
+    };
+    let urls = |list: &[&str]| list.iter().map(|u| (*u).to_string()).collect::<Vec<_>>();
+
+    // By echoed id, and by the page's own address when the id is foreign.
+    let paired = pair_pages(
+        &urls(&["https://a.example/1", "https://b.example/2"]),
+        vec![
+            mk("https://a.example/1", "https://a.example/moved"),
+            mk("opaque-id", "https://b.example/2"),
+        ],
+    );
+    assert_eq!(paired[0].as_ref().unwrap().url, "https://a.example/moved");
+    assert_eq!(paired[1].as_ref().unwrap().url, "https://b.example/2");
+
+    // One source and one page left over: paired.
+    let single = pair_pages(
+        &urls(&["https://a.example/1"]),
+        vec![mk("opaque", "https://www.a.example/1?x=1")],
+    );
+    assert!(single[0].is_some());
+
+    // Two of each left over: nothing is guessed.
+    let two = pair_pages(
+        &urls(&["https://a.example/1", "https://b.example/2"]),
+        vec![
+            mk("o1", "https://x.example/p"),
+            mk("o2", "https://y.example/q"),
+        ],
+    );
+    assert!(two.iter().all(Option::is_none));
+}
+
+/// Second review M2: pairing does not depend on response order. A page with
+/// no echoed id whose address is another source's cannot push that source's
+/// own page into the leftover rule; a duplicate is never placed elsewhere.
+#[test]
+fn pairing_survives_order_and_never_places_a_duplicate() {
+    let mk = |requested: &str, url: &str| {
+        let mut p = page(url, "t", false);
+        p.requested_url = requested.to_string();
+        p
+    };
+    let urls = |list: &[&str]| list.iter().map(|u| (*u).to_string()).collect::<Vec<_>>();
+    let x = "https://x.example/1";
+    let y = "https://y.example/2";
+
+    // P1: no echoed id, address Y (X redirected to Y), listed first. P2:
+    // echoed id Y. Y must get P2; X must not get P2 by the leftover rule.
+    let paired = pair_pages(
+        &urls(&[x, y]),
+        vec![mk("opaque", y), mk(y, "https://y.example/2-final")],
+    );
+    assert_eq!(paired[1].as_ref().unwrap().url, "https://y.example/2-final");
+    assert!(paired[0].is_none(), "X took a page that belongs to Y");
+
+    // A second page echoing X's id is a duplicate, never placed under Y.
+    let dup = pair_pages(
+        &urls(&[x, y]),
+        vec![mk(x, x), mk(x, "https://x.example/dup")],
+    );
+    assert_eq!(dup[0].as_ref().unwrap().url, x);
+    assert!(
+        dup[1].is_none(),
+        "a duplicate was placed under another source"
+    );
+}
+
+/// Second review L1: only a call cut off by time takes the deadline's
+/// stop-early path. A rejection (a bad key, no credits) arriving after the
+/// deadline passed still fails the run, for the search and contents calls.
+#[tokio::test]
+async fn a_rejection_past_the_deadline_still_fails_the_run() {
+    for in_contents in [false, true] {
+        let client = scripted(
+            scope_value(),
+            |_| panic!("no extraction"),
+            |_, _| panic!("no verification"),
+            |_| panic!("no synthesis"),
+        );
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let passed = Arc::clone(&flag);
+        let rejection = move || {
+            passed.store(true, std::sync::atomic::Ordering::SeqCst);
+            AppError::ProviderRejected {
+                status: 402,
+                detail: "no credits".into(),
+            }
+        };
+        let mut search = MockSearchProvider::new();
+        if in_contents {
+            search.expect_search().returning(|_| {
+                Ok(SearchResults {
+                    hits: vec![SearchHit {
+                        url: "https://example.com/a".into(),
+                        title: "A".into(),
+                    }],
+                    cost_usd: None,
+                })
+            });
+            search
+                .expect_contents()
+                .returning(move |_| Err(rejection()));
+        } else {
+            search.expect_search().returning(move |_| Err(rejection()));
+        }
+        let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+        let err = run(&deps, &with_deadline(30_000)).await.unwrap_err();
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 402, .. }),
+            "in_contents={in_contents}: {err}"
+        );
+    }
+}
+
+/// Second review L3: a call that sent nothing (no time was left) cost
+/// nothing, so it does not make the run's cost unknown.
+#[tokio::test]
+async fn a_call_that_sent_nothing_leaves_the_cost_known() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(move |_| {
+        if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/a".into(),
+                    title: "A".into(),
+                }],
+                cost_usd: Some(0.007),
+            })
+        } else {
+            Err(AppError::Timeout {
+                what: crate::traits::search::NOT_SENT,
+                ms: 0,
+            })
+        }
+    });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Text.", false)],
+            cost_usd: Some(0.005),
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let cost = crate::telemetry::SearchCost::default();
+    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
+        .await
+        .unwrap();
+    let total = cost.total().unwrap();
+    assert!((total - 0.012).abs() < 1e-9, "{total}");
+}
+
+/// Finding 4: a failed Exa call may still have been billed, so the run's
+/// cost is unknown rather than the successful calls' sum.
+#[tokio::test]
+async fn a_failed_exa_call_makes_the_runs_cost_unknown() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(move |_| {
+        if failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            Err(AppError::SearchProvider("HTTP 503".into()))
+        } else {
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/a".into(),
+                    title: "A".into(),
+                }],
+                cost_usd: Some(0.007),
+            })
+        }
+    });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Text.", false)],
+            cost_usd: Some(0.005),
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let cost = crate::telemetry::SearchCost::default();
+    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
+        .await
+        .unwrap();
+    assert_eq!(cost.total(), None);
+}
+
+/// A page whose text reached the cap is marked truncated on the result.
+#[tokio::test]
+async fn a_truncated_page_is_marked_on_the_result() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["a claim"] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "Holds [s1].", "gaps": [], "gap_targets": [] }),
+    );
+    let mut search = search_hits(&["https://example.com/long"]);
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Cut short.", true)],
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
+    assert_eq!(result.sources.len(), 1);
+    assert!(result.sources[0].truncated);
+}
+
+/// 059 analyze B1: the contents request failing loses every source, so the
+/// run fails with that error (023), and the scope spend stays metered (020).
+#[tokio::test]
+async fn the_contents_request_failing_fails_the_run_metered() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("no extraction without text"),
+        |_, _| panic!("no verification"),
+        |_| panic!("no synthesis"),
+    );
+    let mut search = search_hits(&["https://example.com/a"]);
+    search
+        .expect_contents()
+        .returning(|_| Err(AppError::SearchProvider("HTTP 503".into())));
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let err = run(&deps, &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap_err();
+    assert!(matches!(err.root(), AppError::SearchProvider(_)), "{err}");
+    let (input_tokens, output_tokens) = err.billed();
+    assert!(
+        input_tokens > 0 && output_tokens > 0,
+        "scope spend lost on a contents failure: {input_tokens}/{output_tokens}"
+    );
 }
 
 // ---- T012: the five phases through mock seams -------------------------------
@@ -214,13 +788,9 @@ async fn happy_path_citations_resolve_and_stats_account() {
     let search = search_returning(&["https://example.com/a", "https://example.com/b"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, usage) = run(
-        &deps,
-        &fetcher_ok(),
-        &params("does it hold?", Some(Depth::Quick)),
-    )
-    .await
-    .unwrap();
+    let (result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
 
     // Citations resolve: every finding source id and every [sN] is listed.
     let listed: Vec<&str> = result.sources.iter().map(|s| s.id.as_str()).collect();
@@ -258,7 +828,7 @@ async fn happy_path_citations_resolve_and_stats_account() {
 
     // FR-012: no page bodies on the wire.
     let wire = serde_json::to_string(&result).unwrap();
-    assert!(!wire.contains("running text for the extractor"));
+    assert!(!wire.contains("Content of https://example.com/a."));
 
     // Token usage summed across every call: scope + 2 extract + 2 verify (K=1)
     // + 1 synthesis = 6 calls at (10, 5).
@@ -282,7 +852,7 @@ async fn verify_prompt_carries_source_excerpts_not_titles_alone() {
         |prompt, _| {
             assert!(prompt.contains("Source excerpts the claim was extracted from"));
             assert!(
-                prompt.contains("running text for the extractor"),
+                prompt.contains("Content of https://example.com/a."),
                 "the judge must receive the fetched evidence, not titles alone"
             );
             assert!(prompt.contains("[s1]"));
@@ -293,14 +863,12 @@ async fn verify_prompt_carries_source_excerpts_not_titles_alone() {
     let search = search_returning(&["https://example.com/a"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert_eq!(result.stats.claims_verified, 1);
     // FR-012 still holds: evidence reaches the judge, never the wire.
     let wire = serde_json::to_string(&result).unwrap();
-    assert!(!wire.contains("running text for the extractor"));
+    assert!(!wire.contains("Content of https://example.com/a."));
 }
 
 #[tokio::test]
@@ -316,8 +884,7 @@ async fn focus_reaches_the_scope_prompt() {
 
     let mut p = params("q?", Some(Depth::Quick));
     p.focus = Some(vec!["the pricing facet".to_string()]);
-    let fetcher = MockFetcher::new(); // zero candidates → never called
-    run(&deps, &fetcher, &p).await.unwrap();
+    run(&deps, &p).await.unwrap();
 
     let prompts = client.prompts.lock().unwrap();
     let scope_prompt = prompts
@@ -335,23 +902,16 @@ async fn single_fetch_failure_degrades_and_counts_never_fails_the_run() {
         |_, _| supported(),
         |_| json!({ "answer": "Good [s2].", "gaps": [], "gap_targets": [] }),
     );
-    let search = search_returning(&["https://bad.example/x", "https://example.com/ok"]);
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().returning(|url| {
-        if url.contains("bad.example") {
-            Err(AppError::SearchProvider("HTTP 503".into()))
-        } else {
-            Ok(crate::traits::fetcher::FetchedPage {
-                url: url.to_string(),
-                html: article_html("Reachable content."),
-            })
-        }
+    let mut search = search_hits(&["https://bad.example/x", "https://example.com/ok"]);
+    search.expect_contents().returning(|_| {
+        Ok(ContentsResults {
+            pages: vec![page("https://example.com/ok", "Reachable content.", false)],
+            cost_usd: None,
+        })
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert_eq!(result.stats.sources_found, 2);
     assert_eq!(result.stats.sources_fetched, 1);
     assert_eq!(result.key_findings.len(), 1);
@@ -371,7 +931,7 @@ async fn an_all_refuted_run_says_the_sources_did_not_establish_the_claims() {
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Standard)))
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Standard)))
         .await
         .unwrap();
 
@@ -409,7 +969,7 @@ async fn refuted_claims_are_dropped_and_contested_claims_surface() {
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Standard)))
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Standard)))
         .await
         .unwrap();
 
@@ -452,9 +1012,7 @@ async fn grounding_violation_retries_once_with_the_violation_named() {
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert_eq!(result.answer, "Grounded [s1].");
     assert!(!result.stats.stopped_early);
     assert_eq!(client.count_containing("executive synthesis"), 2);
@@ -479,9 +1037,7 @@ async fn second_grounding_failure_demotes_instead_of_emitting_ungrounded_content
     let search = search_returning(&["https://example.com/one"]);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert!(!result.answer.contains("[s99]"), "{}", result.answer);
     assert!(result.answer.contains("could not be grounded"));
     assert!(result.stats.stopped_early);
@@ -501,11 +1057,8 @@ async fn no_verified_findings_yields_a_deterministic_honest_gap_answer() {
     );
     let search = search_returning(&[]);
     let deps = deps_with(client, search, Arc::new(SystemClock));
-    let fetcher = MockFetcher::new();
 
-    let (result, _usage) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert!(result.answer.contains("No verifiable findings"));
     assert!(result.key_findings.is_empty());
     assert!(result.sources.is_empty());
@@ -526,7 +1079,6 @@ async fn invalid_inputs_are_rejected_before_any_provider_call() {
     let mut search = MockSearchProvider::new();
     search.expect_search().times(0);
     let deps = deps_with(client, search, Arc::new(SystemClock));
-    let fetcher = MockFetcher::new();
 
     for (build, marker) in [
         (params("   ", None), "empty"),
@@ -577,7 +1129,7 @@ async fn invalid_inputs_are_rejected_before_any_provider_call() {
             "focus",
         ),
     ] {
-        let err = run(&deps, &fetcher, &build).await.unwrap_err();
+        let err = run(&deps, &build).await.unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)), "{marker}: {err}");
         assert!(err.to_string().contains(marker), "{marker}: {err}");
     }
@@ -596,9 +1148,7 @@ async fn depth_scales_the_scope_and_constraints_override_the_tier() {
         );
         let search = search_returning(&[]);
         let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
-        run(&deps, &MockFetcher::new(), &params("q?", Some(depth)))
-            .await
-            .unwrap();
+        run(&deps, &params("q?", Some(depth))).await.unwrap();
         let prompts = client.prompts.lock().unwrap();
         let scope_prompt = prompts
             .iter()
@@ -618,19 +1168,22 @@ async fn depth_scales_the_scope_and_constraints_override_the_tier() {
         |_, _| supported(),
         |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
     );
-    let search = search_returning(&[
+    let mut search = search_hits(&[
         "https://example.com/1",
         "https://example.com/2",
         "https://example.com/3",
     ]);
+    search
+        .expect_contents()
+        .times(1)
+        .withf(|req| req.urls.len() == 1)
+        .returning(|req| {
+            Ok(ContentsResults {
+                pages: vec![page(&req.urls[0], "Capped run content.", false)],
+                cost_usd: None,
+            })
+        });
     let deps = deps_with(client, search, Arc::new(SystemClock));
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().times(1).returning(|url| {
-        Ok(crate::traits::fetcher::FetchedPage {
-            url: url.to_string(),
-            html: article_html("Capped run content."),
-        })
-    });
     let p = ResearchParams {
         constraints: Some(Constraints {
             max_sources: Some(1),
@@ -638,36 +1191,35 @@ async fn depth_scales_the_scope_and_constraints_override_the_tier() {
         }),
         ..params("q?", Some(Depth::Deep))
     };
-    let (result, _usage) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _usage) = run(&deps, &p).await.unwrap();
     assert_eq!(result.stats.sources_fetched, 1);
 }
 
 #[tokio::test]
-async fn denied_and_unallowed_domains_never_reach_the_fetcher() {
+async fn denied_and_unallowed_domains_never_reach_the_contents_call() {
     let client = scripted(
         scope_value(),
         |_| json!({ "claims": [] }),
         |_, _| supported(),
         |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
     );
-    let search = search_returning(&[
+    let mut search = search_hits(&[
         "https://evil.example/page",
         "https://good.example/page",
         "https://other.example/page",
     ]);
-    let deps = deps_with(client, search, Arc::new(SystemClock));
-    let mut fetcher = MockFetcher::new();
-    // Only good.example may ever be fetched.
-    fetcher
-        .expect_fetch()
-        .withf(|url| url.contains("good.example"))
+    // Only good.example may ever have its text requested.
+    search
+        .expect_contents()
         .times(1)
-        .returning(|url| {
-            Ok(crate::traits::fetcher::FetchedPage {
-                url: url.to_string(),
-                html: article_html("Allowed content."),
+        .withf(|req| req.urls == ["https://good.example/page"])
+        .returning(|req| {
+            Ok(ContentsResults {
+                pages: vec![page(&req.urls[0], "Allowed content.", false)],
+                cost_usd: None,
             })
         });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
 
     let p = ResearchParams {
         constraints: Some(Constraints {
@@ -677,7 +1229,7 @@ async fn denied_and_unallowed_domains_never_reach_the_fetcher() {
         }),
         ..params("q?", Some(Depth::Quick))
     };
-    run(&deps, &fetcher, &p).await.unwrap();
+    run(&deps, &p).await.unwrap();
 }
 
 // ---- T016: ceilings — graceful early synthesis -------------------------------
@@ -697,9 +1249,8 @@ async fn budget_ceiling_stops_new_work_and_synthesizes_early() {
     // happens after the budget is already blown.
     let mut search = MockSearchProvider::new();
     search.expect_search().times(0);
+    search.expect_contents().times(0);
     let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().times(0);
 
     let p = ResearchParams {
         constraints: Some(Constraints {
@@ -708,7 +1259,7 @@ async fn budget_ceiling_stops_new_work_and_synthesizes_early() {
         }),
         ..params("q?", Some(Depth::Quick))
     };
-    let (result, _usage) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _usage) = run(&deps, &p).await.unwrap();
     assert!(result.stats.stopped_early);
     assert_eq!(result.stats.stop_reason, Some(StopReason::Budget));
     assert!(!result.answer.is_empty(), "well-formed, not an error");
@@ -737,10 +1288,9 @@ async fn deadline_ceiling_stops_new_work_with_the_reason_named() {
         |_, _| panic!("deadline tripped before verification"),
         |_| panic!("nothing verified — deterministic answer expected"),
     );
-    let search = search_returning(&["https://example.com/a"]);
+    let mut search = search_hits(&["https://example.com/a"]);
+    search.expect_contents().times(0);
     let deps = deps_with(client, search, Arc::new(clock));
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().times(0);
 
     let p = ResearchParams {
         constraints: Some(Constraints {
@@ -749,7 +1299,7 @@ async fn deadline_ceiling_stops_new_work_with_the_reason_named() {
         }),
         ..params("q?", Some(Depth::Quick))
     };
-    let (result, _usage) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _usage) = run(&deps, &p).await.unwrap();
     assert!(result.stats.stopped_early);
     assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
     assert!(!result.answer.is_empty());
@@ -819,7 +1369,7 @@ async fn a_wholly_failed_extraction_phase_bills_each_call_once() {
         Arc::new(SystemClock),
     );
 
-    let err = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let err = run(&deps, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap_err();
 
@@ -857,7 +1407,7 @@ async fn a_wholly_failed_verification_phase_bills_each_call_once() {
         Arc::new(SystemClock),
     );
 
-    let err = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Deep)))
+    let err = run(&deps, &params("q?", Some(Depth::Deep)))
         .await
         .unwrap_err();
 
@@ -884,16 +1434,12 @@ async fn all_angles_failing_fails_the_invocation_with_the_provider_class() {
     let mut search = MockSearchProvider::new();
     search
         .expect_search()
-        .returning(|_, _| Err(AppError::SearchProvider("HTTP 503".into())));
+        .returning(|_| Err(AppError::SearchProvider("HTTP 503".into())));
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let err = run(
-        &deps,
-        &MockFetcher::new(),
-        &params("q?", Some(Depth::Quick)),
-    )
-    .await
-    .unwrap_err();
+    let err = run(&deps, &params("q?", Some(Depth::Quick)))
+        .await
+        .unwrap_err();
     assert!(matches!(err.root(), AppError::SearchProvider(_)), "{err}");
     // 020: the search phase failed, but scope already ran and was billed. The
     // record must carry that spend rather than reporting the run as free.
@@ -914,22 +1460,28 @@ async fn partial_angle_failure_degrades_and_counts() {
     );
     let failed = std::sync::atomic::AtomicBool::new(false);
     let mut search = MockSearchProvider::new();
-    search.expect_search().returning(move |_, _| {
+    search.expect_search().returning(move |_| {
         if failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            Ok(vec![SearchHit {
-                url: "https://example.com/only".into(),
-                title: "only".into(),
-                snippet: String::new(),
-            }])
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/only".into(),
+                    title: "only".into(),
+                }],
+                cost_usd: None,
+            })
         } else {
             Err(AppError::SearchProvider("HTTP 503".into()))
         }
     });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Surviving content.", false)],
+            cost_usd: None,
+        })
+    });
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert_eq!(result.stats.angles, 2);
     assert_eq!(result.stats.searches, 1); // one angle lost, counted honestly
     assert_eq!(result.key_findings.len(), 1);
@@ -962,9 +1514,7 @@ async fn every_sub_question_gapped_no_longer_annihilates_a_supported_answer() {
     let search = search_returning(&["https://example.com/a"]);
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _usage) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _usage) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert!(
         result.confidence > 0.0,
@@ -995,7 +1545,7 @@ async fn refutation_is_reported_as_its_own_rate_not_folded_into_confidence() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (a, _) = run(&deps_a, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (a, _) = run(&deps_a, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
 
@@ -1017,7 +1567,7 @@ async fn refutation_is_reported_as_its_own_rate_not_folded_into_confidence() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (b, _) = run(&deps_b, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (b, _) = run(&deps_b, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
 
@@ -1056,9 +1606,7 @@ async fn sub_question_status_is_published_verbatim_and_in_scope_order() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert_eq!(result.sub_question_status.len(), 2);
     assert_eq!(result.sub_question_status[0].sub_question, "does it hold?");
@@ -1095,11 +1643,9 @@ async fn identical_support_with_different_breadth_differs_only_in_coverage() {
     };
 
     let both = make(json!([1, 2]));
-    let (all_gapped, _) = run(&both, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (all_gapped, _) = run(&both, &params("q?", Some(Depth::Quick))).await.unwrap();
     let neither = make(json!([0, 0]));
-    let (none_gapped, _) = run(&neither, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let (none_gapped, _) = run(&neither, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap();
 
@@ -1143,9 +1689,7 @@ async fn coverage_reconciles_with_the_published_statuses_and_preserves_the_old_f
             search_returning(&["https://example.com/a"]),
             Arc::new(SystemClock),
         );
-        let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-            .await
-            .unwrap();
+        let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
         // SC-003: the figure equals what the published statuses say.
         #[allow(clippy::cast_precision_loss)]
@@ -1198,9 +1742,7 @@ async fn a_gap_target_arity_mismatch_is_retried_then_demoted_never_accepted() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     // Retried once, then demoted — never silently accepted.
     assert_eq!(client.count_containing("executive synthesis"), 2);
@@ -1236,9 +1778,7 @@ async fn a_demoted_synthesis_reports_every_sub_question_unsettled() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert_eq!(result.stats.stop_reason, Some(StopReason::Grounding));
     assert!((result.coverage - 0.0).abs() < f32::EPSILON);
@@ -1271,13 +1811,9 @@ async fn a_run_stopped_early_still_reports_defined_coverage_and_statuses() {
         |_, _| panic!("deadline tripped before verification"),
         |_| panic!("nothing verified — the deterministic answer path applies"),
     );
-    let deps = deps_with(
-        client,
-        search_returning(&["https://example.com/a"]),
-        Arc::new(clock),
-    );
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().times(0);
+    let mut search = search_hits(&["https://example.com/a"]);
+    search.expect_contents().times(0);
+    let deps = deps_with(client, search, Arc::new(clock));
 
     let p = ResearchParams {
         constraints: Some(Constraints {
@@ -1286,7 +1822,7 @@ async fn a_run_stopped_early_still_reports_defined_coverage_and_statuses() {
         }),
         ..params("q?", Some(Depth::Quick))
     };
-    let (result, _) = run(&deps, &fetcher, &p).await.unwrap();
+    let (result, _) = run(&deps, &p).await.unwrap();
 
     assert!(result.stats.stopped_early);
     assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
@@ -1331,9 +1867,7 @@ async fn nine_gaps_on_one_sub_question_leave_the_other_settled() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     // FR-004: nine gaps on one sub-question leave it unsettled once, so the
     // other sub-question is still settled.
@@ -1383,9 +1917,7 @@ async fn twelve_gaps_publish_ten_and_count_every_target() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert_eq!(
         result.gaps.len(),
@@ -1420,9 +1952,7 @@ async fn an_over_long_gap_is_cut_not_fatal() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert_eq!(
         result.gaps[0].chars().count(),
@@ -1453,9 +1983,7 @@ async fn an_over_long_answer_is_retried_then_demoted() {
         search_returning(&["https://example.com/a"]),
         Arc::new(SystemClock),
     );
-    let (result, _) = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
 
     assert_eq!(client.count_containing("executive synthesis"), 2);
     assert_eq!(client.count_containing("the answer was"), 1);
@@ -1506,7 +2034,7 @@ async fn every_extraction_failing_is_an_error_not_an_empty_answer() {
     );
     deps.extract_client = Arc::new(FailingExtract(Arc::clone(&client)));
 
-    let error = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let error = run(&deps, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap_err();
 
@@ -1538,27 +2066,21 @@ async fn one_surviving_source_still_degrades_rather_than_failing() {
         |_, _| supported(),
         |_| json!({ "answer": "Survives [s1].", "gaps": [], "gap_targets": [] }),
     );
-    let deps = deps_with(
-        client,
-        search_returning(&["https://example.com/a", "https://example.com/b"]),
-        Arc::new(SystemClock),
-    );
-    // Only the first URL fetches; the second fails.
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().returning(|url| {
-        if url.contains("example.com/a") {
-            Ok(crate::traits::fetcher::FetchedPage {
-                url: url.to_string(),
-                html: article_html("Content that extracts."),
-            })
-        } else {
-            Err(AppError::Client("fetch refused".to_string()))
-        }
+    let mut search = search_hits(&["https://example.com/a", "https://example.com/b"]);
+    // Only the first URL comes back; the second is missing.
+    search.expect_contents().returning(|_| {
+        Ok(ContentsResults {
+            pages: vec![page(
+                "https://example.com/a",
+                "Content that extracts.",
+                false,
+            )],
+            cost_usd: None,
+        })
     });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert_eq!(result.stats.sources_fetched, 1);
     assert!(!result.key_findings.is_empty());
 }
@@ -1574,22 +2096,16 @@ async fn unreadable_pages_still_produce_the_honest_empty_answer() {
         |_, _| supported(),
         |_| panic!("synthesis must not be called with nothing to ground"),
     );
-    let deps = deps_with(
-        client,
-        search_returning(&["https://example.com/a"]),
-        Arc::new(SystemClock),
-    );
-    let mut fetcher = MockFetcher::new();
-    fetcher.expect_fetch().returning(|url| {
-        Ok(crate::traits::fetcher::FetchedPage {
-            url: url.to_string(),
-            html: "<html><body></body></html>".to_string(),
+    let mut search = search_hits(&["https://example.com/a"]);
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "", false)],
+            cost_usd: None,
         })
     });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
 
-    let (result, _) = run(&deps, &fetcher, &params("q?", Some(Depth::Quick)))
-        .await
-        .unwrap();
+    let (result, _) = run(&deps, &params("q?", Some(Depth::Quick))).await.unwrap();
     assert_eq!(result.stats.sources_fetched, 0);
     assert!(result.answer.contains("No verifiable findings"));
 }
@@ -1625,7 +2141,7 @@ async fn every_verification_failing_is_an_error_not_a_silent_empty_answer() {
     );
     deps.verify_client = Arc::new(FailingVerify(Arc::clone(&client)));
 
-    let error = run(&deps, &fetcher_ok(), &params("q?", Some(Depth::Quick)))
+    let error = run(&deps, &params("q?", Some(Depth::Quick)))
         .await
         .unwrap_err();
     assert!(matches!(error.root(), AppError::Client(_)), "got: {error}");

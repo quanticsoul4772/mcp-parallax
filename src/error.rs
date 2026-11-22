@@ -309,6 +309,17 @@ pub enum ConfigError {
     #[error("invalid routing configuration: {0}")]
     Routing(String),
 
+    /// A variable Parallax no longer reads is set where it would change
+    /// nothing or hide a lost capability (059 FR-002, FR-003). Names the
+    /// variable and what to do instead.
+    #[error("{var} is no longer used: {remedy}")]
+    Removed {
+        /// The removed variable.
+        var: &'static str,
+        /// What replaced it, or that it can be removed.
+        remedy: &'static str,
+    },
+
     /// `GROUNDED_VERIFY_ROOT` is, or is inside, a folder whose files are all
     /// refused as likely secrets (055 FR-003). Carries the folder (or the
     /// pair of folders) as written and the root as a caller would type it.

@@ -1,13 +1,12 @@
-//! Fetch+extract's second half: readable text (local, rs-trafilatura — D2)
-//! and the per-source claim-extraction model call (flat `{claims: []}`,
-//! spans dropped — D4).
+//! The per-source claim-extraction model call (flat `{claims: []}`, spans
+//! dropped — D4). Source text comes from the search provider (059); Parallax
+//! no longer parses HTML.
 
 use crate::error::AppError;
 use crate::modes::CorrectiveMode;
 use crate::research::MAX_CLAIMS_PER_SOURCE;
 use crate::schema::validate;
 use crate::traits::client::ModelClient;
-use crate::traits::fetcher::FetchedPage;
 use serde::Deserialize;
 
 /// Cap on the readable text handed to the extraction call — bounds the
@@ -24,36 +23,13 @@ claim to stand alone without the page context. Extract only claims the page \
 actually asserts. If the page asserts nothing falsifiable, return an empty \
 list.\n\nPage title: <<title>>\n\nPage text:\n<<text>>";
 
-/// One readable page: title (metadata or URL fallback) + main text.
+/// One source's page: title (provider metadata or URL fallback) + text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadablePage {
     /// Page title.
     pub title: String,
-    /// Boilerplate-stripped main text, capped at [`EXTRACT_TEXT_MAX_CHARS`].
+    /// The provider's page text, capped at [`EXTRACT_TEXT_MAX_CHARS`].
     pub text: String,
-}
-
-/// Reduce raw HTML to readable main text (pure, local). `None` when
-/// extraction fails or yields nothing — the caller drops and counts the
-/// source (FR-013).
-#[must_use]
-pub fn readable_text(page: &FetchedPage) -> Option<ReadablePage> {
-    let extracted = rs_trafilatura::extract(&page.html).ok()?;
-    let text = extracted.content_text;
-    if text.trim().is_empty() {
-        return None;
-    }
-    let title = extracted
-        .metadata
-        .title
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or_else(|| page.url.clone());
-    let text = if text.chars().count() > EXTRACT_TEXT_MAX_CHARS {
-        text.chars().take(EXTRACT_TEXT_MAX_CHARS).collect()
-    } else {
-        text
-    };
-    Some(ReadablePage { title, text })
 }
 
 /// The extraction call's constrained output (flat + closed).
@@ -112,38 +88,6 @@ mod tests {
             .get(crate::research::pipeline::EXTRACT_MODE_ID)
             .unwrap()
             .clone()
-    }
-
-    #[test]
-    fn fixture_article_reduces_to_main_text_with_title() {
-        let page = FetchedPage {
-            url: "https://example.com/post".into(),
-            html: include_str!("../../tests/fixtures/article.html").into(),
-        };
-        let readable = readable_text(&page).unwrap();
-        assert!(readable.text.contains("single-digit milliseconds"));
-        assert!(!readable.text.contains("Subscribe to our newsletter"));
-        assert!(readable.title.contains("Brute-Force"));
-    }
-
-    #[test]
-    fn empty_or_unextractable_html_is_none_not_an_error() {
-        let page = FetchedPage {
-            url: "https://example.com/empty".into(),
-            html: "<html><body></body></html>".into(),
-        };
-        assert!(readable_text(&page).is_none());
-    }
-
-    #[test]
-    fn oversized_text_is_capped() {
-        let body = "word ".repeat(20_000);
-        let page = FetchedPage {
-            url: "https://example.com/long".into(),
-            html: format!("<html><body><article><h1>T</h1><p>{body}</p></article></body></html>"),
-        };
-        let readable = readable_text(&page).unwrap();
-        assert!(readable.text.chars().count() <= EXTRACT_TEXT_MAX_CHARS);
     }
 
     #[tokio::test]

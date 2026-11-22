@@ -78,7 +78,7 @@ Transport is **stdio**. The catalog is gated by configuration: the six always-on
 | `recall` | Retrieve memories relevant to the current work, ranked by semantic relevance and labeled with trust standing. | `VOYAGE_API_KEY` |
 | `forget` | Permanently delete a memory by id. Irreversible. | `VOYAGE_API_KEY` |
 | `surface` | Prompt-time memory push: ranks stored memories against the turn's opening prompt and surfaces the few relevant trusted ones as advisory context — verbatim content, id, and trust standing. Pure ranking, no model pass, hard 500 ms budget, fail-open. Each memory surfaces at most once per session. | `VOYAGE_API_KEY` |
-| `research` | Run a web query and return a short, cited, per-claim-verified answer: scoped parallel searches, hygiene-enforced fetching, refute-biased per-claim verification, and a grounding gate that drops unsupported citations. | `BRAVE_API_KEY` |
+| `research` | Run a web query and return a short, cited, per-claim-verified answer: scoped parallel Exa searches, source text from Exa, refute-biased per-claim verification, and a grounding gate that drops unsupported citations. | `EXA_API_KEY` |
 | `grounded_verify` | Verify a claim against verbatim source the caller names (file paths, line ranges, or glob patterns within a configured root): the server reads the exact text. Files whose names mark them as secrets (`.env`, keys, credential files) are refused: an exact path fails the call, a glob leaves them out and lists them under `refused`. Returns supported/refuted; for a computable property of a single source (a line/byte/match count vs a threshold) the server counts over the read bytes and the deterministic engine settles it, returning the executed form (e.g. `1224 > 1000`); anything broader or compound returns `inconclusive`. Also returns findings, an audit manifest of what was read, and a completeness signal naming omitted evidence. | `GROUNDED_VERIFY_ROOT` |
 | `checkpoint_action` | Pre-action gate: evaluate one risk-matched pending action against verified stored constraints; returns `hold` (quoting the conflicting memory) or silence. Fails open; does not modify the action. | hooks (off by default) |
 | `checkpoint_batch` | Post-batch screen: detect loops and repeated failures in the recent trajectory; flags the repeated action and count, or silence. Local, no model call. | hooks (off by default) |
@@ -105,10 +105,12 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `VOYAGE_API_KEY` | no | unset | Presence enables the memory tools; absent, they are not in the catalog |
 | `VOYAGE_MODEL` | no | `voyage-4` | Embedding model (stay within one family — vectors share a space) |
 | `MEMORY_RECALL_LIMIT` | no | `5` | Default recall top-k (1–20) |
-| `BRAVE_API_KEY` | no | unset | Presence enables `research`; absent, it is not in the catalog |
-| `FETCH_TIMEOUT_MS` | no | `10000` | Per-source fetch timeout for research runs |
-| `RESEARCH_CONCURRENCY` | no | `8` | Concurrent fetch/extract/verify cap (1–32) |
-| `FETCH_ALLOW_PRIVATE` | no | `false` | SSRF guard: when false, research fetches to loopback/private/link-local targets are blocked. Enable only for local testing |
+| `BRAVE_API_KEY` | no | unset | No longer used: research runs on Exa. Set while `EXA_API_KEY` is unset, it stops startup with an error naming both; with `EXA_API_KEY` set it is ignored, so other tools can share it |
+| `EXA_API_KEY` | no | unset | Presence enables `research` (Exa search and page text); absent, it is not in the catalog |
+| `EXA_MAX_AGE_HOURS` | no | `168` | Freshness limit for research page text, in hours: `0` always fetches live, `-1` uses Exa's cache only (-1 to 720) |
+| `FETCH_TIMEOUT_MS` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
+| `RESEARCH_CONCURRENCY` | no | `8` | Concurrent extract/verify cap (1–32) |
+| `FETCH_ALLOW_PRIVATE` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
 | `CHECKPOINT_GATE_PATTERNS` | no | empty | Comma-separated substrings extending the pre-action gate's built-in risk patterns; an empty entry (`a,,b`) is an error |
 | `GROUNDED_VERIFY_ROOT` | no | unset | Presence enables `grounded_verify`; the single root that locators resolve within (canonicalized at startup; reads are confined to it). Absent, the tool is not in the catalog. If the root is inside a folder whose files are refused as secrets (such as `.ssh`), or is a drive root or the home folder, `grounded_verify` is left out of the catalog with the reason logged; every other tool still starts. Set it to `.` to give each session its own folder: each Parallax uses the folder its session was started in. |
 | `GROUNDED_VERIFY_MAX_BYTES` | no | `262144` | Total assembled-evidence byte ceiling per `grounded_verify` call |
@@ -224,7 +226,7 @@ CI runs format, clippy, the test suite, an MSRV (1.94) build, the coverage gate,
 Parallax handles credentials and, when enabled, reaches the network — treat it accordingly:
 
 - **No code execution.** The deterministic layer evaluates formal targets with an exact in-process arithmetic evaluator (parsed by `evalexpr`) and an in-process Z3; sandboxed code execution is deliberately deferred and off.
-- **Network egress is gated and off by default.** Research fetches happen only with `BRAVE_API_KEY` set and are SSRF-guarded (`FETCH_ALLOW_PRIVATE=false` blocks loopback/private/link-local targets). Telemetry egress happens only when an `OTEL_*` endpoint is set.
+- **Network egress is gated and off by default.** Research egress happens only with `EXA_API_KEY` set, and goes only to Exa: Parallax requests no source page itself. Telemetry egress happens only when an `OTEL_*` endpoint is set.
 - **The checkpoint layer reads transcript files** (bounded tail reads) and is off until you install the hooks. It is fail-open and never blocks an action on error or timeout.
 - **Secrets** are supplied via environment only and are never written to records or exported telemetry.
 - Report security issues via a private advisory on the [repository](https://github.com/quanticsoul4772/mcp-parallax).

@@ -52,8 +52,8 @@ convention.
 | Memory — vector store | **brute-force f32 BLOBs** (v1); sqlite-vec at scale | — | spike S1: 3 ms at 5k×1024; see §memory amendment |
 | Deterministic — logic | **Z3** | `z3` 0.20 | pure binding, MSRV 1.85; SMT/SAT for the logic/constraint row |
 | Deterministic — code exec | **wasmtime** in-proc; microsandbox/E2B for Python | `wasmtime`; E2B/microsandbox (opt-in) | sandbox is non-negotiable; §deterministic |
-| Research — search | **Brave** (default) or **Tavily** (answers+cites) | Brave Search API / Tavily | Brave: lowest latency (~669ms); you already have the Brave MCP |
-| Research — fetch/extract | **rs-trafilatura** (local) or Firecrawl (managed) | `rs-trafilatura` / `article_scraper` | local extraction avoids a second API |
+| Research — search + page text | **Exa** (amended 2026-11-22, 059) | Exa API (`/search`, `/contents`) | one search per angle returns URLs; one contents request returns the kept sources' text, so no local fetch or extraction |
+| Research — fetch/extract | *(removed 2026-11-22, 059)* — Exa supplies cleaned page text | — | `rs-trafilatura` and `robotstxt` were dropped with the local fetcher |
 | Observability | **OpenTelemetry + OTLP** (0.32 train, shipped in 007) | `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` (http-proto; no bridge crates — telemetry derives from the records) | GenAI semantic conventions on spans/metrics; export story only (the watchdog feeds on hooks per the 2026-06-12 amendment) |
 
 ---
@@ -206,6 +206,9 @@ pipeline.
   - **Pick:** **Brave** as the default (latency + you have it), behind the spec's
     provider trait so Tavily/Exa drop in. The benchmarked 2026 default is "Brave +
     an extractor."
+  - **Amended 2026-11-22 (059):** Exa replaced Brave as the provider, behind the same
+    trait, and supplies page text too; the local fetcher and extractor below were
+    removed. See `specs/059-exa-research-provider/research.md`.
 - **Fetch / extract:**
   - **rs-trafilatura** — Rust port of Trafilatura; classifies page type (article /
     forum / product / docs / …) and applies type-specific extraction. Local, no API.
@@ -305,7 +308,8 @@ traits are already the seams these slot behind):
    loading caveat) before building recall.
 3. **Research primitive:** Brave provider behind the trait + rs-trafilatura extract.
    **Done (004)** — plus `robotstxt`; named narrowings recorded in the feature's
-   research.md and RESEARCH_PRIMITIVE.md's status note.
+   research.md and RESEARCH_PRIMITIVE.md's status note. **Superseded 2026-11-22
+   (059):** Exa provider; the local fetch, robots handling and extraction were removed.
 4. **Deterministic:** `z3` + validator + arithmetic first (no sandbox); the optional
    sandboxed code-exec integration later, off by default.
 5. **Observability/watchdog:** OTLP from the first server commit (cheap, and the
@@ -329,6 +333,8 @@ traits are already the seams these slot behind):
   first.
 - **Search/extract API cost:** Brave/Tavily/Firecrawl are paid; gate egress off by
   default (the Research spec already does), prefer local extraction (rs-trafilatura).
+  (Amended 2026-11-22: research runs on Exa; its per-request cost is recorded as
+  `search_cost_usd`, 059.)
 
 ## Sources
 

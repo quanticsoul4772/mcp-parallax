@@ -10,7 +10,7 @@ use crate::checkpoint::contract::{
 use crate::checkpoint::review as checkpoint_review;
 use crate::checkpoint::run::{self as checkpoint_run, CheckpointDeps};
 use crate::client::pool::ClientPool;
-use crate::client::{BraveClient, VoyageClient};
+use crate::client::{ExaClient, VoyageClient};
 use crate::config::Config;
 use crate::deterministic::check::{self as check_tool, CheckDeps};
 use crate::deterministic::contract::{CheckParams, CheckResult};
@@ -33,7 +33,6 @@ use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
 use crate::observability::CallerTrace;
 use crate::research::contract::{ResearchParams, ResearchResult};
-use crate::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use crate::research::pipeline::{self, ResearchDeps};
 use crate::research::Depth;
 use crate::routing::{CallSite, RoutingTable};
@@ -61,7 +60,7 @@ use record::{to_error_data, RecordGuard};
 /// Bundled rather than passed as three more parameters — each feature that
 /// records something new was extending the same argument list, and it had
 /// grown past the point where a reader could tell which `None` meant what.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct RecordDims {
     /// Research rigor tier (019); `None` for every other tool.
     depth: Option<Depth>,
@@ -70,6 +69,8 @@ pub(super) struct RecordDims {
     /// The caller's pass-count override (028); `None` when the configured
     /// count ran.
     passes: Option<u32>,
+    /// The research run's Exa cost accumulator (059); `None` for other tools.
+    search_cost: Option<Arc<crate::telemetry::SearchCost>>,
 }
 
 impl RecordDims {
@@ -79,6 +80,7 @@ impl RecordDims {
             depth: None,
             effort,
             passes: None,
+            search_cost: None,
         }
     }
 
@@ -88,6 +90,7 @@ impl RecordDims {
             depth: None,
             effort,
             passes,
+            search_cost: None,
         }
     }
 }
@@ -120,10 +123,6 @@ pub struct Parallax {
     /// default because nothing invokes the tools until the sensor plane
     /// (hooks) is installed (006 FR-007).
     checkpoint: Arc<CheckpointDeps>,
-    /// Per-source fetch timeout for research runs (`FETCH_TIMEOUT_MS`).
-    fetch_timeout_ms: u64,
-    /// SSRF guard override for research fetches (`FETCH_ALLOW_PRIVATE`).
-    fetch_allow_private: bool,
     /// Per-process session UUID (one stdio connection per process).
     session_id: String,
     /// The resolved routing table. Record attribution reads from here: a call
@@ -153,8 +152,8 @@ impl Parallax {
             Some(_) => Some(Arc::new(VoyageClient::new(config)?)),
             None => None,
         };
-        let search: Option<Arc<dyn SearchProvider>> = match config.brave_api_key {
-            Some(_) => Some(Arc::new(BraveClient::new(config)?)),
+        let search: Option<Arc<dyn SearchProvider>> = match config.exa_api_key {
+            Some(_) => Some(Arc::new(ExaClient::new(config)?)),
             None => None,
         };
         Self::with_capabilities(client, storage, clock, config, embedder, search)
@@ -371,6 +370,7 @@ impl Parallax {
                 verify_mode: pipeline::research_verify_mode(&verify_mode),
                 input_max_chars: config.input_max_chars,
                 concurrency: usize::from(config.research_concurrency),
+                max_age_hours: config.exa_max_age_hours,
             })),
             None => None,
         };
@@ -441,8 +441,6 @@ impl Parallax {
             grounded,
             deterministic,
             checkpoint,
-            fetch_timeout_ms: config.fetch_timeout_ms,
-            fetch_allow_private: config.fetch_allow_private,
             session_id: uuid::Uuid::new_v4().to_string(),
             routing: config.routing.clone(),
             max_claim_chars: config.input_max_chars,
@@ -652,13 +650,14 @@ impl Parallax {
         name = "research",
         description = "Offload a research question; get back a short, cited, \
         adversarially-verified answer - not a pile of links. Runs scoped parallel searches, \
-        fetches and extracts sources, verifies every claim with independent refute-biased \
+        reads each kept source's text, extracts claims, verifies every claim with independent \
+        refute-biased \
         passes, leaving out claims every verifier found the sources did not establish (which \
         is not a finding that they are false), and surfacing split verdicts as contested, and \
         synthesizes a compact answer with inline citations, surfaced \
-        disagreements, and honest gaps. Depth scales rigor; budget and deadline ceilings \
-        synthesize early and say so. Every citation resolves to a source fetched during the \
-        run."
+        disagreements, and stated gaps. Depth scales rigor; budget and deadline ceilings \
+        synthesize early and say so. Every citation resolves to a source read during the run; \
+        a source whose text was cut at the length cap is marked truncated."
     )]
     pub async fn research(
         &self,
@@ -901,28 +900,22 @@ impl Parallax {
     ) -> Result<Json<ResearchResult>, ErrorData> {
         let deps = Arc::clone(self.research.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
-                "research capability is disabled (BRAVE_API_KEY is not configured)".to_string(),
+                "research capability is disabled (EXA_API_KEY is not configured)".to_string(),
                 None,
             )
         })?);
-        // The fetcher is per-run: the robots cache is run-scoped and the
-        // allow/deny lists come from the call's constraints (research.md D5).
         let constraints = params.constraints.clone().unwrap_or_default();
-        let policy = FetchPolicy {
-            timeout_ms: self.fetch_timeout_ms,
-            domains_allow: constraints.domains_allow.unwrap_or_default(),
-            domains_deny: constraints.domains_deny.unwrap_or_default(),
-            domain_spacing_ms: DOMAIN_SPACING_MS,
-            allow_private: self.fetch_allow_private,
-        };
-        // LLM calls dominate research cost; Brave bills per-request, not
-        // per-token — attribute the record to the anthropic model (plan.md).
+        // LLM calls dominate research cost; Exa bills per request, not per
+        // token — attribute the record to the anthropic model (plan.md).
         // Research is the one tool whose call sites can differ, so it records
         // per-model usage rather than a single token pair (018 FR-007).
         // 019: stamp the rigor tier so the run's budget ceiling is recoverable
         // from the record. The default must match `settings`' — a request that
         // omits `depth` still ran under a tier.
         let depth = params.depth.unwrap_or(Depth::Standard);
+        // 059 FR-010: one accumulator per run, read by the record guard on
+        // every exit and added to by the pipeline on every Exa call.
+        let search_cost = Arc::new(crate::telemetry::SearchCost::default());
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a
@@ -956,14 +949,12 @@ impl Parallax {
             // is per claim, not a caller-set ensemble.
             RecordDims {
                 depth: Some(depth),
+                search_cost: Some(Arc::clone(&search_cost)),
                 ..RecordDims::default()
             },
             ct,
             caller,
-            async {
-                let fetcher = HygieneFetcher::new(policy)?;
-                pipeline::run_at(&deps, &fetcher, &params, concurrency).await
-            },
+            async { pipeline::run_at(&deps, &params, concurrency, &search_cost).await },
         )
         .await
     }

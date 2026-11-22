@@ -6,18 +6,17 @@
 //! well-formed with `stopped_early`. SC-007: a false-premise question is not
 //! confirmed. Results recorded in `specs/004-research-layer/quickstart.md`.
 //!
-//! Run: `ANTHROPIC_API_KEY=... BRAVE_API_KEY=... cargo run --release --example acceptance_research`
+//! Run: `ANTHROPIC_API_KEY=... EXA_API_KEY=... cargo run --release --example acceptance_research`
 
 // Acceptance tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use mcp_parallax::client::{AnthropicClient, BraveClient};
+use mcp_parallax::client::{AnthropicClient, ExaClient};
 use mcp_parallax::config::Config;
 use mcp_parallax::modes::verify::VERIFY_ID;
 use mcp_parallax::modes::{verify, ModeRegistry};
 use mcp_parallax::research::contract::{Constraints, ResearchParams, ResearchResult};
-use mcp_parallax::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use mcp_parallax::research::pipeline::{self, ResearchDeps};
 use mcp_parallax::research::Depth;
 use mcp_parallax::traits::clock::SystemClock;
@@ -48,6 +47,10 @@ const QUESTIONS: &[(&str, Depth)] = &[
         Depth::Standard,
     ),
     (
+        "How do the Tokio and async-std runtimes differ in task scheduling and ecosystem support?",
+        Depth::Deep,
+    ),
+    (
         "Why did Rust 1.0, released in 2018, remove the garbage collector it shipped with?",
         Depth::Quick,
     ),
@@ -65,7 +68,7 @@ fn deps(config: &Config) -> ResearchDeps {
         extract_client: Arc::new(AnthropicClient::new(config)),
         verify_client: Arc::new(AnthropicClient::new(config)),
         synth_client: Arc::new(AnthropicClient::new(config)),
-        search: Arc::new(BraveClient::new(config).expect("brave key present")),
+        search: Arc::new(ExaClient::new(config).expect("exa key present")),
         clock: Arc::new(SystemClock),
         scope_mode: registry.get(pipeline::SCOPE_MODE_ID).unwrap().clone(),
         extract_mode: registry.get(pipeline::EXTRACT_MODE_ID).unwrap().clone(),
@@ -73,19 +76,9 @@ fn deps(config: &Config) -> ResearchDeps {
         verify_mode: pipeline::research_verify_mode(&verify_mode),
         input_max_chars: config.input_max_chars,
         concurrency: usize::from(config.research_concurrency),
+        max_age_hours: config.exa_max_age_hours,
         routing: config.routing.clone(),
     }
-}
-
-fn fetcher(config: &Config) -> HygieneFetcher {
-    HygieneFetcher::new(FetchPolicy {
-        timeout_ms: config.fetch_timeout_ms,
-        domains_allow: vec![],
-        domains_deny: vec![],
-        domain_spacing_ms: DOMAIN_SPACING_MS,
-        allow_private: false,
-    })
-    .expect("fetcher")
 }
 
 /// SC-001: every finding source id and every `[sN]` in the answer resolves.
@@ -106,33 +99,44 @@ fn citations_resolve(result: &ResearchResult) -> bool {
 async fn main() {
     let config = Config::from_env().expect("config (both keys required)");
     assert!(
-        config.brave_api_key.is_some(),
-        "BRAVE_API_KEY required for the acceptance run"
+        config.exa_api_key.is_some(),
+        "EXA_API_KEY required for the acceptance run"
     );
     let deps = deps(&config);
 
     let (mut grounded, mut total) = (0_u32, 0_u32);
     let mut max_quick_ms = 0_u128;
     let mut max_standard_ms = 0_u128;
+    // 059: deep runs are timed to measure deep-lite, not judged — no deep
+    // target exists yet, and counting them as standard would judge standard
+    // runs by a deep one.
+    let mut max_deep_ms = 0_u128;
     let mut false_premise_confirmed = false;
 
     for (i, (question, depth)) in QUESTIONS.iter().enumerate() {
         let start = Instant::now();
-        let outcome = pipeline::run(
+        // 059 review finding 6: track the run's Exa cost to report it.
+        let cost = mcp_parallax::telemetry::SearchCost::default();
+        let outcome = pipeline::run_at(
             &deps,
-            &fetcher(&config),
             &ResearchParams {
                 question: (*question).to_string(),
                 depth: Some(*depth),
                 focus: None,
                 constraints: None,
             },
+            deps.concurrency,
+            &cost,
         )
         .await;
+        let exa_cost = cost
+            .total()
+            .map_or_else(|| "unknown".to_string(), |usd| format!("${usd:.4}"));
         let elapsed = start.elapsed().as_millis();
         match *depth {
             Depth::Quick => max_quick_ms = max_quick_ms.max(elapsed),
-            _ => max_standard_ms = max_standard_ms.max(elapsed),
+            Depth::Standard => max_standard_ms = max_standard_ms.max(elapsed),
+            Depth::Deep => max_deep_ms = max_deep_ms.max(elapsed),
         }
 
         match outcome {
@@ -152,7 +156,7 @@ async fn main() {
                 }
                 println!(
                     "[{elapsed}ms]{} {question}\n   confidence {:.2}; {} findings, {} sources, \
-                     {} gaps; stopped_early={} ({:?})\n   -> {}\n",
+                     {} gaps; stopped_early={} ({:?}); Exa cost {exa_cost}\n   -> {}\n",
                     if ok { "" } else { " ** UNGROUNDED **" },
                     result.confidence,
                     result.key_findings.len(),
@@ -170,7 +174,6 @@ async fn main() {
     // SC-004: a deliberately tiny budget returns well-formed, stopped early.
     let (tiny, _usage) = pipeline::run(
         &deps,
-        &fetcher(&config),
         &ResearchParams {
             question: "What is the capital of France?".to_string(),
             depth: Some(Depth::Quick),
@@ -193,7 +196,7 @@ async fn main() {
     println!(
         "SC-001/002 grounded responses: {grounded}/{total} (target: all; typed structs end to end)"
     );
-    println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < 240000)");
+    println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < 240000)   max deep: {max_deep_ms} ms (measured, no target)");
     println!("SC-004 tiny-budget honesty: {tiny_ok}");
     println!("SC-007 false premise confirmed: {false_premise_confirmed} (target: false)");
 

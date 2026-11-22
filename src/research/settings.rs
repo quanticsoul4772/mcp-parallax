@@ -6,7 +6,7 @@ use crate::research::contract::ResearchParams;
 use crate::research::pipeline::ResearchDeps;
 use crate::research::Depth;
 
-/// Brave caps `count` at 20 per request.
+/// Capped at 20 per request to bound per-request cost.
 pub const SEARCH_COUNT_MAX: u8 = 20;
 
 /// Effective per-run settings: tier defaults with caller overrides (FR-006).

@@ -5,7 +5,7 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
-use mcp_parallax::client::{AnthropicClient, BraveClient, VoyageClient};
+use mcp_parallax::client::{AnthropicClient, ExaClient, VoyageClient};
 use mcp_parallax::config::Config;
 use mcp_parallax::server::Parallax;
 use mcp_parallax::storage::SqliteStorage;
@@ -35,10 +35,9 @@ pub fn test_config(timeout_ms: u64) -> Config {
         voyage_api_key: None,
         voyage_model: "voyage-4".into(),
         memory_recall_limit: 5,
-        brave_api_key: None,
-        fetch_timeout_ms: 10_000,
+        exa_api_key: None,
+        exa_max_age_hours: mcp_parallax::config::EXA_MAX_AGE_HOURS_DEFAULT,
         research_concurrency: 8,
-        fetch_allow_private: false,
         checkpoint_gate_patterns: vec![],
         grounded_verify_root: None,
         grounded_verify_max_bytes: 262_144,
@@ -155,7 +154,7 @@ pub fn mount_embeddings(mock: &MockServer) -> impl std::future::Future<Output = 
         .mount(mock)
 }
 
-/// Build the full server with research ON: a real `BraveClient` pointed at
+/// Build the full server with research ON: a real `ExaClient` pointed at
 /// wiremock (`/res/v1/web/search`), pages and `/v1/messages` served by the
 /// same mock server. The fetcher is the real `HygieneFetcher` hitting
 /// wiremock over localhost.
@@ -167,25 +166,22 @@ pub async fn serve_with_research(
     rmcp::service::RunningService<rmcp::service::RoleServer, Parallax>,
 ) {
     let mut config = test_config(5_000);
-    config.brave_api_key = Some("brave-test-key".into());
-    config.fetch_timeout_ms = 3_000;
-    // Integration pages are served by wiremock on localhost.
-    config.fetch_allow_private = true;
+    config.exa_api_key = Some("exa-test-key".into());
     let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
     let anthropic =
         Arc::new(AnthropicClient::with_base_url(&config, &mock.uri()).with_backoff_base_ms(1));
-    let brave = Arc::new(
-        BraveClient::with_base_url(&config, &mock.uri())
-            .unwrap()
-            .with_backoff_base_ms(1),
-    );
+    let exa = Arc::new(ExaClient::with_base_url(
+        &config,
+        "exa-test-key",
+        &mock.uri(),
+    ));
     let server = Parallax::with_capabilities(
         anthropic,
         storage.clone(),
         Arc::new(SystemClock),
         &config,
         None,
-        Some(brave),
+        Some(exa),
     )
     .unwrap();
 
@@ -234,29 +230,27 @@ pub async fn mount_research_llm(mock: &MockServer, answer: &str) {
         .await;
 }
 
+/// An Exa double: one search hit, and its page text from the contents call.
 pub async fn mount_search_and_page(mock: &MockServer) {
-    let page_url = format!("{}/page1", mock.uri());
-    Mock::given(method("GET"))
-        .and(path("/res/v1/web/search"))
+    let page_url = "https://docs.example/page1";
+    Mock::given(method("POST"))
+        .and(path("/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "web": { "results": [
-                { "url": page_url, "title": "The Documented Page", "description": "doc" }
-            ]}
+            "results": [ { "id": page_url, "url": page_url, "title": "The Documented Page" } ]
         })))
         .mount(mock)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/page1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_raw(
-                "<html><head><title>The Documented Page</title></head><body><article>\
-             <h1>Heading</h1><p>The documented claim holds, as this page explains at \
-             length with enough running text for extraction to keep it as main \
-             content.</p></article></body></html>"
-                    .to_string(),
-                "text/html; charset=utf-8",
-            ),
-        )
+    Mock::given(method("POST"))
+        .and(path("/contents"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [ {
+                "id": page_url,
+                "url": page_url,
+                "title": "The Documented Page",
+                "text": "The documented claim holds, as this page explains at length."
+            } ],
+            "statuses": [ { "id": page_url, "status": "success" } ]
+        })))
         .mount(mock)
         .await;
 }

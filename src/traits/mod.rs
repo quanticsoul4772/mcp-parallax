@@ -8,7 +8,6 @@
 pub mod client;
 pub mod clock;
 pub mod embedder;
-pub mod fetcher;
 pub mod search;
 pub mod source;
 pub mod storage;
@@ -17,7 +16,6 @@ pub mod trajectory;
 pub use client::{Completion, ModelClient};
 pub use clock::{SystemClock, TimeProvider};
 pub use embedder::{Embedder, Embedding};
-pub use fetcher::{FetchedPage, Fetcher};
 pub use search::{SearchHit, SearchProvider};
 pub use source::{SourceContent, SourceReader};
 pub use storage::Storage;

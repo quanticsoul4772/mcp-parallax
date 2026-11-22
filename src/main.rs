@@ -214,18 +214,21 @@ CAPABILITY GATES (absent = the tools are not in the catalog at all):
                                   family — changing it makes stored vectors incomparable
     MEMORY_RECALL_LIMIT           Default recall top-k, 1..=20 (default: 5).
                                   `recall` takes a per-call `limit`
-    BRAVE_API_KEY                 Enables `research`
+    BRAVE_API_KEY                 No longer used; a startup error only when
+                                  EXA_API_KEY is unset
+    EXA_API_KEY                   Enables `research` (Exa search and page text)
     GROUNDED_VERIFY_ROOT          Enables `grounded_verify`; the single root that
                                   locators resolve within, canonicalized at startup;
                                   files named as secrets (.env, keys) are refused;
                                   `.` gives each session its own folder
 
 RESEARCH:
-    FETCH_TIMEOUT_MS              Per-source fetch timeout in ms (default: 10000)
-    RESEARCH_CONCURRENCY          Concurrent fetch/extract/verify cap, 1..=32
+    FETCH_TIMEOUT_MS              No longer used; set, it is a startup error
+    EXA_MAX_AGE_HOURS             Page-text freshness in hours, -1..=720; 0 always
+                                  live, -1 cache only (default: 168)
+    RESEARCH_CONCURRENCY          Concurrent extract/verify cap, 1..=32
                                   (default: 8). A call may lower it, never raise it
-    FETCH_ALLOW_PRIVATE           SSRF guard (default: false). When false, fetches to
-                                  loopback/private/link-local targets are blocked
+    FETCH_ALLOW_PRIVATE           No longer used; set, it is a startup error
 
 GROUNDED VERIFY:
     GROUNDED_VERIFY_MAX_BYTES     Assembled-evidence byte ceiling (default: 262144)

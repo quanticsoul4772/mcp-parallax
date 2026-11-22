@@ -24,14 +24,13 @@ use crate::research::settings::{per_angle_count, validate_params, RunSettings};
 use crate::research::synthesis::{assemble, synthesize_grounded, Synthesized};
 use crate::research::verdict::{self, source_credibility};
 use crate::research::{
-    claim_key, domain_matches, url_key, Claim, RunMeter, ScopePlan, SourceRecord, Support,
+    claim_key, domain_matches, url_key, Claim, Depth, RunMeter, ScopePlan, SourceRecord, Support,
     VerifiedClaim, MAX_SUB_QUESTIONS,
 };
 use crate::schema::validate;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
-use crate::traits::fetcher::Fetcher;
-use crate::traits::search::SearchProvider;
+use crate::traits::search::{ContentsRequest, Page, SearchProvider, SearchRequest};
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -69,8 +68,10 @@ pub struct ResearchDeps {
     pub verify_mode: CorrectiveMode,
     /// Generic input bound (`INPUT_MAX_CHARS`).
     pub input_max_chars: usize,
-    /// Concurrent fetch/extract/verify cap (`RESEARCH_CONCURRENCY`).
+    /// Concurrent extract/verify cap (`RESEARCH_CONCURRENCY`).
     pub concurrency: usize,
+    /// Freshness limit for source text in hours (`EXA_MAX_AGE_HOURS`, 059).
+    pub max_age_hours: i32,
     /// 018: which model each research call site resolved to, so per-model
     /// token usage can be attributed without asking a client what it is
     /// (the `ModelClient` trait deliberately does not say — research D2).
@@ -117,6 +118,12 @@ impl Ceiling<'_> {
         hit
     }
 
+    /// Time left before the deadline (059 review finding 1): bounds every
+    /// Exa call, so a call in progress cannot carry the run past it.
+    fn time_left(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.deadline_ms.saturating_sub(self.elapsed_ms()))
+    }
+
     fn current(&self) -> Option<StopReason> {
         self.tripped.get().copied()
     }
@@ -161,10 +168,15 @@ enum ClaimOutcome {
 /// source/claim failures degrade the run instead (FR-013).
 pub async fn run(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     params: &ResearchParams,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
-    run_at(deps, fetcher, params, deps.concurrency).await
+    run_at(
+        deps,
+        params,
+        deps.concurrency,
+        &crate::telemetry::SearchCost::default(),
+    )
+    .await
 }
 
 /// Run at a caller-reduced concurrency (028 FR-015).
@@ -179,12 +191,12 @@ pub async fn run(
 /// whatever the run had already spent.
 pub async fn run_at(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     params: &ResearchParams,
     concurrency: usize,
+    search_cost: &crate::telemetry::SearchCost,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered_at(deps, fetcher, params, &meter, concurrency).await;
+    let outcome = run_metered_at(deps, params, &meter, concurrency, search_cost).await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -201,10 +213,10 @@ pub async fn run_at(
 #[allow(clippy::too_many_lines)] // the five-phase spine reads best unbroken; helpers carry the logic
 async fn run_metered_at(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     params: &ResearchParams,
     meter: &RunMeter,
     concurrency: usize,
+    search_cost: &crate::telemetry::SearchCost,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
@@ -227,29 +239,50 @@ async fn run_metered_at(
     let mut candidates: Vec<(String, String)> = Vec::new(); // (url, title)
     if ceiling.probe().is_none() {
         let per_angle = per_angle_count(&settings, plan.angles.len());
-        let searches = futures::future::join_all(
-            plan.angles
-                .iter()
-                .map(|angle| deps.search.search(angle, per_angle)),
-        )
-        .await;
+        let requests: Vec<SearchRequest> = plan
+            .angles
+            .iter()
+            .map(|angle| SearchRequest {
+                query: angle.clone(),
+                count: per_angle,
+                search_type: params.depth.unwrap_or(Depth::Standard).search_type(),
+                include_domains: settings.domains_allow.clone(),
+                exclude_domains: settings.domains_deny.clone(),
+                time_left: Some(ceiling.time_left()),
+            })
+            .collect();
+        for _ in &requests {
+            search_cost.begin();
+        }
+        let searches =
+            futures::future::join_all(requests.iter().map(|r| deps.search.search(r))).await;
 
         let mut seen_urls = std::collections::BTreeSet::new();
         let mut search_errors: Vec<AppError> = Vec::new();
         for outcome in searches {
             match outcome {
-                Ok(hits) => {
+                Ok(results) => {
                     stats.searches += 1;
-                    for hit in hits {
+                    search_cost.end(results.cost_usd);
+                    for hit in results.hits {
                         if seen_urls.insert(url_key(&hit.url)) {
                             candidates.push((hit.url, hit.title));
                         }
                     }
                 }
-                Err(e) => search_errors.push(e),
+                Err(e) => {
+                    // A failed call may still have been billed (finding 4),
+                    // unless it sent nothing (second review L3).
+                    search_cost.end(unbilled(&e));
+                    search_errors.push(e);
+                }
             }
         }
-        if stats.searches == 0 {
+        // Searches cut off because the deadline arrived stop the run early,
+        // as the deadline always does (finding 1) — but only a timeout does:
+        // a rejection or provider failure still fails the run (L1).
+        let deadline_cut = search_errors.iter().all(is_timeout) && ceiling.probe().is_some();
+        if stats.searches == 0 && !deadline_cut {
             if let Some(first) = search_errors.into_iter().next() {
                 // The whole search phase failed — the invocation fails with
                 // the provider's class (edge case: provider down).
@@ -262,43 +295,69 @@ async fn run_metered_at(
     // policy-excluded candidates don't silently vanish from the accounting).
     stats.sources_found = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
 
-    // Domain pre-filter (pure) — denied domains never reach the fetcher.
-    candidates.retain(|(url, _)| {
-        reqwest::Url::parse(url)
-            .ok()
-            .and_then(|u| u.host_str().map(String::from))
-            .is_some_and(|host| {
-                !settings
-                    .domains_deny
-                    .iter()
-                    .any(|d| domain_matches(&host, d))
-                    && (settings.domains_allow.is_empty()
-                        || settings
-                            .domains_allow
-                            .iter()
-                            .any(|d| domain_matches(&host, d)))
-            })
-    });
+    // Domain pre-filter (pure) — denied domains never reach the contents call.
+    candidates.retain(|(url, _)| domain_allowed(url, &settings));
     candidates.truncate(settings.max_sources);
 
-    // ---- (3) FETCH + EXTRACT — per-source pipeline, no cross-source barrier
+    // ---- (3) CONTENTS + EXTRACT — one contents call for the kept sources
+    // (059 D1: text is billed only for sources used), then per-source
+    // extraction with no cross-source barrier.
+    let mut pages: Vec<Option<Page>> = vec![None; candidates.len()];
+    if !candidates.is_empty() && ceiling.probe().is_none() {
+        let request = ContentsRequest {
+            urls: candidates.iter().map(|(url, _)| url.clone()).collect(),
+            max_age_hours: deps.max_age_hours,
+            max_characters: extract::EXTRACT_TEXT_MAX_CHARS,
+            time_left: Some(ceiling.time_left()),
+        };
+        search_cost.begin();
+        match deps.search.contents(&request).await {
+            Ok(contents) => {
+                search_cost.end(contents.cost_usd);
+                pages = pair_pages(&request.urls, contents.pages);
+            }
+            Err(error) => {
+                search_cost.end(unbilled(&error));
+                // 059 B1: this one request carries every source's text, so
+                // its failure is the phase's failure (023); `run_at` meters
+                // the spend so far onto the error (020). Cut off by the
+                // deadline instead — a timeout once the deadline has passed —
+                // the run stops early (finding 1, second review L1).
+                if !(is_timeout(&error) && ceiling.probe().is_some()) {
+                    return Err(error);
+                }
+            }
+        }
+    }
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
         let mut tasks = Vec::new();
-        for (index, (url, _title)) in candidates.iter().enumerate() {
+        for (index, ((url, _title), page)) in candidates.iter().zip(pages).enumerate() {
             if ceiling.probe().is_some() {
                 break;
             }
+            // Finding 2: the page may come back under another address (a
+            // redirect); the caller's domain lists apply to that one too, as
+            // they did to every redirect hop of the old fetcher. A denied
+            // page is dropped as filtered, never extracted or cited.
+            if let Some(denied) = page.as_ref().filter(|p| !domain_allowed(&p.url, &settings)) {
+                tracing::debug!(
+                    source = url.as_str(),
+                    returned = denied.url.as_str(),
+                    "source dropped: its page came back under a denied domain"
+                );
+                continue;
+            }
             let id = format!("s{}", index + 1);
-            tasks.push(fetch_and_extract(
+            tasks.push(extract_source(
                 deps,
-                fetcher,
                 Arc::clone(&semaphore),
                 meter,
                 &ceiling,
                 id,
                 url.clone(),
+                page,
             ));
         }
         let mut failures: Vec<AppError> = Vec::new();
@@ -535,18 +594,90 @@ async fn scope(
     })
 }
 
-/// One source's fetch → readable-text → claim-extraction pipeline. `None`
-/// drops the source (counted by the caller's arithmetic; FR-013). The
-/// ceiling is re-probed after the permit — a budget blown mid-phase stops
-/// queued sources, not just the next phase.
-async fn fetch_and_extract(
+/// The caller's domain lists applied to one address: not denied, and allowed
+/// when an allow list is given.
+fn domain_allowed(url: &str, settings: &RunSettings) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .is_some_and(|host| {
+            !settings
+                .domains_deny
+                .iter()
+                .any(|d| domain_matches(&host, d))
+                && (settings.domains_allow.is_empty()
+                    || settings
+                        .domains_allow
+                        .iter()
+                        .any(|d| domain_matches(&host, d)))
+        })
+}
+
+/// Pair the contents call's pages with the requested URLs, in request order
+/// (059 review finding 3, second review M2). Three passes over all pages, so
+/// the result does not depend on the order Exa returns them: every echoed
+/// `id` match first; then the page's own address, for pages still unpaired;
+/// then, when exactly one URL and one page are left, those two — but only if
+/// that page's `id` and address match no requested URL at all, so a duplicate
+/// or a page whose slot is taken is never placed under an unrelated source.
+/// Anything still unpaired stays `None`.
+pub(crate) fn pair_pages(requested: &[String], pages: Vec<Page>) -> Vec<Option<Page>> {
+    let keys: Vec<String> = requested.iter().map(|url| url_key(url)).collect();
+    let mut paired: Vec<Option<Page>> = vec![None; requested.len()];
+    let mut unpaired: Vec<Page> = Vec::new();
+    for page in pages {
+        let key = url_key(&page.requested_url);
+        match (0..keys.len()).find(|&i| paired[i].is_none() && keys[i] == key) {
+            Some(i) => paired[i] = Some(page),
+            None => unpaired.push(page),
+        }
+    }
+    let mut leftovers: Vec<Page> = Vec::new();
+    for page in unpaired {
+        let key = url_key(&page.url);
+        match (0..keys.len()).find(|&i| paired[i].is_none() && keys[i] == key) {
+            Some(i) => paired[i] = Some(page),
+            None => leftovers.push(page),
+        }
+    }
+    let matches_none = |page: &Page| {
+        let (id, own) = (url_key(&page.requested_url), url_key(&page.url));
+        !keys.iter().any(|k| *k == id || *k == own)
+    };
+    let open: Vec<usize> = (0..keys.len()).filter(|&i| paired[i].is_none()).collect();
+    if let ([i], [page]) = (open.as_slice(), leftovers.as_slice()) {
+        if matches_none(page) {
+            paired[*i] = leftovers.pop();
+        }
+    }
+    paired
+}
+
+/// The run's deadline or a request timeout cut the call off.
+fn is_timeout(error: &AppError) -> bool {
+    matches!(error.root(), AppError::Timeout { .. })
+}
+
+/// The cost a failed Exa call is credited with: nothing when it sent
+/// nothing (second review L3), otherwise unknown — it may have been billed.
+fn unbilled(error: &AppError) -> Option<f64> {
+    matches!(error.root(), AppError::Timeout { what, .. } if *what == crate::traits::search::NOT_SENT)
+        .then_some(0.0)
+}
+
+/// One source's text → claim-extraction pipeline. The text came from the
+/// run's contents call (059); a URL it returned no page for is a failed
+/// source, and a page with no text is an empty one (FR-013). The ceiling is
+/// re-probed after the permit — a budget blown mid-phase stops queued
+/// sources, not just the next phase.
+async fn extract_source(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     semaphore: Arc<Semaphore>,
     meter: &RunMeter,
     ceiling: &Ceiling<'_>,
     id: String,
     url: String,
+    page: Option<Page>,
 ) -> SourceOutcome {
     let Ok(_permit) = semaphore.acquire().await else {
         return SourceOutcome::Empty;
@@ -554,22 +685,31 @@ async fn fetch_and_extract(
     if ceiling.probe().is_some() {
         return SourceOutcome::Empty;
     }
-    let page = match fetcher.fetch(&url).await {
-        Ok(page) => page,
-        Err(e) => {
-            tracing::debug!(url, error = %e, "source dropped at fetch");
-            return SourceOutcome::Failed(Box::new(e));
-        }
-    };
-    // Not a failure: the page loaded and held no main text. A run where every
-    // candidate is unreadable genuinely has no findings, and saying so is the
-    // truthful answer.
-    let Some(readable) = extract::readable_text(&page) else {
+    let Some(page) = page else {
         tracing::debug!(
             url,
-            "source dropped at readability (no extractable main text)"
+            "source dropped: the contents call returned no page for it"
         );
+        return SourceOutcome::Failed(Box::new(AppError::SearchProvider(format!(
+            "no text returned for {url}"
+        ))));
+    };
+    // Not a failure: the page was read and held no text. A run where every
+    // candidate is like that genuinely has no findings, and saying so is the
+    // truthful answer.
+    let text: String = page
+        .text
+        .trim()
+        .chars()
+        .take(extract::EXTRACT_TEXT_MAX_CHARS)
+        .collect();
+    if text.is_empty() {
+        tracing::debug!(url, "source dropped: no text");
         return SourceOutcome::Empty;
+    }
+    let readable = extract::ReadablePage {
+        title: page.title,
+        text,
     };
     let (claims, input, output) =
         match extract::extract_claims(deps.extract_client.as_ref(), &deps.extract_mode, &readable)
@@ -606,12 +746,13 @@ async fn fetch_and_extract(
         .unwrap_or_default();
     SourceOutcome::Extracted(Box::new(SourceRecord {
         id,
-        url: page.url.clone(),
+        url: page.url,
         title: readable.title,
         fetched_at: deps.clock.now().to_rfc3339(),
         credibility: source_credibility(&host),
         claims,
         text: readable.text,
+        truncated: page.truncated,
     }))
 }
 

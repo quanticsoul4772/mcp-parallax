@@ -36,7 +36,7 @@ server-assembled; one violation-fed retry on real engine signals only), the
 memory tools **`save`/`recall`/`forget`** (gated on `VOYAGE_API_KEY`;
 verified-before-stored trust, brute-force cosine ranking — the named
 sqlite-vec deviation, `SDK_LANDSCAPE.md` §memory), and **`research`** (gated
-on `BRAVE_API_KEY`; five-phase scope→search→fetch+extract→verify→synthesize
+on `EXA_API_KEY`; five-phase scope→search→contents+extract→verify→synthesize
 pipeline with refute-biased per-claim verification and a deterministic
 grounding gate — the model writes the answer prose, the gaps, and the
 sub-question each gap concerns; findings, labels, confidences, coverage,
@@ -148,10 +148,12 @@ reached the live endpoint from inside the suite),
 `VERIFY_MAX_CLAIM_CHARS` honored as alias), `VOYAGE_API_KEY` (optional —
 presence enables the memory tools; absent, they are not in the catalog),
 `VOYAGE_MODEL` (default `voyage-4`), `MEMORY_RECALL_LIMIT` (default `5`,
-1..=20), `BRAVE_API_KEY` (optional — presence enables the `research` tool),
-`FETCH_TIMEOUT_MS` (default `10000`), `RESEARCH_CONCURRENCY` (default `8`,
-1..=32), `FETCH_ALLOW_PRIVATE` (default `false` — SSRF guard for research
-fetches), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
+1..=20), `EXA_API_KEY` (optional — presence enables the `research` tool),
+`EXA_MAX_AGE_HOURS` (default `168`, -1..=720 — freshness of research page
+text), `RESEARCH_CONCURRENCY` (default `8`, 1..=32), `BRAVE_API_KEY`,
+`FETCH_TIMEOUT_MS` and `FETCH_ALLOW_PRIVATE` (no longer used since 059: the two
+`FETCH_*` are startup errors if set, `BRAVE_API_KEY` only when `EXA_API_KEY` is
+unset), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
 substrings extending the gate's built-in risk patterns),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
 tool; the single root that locators resolve within (`.` means the folder the
@@ -227,7 +229,7 @@ audited against it.
   them together.
 - Structured `tracing` to **stderr only** — stdout is the MCP JSON-RPC channel.
 - Composition over trait inheritance (the `ModelClient`/`Storage`/
-  `TimeProvider`/`Embedder`/`SearchProvider`/`Fetcher` seams). Every external
+  `TimeProvider`/`Embedder`/`SearchProvider` seams). Every external
   dependency sits behind a mockable trait so the server tests without network
   or disk.
 - Target ≤500 lines per `.rs` file for new modules.
@@ -250,21 +252,20 @@ src/
 ├── server/
 │   ├── correctives.rs  # the five single-shape corrective handlers (032)
 │   └── record.rs       # RecordGuard: one invocation record per call, on every exit path
-├── client/           # AnthropicClient, VoyageClient (embeddings), BraveClient (search)
+├── client/           # AnthropicClient, VoyageClient (embeddings), ExaClient (search + page text)
 ├── modes/            # mode registry + verify (per-pass lenses, 010) / unstick / diverge (generative lenses + deterministic dedup, 012) / decide (scored single pass → argmax + margin confidence, 013) / elicit (wrong-objective: surface objective + preferences, optional memory recall, 014) / grounded_verify (010 abstain → 011 compute-settle: count line/byte/match over read bytes, arithmetic engine decides, executed form)
 ├── deterministic/    # check: translate -> execute (evalexpr/Z3) -> assembled verdict
 ├── memory/           # Memory/Kind/Trust, pure ranking, save/recall/forget logic
-├── research/         # five-phase pipeline, hygiene fetcher, pure verdict/grounding
+├── research/         # five-phase pipeline, pure verdict/grounding
 ├── grounded/         # grounded_verify: root-confined reader + all-or-nothing assembly (008); glob/ = extended-glob engine (009); secrets.rs = secret-name refusal (055)
 ├── schema/           # sanitizer (grammar subset) + local validator
 ├── storage/          # SqliteStorage (sessions, memories, invocation records)
 ├── telemetry.rs      # InvocationRecord + per-model pricing
-└── traits/           # the mockable seams (clock/client/embedder/search/fetcher/source/storage/trajectory)
+└── traits/           # the mockable seams (clock/client/embedder/search/source/storage/trajectory)
     ├── clock.rs      # TimeProvider + SystemClock
     ├── client.rs     # ModelClient — the constrained-output contract (prompt + schema → JSON)
     ├── embedder.rs   # Embedder — asymmetric document/query embeddings
     ├── search.rs     # SearchProvider — web search hits
-    ├── fetcher.rs    # Fetcher — hygiene-enforced page fetches
     ├── source.rs     # SourceReader — root-confined verbatim source reads (008)
     └── storage.rs    # Storage — sessions, memories, records
 docs/design/          # the full design corpus (north star)
@@ -283,7 +284,7 @@ hooks (branch/commit) are wired via the speckit-git extension.
 The scaffold's trait seams are the slots the SDKs fill. Rough order: **core**
 (rmcp + thin Anthropic structured-outputs client behind `ModelClient` — done) →
 **memory** (Voyage 4 + brute-force cosine over f32 BLOBs, the named sqlite-vec
-deviation — done) → **research** (Brave provider + local extraction — done) →
+deviation — done) → **research** (Brave provider + local extraction — done; Exa since 059) →
 **deterministic** (z3 + evalexpr + the existing validator — done; sandboxed
 code-exec stays deferred, off) →
 **observability** (OTLP from the first server commit). This is a recommended order,
@@ -292,14 +293,27 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `058-otel-trace-context`; all 20 tasks closed,
+**Active Spec Kit feature: `059-exa-research-provider`; all 26 tasks closed,
+part of the live check deferred**
+([plan](specs/059-exa-research-provider/plan.md)) — `research` runs on Exa:
+one Exa search per angle finds sources and one contents request returns the
+kept sources' text (paired by the requested address; redirects re-checked
+against the domain lists), so Parallax no longer fetches pages.
+`BRAVE_API_KEY`, `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` are removed (the
+two `FETCH_*` are startup errors if set, `BRAVE_API_KEY` only when
+`EXA_API_KEY` is unset). Exa calls retry with a capped `Retry-After` and are
+bounded by the run's deadline; each run's Exa cost is recorded as
+`search_cost_usd`. Nine live questions passed; the deep, false-premise and
+tiny-budget checks wait for API credit.
+
+**058 (`058-otel-trace-context`); all 20 tasks closed,
 the optional live check (T019) deferred**
 ([plan](specs/058-otel-trace-context/plan.md)) — when a tool request carries
 W3C trace context in `_meta` (`traceparent`, optionally `tracestate`; MCP
 2026-07-28), every span the call exports (invocation, checkpoint evaluation,
 push, consolidation) joins the caller's trace; without it, telemetry is
 unchanged, `baggage` is not read, and a sampled-off caller gets no span.
-`main` is at **v0.5.0** (tagged 2026-07-27) plus rmcp 3.11 (#151).
+`main` is at **v0.5.0** (tagged 2026-07-27) plus rmcp 3.11 (#151) and 058 (#152).
 
 **057 (`057-provider-rejected-outcome`); all 17 tasks closed**
 ([plan](specs/057-provider-rejected-outcome/plan.md)) — a model-provider HTTP
