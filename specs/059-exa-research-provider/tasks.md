@@ -56,8 +56,8 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 
 **Independent test**: a double reports cost and rate-limits the first request with `Retry-After`; the run succeeds after the delay and the record carries the summed cost.
 
-- [ ] T013 [US3] Write failing tests in `src/client/exa.rs`, for both `/search` and `/contents`: 429 with `Retry-After` (seconds, and HTTP date) waits that long and retries; 5xx and network errors retry with backoff up to `MAX_RETRIES`; 400 is not retried and maps to `provider_rejected`; `costDollars.total` is returned, absent cost is `None`
-- [ ] T014 [US3] Implement the retry rules and cost parsing in `src/client/exa.rs`
+- [X] T013 [US3] Write failing tests in `src/client/exa.rs`, for both `/search` and `/contents`: 429 with `Retry-After` (seconds, and HTTP date) waits that long and retries; 5xx and network errors retry with backoff up to `MAX_RETRIES`; 400 is not retried and maps to `provider_rejected`; `costDollars.total` is returned, absent cost is `None`
+- [X] T014 [US3] Implement the retry rules and cost parsing in `src/client/exa.rs`
 - [ ] T015 [US3] Write failing tests: the run meter in `src/research/mod.rs` sums Exa costs and flags a missing one; `InvocationRecord.search_cost_usd` in `src/telemetry.rs` is the sum, null when any cost was missing, null for other tools, and set on a failed run; the column round-trips in `src/storage/sqlite.rs` (older rows read null)
 - [ ] T016 [US3] Implement the meter, record field, additive `ALTER TABLE invocation_records ADD COLUMN search_cost_usd REAL` migration, and the server plumbing from `run_at` to the record in `src/server.rs`
 - [ ] T017 [US3] Write a failing test in `src/observability.rs` that the research span carries `parallax.search.cost_usd` equal to the record's value and other tools' spans do not; implement it

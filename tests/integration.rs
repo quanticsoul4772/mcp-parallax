@@ -1193,10 +1193,11 @@ async fn tiny_budget_returns_a_well_formed_early_synthesized_result() {
 // ---- T018: failure parity -----------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn search_provider_outage_surfaces_named_with_one_record() {
+async fn search_provider_rejection_surfaces_named_with_one_record() {
     let mock = MockServer::start().await;
     mount_research_llm(&mock, "n/a").await;
-    // Terminal 422 from Exa (e.g. an invalid request).
+    // Terminal 422 from Exa (e.g. an invalid request): the provider refused
+    // the request, recorded as provider_rejected (059 D9, 057's rule).
     Mock::given(method("POST"))
         .and(path("/search"))
         .respond_with(ResponseTemplate::new(422).set_body_string("INVALID_REQUEST"))
@@ -1208,11 +1209,14 @@ async fn search_provider_outage_surfaces_named_with_one_record() {
         .call_tool(tool_call("research", &json!({ "question": "q?" })))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("[search_provider]"), "got: {err}");
+    assert!(
+        err.to_string().contains("[provider_rejected]"),
+        "got: {err}"
+    );
 
     let records = storage.list_invocations().await.unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].outcome, Outcome::SearchProvider);
+    assert_eq!(records[0].outcome, Outcome::ProviderRejected);
 
     client.cancel().await.unwrap();
 }

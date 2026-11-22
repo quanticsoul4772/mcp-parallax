@@ -24,6 +24,8 @@ pub struct ExaClient {
     base_url: String,
     api_key: String,
     timeout_ms: u64,
+    max_retries: u32,
+    backoff_base_ms: u64,
 }
 
 impl ExaClient {
@@ -52,7 +54,17 @@ impl ExaClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             timeout_ms: config.request_timeout_ms,
+            max_retries: config.max_retries,
+            backoff_base_ms: 200,
         }
+    }
+
+    /// Shrink the retry backoff base (test-only speedup).
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_backoff_base_ms(mut self, ms: u64) -> Self {
+        self.backoff_base_ms = ms;
+        self
     }
 
     /// The `POST /search` body: no `contents`, so no text is returned or
@@ -81,23 +93,65 @@ impl ExaClient {
         })
     }
 
+    /// POST to a read-only endpoint (059 D9). Network errors, 429 and 5xx
+    /// are retried up to `MAX_RETRIES`, waiting `Retry-After` when the
+    /// provider gives one, else an exponential backoff; any other 4xx is the
+    /// provider refusing the request (057's `provider_rejected`), terminal.
+    /// A timeout used the whole per-request budget and is terminal too.
     async fn post(&self, path: &str, body: &Value) -> Result<reqwest::Response, AppError> {
-        let response = self
-            .http
-            .post(format!("{}{path}", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("Accept", "application/json")
-            .json(body)
-            .timeout(Duration::from_millis(self.timeout_ms))
-            .send()
-            .await
-            .map_err(|e| self.transport_error(&e))?;
-        let status = response.status();
-        if !status.is_success() {
+        let attempts_max = self.max_retries.saturating_add(1);
+        let mut last_error = String::new();
+        let mut wait: Option<Duration> = None;
+        for attempt in 1..=attempts_max {
+            if attempt > 1 {
+                let backoff = Duration::from_millis(
+                    self.backoff_base_ms
+                        .saturating_mul(1 << (attempt - 2).min(8)),
+                );
+                tokio::time::sleep(wait.take().unwrap_or(backoff)).await;
+            }
+            let response = match self
+                .http
+                .post(format!("{}{path}", self.base_url))
+                .header("x-api-key", &self.api_key)
+                .header("Accept", "application/json")
+                .json(body)
+                .timeout(Duration::from_millis(self.timeout_ms))
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(e) if e.is_timeout() => return Err(self.timeout()),
+                Err(e) => {
+                    last_error = self.transport_error(&e).to_string();
+                    continue;
+                }
+            };
+            let status = response.status();
+            if status.is_success() {
+                return Ok(response);
+            }
+            if status.as_u16() == 429 || status.is_server_error() {
+                wait = retry_after(
+                    response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok()),
+                    chrono::Utc::now(),
+                );
+                last_error = format!("HTTP {status}");
+                continue;
+            }
             let detail = response.text().await.unwrap_or_default();
-            return Err(AppError::SearchProvider(format!("HTTP {status}: {detail}")));
+            return Err(AppError::ProviderRejected {
+                status: status.as_u16(),
+                detail,
+            });
         }
-        Ok(response)
+        Err(AppError::RetriesExhausted {
+            attempts: attempts_max,
+            last: last_error,
+        })
     }
 
     async fn read<T: serde::de::DeserializeOwned>(
@@ -184,6 +238,19 @@ impl SearchProvider for ExaClient {
     }
 }
 
+/// The wait a `Retry-After` header asks for: whole seconds or an HTTP date
+/// (RFC 9110); a date already past is no wait. `None` when absent or
+/// unreadable, so the caller falls back to its own backoff.
+fn retry_after(value: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
+    let value = value?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let wait = at.with_timezone(&chrono::Utc) - now;
+    Some(wait.to_std().unwrap_or(Duration::ZERO))
+}
+
 /// The provider's title, or the URL when it gives none.
 fn title_or_url(title: Option<String>, url: &str) -> String {
     title
@@ -239,6 +306,7 @@ mod tests {
 
     fn client_for(mock: &MockServer) -> ExaClient {
         ExaClient::with_base_url(&test_config(), "exa-test-key", &mock.uri())
+            .with_backoff_base_ms(1)
     }
 
     fn search_request(include: &[&str], exclude: &[&str]) -> SearchRequest {
@@ -396,11 +464,14 @@ mod tests {
         assert_eq!(pages[1].requested_url, "https://example.com/b");
     }
 
+    /// 059 D9 (057's rule): a 4xx other than 429 is the provider refusing
+    /// the request — terminal, not retried, recorded as provider_rejected.
     #[tokio::test]
-    async fn a_client_error_is_a_search_provider_error() {
+    async fn a_client_error_is_provider_rejected_and_not_retried() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .expect(1)
             .mount(&mock)
             .await;
 
@@ -409,8 +480,82 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(&err, AppError::SearchProvider(m) if m.contains("400")),
+            matches!(&err, AppError::ProviderRejected { status: 400, detail } if detail.contains("bad request")),
             "{err:?}"
         );
+    }
+
+    /// A 429 is retried (here with `Retry-After: 0`) and the request then
+    /// succeeds — on both endpoints.
+    #[tokio::test]
+    async fn a_rate_limit_is_retried_then_succeeds() {
+        let mock = MockServer::start().await;
+        for endpoint in ["/search", "/contents"] {
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+                .up_to_n_times(1)
+                .with_priority(1)
+                .mount(&mock)
+                .await;
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+                .with_priority(2)
+                .mount(&mock)
+                .await;
+        }
+        let client = client_for(&mock);
+        client.search(&search_request(&[], &[])).await.unwrap();
+        client
+            .contents(&ContentsRequest {
+                urls: vec!["https://example.com/a".into()],
+                max_age_hours: 168,
+                max_characters: 100,
+            })
+            .await
+            .unwrap();
+        assert_eq!(mock.received_requests().await.unwrap().len(), 4);
+    }
+
+    /// A server error is retried up to MAX_RETRIES (2 in the test config:
+    /// three attempts), then reported as exhausted with the attempt count.
+    #[tokio::test]
+    async fn a_persistent_server_error_exhausts_the_retries() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(3)
+            .mount(&mock)
+            .await;
+
+        let err = client_for(&mock)
+            .search(&search_request(&[], &[]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::RetriesExhausted { attempts: 3, last } if last.contains("503")),
+            "{err:?}"
+        );
+    }
+
+    /// `Retry-After` is seconds or an HTTP date (RFC 9110); a date in the
+    /// past means no wait; anything else is not a delay.
+    #[test]
+    fn retry_after_reads_seconds_and_http_dates() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-22T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(retry_after(Some("2"), now), Some(Duration::from_secs(2)));
+        assert_eq!(
+            retry_after(Some("Sun, 22 Nov 2026 12:00:03 GMT"), now),
+            Some(Duration::from_secs(3))
+        );
+        assert_eq!(
+            retry_after(Some("Sun, 22 Nov 2026 11:59:00 GMT"), now),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(retry_after(Some("soon"), now), None);
+        assert_eq!(retry_after(None, now), None);
     }
 }
