@@ -72,6 +72,8 @@ pub fn config() -> Config {
         voyage_model: DEFAULT_VOYAGE_MODEL.into(),
         memory_recall_limit: 5,
         brave_api_key: None,
+        exa_api_key: None,
+        exa_max_age_hours: mcp_parallax::config::EXA_MAX_AGE_HOURS_DEFAULT,
         fetch_timeout_ms: 10_000,
         research_concurrency: 8,
         fetch_allow_private: false,

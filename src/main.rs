@@ -215,6 +215,7 @@ CAPABILITY GATES (absent = the tools are not in the catalog at all):
     MEMORY_RECALL_LIMIT           Default recall top-k, 1..=20 (default: 5).
                                   `recall` takes a per-call `limit`
     BRAVE_API_KEY                 Enables `research`
+    EXA_API_KEY                   Enables `research` (Exa search and page text)
     GROUNDED_VERIFY_ROOT          Enables `grounded_verify`; the single root that
                                   locators resolve within, canonicalized at startup;
                                   files named as secrets (.env, keys) are refused;
@@ -222,6 +223,8 @@ CAPABILITY GATES (absent = the tools are not in the catalog at all):
 
 RESEARCH:
     FETCH_TIMEOUT_MS              Per-source fetch timeout in ms (default: 10000)
+    EXA_MAX_AGE_HOURS             Page-text freshness in hours, -1..=720; 0 always
+                                  live, -1 cache only (default: 168)
     RESEARCH_CONCURRENCY          Concurrent fetch/extract/verify cap, 1..=32
                                   (default: 8). A call may lower it, never raise it
     FETCH_ALLOW_PRIVATE           SSRF guard (default: false). When false, fetches to

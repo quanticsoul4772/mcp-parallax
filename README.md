@@ -106,6 +106,8 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `VOYAGE_MODEL` | no | `voyage-4` | Embedding model (stay within one family — vectors share a space) |
 | `MEMORY_RECALL_LIMIT` | no | `5` | Default recall top-k (1–20) |
 | `BRAVE_API_KEY` | no | unset | Presence enables `research`; absent, it is not in the catalog |
+| `EXA_API_KEY` | no | unset | Presence enables `research` (Exa search and page text); absent, it is not in the catalog |
+| `EXA_MAX_AGE_HOURS` | no | `168` | Freshness limit for research page text, in hours: `0` always fetches live, `-1` uses Exa's cache only (-1 to 720) |
 | `FETCH_TIMEOUT_MS` | no | `10000` | Per-source fetch timeout for research runs |
 | `RESEARCH_CONCURRENCY` | no | `8` | Concurrent fetch/extract/verify cap (1–32) |
 | `FETCH_ALLOW_PRIVATE` | no | `false` | SSRF guard: when false, research fetches to loopback/private/link-local targets are blocked. Enable only for local testing |
