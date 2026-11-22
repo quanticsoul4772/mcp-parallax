@@ -16,9 +16,13 @@
   saying Brave is removed and `EXA_API_KEY` enables research.
 - Q: Parallax's own page fetcher once Exa supplies the text? → A: Deleted,
   with `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS`; a still-set one is a
-  startup error, the same rule as `BRAVE_API_KEY`.
+  startup error.
 - Q: The caller's domain constraints? → A: Sent to Exa as domain filters and
   kept as the local filter, which stays the authority.
+- Q (revised the same day): A set `BRAVE_API_KEY` when another tool shares
+  it? → A: A startup error only when `EXA_API_KEY` is not set; with
+  `EXA_API_KEY` set, `BRAVE_API_KEY` is ignored. The user's own environment
+  sets it for a separate Brave search tool.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -59,15 +63,16 @@ in the CHANGELOG, that Brave is gone and which variable now enables research.
 **Why this priority**: A silent loss of the research tool after an upgrade is
 the failure this project's configuration rules exist to prevent.
 
-**Independent Test**: Start the server with only `BRAVE_API_KEY` set and read
-what it reports.
+**Independent Test**: Start the server with only `BRAVE_API_KEY` set, then
+with both keys set, and read what it reports.
 
 **Acceptance Scenarios**:
 
-1. **Given** only `BRAVE_API_KEY` is set, **When** the server starts, **Then**
-   the operator is told that Brave is no longer supported and `EXA_API_KEY`
-   enables research, and the server does not start until `BRAVE_API_KEY` is
-   removed.
+1. **Given** `BRAVE_API_KEY` is set and `EXA_API_KEY` is not, **When** the
+   server starts, **Then** it refuses to start with an error saying Brave is
+   no longer supported and `EXA_API_KEY` enables research.
+2. **Given** both keys are set, **When** the server starts, **Then** it
+   starts with research on Exa and ignores `BRAVE_API_KEY`.
 
 ---
 
@@ -117,14 +122,15 @@ Exa cost.
 - **FR-001**: Research MUST find sources with Exa search, and MUST be offered
   only when an Exa API key is configured.
 - **FR-002**: The Brave provider and its configuration MUST be removed. A
-  still-set `BRAVE_API_KEY` MUST be a startup error that names it, says Brave
-  is removed, and names `EXA_API_KEY`.
+  set `BRAVE_API_KEY` with no `EXA_API_KEY` MUST be a startup error that names
+  both and says Brave is removed; with `EXA_API_KEY` set, `BRAVE_API_KEY`
+  MUST be ignored.
 - **FR-003**: Each source's text MUST come from Exa. Parallax MUST NOT
   download or parse the source page itself. Parallax's own page fetcher, its
   private-address guard, page-hygiene rules and readability extraction, and
   the `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` settings MUST be removed;
   a still-set `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS` MUST be a startup
-  error naming it, as for `BRAVE_API_KEY`.
+  error naming it.
 - **FR-004**: The grounding gate, claim extraction, verification and
   synthesis MUST be unchanged apart from where the text comes from.
 - **FR-005**: Each research depth MUST map to one Exa search type, stated in
@@ -171,10 +177,10 @@ Exa cost.
   exported telemetry carries the same value.
 - **SC-004**: A run whose first Exa request is rate-limited with a retry
   delay succeeds after waiting that delay.
-- **SC-005**: An operator who upgrades with `BRAVE_API_KEY`,
-  `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS` still set gets a startup error
-  naming the variable, and for `BRAVE_API_KEY`, the variable that enables
-  research now.
+- **SC-005**: An operator who upgrades with `BRAVE_API_KEY` set and no
+  `EXA_API_KEY`, or with `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS` set, gets
+  a startup error naming the variable (for `BRAVE_API_KEY`, also the variable
+  that enables research now); one with both keys set starts normally.
 
 ## Assumptions
 

@@ -45,7 +45,7 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 
 **Independent test**: load config with each removed variable set and read the error.
 
-- [ ] T011 [US2] Write failing tests in `src/config.rs`: `BRAVE_API_KEY` set is a `ConfigError` naming it and `EXA_API_KEY`; `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` set are errors naming each and saying Parallax no longer fetches pages
+- [ ] T011 [US2] Write failing tests in `src/config.rs`: `BRAVE_API_KEY` set without `EXA_API_KEY` is a `ConfigError` naming both; with both set, config loads and ignores `BRAVE_API_KEY`; `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` set are errors naming each and saying Parallax no longer fetches pages
 - [ ] T012 [US2] Implement the three removed-variable errors in `src/config.rs`; remove the `brave_api_key`, `fetch_timeout_ms` and `fetch_allow_private` fields and their uses; update `src/config_facts/` (sources and exclusions), `--help`, and README's configuration rows (exact text approved first; analyze A2)
 
 **Checkpoint**: US2 complete.

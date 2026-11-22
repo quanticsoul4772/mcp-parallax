@@ -5,9 +5,10 @@
 - `research` is in the catalog iff `EXA_API_KEY` is set.
 - `EXA_MAX_AGE_HOURS`: integer -1..=720, default 168. Anything else is a
   startup error naming it.
-- `BRAVE_API_KEY`, `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS` set: startup
-  error naming the variable. For `BRAVE_API_KEY` the message names
-  `EXA_API_KEY`.
+- `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS` set: startup error naming the
+  variable.
+- `BRAVE_API_KEY` set without `EXA_API_KEY`: startup error naming both; with
+  `EXA_API_KEY` set, it is ignored.
 
 ## Outbound requests
 

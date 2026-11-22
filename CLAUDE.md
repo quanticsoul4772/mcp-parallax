@@ -296,8 +296,9 @@ not a mandate — confirm priorities before building.
 ([plan](specs/059-exa-research-provider/plan.md)) — Exa replaces Brave for
 `research`: one Exa search per angle supplies both the sources and their
 text, so Parallax no longer fetches pages; `BRAVE_API_KEY`,
-`FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` are removed and are startup
-errors if still set; Exa's cost per run is recorded as `search_cost_usd`.
+`FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` are removed; the two `FETCH_*`
+are startup errors if still set, and `BRAVE_API_KEY` is one only when
+`EXA_API_KEY` is not set; Exa's cost per run is recorded as `search_cost_usd`.
 Spec and plan written; tasks not yet generated.
 
 **Active Spec Kit feature: `058-otel-trace-context`; all 20 tasks closed,

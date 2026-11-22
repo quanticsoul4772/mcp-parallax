@@ -55,6 +55,6 @@ the existing additive migration. Older rows read as null.
 |---|---|
 | `EXA_API_KEY` | New. Presence enables `research`. |
 | `EXA_MAX_AGE_HOURS` | New. Integer -1..=720, default 168. |
-| `BRAVE_API_KEY` | Removed. Present → startup error naming it and `EXA_API_KEY`. |
+| `BRAVE_API_KEY` | Removed. Present without `EXA_API_KEY` → startup error naming both; with `EXA_API_KEY`, ignored. |
 | `FETCH_ALLOW_PRIVATE` | Removed. Present → startup error naming it. |
 | `FETCH_TIMEOUT_MS` | Removed. Present → startup error naming it. |

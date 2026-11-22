@@ -99,12 +99,15 @@ else uses it (only `fetch.rs` calls `bytes_stream` today).
 **Rationale**: no caller remains; Parallax makes no page requests (SC-002), so
 the private-address guard has nothing to guard. Exa crawls on its side.
 
-## D7 — Removed variables are startup errors (clarification Q1, Q2)
+## D7 — Removed variables at startup (clarification Q1 as revised, Q2)
 
-**Decision**: `BRAVE_API_KEY`, `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS`
-present in the environment is a `ConfigError` naming the variable. For
-`BRAVE_API_KEY` the message says Brave is removed and `EXA_API_KEY` enables
-research; for the two `FETCH_*` it says Parallax no longer fetches pages.
+**Decision**: `FETCH_ALLOW_PRIVATE` or `FETCH_TIMEOUT_MS` present is a
+`ConfigError` naming it and saying Parallax no longer fetches pages.
+`BRAVE_API_KEY` present with `EXA_API_KEY` absent is a `ConfigError` naming
+both and saying Brave is removed; with `EXA_API_KEY` present, `BRAVE_API_KEY`
+is ignored (amended 2026-11-22: other tools share `BRAVE_API_KEY`, and the
+user's environment sets it, so a blanket error would stop Parallax on every
+launch).
 
 **Rationale**: the project's loud-configuration rule; a silent loss of the
 research tool after upgrade is what it prevents.

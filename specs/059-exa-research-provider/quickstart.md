@@ -2,15 +2,16 @@
 
 ## Configure
 
-Set `EXA_API_KEY` in the server's environment and remove `BRAVE_API_KEY`,
+Set `EXA_API_KEY` in the server's environment and remove
 `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` if present (each is now a startup
-error). Optionally set `EXA_MAX_AGE_HOURS` (default 168; 0 forces a live
+error). `BRAVE_API_KEY` can stay if other tools use it: with `EXA_API_KEY`
+set, Parallax ignores it. Optionally set `EXA_MAX_AGE_HOURS` (default 168; 0 forces a live
 crawl, -1 uses Exa's cache only).
 
 ## Check the startup errors
 
-Start the server with `BRAVE_API_KEY` set: it exits with an error naming
-`BRAVE_API_KEY` and `EXA_API_KEY`.
+Start the server with `BRAVE_API_KEY` set and no `EXA_API_KEY`: it exits
+with an error naming both. With both set, it starts.
 
 ## Live acceptance (before the PR)
 
