@@ -139,7 +139,7 @@ impl SqliteStorage {
         let rows = sqlx::query(
             "SELECT id, session_id, tool, model, input_tokens, output_tokens,
                     cost_usd, latency_ms, outcome, created_at,
-                    models, usage_by_model, depth, effort, passes
+                    models, usage_by_model, depth, effort, passes, search_cost_usd
              FROM invocation_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -202,6 +202,9 @@ impl SqliteStorage {
                     passes: row
                         .get::<Option<i64>, _>("passes")
                         .and_then(|n| u32::try_from(n).ok()),
+                    // 059: NULL for other tools, for a run where an Exa call
+                    // reported no cost, and for rows written before the column.
+                    search_cost_usd: row.get::<Option<f64>, _>("search_cost_usd"),
                     latency_ms,
                     outcome,
                     created_at,
@@ -270,7 +273,7 @@ impl SqliteStorage {
             .await
             .map_err(|e| AppError::Storage(format!("pragma table_info failed: {e}")))?;
         let existing: Vec<String> = rows.iter().map(|r| r.get::<String, _>("name")).collect();
-        let additions: [(&str, &str); 5] = [
+        let additions: [(&str, &str); 6] = [
             (
                 "models",
                 "ALTER TABLE invocation_records ADD COLUMN models TEXT",
@@ -292,6 +295,11 @@ impl SqliteStorage {
             (
                 "passes",
                 "ALTER TABLE invocation_records ADD COLUMN passes INTEGER",
+            ),
+            // 059: the research run's Exa cost; nullable like the rest.
+            (
+                "search_cost_usd",
+                "ALTER TABLE invocation_records ADD COLUMN search_cost_usd REAL",
             ),
         ];
         for (column, ddl) in additions {
@@ -782,8 +790,8 @@ impl Storage for SqliteStorage {
             "INSERT INTO invocation_records
                 (id, session_id, tool, model, input_tokens, output_tokens,
                  cost_usd, latency_ms, outcome, created_at,
-                 models, usage_by_model, depth, effort, passes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 models, usage_by_model, depth, effort, passes, search_cost_usd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -800,6 +808,7 @@ impl Storage for SqliteStorage {
         .bind(record.depth.clone())
         .bind(record.effort.clone())
         .bind(record.passes.map(i64::from))
+        .bind(record.search_cost_usd)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
@@ -905,6 +914,7 @@ mod tests {
             depth: None,
             effort: None,
             passes: None,
+            search_cost_usd: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
@@ -926,6 +936,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    // 059 T015: the Exa cost written is the cost read; a row without one —
+    // another tool, or one written before the column — reads back as None.
+    #[tokio::test]
+    async fn search_cost_round_trips_and_old_rows_read_none() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let research = InvocationRecord {
+            id: "r-research".to_string(),
+            tool: "research".to_string(),
+            search_cost_usd: Some(0.019),
+            ..sample(Outcome::Success)
+        };
+        storage.record_invocation(&research).await.unwrap();
+        storage
+            .record_invocation(&InvocationRecord {
+                id: "r-verify".to_string(),
+                ..sample(Outcome::Success)
+            })
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO invocation_records
+                (id, session_id, tool, model, input_tokens, output_tokens,
+                 cost_usd, latency_ms, outcome, created_at)
+             VALUES ('old', 's', 'research', 'claude-opus-4-8', 1, 1, 0.0, 1,
+                     'success', '2026-06-11T12:00:00+00:00')",
+        )
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+        SqliteStorage::migrate_invocation_columns(&storage.pool)
+            .await
+            .unwrap();
+
+        let records = storage.list_invocations().await.unwrap();
+        let cost = |id: &str| records.iter().find(|r| r.id == id).unwrap().search_cost_usd;
+        assert_eq!(cost("r-research"), Some(0.019));
+        assert_eq!(cost("r-verify"), None);
+        assert_eq!(cost("old"), None);
     }
 
     // 019: the tier written is the tier read. Paired with the NULL case above,

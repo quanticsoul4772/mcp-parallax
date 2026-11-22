@@ -60,7 +60,7 @@ use record::{to_error_data, RecordGuard};
 /// Bundled rather than passed as three more parameters — each feature that
 /// records something new was extending the same argument list, and it had
 /// grown past the point where a reader could tell which `None` meant what.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct RecordDims {
     /// Research rigor tier (019); `None` for every other tool.
     depth: Option<Depth>,
@@ -69,6 +69,8 @@ pub(super) struct RecordDims {
     /// The caller's pass-count override (028); `None` when the configured
     /// count ran.
     passes: Option<u32>,
+    /// The research run's Exa cost accumulator (059); `None` for other tools.
+    search_cost: Option<Arc<crate::telemetry::SearchCost>>,
 }
 
 impl RecordDims {
@@ -78,6 +80,7 @@ impl RecordDims {
             depth: None,
             effort,
             passes: None,
+            search_cost: None,
         }
     }
 
@@ -87,6 +90,7 @@ impl RecordDims {
             depth: None,
             effort,
             passes,
+            search_cost: None,
         }
     }
 }
@@ -908,6 +912,9 @@ impl Parallax {
         // from the record. The default must match `settings`' — a request that
         // omits `depth` still ran under a tier.
         let depth = params.depth.unwrap_or(Depth::Standard);
+        // 059 FR-010: one accumulator per run, read by the record guard on
+        // every exit and added to by the pipeline on every Exa call.
+        let search_cost = Arc::new(crate::telemetry::SearchCost::default());
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a
@@ -941,11 +948,12 @@ impl Parallax {
             // is per claim, not a caller-set ensemble.
             RecordDims {
                 depth: Some(depth),
+                search_cost: Some(Arc::clone(&search_cost)),
                 ..RecordDims::default()
             },
             ct,
             caller,
-            async { pipeline::run_at(&deps, &params, concurrency).await },
+            async { pipeline::run_at(&deps, &params, concurrency, &search_cost).await },
         )
         .await
     }

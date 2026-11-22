@@ -164,7 +164,13 @@ pub async fn run(
     deps: &ResearchDeps,
     params: &ResearchParams,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
-    run_at(deps, params, deps.concurrency).await
+    run_at(
+        deps,
+        params,
+        deps.concurrency,
+        &crate::telemetry::SearchCost::default(),
+    )
+    .await
 }
 
 /// Run at a caller-reduced concurrency (028 FR-015).
@@ -181,9 +187,10 @@ pub async fn run_at(
     deps: &ResearchDeps,
     params: &ResearchParams,
     concurrency: usize,
+    search_cost: &crate::telemetry::SearchCost,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered_at(deps, params, &meter, concurrency).await;
+    let outcome = run_metered_at(deps, params, &meter, concurrency, search_cost).await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -203,6 +210,7 @@ async fn run_metered_at(
     params: &ResearchParams,
     meter: &RunMeter,
     concurrency: usize,
+    search_cost: &crate::telemetry::SearchCost,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
@@ -245,6 +253,7 @@ async fn run_metered_at(
             match outcome {
                 Ok(results) => {
                     stats.searches += 1;
+                    search_cost.add(results.cost_usd);
                     for hit in results.hits {
                         if seen_urls.insert(url_key(&hit.url)) {
                             candidates.push((hit.url, hit.title));
@@ -300,6 +309,7 @@ async fn run_metered_at(
         // failure is the phase's failure (023); `run_at` meters the spend
         // so far onto the error (020).
         let contents = deps.search.contents(&request).await?;
+        search_cost.add(contents.cost_usd);
         for page in contents.pages {
             pages.insert(url_key(&page.requested_url), page);
         }

@@ -390,6 +390,10 @@ pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) 
     if let Some(passes) = record.passes {
         attributes.push(KeyValue::new("parallax.passes", i64::from(passes)));
     }
+    // 059: the research run's Exa cost, present when the record has one.
+    if let Some(search_cost) = record.search_cost_usd {
+        attributes.push(KeyValue::new("parallax.search.cost_usd", search_cost));
+    }
     if record.outcome != Outcome::Success {
         attributes.push(KeyValue::new("error.type", outcome));
     }
@@ -748,6 +752,7 @@ mod tests {
             depth: None,
             effort: None,
             passes: None,
+            search_cost_usd: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")
@@ -851,6 +856,37 @@ mod tests {
                 kv.key
             );
         }
+    }
+
+    /// 059 T017 (FR-010, SC-003): the research span carries the record's Exa
+    /// cost; a record without one carries no attribute.
+    #[test]
+    fn the_search_cost_is_on_the_span_only_when_the_record_has_it() {
+        let (spans, _, guard) = test_handles();
+        let mut with_cost = sample_invocation(Outcome::Success);
+        with_cost.tool = "search_cost_probe".into();
+        with_cost.search_cost_usd = Some(0.019);
+        emit_invocation(&with_cost, None);
+        let mut without = sample_invocation(Outcome::Success);
+        without.tool = "no_search_cost_probe".into();
+        emit_invocation(&without, None);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = |name: &str| exported.iter().find(|s| s.name == name).unwrap();
+        let cost = attr(
+            &span("parallax.search_cost_probe").attributes,
+            "parallax.search.cost_usd",
+        );
+        assert_eq!(
+            cost.map(opentelemetry::Value::as_str).as_deref(),
+            Some("0.019")
+        );
+        assert!(attr(
+            &span("parallax.no_search_cost_probe").attributes,
+            "parallax.search.cost_usd"
+        )
+        .is_none());
     }
 
     // T024 / 018 D6: a multi-model invocation still emits ONE span, carrying

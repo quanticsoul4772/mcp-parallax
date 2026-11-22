@@ -42,6 +42,9 @@ pub(super) struct RecordGuard {
     effort: Option<crate::routing::Effort>,
     /// The caller's pass-count override (028), or `None`.
     passes: Option<u32>,
+    /// The research run's Exa cost accumulator (059), or `None`. Read on
+    /// every exit, so a failed or cancelled run still records its cost.
+    search_cost: Option<Arc<crate::telemetry::SearchCost>>,
     /// The trace context the request carried (058), or `None`. Held until the
     /// record is published so every exit, cancellation included, exports its
     /// span under the caller's trace. Never stored.
@@ -70,6 +73,7 @@ impl RecordGuard {
             depth: dims.depth.map(|d| d.as_str().to_string()),
             effort: dims.effort,
             passes: dims.passes,
+            search_cost: dims.search_cost,
             caller,
             started_at,
             done: false,
@@ -91,7 +95,8 @@ impl RecordGuard {
         )
         .with_depth(self.depth.as_deref())
         .with_effort(self.effort)
-        .with_passes(self.passes);
+        .with_passes(self.passes)
+        .with_search_cost(self.search_cost.as_ref().and_then(|c| c.total()));
         // One measurement, two sinks (007 FR-009): tracing + telemetry, both
         // derived from this record value via the single publish() door.
         record.publish(self.caller.as_ref());
@@ -121,7 +126,8 @@ impl Drop for RecordGuard {
         )
         .with_depth(self.depth.as_deref())
         .with_effort(self.effort)
-        .with_passes(self.passes);
+        .with_passes(self.passes)
+        .with_search_cost(self.search_cost.as_ref().and_then(|c| c.total()));
         record.publish(self.caller.as_ref());
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {

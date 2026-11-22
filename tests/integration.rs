@@ -1051,6 +1051,64 @@ async fn with_an_exa_key_the_catalog_matches_the_research_contract() {
 
 // ---- T014: full round trip ----------------------------------------------------
 
+/// 059 T018 (SC-003, SC-004): the first Exa search is rate-limited with a
+/// `Retry-After`; the run still succeeds, and its record carries the summed
+/// Exa cost of every search and the contents call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rate_limited_research_run_succeeds_and_records_its_exa_cost() {
+    let mock = MockServer::start().await;
+    let page_url = "https://docs.example/page1";
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [ { "id": page_url, "url": page_url, "title": "Doc" } ],
+            "costDollars": { "total": 0.007 }
+        })))
+        .with_priority(2)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/contents"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [ { "id": page_url, "url": page_url, "title": "Doc",
+                           "text": "The documented claim holds." } ],
+            "costDollars": { "total": 0.005 }
+        })))
+        .mount(&mock)
+        .await;
+    mount_research_llm(&mock, "The claim holds [s1].").await;
+    let (client, storage, _server) = serve_with_research(&mock).await;
+
+    let result = client
+        .call_tool(tool_call(
+            "research",
+            &json!({ "question": "does the documented claim hold?", "depth": "quick" }),
+        ))
+        .await
+        .unwrap();
+    let searches = result.structured_content.as_ref().unwrap()["stats"]["searches"]
+        .as_f64()
+        .unwrap();
+    assert!(searches >= 1.0);
+
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success);
+    let expected = 0.007f64.mul_add(searches, 0.005);
+    let recorded = records[0].search_cost_usd.unwrap();
+    assert!(
+        (recorded - expected).abs() < 1e-9,
+        "recorded {recorded}, expected {expected}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn research_round_trip_returns_grounded_citations_and_one_record() {
     let mock = MockServer::start().await;
@@ -1078,7 +1136,7 @@ async fn research_round_trip_returns_grounded_citations_and_one_record() {
     assert_eq!(sources[0]["id"], "s1");
     assert!(sources[0]["url"].as_str().unwrap().ends_with("/page1"));
     let wire = structured.to_string();
-    assert!(!wire.contains("running text for extraction"));
+    assert!(!wire.contains("as this page explains at length"));
 
     let findings = structured["key_findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1);

@@ -328,6 +328,41 @@ async fn a_redirected_page_still_pairs_with_its_source() {
     assert_eq!(result.sources[0].url, "https://example.com/new");
 }
 
+/// 059 T015: the run's Exa cost is every search's reported cost plus the
+/// contents call's (two angles at 0.007, contents at 0.005).
+#[tokio::test]
+async fn the_runs_exa_cost_sums_every_search_and_the_contents_call() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(|_| {
+        Ok(SearchResults {
+            hits: vec![SearchHit {
+                url: "https://example.com/a".into(),
+                title: "A".into(),
+            }],
+            cost_usd: Some(0.007),
+        })
+    });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Text.", false)],
+            cost_usd: Some(0.005),
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let cost = crate::telemetry::SearchCost::default();
+    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
+        .await
+        .unwrap();
+    let total = cost.total().unwrap();
+    assert!((total - 0.019).abs() < 1e-9, "{total}");
+}
+
 /// A page whose text reached the cap is marked truncated on the result.
 #[tokio::test]
 async fn a_truncated_page_is_marked_on_the_result() {

@@ -173,6 +173,41 @@ impl ModelUsage {
     }
 }
 
+/// One research run's Exa cost (059 FR-010).
+///
+/// The sum of what each Exa call reported, shared by the pipeline (which
+/// adds) and the record guard (which reads on every exit, failures and
+/// cancellations included).
+#[derive(Debug, Default)]
+pub struct SearchCost {
+    /// `(sum, calls, every call reported a cost)`.
+    state: std::sync::Mutex<(f64, u32, bool)>,
+}
+
+impl SearchCost {
+    /// Add one Exa call's reported cost; `None` when the call reported none.
+    pub fn add(&self, cost: Option<f64>) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.1 == 0 {
+                state.2 = true;
+            }
+            state.1 += 1;
+            match cost {
+                Some(usd) => state.0 += usd,
+                None => state.2 = false,
+            }
+        }
+    }
+
+    /// The run's total: `None` when no Exa call was made, or when any call
+    /// reported no cost — unknown, never understated as a partial sum.
+    #[must_use]
+    pub fn total(&self) -> Option<f64> {
+        let state = self.state.lock().ok()?;
+        (state.1 > 0 && state.2).then_some(state.0)
+    }
+}
+
 /// The observability record of one tool call (data-model.md §5; contract:
 /// `specs/001-core-layer/contracts/invocation-record.schema.json`).
 #[derive(Debug, Clone)]
@@ -227,6 +262,10 @@ pub struct InvocationRecord {
     ///
     /// `None` means the configured count ran.
     pub passes: Option<u32>,
+    /// The run's Exa cost in USD (059 FR-010): `research` only, and only when
+    /// every Exa call reported a cost. Separate from [`Self::cost_usd`],
+    /// which stays the summed model cost.
+    pub search_cost_usd: Option<f64>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -278,10 +317,18 @@ impl InvocationRecord {
             // the same reason as `depth` (028).
             effort: None,
             passes: None,
+            search_cost_usd: None,
             latency_ms,
             outcome,
             created_at,
         }
+    }
+
+    /// Stamp the run's Exa cost onto the record (059 FR-010).
+    #[must_use]
+    pub const fn with_search_cost(mut self, search_cost_usd: Option<f64>) -> Self {
+        self.search_cost_usd = search_cost_usd;
+        self
     }
 
     /// Stamp the research rigor tier onto the record (019).
@@ -357,6 +404,42 @@ impl InvocationRecord {
 mod tests {
     use super::*;
     use crate::traits::clock::MockTimeProvider;
+
+    /// 059 T015 (FR-010): the run's Exa cost is the sum of what each call
+    /// reported; one call without a cost makes the total unknown, not lower;
+    /// a run that made no Exa call has no cost to state.
+    #[test]
+    fn search_cost_sums_reported_costs_and_an_unreported_one_makes_it_unknown() {
+        let cost = SearchCost::default();
+        assert_eq!(cost.total(), None);
+        cost.add(Some(0.007));
+        cost.add(Some(0.005));
+        let total = cost.total().unwrap();
+        assert!((total - 0.012).abs() < 1e-9, "{total}");
+        cost.add(None);
+        assert_eq!(cost.total(), None);
+        cost.add(Some(0.007));
+        assert_eq!(cost.total(), None, "unknown stays unknown");
+    }
+
+    #[test]
+    fn a_record_carries_the_search_cost_only_when_stamped() {
+        let clock = crate::traits::clock::SystemClock;
+        let record = InvocationRecord::create(
+            &clock,
+            "s",
+            "verify",
+            "claude-opus-4-8",
+            &ModelUsage::default(),
+            Outcome::Success,
+            clock.now(),
+        );
+        assert_eq!(record.search_cost_usd, None);
+        assert_eq!(
+            record.with_search_cost(Some(0.012)).search_cost_usd,
+            Some(0.012)
+        );
+    }
 
     fn fixed(rfc3339: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(rfc3339)
