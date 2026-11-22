@@ -186,8 +186,10 @@ Exa cost.
   Task are named follow-ups, not part of this feature.
 - Highlights alone are too short for claim extraction, so research asks Exa
   for page text; highlights may be requested alongside it.
-- The tool's input and output shapes do not change; only where sources and
-  their text come from changes, plus the cost now recorded.
+- The tool's input shape does not change. Its output gains one field,
+  `sources[].truncated` (FR-007); nothing else in it changes. Beyond that,
+  only where sources and their text come from changes, plus the cost now
+  recorded.
 - The model-facing prompts may need wording changes where they describe
   fetched pages; any such change passes the live research acceptance run
   before the PR.

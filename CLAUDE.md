@@ -292,6 +292,14 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
+**In progress: `059-exa-research-provider`**
+([plan](specs/059-exa-research-provider/plan.md)) — Exa replaces Brave for
+`research`: one Exa search per angle supplies both the sources and their
+text, so Parallax no longer fetches pages; `BRAVE_API_KEY`,
+`FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` are removed and are startup
+errors if still set; Exa's cost per run is recorded as `search_cost_usd`.
+Spec and plan written; tasks not yet generated.
+
 **Active Spec Kit feature: `058-otel-trace-context`; all 20 tasks closed,
 the optional live check (T019) deferred**
 ([plan](specs/058-otel-trace-context/plan.md)) — when a tool request carries
