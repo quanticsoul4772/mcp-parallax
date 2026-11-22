@@ -40,6 +40,9 @@ pub struct SearchRequest {
     pub include_domains: Vec<String>,
     /// Never these domains.
     pub exclude_domains: Vec<String>,
+    /// Time left before the run's deadline; bounds the call when set
+    /// (059 review finding 1).
+    pub time_left: Option<std::time::Duration>,
 }
 
 /// One search hit: identity only — text comes from [`SearchProvider::contents`].
@@ -69,6 +72,9 @@ pub struct ContentsRequest {
     pub max_age_hours: i32,
     /// Per-page text cap in characters.
     pub max_characters: usize,
+    /// Time left before the run's deadline; bounds the call when set
+    /// (059 review finding 1).
+    pub time_left: Option<std::time::Duration>,
 }
 
 /// One page's text.
@@ -137,6 +143,7 @@ mod tests {
             search_type: SearchType::Auto,
             include_domains: vec!["example.com".into()],
             exclude_domains: vec![],
+            time_left: None,
         }
     }
 
@@ -193,6 +200,7 @@ mod tests {
                 urls: vec!["https://example.com/a".into()],
                 max_age_hours: 168,
                 max_characters: 16_000,
+                time_left: None,
             })
             .await
             .unwrap();

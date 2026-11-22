@@ -363,6 +363,238 @@ async fn the_runs_exa_cost_sums_every_search_and_the_contents_call() {
     assert!((total - 0.019).abs() < 1e-9, "{total}");
 }
 
+// ---- 059 review findings 1-4 ---------------------------------------------------
+
+/// A clock fixed at the run start until `flag` is set, then ten minutes on —
+/// so a stand-in call can make the deadline pass while it is running.
+fn clock_passing_the_deadline_when(
+    flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Arc<dyn TimeProvider> {
+    let started = DateTime::parse_from_rfc3339("2026-11-22T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let mut clock = MockTimeProvider::new();
+    clock.expect_now().returning(move || {
+        if flag.load(std::sync::atomic::Ordering::SeqCst) {
+            started + chrono::Duration::seconds(600)
+        } else {
+            started
+        }
+    });
+    Arc::new(clock)
+}
+
+fn with_deadline(ms: u64) -> ResearchParams {
+    ResearchParams {
+        constraints: Some(Constraints {
+            deadline_ms: Some(ms),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(Depth::Quick))
+    }
+}
+
+/// Finding 1: every Exa call is bounded by the time left before the deadline.
+#[tokio::test]
+async fn each_exa_call_carries_the_time_left_before_the_deadline() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let thirty = Some(std::time::Duration::from_secs(30));
+    let mut search = MockSearchProvider::new();
+    search
+        .expect_search()
+        .withf(move |req| req.time_left == thirty)
+        .returning(|_| {
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/a".into(),
+                    title: "A".into(),
+                }],
+                cost_usd: None,
+            })
+        });
+    search
+        .expect_contents()
+        .withf(move |req| req.time_left == thirty)
+        .returning(|req| {
+            Ok(ContentsResults {
+                pages: vec![page(&req.urls[0], "Text.", false)],
+                cost_usd: None,
+            })
+        });
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    run(&deps, &with_deadline(30_000)).await.unwrap();
+}
+
+/// Finding 1: a search cut off because the deadline arrived stops the run
+/// early (the deadline's usual outcome), not as a provider failure.
+#[tokio::test]
+async fn a_search_cut_off_by_the_deadline_stops_the_run_early() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("no extraction"),
+        |_, _| panic!("no verification"),
+        |_| panic!("nothing verified"),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(move |_| {
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Err(AppError::Timeout {
+            what: "research deadline",
+            ms: 0,
+        })
+    });
+    let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    let (result, _) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert!(result.stats.stopped_early);
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
+}
+
+/// Finding 1: the same for the contents call.
+#[tokio::test]
+async fn a_contents_call_cut_off_by_the_deadline_stops_the_run_early() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("no extraction"),
+        |_, _| panic!("no verification"),
+        |_| panic!("nothing verified"),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = search_hits(&["https://example.com/a"]);
+    search.expect_contents().returning(move |_| {
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Err(AppError::Timeout {
+            what: "research deadline",
+            ms: 0,
+        })
+    });
+    let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    let (result, _) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert!(result.stats.stopped_early);
+    assert_eq!(result.stats.stop_reason, Some(StopReason::Deadline));
+    assert!(result.sources.is_empty());
+}
+
+/// Finding 2: a page Exa returns under a denied domain (a redirect) is
+/// dropped as filtered — never extracted, never cited.
+#[tokio::test]
+async fn a_redirect_into_a_denied_domain_is_dropped() {
+    let client = scripted(
+        scope_value(),
+        |_| panic!("a denied page must not be extracted"),
+        |_, _| supported(),
+        |_| panic!("nothing to synthesize"),
+    );
+    let mut search = search_hits(&["https://good.example/x"]);
+    search.expect_contents().returning(|req| {
+        let mut moved = page("https://evil.example/y", "Denied text.", false);
+        moved.requested_url = req.urls[0].clone();
+        Ok(ContentsResults {
+            pages: vec![moved],
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let p = ResearchParams {
+        constraints: Some(Constraints {
+            domains_deny: Some(vec!["evil.example".into()]),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(Depth::Quick))
+    };
+    let (result, _) = run(&deps, &p).await.unwrap();
+    assert!(result.sources.is_empty());
+    assert_eq!(result.stats.sources_fetched, 0);
+}
+
+/// Finding 3: pages pair with sources by the echoed address, then by the
+/// page's own address, then — only when exactly one of each is left — the
+/// two leftovers; anything else stays unpaired.
+#[test]
+fn pages_pair_by_id_then_url_then_a_single_leftover() {
+    let mk = |requested: &str, url: &str| {
+        let mut p = page(url, "t", false);
+        p.requested_url = requested.to_string();
+        p
+    };
+    let urls = |list: &[&str]| list.iter().map(|u| (*u).to_string()).collect::<Vec<_>>();
+
+    // By echoed id, and by the page's own address when the id is foreign.
+    let paired = pair_pages(
+        &urls(&["https://a.example/1", "https://b.example/2"]),
+        vec![
+            mk("https://a.example/1", "https://a.example/moved"),
+            mk("opaque-id", "https://b.example/2"),
+        ],
+    );
+    assert_eq!(paired[0].as_ref().unwrap().url, "https://a.example/moved");
+    assert_eq!(paired[1].as_ref().unwrap().url, "https://b.example/2");
+
+    // One source and one page left over: paired.
+    let single = pair_pages(
+        &urls(&["https://a.example/1"]),
+        vec![mk("opaque", "https://www.a.example/1?x=1")],
+    );
+    assert!(single[0].is_some());
+
+    // Two of each left over: nothing is guessed.
+    let two = pair_pages(
+        &urls(&["https://a.example/1", "https://b.example/2"]),
+        vec![
+            mk("o1", "https://x.example/p"),
+            mk("o2", "https://y.example/q"),
+        ],
+    );
+    assert!(two.iter().all(Option::is_none));
+}
+
+/// Finding 4: a failed Exa call may still have been billed, so the run's
+/// cost is unknown rather than the successful calls' sum.
+#[tokio::test]
+async fn a_failed_exa_call_makes_the_runs_cost_unknown() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(move |_| {
+        if failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            Err(AppError::SearchProvider("HTTP 503".into()))
+        } else {
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/a".into(),
+                    title: "A".into(),
+                }],
+                cost_usd: Some(0.007),
+            })
+        }
+    });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Text.", false)],
+            cost_usd: Some(0.005),
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let cost = crate::telemetry::SearchCost::default();
+    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
+        .await
+        .unwrap();
+    assert_eq!(cost.total(), None);
+}
+
 /// A page whose text reached the cap is marked truncated on the result.
 #[tokio::test]
 async fn a_truncated_page_is_marked_on_the_result() {

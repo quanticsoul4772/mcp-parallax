@@ -145,9 +145,9 @@ are read-only, so every request is safe to retry.
 request without a cost. The invocation record gains `search_cost_usd`
 (nullable): the run's sum when every Exa request reported a cost, null when
 any did not, and null for every other tool. A new nullable SQLite column,
-added by the existing additive `ALTER TABLE` migration pattern. The research
-invocation span and metrics carry it as `parallax.search.cost_usd` when
-present. `cost_usd` stays the model cost. The cost is recorded on failed runs
+added by the existing additive `ALTER TABLE` migration pattern. The research invocation span carries it as `parallax.search.cost_usd` when
+present (analyze A3: span only; a dollar value is not used as a metric
+attribute). `cost_usd` stays the model cost. The cost is recorded on failed runs
 too, as model tokens are (020).
 
 **Rationale**: FR-010 and SC-003 (record and telemetry agree because both

@@ -107,7 +107,9 @@ async fn main() {
 
     for (i, (question, depth)) in QUESTIONS.iter().enumerate() {
         let start = Instant::now();
-        let outcome = pipeline::run(
+        // 059 review finding 6: track the run's Exa cost to report it.
+        let cost = mcp_parallax::telemetry::SearchCost::default();
+        let outcome = pipeline::run_at(
             &deps,
             &ResearchParams {
                 question: (*question).to_string(),
@@ -115,8 +117,13 @@ async fn main() {
                 focus: None,
                 constraints: None,
             },
+            deps.concurrency,
+            &cost,
         )
         .await;
+        let exa_cost = cost
+            .total()
+            .map_or_else(|| "unknown".to_string(), |usd| format!("${usd:.4}"));
         let elapsed = start.elapsed().as_millis();
         match *depth {
             Depth::Quick => max_quick_ms = max_quick_ms.max(elapsed),
@@ -140,7 +147,7 @@ async fn main() {
                 }
                 println!(
                     "[{elapsed}ms]{} {question}\n   confidence {:.2}; {} findings, {} sources, \
-                     {} gaps; stopped_early={} ({:?})\n   -> {}\n",
+                     {} gaps; stopped_early={} ({:?}); Exa cost {exa_cost}\n   -> {}\n",
                     if ok { "" } else { " ** UNGROUNDED **" },
                     result.confidence,
                     result.key_findings.len(),

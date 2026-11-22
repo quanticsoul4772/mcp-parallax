@@ -96,19 +96,32 @@ impl ExaClient {
     /// POST to a read-only endpoint (059 D9). Network errors, 429 and 5xx
     /// are retried up to `MAX_RETRIES`, waiting `Retry-After` when the
     /// provider gives one, else an exponential backoff; any other 4xx is the
-    /// provider refusing the request (057's `provider_rejected`), terminal.
-    /// A timeout used the whole per-request budget and is terminal too.
-    async fn post(&self, path: &str, body: &Value) -> Result<reqwest::Response, AppError> {
+    /// provider refusing the request (057's `provider_rejected`), terminal,
+    /// with at most [`DETAIL_MAX_CHARS`] of its body. A timeout used the whole
+    /// per-request budget and is terminal too.
+    ///
+    /// 059 review finding 1: `time_left` (the run's remaining deadline)
+    /// bounds every attempt and every wait, and a `Retry-After` longer than
+    /// the request timeout ends the retries instead of being slept. Returns
+    /// whether a network error was retried on the way (finding 4: the lost
+    /// attempt may have been billed).
+    async fn post(
+        &self,
+        path: &str,
+        body: &Value,
+        time_left: Option<Duration>,
+    ) -> Result<(reqwest::Response, bool), AppError> {
+        let deadline = time_left.map(|left| std::time::Instant::now() + left);
+        let request_timeout = Duration::from_millis(self.timeout_ms);
         let attempts_max = self.max_retries.saturating_add(1);
         let mut last_error = String::new();
-        let mut wait: Option<Duration> = None;
+        let mut retried_transport_error = false;
         for attempt in 1..=attempts_max {
-            if attempt > 1 {
-                let backoff = Duration::from_millis(
-                    self.backoff_base_ms
-                        .saturating_mul(1 << (attempt - 2).min(8)),
-                );
-                tokio::time::sleep(wait.take().unwrap_or(backoff)).await;
+            let budget = deadline
+                .map(time_until)
+                .map_or(request_timeout, |left| left.min(request_timeout));
+            if budget.is_zero() {
+                return Err(Self::deadline_reached());
             }
             let response = match self
                 .http
@@ -116,23 +129,32 @@ impl ExaClient {
                 .header("x-api-key", &self.api_key)
                 .header("Accept", "application/json")
                 .json(body)
-                .timeout(Duration::from_millis(self.timeout_ms))
+                .timeout(budget)
                 .send()
                 .await
             {
                 Ok(response) => response,
-                Err(e) if e.is_timeout() => return Err(self.timeout()),
+                Err(e) if e.is_timeout() => {
+                    return Err(if budget < request_timeout {
+                        Self::deadline_reached()
+                    } else {
+                        self.timeout()
+                    });
+                }
                 Err(e) => {
                     last_error = self.transport_error(&e).to_string();
+                    retried_transport_error = true;
+                    self.wait_before_retry(attempt, attempts_max, None, deadline)
+                        .await?;
                     continue;
                 }
             };
             let status = response.status();
             if status.is_success() {
-                return Ok(response);
+                return Ok((response, retried_transport_error));
             }
             if status.as_u16() == 429 || status.is_server_error() {
-                wait = retry_after(
+                let asked = retry_after(
                     response
                         .headers()
                         .get(reqwest::header::RETRY_AFTER)
@@ -140,9 +162,19 @@ impl ExaClient {
                     chrono::Utc::now(),
                 );
                 last_error = format!("HTTP {status}");
+                if asked.is_some_and(|wait| wait > request_timeout) {
+                    return Err(AppError::RetriesExhausted {
+                        attempts: attempt,
+                        last: format!(
+                            "{last_error} (Retry-After longer than the request timeout, not waited)"
+                        ),
+                    });
+                }
+                self.wait_before_retry(attempt, attempts_max, asked, deadline)
+                    .await?;
                 continue;
             }
-            let detail = response.text().await.unwrap_or_default();
+            let detail = cap_detail(&response.text().await.unwrap_or_default());
             return Err(AppError::ProviderRejected {
                 status: status.as_u16(),
                 detail,
@@ -152,6 +184,39 @@ impl ExaClient {
             attempts: attempts_max,
             last: last_error,
         })
+    }
+
+    /// Sleep before the next attempt — the provider's `Retry-After`, else the
+    /// backoff — unless this was the last attempt. A wait that would outlast
+    /// the run's deadline ends the call instead.
+    async fn wait_before_retry(
+        &self,
+        attempt: u32,
+        attempts_max: u32,
+        asked: Option<Duration>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), AppError> {
+        if attempt >= attempts_max {
+            return Ok(());
+        }
+        let backoff = Duration::from_millis(
+            self.backoff_base_ms
+                .saturating_mul(1 << (attempt - 1).min(8)),
+        );
+        let wait = asked.unwrap_or(backoff);
+        if deadline.map(time_until).is_some_and(|left| wait >= left) {
+            return Err(Self::deadline_reached());
+        }
+        tokio::time::sleep(wait).await;
+        Ok(())
+    }
+
+    /// The run's deadline arrived during an Exa call.
+    const fn deadline_reached() -> AppError {
+        AppError::Timeout {
+            what: "research deadline",
+            ms: 0,
+        }
     }
 
     async fn read<T: serde::de::DeserializeOwned>(
@@ -186,7 +251,9 @@ impl ExaClient {
 #[async_trait::async_trait]
 impl SearchProvider for ExaClient {
     async fn search(&self, request: &SearchRequest) -> Result<SearchResults, AppError> {
-        let response = self.post("/search", &Self::search_body(request)).await?;
+        let (response, retried) = self
+            .post("/search", &Self::search_body(request), request.time_left)
+            .await?;
         let payload: SearchPayload = self.read(response).await?;
         Ok(SearchResults {
             hits: payload
@@ -197,13 +264,17 @@ impl SearchProvider for ExaClient {
                     url: r.url,
                 })
                 .collect(),
-            cost_usd: payload.cost_dollars.and_then(|c| c.total),
+            cost_usd: reported_cost(payload.cost_dollars.and_then(|c| c.total), retried),
         })
     }
 
     async fn contents(&self, request: &ContentsRequest) -> Result<ContentsResults, AppError> {
-        let response = self
-            .post("/contents", &Self::contents_body(request))
+        let (response, retried) = self
+            .post(
+                "/contents",
+                &Self::contents_body(request),
+                request.time_left,
+            )
             .await?;
         let payload: ContentsPayload = self.read(response).await?;
         let failed: Vec<String> = payload
@@ -233,7 +304,7 @@ impl SearchProvider for ExaClient {
                     }
                 })
                 .collect(),
-            cost_usd: payload.cost_dollars.and_then(|c| c.total),
+            cost_usd: reported_cost(payload.cost_dollars.and_then(|c| c.total), retried),
         })
     }
 }
@@ -249,6 +320,35 @@ fn retry_after(value: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Optio
     let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
     let wait = at.with_timezone(&chrono::Utc) - now;
     Some(wait.to_std().unwrap_or(Duration::ZERO))
+}
+
+/// The cost a reply can be credited with (059 review finding 4): what it
+/// reported, unless a network error was retried on the way — the provider may
+/// have billed the lost attempt, so the call's true cost is unknown.
+const fn reported_cost(parsed: Option<f64>, retried_transport_error: bool) -> Option<f64> {
+    if retried_transport_error {
+        None
+    } else {
+        parsed
+    }
+}
+
+/// Time left until `deadline`.
+fn time_until(deadline: std::time::Instant) -> Duration {
+    deadline.saturating_duration_since(std::time::Instant::now())
+}
+
+/// Most of a rejection body kept in the error (059 review finding 7).
+const DETAIL_MAX_CHARS: usize = 2_000;
+
+/// A rejection body cut to [`DETAIL_MAX_CHARS`], marking the cut.
+fn cap_detail(body: &str) -> String {
+    if body.chars().count() <= DETAIL_MAX_CHARS {
+        return body.to_string();
+    }
+    let mut kept: String = body.chars().take(DETAIL_MAX_CHARS).collect();
+    kept.push_str("… (truncated)");
+    kept
 }
 
 /// The provider's title, or the URL when it gives none.
@@ -316,6 +416,7 @@ mod tests {
             search_type: SearchType::DeepLite,
             include_domains: include.iter().map(|d| (*d).to_string()).collect(),
             exclude_domains: exclude.iter().map(|d| (*d).to_string()).collect(),
+            time_left: None,
         }
     }
 
@@ -408,6 +509,7 @@ mod tests {
             ],
             max_age_hours: 168,
             max_characters: 100,
+            time_left: None,
         };
         let results = client_for(&mock).contents(&request).await.unwrap();
 
@@ -456,6 +558,7 @@ mod tests {
             ],
             max_age_hours: 168,
             max_characters: 100,
+            time_left: None,
         };
         let pages = client_for(&mock).contents(&request).await.unwrap().pages;
         assert_eq!(pages[0].requested_url, "http://example.com/a");
@@ -512,6 +615,7 @@ mod tests {
                 urls: vec!["https://example.com/a".into()],
                 max_age_hours: 168,
                 max_characters: 100,
+                time_left: None,
             })
             .await
             .unwrap();
@@ -535,6 +639,88 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(&err, AppError::RetriesExhausted { attempts: 3, last } if last.contains("503")),
+            "{err:?}"
+        );
+    }
+
+    /// 059 review finding 1: a `Retry-After` longer than the request timeout
+    /// is not slept — the call fails at once with the last error.
+    #[tokio::test]
+    async fn a_retry_after_beyond_the_request_timeout_fails_without_waiting() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "3600"))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let started = std::time::Instant::now();
+        let err = client_for(&mock)
+            .search(&search_request(&[], &[]))
+            .await
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(5), "it waited");
+        assert!(
+            matches!(&err, AppError::RetriesExhausted { attempts: 1, last } if last.contains("Retry-After")),
+            "{err:?}"
+        );
+    }
+
+    /// 059 review finding 1: the time left before the run's deadline bounds
+    /// the call, so a slow reply cannot carry the run past it.
+    #[tokio::test]
+    async fn the_time_left_bounds_the_call() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "results": [] }))
+                    .set_delay(Duration::from_secs(5)),
+            )
+            .mount(&mock)
+            .await;
+        // A long request timeout, so only the time left can cut the call short.
+        let config = crate::config::Config {
+            request_timeout_ms: 30_000,
+            ..test_config()
+        };
+        let client = ExaClient::with_base_url(&config, "exa-test-key", &mock.uri());
+        let started = std::time::Instant::now();
+        let mut request = search_request(&[], &[]);
+        request.time_left = Some(Duration::from_millis(300));
+        let err = client.search(&request).await.unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_millis(1_500),
+            "the deadline did not bound it"
+        );
+        assert!(matches!(&err, AppError::Timeout { .. }), "{err:?}");
+    }
+
+    /// 059 review finding 4: a reply that followed a retried network error
+    /// may have been billed twice, so its cost is unknown, not the one figure.
+    #[test]
+    fn a_cost_after_a_retried_network_error_is_unknown() {
+        assert_eq!(reported_cost(Some(0.007), false), Some(0.007));
+        assert_eq!(reported_cost(Some(0.007), true), None);
+        assert_eq!(reported_cost(None, false), None);
+    }
+
+    /// 059 review finding 7: a rejection keeps at most 2,000 characters of the
+    /// provider's body, marking the cut.
+    #[tokio::test]
+    async fn a_long_rejection_body_is_cut_and_marked() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("x".repeat(5_000)))
+            .mount(&mock)
+            .await;
+        let err = client_for(&mock)
+            .search(&search_request(&[], &[]))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, AppError::ProviderRejected { detail, .. }
+                if detail.ends_with("… (truncated)")
+                    && detail.chars().filter(|c| *c == 'x').count() == 2_000),
             "{err:?}"
         );
     }

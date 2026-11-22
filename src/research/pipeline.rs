@@ -118,6 +118,12 @@ impl Ceiling<'_> {
         hit
     }
 
+    /// Time left before the deadline (059 review finding 1): bounds every
+    /// Exa call, so a call in progress cannot carry the run past it.
+    fn time_left(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.deadline_ms.saturating_sub(self.elapsed_ms()))
+    }
+
     fn current(&self) -> Option<StopReason> {
         self.tripped.get().copied()
     }
@@ -242,8 +248,12 @@ async fn run_metered_at(
                 search_type: params.depth.unwrap_or(Depth::Standard).search_type(),
                 include_domains: settings.domains_allow.clone(),
                 exclude_domains: settings.domains_deny.clone(),
+                time_left: Some(ceiling.time_left()),
             })
             .collect();
+        for _ in &requests {
+            search_cost.begin();
+        }
         let searches =
             futures::future::join_all(requests.iter().map(|r| deps.search.search(r))).await;
 
@@ -253,17 +263,23 @@ async fn run_metered_at(
             match outcome {
                 Ok(results) => {
                     stats.searches += 1;
-                    search_cost.add(results.cost_usd);
+                    search_cost.end(results.cost_usd);
                     for hit in results.hits {
                         if seen_urls.insert(url_key(&hit.url)) {
                             candidates.push((hit.url, hit.title));
                         }
                     }
                 }
-                Err(e) => search_errors.push(e),
+                Err(e) => {
+                    // A failed call may still have been billed (finding 4).
+                    search_cost.end(None);
+                    search_errors.push(e);
+                }
             }
         }
-        if stats.searches == 0 {
+        // A search cut off because the deadline arrived stops the run early,
+        // as the deadline always does, rather than failing it (finding 1).
+        if stats.searches == 0 && ceiling.probe().is_none() {
             if let Some(first) = search_errors.into_iter().next() {
                 // The whole search phase failed — the invocation fails with
                 // the provider's class (edge case: provider down).
@@ -276,51 +292,56 @@ async fn run_metered_at(
     // policy-excluded candidates don't silently vanish from the accounting).
     stats.sources_found = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
 
-    // Domain pre-filter (pure) — denied domains never reach the fetcher.
-    candidates.retain(|(url, _)| {
-        reqwest::Url::parse(url)
-            .ok()
-            .and_then(|u| u.host_str().map(String::from))
-            .is_some_and(|host| {
-                !settings
-                    .domains_deny
-                    .iter()
-                    .any(|d| domain_matches(&host, d))
-                    && (settings.domains_allow.is_empty()
-                        || settings
-                            .domains_allow
-                            .iter()
-                            .any(|d| domain_matches(&host, d)))
-            })
-    });
+    // Domain pre-filter (pure) — denied domains never reach the contents call.
+    candidates.retain(|(url, _)| domain_allowed(url, &settings));
     candidates.truncate(settings.max_sources);
 
     // ---- (3) CONTENTS + EXTRACT — one contents call for the kept sources
     // (059 D1: text is billed only for sources used), then per-source
     // extraction with no cross-source barrier.
-    let mut pages: BTreeMap<String, Page> = BTreeMap::new();
+    let mut pages: Vec<Option<Page>> = vec![None; candidates.len()];
     if !candidates.is_empty() && ceiling.probe().is_none() {
         let request = ContentsRequest {
             urls: candidates.iter().map(|(url, _)| url.clone()).collect(),
             max_age_hours: deps.max_age_hours,
             max_characters: extract::EXTRACT_TEXT_MAX_CHARS,
+            time_left: Some(ceiling.time_left()),
         };
-        // 059 B1: this one request carries every source's text, so its
-        // failure is the phase's failure (023); `run_at` meters the spend
-        // so far onto the error (020).
-        let contents = deps.search.contents(&request).await?;
-        search_cost.add(contents.cost_usd);
-        for page in contents.pages {
-            pages.insert(url_key(&page.requested_url), page);
+        search_cost.begin();
+        match deps.search.contents(&request).await {
+            Ok(contents) => {
+                search_cost.end(contents.cost_usd);
+                pages = pair_pages(&request.urls, contents.pages);
+            }
+            Err(error) => {
+                search_cost.end(None);
+                // 059 B1: this one request carries every source's text, so
+                // its failure is the phase's failure (023); `run_at` meters
+                // the spend so far onto the error (020). Cut off by the
+                // deadline instead, the run stops early (finding 1).
+                if ceiling.probe().is_none() {
+                    return Err(error);
+                }
+            }
         }
     }
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
         let mut tasks = Vec::new();
-        for (index, (url, _title)) in candidates.iter().enumerate() {
+        for (index, ((url, _title), page)) in candidates.iter().zip(pages).enumerate() {
             if ceiling.probe().is_some() {
                 break;
+            }
+            // Finding 2: the page may come back under another address (a
+            // redirect); the caller's domain lists apply to that one too, as
+            // they did to every redirect hop of the old fetcher. A denied
+            // page is dropped as filtered, never extracted or cited.
+            if page
+                .as_ref()
+                .is_some_and(|p| !domain_allowed(&p.url, &settings))
+            {
+                continue;
             }
             let id = format!("s{}", index + 1);
             tasks.push(extract_source(
@@ -330,7 +351,7 @@ async fn run_metered_at(
                 &ceiling,
                 id,
                 url.clone(),
-                pages.remove(&url_key(url)),
+                page,
             ));
         }
         let mut failures: Vec<AppError> = Vec::new();
@@ -565,6 +586,56 @@ async fn scope(
         angles,
         sub_questions,
     })
+}
+
+/// The caller's domain lists applied to one address: not denied, and allowed
+/// when an allow list is given.
+fn domain_allowed(url: &str, settings: &RunSettings) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .is_some_and(|host| {
+            !settings
+                .domains_deny
+                .iter()
+                .any(|d| domain_matches(&host, d))
+                && (settings.domains_allow.is_empty()
+                    || settings
+                        .domains_allow
+                        .iter()
+                        .any(|d| domain_matches(&host, d)))
+        })
+}
+
+/// Pair the contents call's pages with the requested URLs, in request order
+/// (059 review finding 3): by the address Exa echoes as `id`, then by the
+/// page's own address, then — only when exactly one page and one URL are
+/// left — those two. Anything still unpaired stays `None`; text is never
+/// attached to a source by guesswork.
+pub(crate) fn pair_pages(requested: &[String], pages: Vec<Page>) -> Vec<Option<Page>> {
+    let mut paired: Vec<Option<Page>> = vec![None; requested.len()];
+    let position = |key: String, paired: &[Option<Page>]| {
+        requested
+            .iter()
+            .enumerate()
+            .position(|(i, url)| paired[i].is_none() && url_key(url) == key)
+    };
+    let mut leftovers = Vec::new();
+    for page in pages {
+        let slot = position(url_key(&page.requested_url), &paired)
+            .or_else(|| position(url_key(&page.url), &paired));
+        match slot {
+            Some(i) => paired[i] = Some(page),
+            None => leftovers.push(page),
+        }
+    }
+    let open: Vec<usize> = (0..requested.len())
+        .filter(|i| paired[*i].is_none())
+        .collect();
+    if let ([i], [_]) = (open.as_slice(), leftovers.as_slice()) {
+        paired[*i] = leftovers.pop();
+    }
+    paired
 }
 
 /// One source's text → claim-extraction pipeline. The text came from the

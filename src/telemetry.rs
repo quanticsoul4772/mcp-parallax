@@ -176,35 +176,52 @@ impl ModelUsage {
 /// One research run's Exa cost (059 FR-010).
 ///
 /// The sum of what each Exa call reported, shared by the pipeline (which
-/// adds) and the record guard (which reads on every exit, failures and
-/// cancellations included).
+/// records each call) and the record guard (which reads on every exit,
+/// failures and cancellations included). A call is opened with
+/// [`Self::begin`] and closed with [`Self::end`]; one never closed (the run
+/// was cancelled mid-call) or closed without a cost may still have been
+/// billed, so the total becomes unknown (059 review finding 4).
 #[derive(Debug, Default)]
 pub struct SearchCost {
-    /// `(sum, calls, every call reported a cost)`.
-    state: std::sync::Mutex<(f64, u32, bool)>,
+    state: std::sync::Mutex<CostState>,
+}
+
+#[derive(Debug, Default)]
+struct CostState {
+    sum: f64,
+    calls: u32,
+    open: u32,
+    unreported: bool,
 }
 
 impl SearchCost {
-    /// Add one Exa call's reported cost; `None` when the call reported none.
-    pub fn add(&self, cost: Option<f64>) {
+    /// An Exa call is starting.
+    pub fn begin(&self) {
         if let Ok(mut state) = self.state.lock() {
-            if state.1 == 0 {
-                state.2 = true;
-            }
-            state.1 += 1;
+            state.open += 1;
+        }
+    }
+
+    /// An Exa call finished, with the cost it reported — `None` when it
+    /// failed or reported none.
+    pub fn end(&self, cost: Option<f64>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.open = state.open.saturating_sub(1);
+            state.calls += 1;
             match cost {
-                Some(usd) => state.0 += usd,
-                None => state.2 = false,
+                Some(usd) => state.sum += usd,
+                None => state.unreported = true,
             }
         }
     }
 
-    /// The run's total: `None` when no Exa call was made, or when any call
-    /// reported no cost — unknown, never understated as a partial sum.
+    /// The run's total: `None` when no Exa call was made, when one is still
+    /// open, or when any reported no cost — unknown, never understated as a
+    /// partial sum.
     #[must_use]
     pub fn total(&self) -> Option<f64> {
         let state = self.state.lock().ok()?;
-        (state.1 > 0 && state.2).then_some(state.0)
+        (state.calls > 0 && state.open == 0 && !state.unreported).then_some(state.sum)
     }
 }
 
@@ -412,14 +429,31 @@ mod tests {
     fn search_cost_sums_reported_costs_and_an_unreported_one_makes_it_unknown() {
         let cost = SearchCost::default();
         assert_eq!(cost.total(), None);
-        cost.add(Some(0.007));
-        cost.add(Some(0.005));
+        cost.begin();
+        cost.end(Some(0.007));
+        cost.begin();
+        cost.end(Some(0.005));
         let total = cost.total().unwrap();
         assert!((total - 0.012).abs() < 1e-9, "{total}");
-        cost.add(None);
+        // A call that failed or reported nothing may still have been billed.
+        cost.begin();
+        cost.end(None);
         assert_eq!(cost.total(), None);
-        cost.add(Some(0.007));
+        cost.begin();
+        cost.end(Some(0.007));
         assert_eq!(cost.total(), None, "unknown stays unknown");
+    }
+
+    /// 059 review finding 4: a call still in flight when the run ends (a
+    /// cancellation drops it mid-await) may have been billed, so the total
+    /// is unknown.
+    #[test]
+    fn a_call_still_in_flight_makes_the_cost_unknown() {
+        let cost = SearchCost::default();
+        cost.begin();
+        cost.end(Some(0.007));
+        cost.begin();
+        assert_eq!(cost.total(), None);
     }
 
     #[test]
