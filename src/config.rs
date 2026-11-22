@@ -184,26 +184,15 @@ pub struct Config {
     /// Default recall result count. `MEMORY_RECALL_LIMIT`, default `5`;
     /// must be in `1..=20`.
     pub memory_recall_limit: u8,
-    /// Brave Search API key. **Optional — its presence enables the research
-    /// capability** (`research`); absent, the tool does not exist and no
-    /// research egress is ever made. `BRAVE_API_KEY`.
-    pub brave_api_key: Option<String>,
     /// Exa API key. **Optional — its presence enables the research
     /// capability** (059); absent, no research egress is made. `EXA_API_KEY`.
     pub exa_api_key: Option<String>,
     /// Freshness limit for research page text, in hours. `EXA_MAX_AGE_HOURS`,
     /// default `168`; must be in `-1..=720` (`0` always live, `-1` cache only).
     pub exa_max_age_hours: i32,
-    /// Per-source fetch timeout in milliseconds. `FETCH_TIMEOUT_MS`,
-    /// default `10000`.
-    pub fetch_timeout_ms: u64,
-    /// Concurrent fetch/extract/verify cap for research runs.
+    /// Concurrent extract/verify cap for research runs.
     /// `RESEARCH_CONCURRENCY`, default `8`; must be in `1..=32`.
     pub research_concurrency: u8,
-    /// Permit research fetches to loopback/private/link-local targets.
-    /// `FETCH_ALLOW_PRIVATE`, default `false` — an SSRF guard; enable only
-    /// for local testing.
-    pub fetch_allow_private: bool,
     /// Extra pre-action gate risk patterns (checkpoint layer, FR-013) —
     /// comma-separated substrings extending the built-in set.
     /// `CHECKPOINT_GATE_PATTERNS`, default empty. A present value with an
@@ -339,16 +328,12 @@ impl Config {
         let voyage_model =
             std::env::var("VOYAGE_MODEL").unwrap_or_else(|_| DEFAULT_VOYAGE_MODEL.to_string());
         let memory_recall_limit = validate_recall_limit(parse_env("MEMORY_RECALL_LIMIT", 5)?)?;
-        let brave_api_key = std::env::var("BRAVE_API_KEY")
-            .ok()
-            .filter(|key| !key.trim().is_empty());
         let exa_api_key = present_key(std::env::var("EXA_API_KEY").ok());
+        check_removed(&|key| present_key(std::env::var(key).ok()).is_some())?;
         let exa_max_age_hours =
             validate_exa_max_age_hours(parse_env("EXA_MAX_AGE_HOURS", EXA_MAX_AGE_HOURS_DEFAULT)?)?;
-        let fetch_timeout_ms = parse_env("FETCH_TIMEOUT_MS", 10_000)?;
         let research_concurrency =
             validate_research_concurrency(parse_env("RESEARCH_CONCURRENCY", 8)?)?;
-        let fetch_allow_private = parse_env("FETCH_ALLOW_PRIVATE", false)?;
         let checkpoint_gate_patterns =
             parse_gate_patterns(std::env::var("CHECKPOINT_GATE_PATTERNS").ok().as_deref())?;
         let grounded_verify_root = std::env::var("GROUNDED_VERIFY_ROOT")
@@ -388,12 +373,9 @@ impl Config {
             voyage_api_key,
             voyage_model,
             memory_recall_limit,
-            brave_api_key,
             exa_api_key,
             exa_max_age_hours,
-            fetch_timeout_ms,
             research_concurrency,
-            fetch_allow_private,
             checkpoint_gate_patterns,
             grounded_verify_root,
             grounded_verify_max_bytes,
@@ -469,6 +451,31 @@ fn validate_research_concurrency(n: u8) -> Result<u8, ConfigError> {
     } else {
         Err(ConfigError::Invalid("RESEARCH_CONCURRENCY"))
     }
+}
+
+/// Variables removed by 059, checked before anything starts (FR-002,
+/// FR-003). `present` reports a variable set to a non-blank value. A Brave
+/// key is an error only when no Exa key would enable research instead —
+/// other tools share `BRAVE_API_KEY`, so with Exa set it is ignored. The two
+/// fetch settings are errors whenever set: nothing reads them any more.
+fn check_removed(present: &dyn Fn(&str) -> bool) -> Result<(), ConfigError> {
+    if present("BRAVE_API_KEY") && !present("EXA_API_KEY") {
+        return Err(ConfigError::Removed {
+            var: "BRAVE_API_KEY",
+            remedy: "research now uses Exa; set EXA_API_KEY (BRAVE_API_KEY is ignored once \
+                     EXA_API_KEY is set)",
+        });
+    }
+    for var in ["FETCH_TIMEOUT_MS", "FETCH_ALLOW_PRIVATE"] {
+        if present(var) {
+            return Err(ConfigError::Removed {
+                var,
+                remedy: "Parallax no longer fetches pages (research text comes from Exa); \
+                         remove it",
+            });
+        }
+    }
+    Ok(())
 }
 
 /// An API key is present only when non-blank.
@@ -548,12 +555,9 @@ pub(crate) fn test_config() -> Config {
         voyage_api_key: None,
         voyage_model: DEFAULT_VOYAGE_MODEL.into(),
         memory_recall_limit: 5,
-        brave_api_key: None,
         exa_api_key: None,
         exa_max_age_hours: EXA_MAX_AGE_HOURS_DEFAULT,
-        fetch_timeout_ms: 10_000,
         research_concurrency: 8,
-        fetch_allow_private: false,
         checkpoint_gate_patterns: vec![],
         grounded_verify_root: None,
         grounded_verify_max_bytes: DEFAULT_GROUNDED_VERIFY_MAX_BYTES,
@@ -669,6 +673,42 @@ mod tests {
             assert!(
                 err.to_string().contains("EXA_MAX_AGE_HOURS"),
                 "{hours}: {err}"
+            );
+        }
+    }
+
+    /// 059 T011 (FR-002, FR-003, research.md D7 as amended): a Brave key is
+    /// an error only when no Exa key would enable research instead; the two
+    /// fetch settings are errors whenever set. Each error names its variable.
+    #[test]
+    fn removed_variables_are_startup_errors_naming_them() {
+        let set = |names: &'static [&'static str]| move |key: &str| names.contains(&key);
+
+        assert!(check_removed(&set(&[])).is_ok());
+        assert!(check_removed(&set(&["EXA_API_KEY"])).is_ok());
+
+        let msg = check_removed(&set(&["BRAVE_API_KEY"]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("BRAVE_API_KEY") && msg.contains("EXA_API_KEY"),
+            "{msg}"
+        );
+        assert!(
+            check_removed(&set(&["BRAVE_API_KEY", "EXA_API_KEY"])).is_ok(),
+            "Brave is ignored with Exa set"
+        );
+
+        for name in ["FETCH_TIMEOUT_MS", "FETCH_ALLOW_PRIVATE"] {
+            let names: &'static [&'static str] = if name == "FETCH_TIMEOUT_MS" {
+                &["FETCH_TIMEOUT_MS", "EXA_API_KEY"]
+            } else {
+                &["FETCH_ALLOW_PRIVATE", "EXA_API_KEY"]
+            };
+            let msg = check_removed(&set(names)).unwrap_err().to_string();
+            assert!(
+                msg.contains(name) && msg.contains("no longer used"),
+                "{msg}"
             );
         }
     }

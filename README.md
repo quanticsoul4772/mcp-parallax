@@ -105,12 +105,12 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `VOYAGE_API_KEY` | no | unset | Presence enables the memory tools; absent, they are not in the catalog |
 | `VOYAGE_MODEL` | no | `voyage-4` | Embedding model (stay within one family — vectors share a space) |
 | `MEMORY_RECALL_LIMIT` | no | `5` | Default recall top-k (1–20) |
-| `BRAVE_API_KEY` | no | unset | Presence enables `research`; absent, it is not in the catalog |
+| `BRAVE_API_KEY` | no | unset | No longer used: research runs on Exa. Set while `EXA_API_KEY` is unset, it stops startup with an error naming both; with `EXA_API_KEY` set it is ignored, so other tools can share it |
 | `EXA_API_KEY` | no | unset | Presence enables `research` (Exa search and page text); absent, it is not in the catalog |
 | `EXA_MAX_AGE_HOURS` | no | `168` | Freshness limit for research page text, in hours: `0` always fetches live, `-1` uses Exa's cache only (-1 to 720) |
-| `FETCH_TIMEOUT_MS` | no | `10000` | Per-source fetch timeout for research runs |
-| `RESEARCH_CONCURRENCY` | no | `8` | Concurrent fetch/extract/verify cap (1–32) |
-| `FETCH_ALLOW_PRIVATE` | no | `false` | SSRF guard: when false, research fetches to loopback/private/link-local targets are blocked. Enable only for local testing |
+| `FETCH_TIMEOUT_MS` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
+| `RESEARCH_CONCURRENCY` | no | `8` | Concurrent extract/verify cap (1–32) |
+| `FETCH_ALLOW_PRIVATE` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
 | `CHECKPOINT_GATE_PATTERNS` | no | empty | Comma-separated substrings extending the pre-action gate's built-in risk patterns; an empty entry (`a,,b`) is an error |
 | `GROUNDED_VERIFY_ROOT` | no | unset | Presence enables `grounded_verify`; the single root that locators resolve within (canonicalized at startup; reads are confined to it). Absent, the tool is not in the catalog. If the root is inside a folder whose files are refused as secrets (such as `.ssh`), or is a drive root or the home folder, `grounded_verify` is left out of the catalog with the reason logged; every other tool still starts. Set it to `.` to give each session its own folder: each Parallax uses the folder its session was started in. |
 | `GROUNDED_VERIFY_MAX_BYTES` | no | `262144` | Total assembled-evidence byte ceiling per `grounded_verify` call |
