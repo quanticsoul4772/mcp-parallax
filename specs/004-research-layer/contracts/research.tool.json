@@ -255,6 +255,9 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "truncated": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -262,7 +265,8 @@
             "url",
             "title",
             "fetched_at",
-            "credibility"
+            "credibility",
+            "truncated"
           ],
           "additionalProperties": false
         },

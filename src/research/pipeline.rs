@@ -30,8 +30,7 @@ use crate::research::{
 use crate::schema::validate;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
-use crate::traits::fetcher::Fetcher;
-use crate::traits::search::{SearchProvider, SearchRequest};
+use crate::traits::search::{ContentsRequest, Page, SearchProvider, SearchRequest};
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -69,8 +68,10 @@ pub struct ResearchDeps {
     pub verify_mode: CorrectiveMode,
     /// Generic input bound (`INPUT_MAX_CHARS`).
     pub input_max_chars: usize,
-    /// Concurrent fetch/extract/verify cap (`RESEARCH_CONCURRENCY`).
+    /// Concurrent extract/verify cap (`RESEARCH_CONCURRENCY`).
     pub concurrency: usize,
+    /// Freshness limit for source text in hours (`EXA_MAX_AGE_HOURS`, 059).
+    pub max_age_hours: i32,
     /// 018: which model each research call site resolved to, so per-model
     /// token usage can be attributed without asking a client what it is
     /// (the `ModelClient` trait deliberately does not say — research D2).
@@ -161,10 +162,9 @@ enum ClaimOutcome {
 /// source/claim failures degrade the run instead (FR-013).
 pub async fn run(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     params: &ResearchParams,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
-    run_at(deps, fetcher, params, deps.concurrency).await
+    run_at(deps, params, deps.concurrency).await
 }
 
 /// Run at a caller-reduced concurrency (028 FR-015).
@@ -179,12 +179,11 @@ pub async fn run(
 /// whatever the run had already spent.
 pub async fn run_at(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     params: &ResearchParams,
     concurrency: usize,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered_at(deps, fetcher, params, &meter, concurrency).await;
+    let outcome = run_metered_at(deps, params, &meter, concurrency).await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -201,7 +200,6 @@ pub async fn run_at(
 #[allow(clippy::too_many_lines)] // the five-phase spine reads best unbroken; helpers carry the logic
 async fn run_metered_at(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     params: &ResearchParams,
     meter: &RunMeter,
     concurrency: usize,
@@ -288,7 +286,24 @@ async fn run_metered_at(
     });
     candidates.truncate(settings.max_sources);
 
-    // ---- (3) FETCH + EXTRACT — per-source pipeline, no cross-source barrier
+    // ---- (3) CONTENTS + EXTRACT — one contents call for the kept sources
+    // (059 D1: text is billed only for sources used), then per-source
+    // extraction with no cross-source barrier.
+    let mut pages: BTreeMap<String, Page> = BTreeMap::new();
+    if !candidates.is_empty() && ceiling.probe().is_none() {
+        let request = ContentsRequest {
+            urls: candidates.iter().map(|(url, _)| url.clone()).collect(),
+            max_age_hours: deps.max_age_hours,
+            max_characters: extract::EXTRACT_TEXT_MAX_CHARS,
+        };
+        // 059 B1: this one request carries every source's text, so its
+        // failure is the phase's failure (023); `run_at` meters the spend
+        // so far onto the error (020).
+        let contents = deps.search.contents(&request).await?;
+        for page in contents.pages {
+            pages.insert(url_key(&page.requested_url), page);
+        }
+    }
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
@@ -298,14 +313,14 @@ async fn run_metered_at(
                 break;
             }
             let id = format!("s{}", index + 1);
-            tasks.push(fetch_and_extract(
+            tasks.push(extract_source(
                 deps,
-                fetcher,
                 Arc::clone(&semaphore),
                 meter,
                 &ceiling,
                 id,
                 url.clone(),
+                pages.remove(&url_key(url)),
             ));
         }
         let mut failures: Vec<AppError> = Vec::new();
@@ -542,18 +557,19 @@ async fn scope(
     })
 }
 
-/// One source's fetch → readable-text → claim-extraction pipeline. `None`
-/// drops the source (counted by the caller's arithmetic; FR-013). The
-/// ceiling is re-probed after the permit — a budget blown mid-phase stops
-/// queued sources, not just the next phase.
-async fn fetch_and_extract(
+/// One source's text → claim-extraction pipeline. The text came from the
+/// run's contents call (059); a URL it returned no page for is a failed
+/// source, and a page with no text is an empty one (FR-013). The ceiling is
+/// re-probed after the permit — a budget blown mid-phase stops queued
+/// sources, not just the next phase.
+async fn extract_source(
     deps: &ResearchDeps,
-    fetcher: &dyn Fetcher,
     semaphore: Arc<Semaphore>,
     meter: &RunMeter,
     ceiling: &Ceiling<'_>,
     id: String,
     url: String,
+    page: Option<Page>,
 ) -> SourceOutcome {
     let Ok(_permit) = semaphore.acquire().await else {
         return SourceOutcome::Empty;
@@ -561,22 +577,31 @@ async fn fetch_and_extract(
     if ceiling.probe().is_some() {
         return SourceOutcome::Empty;
     }
-    let page = match fetcher.fetch(&url).await {
-        Ok(page) => page,
-        Err(e) => {
-            tracing::debug!(url, error = %e, "source dropped at fetch");
-            return SourceOutcome::Failed(Box::new(e));
-        }
-    };
-    // Not a failure: the page loaded and held no main text. A run where every
-    // candidate is unreadable genuinely has no findings, and saying so is the
-    // truthful answer.
-    let Some(readable) = extract::readable_text(&page) else {
+    let Some(page) = page else {
         tracing::debug!(
             url,
-            "source dropped at readability (no extractable main text)"
+            "source dropped: the contents call returned no page for it"
         );
+        return SourceOutcome::Failed(Box::new(AppError::SearchProvider(format!(
+            "no text returned for {url}"
+        ))));
+    };
+    // Not a failure: the page was read and held no text. A run where every
+    // candidate is like that genuinely has no findings, and saying so is the
+    // truthful answer.
+    let text: String = page
+        .text
+        .trim()
+        .chars()
+        .take(extract::EXTRACT_TEXT_MAX_CHARS)
+        .collect();
+    if text.is_empty() {
+        tracing::debug!(url, "source dropped: no text");
         return SourceOutcome::Empty;
+    }
+    let readable = extract::ReadablePage {
+        title: page.title,
+        text,
     };
     let (claims, input, output) =
         match extract::extract_claims(deps.extract_client.as_ref(), &deps.extract_mode, &readable)
@@ -613,12 +638,13 @@ async fn fetch_and_extract(
         .unwrap_or_default();
     SourceOutcome::Extracted(Box::new(SourceRecord {
         id,
-        url: page.url.clone(),
+        url: page.url,
         title: readable.title,
         fetched_at: deps.clock.now().to_rfc3339(),
         credibility: source_credibility(&host),
         claims,
         text: readable.text,
+        truncated: page.truncated,
     }))
 }
 

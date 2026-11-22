@@ -6,18 +6,17 @@
 //! well-formed with `stopped_early`. SC-007: a false-premise question is not
 //! confirmed. Results recorded in `specs/004-research-layer/quickstart.md`.
 //!
-//! Run: `ANTHROPIC_API_KEY=... BRAVE_API_KEY=... cargo run --release --example acceptance_research`
+//! Run: `ANTHROPIC_API_KEY=... EXA_API_KEY=... cargo run --release --example acceptance_research`
 
 // Acceptance tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use mcp_parallax::client::{AnthropicClient, BraveClient};
+use mcp_parallax::client::{AnthropicClient, ExaClient};
 use mcp_parallax::config::Config;
 use mcp_parallax::modes::verify::VERIFY_ID;
 use mcp_parallax::modes::{verify, ModeRegistry};
 use mcp_parallax::research::contract::{Constraints, ResearchParams, ResearchResult};
-use mcp_parallax::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use mcp_parallax::research::pipeline::{self, ResearchDeps};
 use mcp_parallax::research::Depth;
 use mcp_parallax::traits::clock::SystemClock;
@@ -65,7 +64,7 @@ fn deps(config: &Config) -> ResearchDeps {
         extract_client: Arc::new(AnthropicClient::new(config)),
         verify_client: Arc::new(AnthropicClient::new(config)),
         synth_client: Arc::new(AnthropicClient::new(config)),
-        search: Arc::new(BraveClient::new(config).expect("brave key present")),
+        search: Arc::new(ExaClient::new(config).expect("exa key present")),
         clock: Arc::new(SystemClock),
         scope_mode: registry.get(pipeline::SCOPE_MODE_ID).unwrap().clone(),
         extract_mode: registry.get(pipeline::EXTRACT_MODE_ID).unwrap().clone(),
@@ -73,19 +72,9 @@ fn deps(config: &Config) -> ResearchDeps {
         verify_mode: pipeline::research_verify_mode(&verify_mode),
         input_max_chars: config.input_max_chars,
         concurrency: usize::from(config.research_concurrency),
+        max_age_hours: config.exa_max_age_hours,
         routing: config.routing.clone(),
     }
-}
-
-fn fetcher(config: &Config) -> HygieneFetcher {
-    HygieneFetcher::new(FetchPolicy {
-        timeout_ms: config.fetch_timeout_ms,
-        domains_allow: vec![],
-        domains_deny: vec![],
-        domain_spacing_ms: DOMAIN_SPACING_MS,
-        allow_private: false,
-    })
-    .expect("fetcher")
 }
 
 /// SC-001: every finding source id and every `[sN]` in the answer resolves.
@@ -106,8 +95,8 @@ fn citations_resolve(result: &ResearchResult) -> bool {
 async fn main() {
     let config = Config::from_env().expect("config (both keys required)");
     assert!(
-        config.brave_api_key.is_some(),
-        "BRAVE_API_KEY required for the acceptance run"
+        config.exa_api_key.is_some(),
+        "EXA_API_KEY required for the acceptance run"
     );
     let deps = deps(&config);
 
@@ -120,7 +109,6 @@ async fn main() {
         let start = Instant::now();
         let outcome = pipeline::run(
             &deps,
-            &fetcher(&config),
             &ResearchParams {
                 question: (*question).to_string(),
                 depth: Some(*depth),
@@ -170,7 +158,6 @@ async fn main() {
     // SC-004: a deliberately tiny budget returns well-formed, stopped early.
     let (tiny, _usage) = pipeline::run(
         &deps,
-        &fetcher(&config),
         &ResearchParams {
             question: "What is the capital of France?".to_string(),
             depth: Some(Depth::Quick),

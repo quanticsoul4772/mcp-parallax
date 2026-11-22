@@ -1,14 +1,12 @@
 //! Provider clients implementing the [`crate::traits::client::ModelClient`] seam.
 
 pub mod anthropic;
-pub mod brave;
 pub mod exa;
 pub mod openai_compat;
 pub mod pool;
 pub mod voyage;
 
 pub use anthropic::AnthropicClient;
-pub use brave::BraveClient;
 pub use exa::ExaClient;
 pub use openai_compat::OpenAiCompatClient;
 pub use voyage::VoyageClient;

@@ -74,7 +74,10 @@ pub struct ContentsRequest {
 /// One page's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
-    /// The page URL.
+    /// The address that was requested for this page — what research pairs
+    /// it with its source by, even when the provider followed a redirect.
+    pub requested_url: String,
+    /// The page's own address as the provider returned it.
     pub url: String,
     /// The page title (the URL when the provider gives none).
     pub title: String,
@@ -175,6 +178,7 @@ mod tests {
             assert_eq!(req.max_characters, 16_000);
             Ok(ContentsResults {
                 pages: vec![Page {
+                    requested_url: req.urls[0].clone(),
                     url: req.urls[0].clone(),
                     title: "A".into(),
                     text: "body".into(),

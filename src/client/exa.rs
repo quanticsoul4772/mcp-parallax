@@ -16,6 +16,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+const EXA_API_BASE: &str = "https://api.exa.ai";
+
 /// Thin `reqwest` client implementing [`SearchProvider`] against Exa.
 pub struct ExaClient {
     http: reqwest::Client,
@@ -25,6 +27,22 @@ pub struct ExaClient {
 }
 
 impl ExaClient {
+    /// Build a client from configuration, targeting Exa's endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Errors when `exa_api_key` is absent — callers gate construction on
+    /// key presence, so reaching this without a key is a wiring bug surfaced
+    /// loudly.
+    pub fn new(config: &Config) -> Result<Self, AppError> {
+        let api_key = config.exa_api_key.as_deref().ok_or_else(|| {
+            AppError::SearchProvider(
+                "ExaClient constructed without EXA_API_KEY — gate on key presence".into(),
+            )
+        })?;
+        Ok(Self::with_base_url(config, api_key, EXA_API_BASE))
+    }
+
     /// Build a client against `base_url` with the given key (tests point
     /// this at a local wiremock server).
     #[must_use]
@@ -154,6 +172,8 @@ impl SearchProvider for ExaClient {
                     Page {
                         truncated: is_truncated(text.chars().count(), request.max_characters),
                         title: title_or_url(r.title, &r.url),
+                        // Exa echoes the requested identifier as `id`.
+                        requested_url: r.id.clone().unwrap_or_else(|| r.url.clone()),
                         url: r.url,
                         text,
                     }
@@ -342,6 +362,38 @@ mod tests {
         assert!(results.pages[1].truncated, "text at the cap is truncated");
         assert_eq!(results.pages[2].text, "");
         assert!(!results.pages[2].truncated);
+    }
+
+    /// A page Exa returns under another address (a redirect) keeps the
+    /// address that was requested (`id`), so research can still pair it with
+    /// its source; `url` is the page's own address.
+    #[tokio::test]
+    async fn a_redirected_page_keeps_the_requested_address() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/contents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [
+                    { "id": "http://example.com/a", "url": "https://example.com/a-moved", "title": "A", "text": "body" },
+                    { "url": "https://example.com/b", "title": "B", "text": "body" }
+                ]
+            })))
+            .mount(&mock)
+            .await;
+
+        let request = ContentsRequest {
+            urls: vec![
+                "http://example.com/a".into(),
+                "https://example.com/b".into(),
+            ],
+            max_age_hours: 168,
+            max_characters: 100,
+        };
+        let pages = client_for(&mock).contents(&request).await.unwrap().pages;
+        assert_eq!(pages[0].requested_url, "http://example.com/a");
+        assert_eq!(pages[0].url, "https://example.com/a-moved");
+        // No id: the URL stands in for it.
+        assert_eq!(pages[1].requested_url, "https://example.com/b");
     }
 
     #[tokio::test]

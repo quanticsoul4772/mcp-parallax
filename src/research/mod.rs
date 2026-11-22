@@ -9,7 +9,6 @@
 pub mod contract;
 pub mod evidence;
 pub mod extract;
-pub mod fetch;
 pub mod grounding;
 pub(crate) mod outcome;
 pub mod pipeline;
@@ -310,6 +309,8 @@ pub(crate) struct SourceRecord {
     /// Readable text retained for the verification hop's evidence context
     /// (004 D3 amendment). Internal only — never on the wire (FR-012).
     pub(crate) text: String,
+    /// The text reached the character cap (059 FR-007).
+    pub(crate) truncated: bool,
 }
 
 /// A claim after verification.

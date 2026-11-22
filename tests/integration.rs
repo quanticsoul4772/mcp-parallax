@@ -337,6 +337,7 @@ fn stdio_smoke_test_stdout_carries_only_protocol_frames() {
         // capability-OFF catalog (FR-007).
         .env_remove("VOYAGE_API_KEY")
         .env_remove("BRAVE_API_KEY")
+        .env_remove("EXA_API_KEY")
         .env("DATABASE_PATH", db.to_string_lossy().to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1002,7 +1003,7 @@ const RESEARCH_CONTRACT: &str =
 // ---- T017: catalog gating ---------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn with_a_brave_key_the_catalog_matches_the_research_contract() {
+async fn with_an_exa_key_the_catalog_matches_the_research_contract() {
     let mock = MockServer::start().await;
     let (client, _storage, _server) = serve_with_research(&mock).await;
 
@@ -1195,10 +1196,10 @@ async fn tiny_budget_returns_a_well_formed_early_synthesized_result() {
 async fn search_provider_outage_surfaces_named_with_one_record() {
     let mock = MockServer::start().await;
     mount_research_llm(&mock, "n/a").await;
-    // Terminal 422 from Brave (e.g. an invalid subscription token).
-    Mock::given(method("GET"))
-        .and(path("/res/v1/web/search"))
-        .respond_with(ResponseTemplate::new(422).set_body_string("SUBSCRIPTION_TOKEN_INVALID"))
+    // Terminal 422 from Exa (e.g. an invalid request).
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(422).set_body_string("INVALID_REQUEST"))
         .mount(&mock)
         .await;
     let (client, storage, _server) = serve_with_research(&mock).await;
@@ -2549,6 +2550,7 @@ fn stdio_smoke_with_unreachable_collector_stays_clean_and_exits_bounded() {
         .env("ANTHROPIC_API_KEY", "dummy-key-no-model-call-happens")
         .env_remove("VOYAGE_API_KEY")
         .env_remove("BRAVE_API_KEY")
+        .env_remove("EXA_API_KEY")
         // Telemetry ON, collector unreachable (nothing listens on port 9).
         .env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
         .env("DATABASE_PATH", db.to_string_lossy().to_string())

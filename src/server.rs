@@ -10,7 +10,7 @@ use crate::checkpoint::contract::{
 use crate::checkpoint::review as checkpoint_review;
 use crate::checkpoint::run::{self as checkpoint_run, CheckpointDeps};
 use crate::client::pool::ClientPool;
-use crate::client::{BraveClient, VoyageClient};
+use crate::client::{ExaClient, VoyageClient};
 use crate::config::Config;
 use crate::deterministic::check::{self as check_tool, CheckDeps};
 use crate::deterministic::contract::{CheckParams, CheckResult};
@@ -33,7 +33,6 @@ use crate::modes::verify::{self, Verdict, VerifyParams, VERIFY_ID};
 use crate::modes::ModeRegistry;
 use crate::observability::CallerTrace;
 use crate::research::contract::{ResearchParams, ResearchResult};
-use crate::research::fetch::{FetchPolicy, HygieneFetcher, DOMAIN_SPACING_MS};
 use crate::research::pipeline::{self, ResearchDeps};
 use crate::research::Depth;
 use crate::routing::{CallSite, RoutingTable};
@@ -120,10 +119,6 @@ pub struct Parallax {
     /// default because nothing invokes the tools until the sensor plane
     /// (hooks) is installed (006 FR-007).
     checkpoint: Arc<CheckpointDeps>,
-    /// Per-source fetch timeout for research runs (`FETCH_TIMEOUT_MS`).
-    fetch_timeout_ms: u64,
-    /// SSRF guard override for research fetches (`FETCH_ALLOW_PRIVATE`).
-    fetch_allow_private: bool,
     /// Per-process session UUID (one stdio connection per process).
     session_id: String,
     /// The resolved routing table. Record attribution reads from here: a call
@@ -153,8 +148,8 @@ impl Parallax {
             Some(_) => Some(Arc::new(VoyageClient::new(config)?)),
             None => None,
         };
-        let search: Option<Arc<dyn SearchProvider>> = match config.brave_api_key {
-            Some(_) => Some(Arc::new(BraveClient::new(config)?)),
+        let search: Option<Arc<dyn SearchProvider>> = match config.exa_api_key {
+            Some(_) => Some(Arc::new(ExaClient::new(config)?)),
             None => None,
         };
         Self::with_capabilities(client, storage, clock, config, embedder, search)
@@ -371,6 +366,7 @@ impl Parallax {
                 verify_mode: pipeline::research_verify_mode(&verify_mode),
                 input_max_chars: config.input_max_chars,
                 concurrency: usize::from(config.research_concurrency),
+                max_age_hours: config.exa_max_age_hours,
             })),
             None => None,
         };
@@ -441,8 +437,6 @@ impl Parallax {
             grounded,
             deterministic,
             checkpoint,
-            fetch_timeout_ms: config.fetch_timeout_ms,
-            fetch_allow_private: config.fetch_allow_private,
             session_id: uuid::Uuid::new_v4().to_string(),
             routing: config.routing.clone(),
             max_claim_chars: config.input_max_chars,
@@ -901,22 +895,13 @@ impl Parallax {
     ) -> Result<Json<ResearchResult>, ErrorData> {
         let deps = Arc::clone(self.research.as_ref().ok_or_else(|| {
             ErrorData::internal_error(
-                "research capability is disabled (BRAVE_API_KEY is not configured)".to_string(),
+                "research capability is disabled (EXA_API_KEY is not configured)".to_string(),
                 None,
             )
         })?);
-        // The fetcher is per-run: the robots cache is run-scoped and the
-        // allow/deny lists come from the call's constraints (research.md D5).
         let constraints = params.constraints.clone().unwrap_or_default();
-        let policy = FetchPolicy {
-            timeout_ms: self.fetch_timeout_ms,
-            domains_allow: constraints.domains_allow.unwrap_or_default(),
-            domains_deny: constraints.domains_deny.unwrap_or_default(),
-            domain_spacing_ms: DOMAIN_SPACING_MS,
-            allow_private: self.fetch_allow_private,
-        };
-        // LLM calls dominate research cost; Brave bills per-request, not
-        // per-token — attribute the record to the anthropic model (plan.md).
+        // LLM calls dominate research cost; Exa bills per request, not per
+        // token — attribute the record to the anthropic model (plan.md).
         // Research is the one tool whose call sites can differ, so it records
         // per-model usage rather than a single token pair (018 FR-007).
         // 019: stamp the rigor tier so the run's budget ceiling is recoverable
@@ -960,10 +945,7 @@ impl Parallax {
             },
             ct,
             caller,
-            async {
-                let fetcher = HygieneFetcher::new(policy)?;
-                pipeline::run_at(&deps, &fetcher, &params, concurrency).await
-            },
+            async { pipeline::run_at(&deps, &params, concurrency).await },
         )
         .await
     }
