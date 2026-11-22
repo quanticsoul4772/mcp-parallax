@@ -142,6 +142,9 @@ B is still fetching — the parent note's "pipeline by default"):
 - **Fetch:** HTTP GET with per-fetch timeout, robots.txt respect, per-domain rate
   limit, redirect cap, content-type/size guard. Reduce to readable text
   (boilerplate stripped). Unreachable/paywalled/too-large → dropped, counted.
+  *(Amended 2026-11-22, 059: Exa returns each kept source's text in one contents
+  request; Parallax makes no page request, so robots, rate-limit, redirect and size
+  guards are on Exa's side.)*
 - **Extract:** *1 LLM call per source* → a list of **falsifiable claims**, each with
   the supporting span and the source id. Non-falsifiable fluff is discarded at the
   source. Constrained output: `[{ claim, span, source_id }]`.
@@ -320,6 +323,8 @@ truncation** — if it stopped short, the response says so.
   clear "research disabled" config error (not a silent degrade).
 - **Fetch hygiene:** robots.txt, per-domain rate limit, per-fetch timeout, redirect
   - size + content-type guards, `domains_deny` honored absolutely.
+  *(Amended 2026-11-22, 059: no local fetch remains; `domains_allow`/`domains_deny`
+  are sent to Exa and still enforced locally.)*
 - **Redaction:** the answer is *derived*; `sources` carry URL+title only; no raw
   page bodies, secrets, or verifier transcripts cross the wire. Reuse the parent's
   redaction discipline.

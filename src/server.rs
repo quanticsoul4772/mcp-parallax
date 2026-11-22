@@ -650,13 +650,14 @@ impl Parallax {
         name = "research",
         description = "Offload a research question; get back a short, cited, \
         adversarially-verified answer - not a pile of links. Runs scoped parallel searches, \
-        fetches and extracts sources, verifies every claim with independent refute-biased \
+        reads each kept source's text, extracts claims, verifies every claim with independent \
+        refute-biased \
         passes, leaving out claims every verifier found the sources did not establish (which \
         is not a finding that they are false), and surfacing split verdicts as contested, and \
         synthesizes a compact answer with inline citations, surfaced \
-        disagreements, and honest gaps. Depth scales rigor; budget and deadline ceilings \
-        synthesize early and say so. Every citation resolves to a source fetched during the \
-        run."
+        disagreements, and stated gaps. Depth scales rigor; budget and deadline ceilings \
+        synthesize early and say so. Every citation resolves to a source read during the run; \
+        a source whose text was cut at the length cap is marked truncated."
     )]
     pub async fn research(
         &self,

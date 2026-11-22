@@ -67,11 +67,11 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T019 Update `specs/007-observability-layer/contracts/telemetry.md` with `parallax.search.cost_usd` and the record contract for `search_cost_usd`
-- [ ] T020 Dated amendments (2026-11-22) to `docs/design/SDK_LANDSCAPE.md`, `docs/design/RESEARCH_PRIMITIVE.md` and `docs/design/NEW_SERVER_DESIGN.md` §10 (research.md D13), exact text approved first
-- [ ] T021 README's tools table and security paragraph, the `research` tool description in `src/server.rs`, and CLAUDE.md's runtime-configuration paragraph name `EXA_API_KEY` and `EXA_MAX_AGE_HOURS` and drop the removed variables (exact text approved first; README's configuration rows are done in T005 and T012)
-- [ ] T022 CHANGELOG `Unreleased`: Changed (research on Exa, `sources[].truncated`, `search_cost_usd`) and Removed (Brave, the page fetcher, three variables, now startup errors)
-- [ ] T023 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
+- [X] T019 Update `specs/007-observability-layer/contracts/telemetry.md` with `parallax.search.cost_usd` and the record contract for `search_cost_usd`
+- [X] T020 Dated amendments (2026-11-22) to `docs/design/SDK_LANDSCAPE.md`, `docs/design/RESEARCH_PRIMITIVE.md` and `docs/design/NEW_SERVER_DESIGN.md` §10 (research.md D13), exact text approved first
+- [X] T021 README's tools table and security paragraph, the `research` tool description in `src/server.rs`, and CLAUDE.md's runtime-configuration paragraph name `EXA_API_KEY` and `EXA_MAX_AGE_HOURS` and drop the removed variables (exact text approved first; README's configuration rows are done in T005 and T012)
+- [X] T022 CHANGELOG `Unreleased`: Changed (research on Exa, `sources[].truncated`, `search_cost_usd`) and Removed (Brave, the page fetcher, three variables, now startup errors)
+- [X] T023 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
 - [ ] T024 Independent review of the branch diff by a fresh subagent; act on findings
 - [ ] T025 Live acceptance (quickstart.md): three runs of `acceptance_research` with `EXA_API_KEY`, one at `deep`; record findings, sources, truncated sources, Exa cost and elapsed time in quickstart.md (SC-001, research.md D2)
 - [ ] T026 Update the CLAUDE.md active-feature block for 059 (exact text approved first)
