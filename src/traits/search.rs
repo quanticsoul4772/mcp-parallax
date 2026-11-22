@@ -7,6 +7,13 @@
 
 use crate::error::AppError;
 
+/// The `Timeout` label for a call the run's deadline cut off (059 review).
+pub const DEADLINE: &str = "research deadline";
+
+/// The `Timeout` label for a call that sent nothing because no time was left:
+/// it cost nothing, so it does not make the run's cost unknown.
+pub const NOT_SENT: &str = "research deadline, nothing sent";
+
 /// The provider's search mode (059 research.md D2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchType {

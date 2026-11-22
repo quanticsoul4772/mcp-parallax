@@ -556,6 +556,131 @@ fn pages_pair_by_id_then_url_then_a_single_leftover() {
     assert!(two.iter().all(Option::is_none));
 }
 
+/// Second review M2: pairing does not depend on response order. A page with
+/// no echoed id whose address is another source's cannot push that source's
+/// own page into the leftover rule; a duplicate is never placed elsewhere.
+#[test]
+fn pairing_survives_order_and_never_places_a_duplicate() {
+    let mk = |requested: &str, url: &str| {
+        let mut p = page(url, "t", false);
+        p.requested_url = requested.to_string();
+        p
+    };
+    let urls = |list: &[&str]| list.iter().map(|u| (*u).to_string()).collect::<Vec<_>>();
+    let x = "https://x.example/1";
+    let y = "https://y.example/2";
+
+    // P1: no echoed id, address Y (X redirected to Y), listed first. P2:
+    // echoed id Y. Y must get P2; X must not get P2 by the leftover rule.
+    let paired = pair_pages(
+        &urls(&[x, y]),
+        vec![mk("opaque", y), mk(y, "https://y.example/2-final")],
+    );
+    assert_eq!(paired[1].as_ref().unwrap().url, "https://y.example/2-final");
+    assert!(paired[0].is_none(), "X took a page that belongs to Y");
+
+    // A second page echoing X's id is a duplicate, never placed under Y.
+    let dup = pair_pages(
+        &urls(&[x, y]),
+        vec![mk(x, x), mk(x, "https://x.example/dup")],
+    );
+    assert_eq!(dup[0].as_ref().unwrap().url, x);
+    assert!(
+        dup[1].is_none(),
+        "a duplicate was placed under another source"
+    );
+}
+
+/// Second review L1: only a call cut off by time takes the deadline's
+/// stop-early path. A rejection (a bad key, no credits) arriving after the
+/// deadline passed still fails the run, for the search and contents calls.
+#[tokio::test]
+async fn a_rejection_past_the_deadline_still_fails_the_run() {
+    for in_contents in [false, true] {
+        let client = scripted(
+            scope_value(),
+            |_| panic!("no extraction"),
+            |_, _| panic!("no verification"),
+            |_| panic!("no synthesis"),
+        );
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let passed = Arc::clone(&flag);
+        let rejection = move || {
+            passed.store(true, std::sync::atomic::Ordering::SeqCst);
+            AppError::ProviderRejected {
+                status: 402,
+                detail: "no credits".into(),
+            }
+        };
+        let mut search = MockSearchProvider::new();
+        if in_contents {
+            search.expect_search().returning(|_| {
+                Ok(SearchResults {
+                    hits: vec![SearchHit {
+                        url: "https://example.com/a".into(),
+                        title: "A".into(),
+                    }],
+                    cost_usd: None,
+                })
+            });
+            search
+                .expect_contents()
+                .returning(move |_| Err(rejection()));
+        } else {
+            search.expect_search().returning(move |_| Err(rejection()));
+        }
+        let deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+        let err = run(&deps, &with_deadline(30_000)).await.unwrap_err();
+        assert!(
+            matches!(err.root(), AppError::ProviderRejected { status: 402, .. }),
+            "in_contents={in_contents}: {err}"
+        );
+    }
+}
+
+/// Second review L3: a call that sent nothing (no time was left) cost
+/// nothing, so it does not make the run's cost unknown.
+#[tokio::test]
+async fn a_call_that_sent_nothing_leaves_the_cost_known() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let mut search = MockSearchProvider::new();
+    search.expect_search().returning(move |_| {
+        if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/a".into(),
+                    title: "A".into(),
+                }],
+                cost_usd: Some(0.007),
+            })
+        } else {
+            Err(AppError::Timeout {
+                what: crate::traits::search::NOT_SENT,
+                ms: 0,
+            })
+        }
+    });
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: vec![page(&req.urls[0], "Text.", false)],
+            cost_usd: Some(0.005),
+        })
+    });
+    let deps = deps_with(client, search, Arc::new(SystemClock));
+    let cost = crate::telemetry::SearchCost::default();
+    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
+        .await
+        .unwrap();
+    let total = cost.total().unwrap();
+    assert!((total - 0.012).abs() < 1e-9, "{total}");
+}
+
 /// Finding 4: a failed Exa call may still have been billed, so the run's
 /// cost is unknown rather than the successful calls' sum.
 #[tokio::test]

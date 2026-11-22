@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::traits::search::{
     is_truncated, ContentsRequest, ContentsResults, Page, SearchHit, SearchProvider, SearchRequest,
-    SearchResults,
+    SearchResults, DEADLINE, NOT_SENT,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -110,8 +110,11 @@ impl ExaClient {
         path: &str,
         body: &Value,
         time_left: Option<Duration>,
-    ) -> Result<(reqwest::Response, bool), AppError> {
+    ) -> Result<Sent, AppError> {
         let deadline = time_left.map(|left| std::time::Instant::now() + left);
+        let deadline_ms = time_left.map_or(0, |left| {
+            u64::try_from(left.as_millis()).unwrap_or(u64::MAX)
+        });
         let request_timeout = Duration::from_millis(self.timeout_ms);
         let attempts_max = self.max_retries.saturating_add(1);
         let mut last_error = String::new();
@@ -121,7 +124,16 @@ impl ExaClient {
                 .map(time_until)
                 .map_or(request_timeout, |left| left.min(request_timeout));
             if budget.is_zero() {
-                return Err(Self::deadline_reached());
+                // L3: nothing has gone out yet on the first attempt, so the
+                // call cost nothing; after that, earlier attempts were sent.
+                return Err(if attempt == 1 {
+                    AppError::Timeout {
+                        what: NOT_SENT,
+                        ms: deadline_ms,
+                    }
+                } else {
+                    Self::deadline_reached(deadline_ms)
+                });
             }
             let response = match self
                 .http
@@ -136,7 +148,7 @@ impl ExaClient {
                 Ok(response) => response,
                 Err(e) if e.is_timeout() => {
                     return Err(if budget < request_timeout {
-                        Self::deadline_reached()
+                        Self::deadline_reached(deadline_ms)
                     } else {
                         self.timeout()
                     });
@@ -144,14 +156,18 @@ impl ExaClient {
                 Err(e) => {
                     last_error = self.transport_error(&e).to_string();
                     retried_transport_error = true;
-                    self.wait_before_retry(attempt, attempts_max, None, deadline)
+                    self.wait_before_retry(attempt, attempts_max, None, deadline, deadline_ms)
                         .await?;
                     continue;
                 }
             };
             let status = response.status();
             if status.is_success() {
-                return Ok((response, retried_transport_error));
+                return Ok(Sent {
+                    response,
+                    retried_transport_error,
+                    deadline_ms: (budget < request_timeout).then_some(deadline_ms),
+                });
             }
             if status.as_u16() == 429 || status.is_server_error() {
                 let asked = retry_after(
@@ -170,7 +186,7 @@ impl ExaClient {
                         ),
                     });
                 }
-                self.wait_before_retry(attempt, attempts_max, asked, deadline)
+                self.wait_before_retry(attempt, attempts_max, asked, deadline, deadline_ms)
                     .await?;
                 continue;
             }
@@ -188,13 +204,16 @@ impl ExaClient {
 
     /// Sleep before the next attempt — the provider's `Retry-After`, else the
     /// backoff — unless this was the last attempt. A wait that would outlast
-    /// the run's deadline ends the call instead.
+    /// the run's deadline sleeps only until the deadline and then reports it
+    /// (second review M1), so the pipeline's clock sees the deadline passed
+    /// and stops the run early rather than failing it.
     async fn wait_before_retry(
         &self,
         attempt: u32,
         attempts_max: u32,
         asked: Option<Duration>,
         deadline: Option<std::time::Instant>,
+        deadline_ms: u64,
     ) -> Result<(), AppError> {
         if attempt >= attempts_max {
             return Ok(());
@@ -204,28 +223,27 @@ impl ExaClient {
                 .saturating_mul(1 << (attempt - 1).min(8)),
         );
         let wait = asked.unwrap_or(backoff);
-        if deadline.map(time_until).is_some_and(|left| wait >= left) {
-            return Err(Self::deadline_reached());
+        if let Some(left) = deadline.map(time_until).filter(|left| wait >= *left) {
+            tokio::time::sleep(left).await;
+            return Err(Self::deadline_reached(deadline_ms));
         }
         tokio::time::sleep(wait).await;
         Ok(())
     }
 
-    /// The run's deadline arrived during an Exa call.
-    const fn deadline_reached() -> AppError {
-        AppError::Timeout {
-            what: "research deadline",
-            ms: 0,
-        }
+    /// The run's deadline arrived during an Exa call; `ms` is the time the
+    /// call was given.
+    const fn deadline_reached(ms: u64) -> AppError {
+        AppError::Timeout { what: DEADLINE, ms }
     }
 
-    async fn read<T: serde::de::DeserializeOwned>(
-        &self,
-        response: reqwest::Response,
-    ) -> Result<T, AppError> {
-        response.json().await.map_err(|e| {
+    async fn read<T: serde::de::DeserializeOwned>(&self, sent: Sent) -> Result<T, AppError> {
+        let deadline_ms = sent.deadline_ms;
+        sent.response.json().await.map_err(|e| {
             if e.is_timeout() {
-                self.timeout()
+                // Second review L2: the deadline bounded this reply, so the
+                // deadline is what cut the body off.
+                deadline_ms.map_or_else(|| self.timeout(), Self::deadline_reached)
             } else {
                 AppError::SearchProvider(format!("response body unreadable: {e}"))
             }
@@ -251,10 +269,11 @@ impl ExaClient {
 #[async_trait::async_trait]
 impl SearchProvider for ExaClient {
     async fn search(&self, request: &SearchRequest) -> Result<SearchResults, AppError> {
-        let (response, retried) = self
+        let sent = self
             .post("/search", &Self::search_body(request), request.time_left)
             .await?;
-        let payload: SearchPayload = self.read(response).await?;
+        let retried = sent.retried_transport_error;
+        let payload: SearchPayload = self.read(sent).await?;
         Ok(SearchResults {
             hits: payload
                 .results
@@ -269,14 +288,15 @@ impl SearchProvider for ExaClient {
     }
 
     async fn contents(&self, request: &ContentsRequest) -> Result<ContentsResults, AppError> {
-        let (response, retried) = self
+        let sent = self
             .post(
                 "/contents",
                 &Self::contents_body(request),
                 request.time_left,
             )
             .await?;
-        let payload: ContentsPayload = self.read(response).await?;
+        let retried = sent.retried_transport_error;
+        let payload: ContentsPayload = self.read(sent).await?;
         let failed: Vec<String> = payload
             .statuses
             .into_iter()
@@ -331,6 +351,16 @@ const fn reported_cost(parsed: Option<f64>, retried_transport_error: bool) -> Op
     } else {
         parsed
     }
+}
+
+/// A reply that arrived, with what the cost and error labels need to know.
+struct Sent {
+    response: reqwest::Response,
+    /// A network error was retried on the way (finding 4).
+    retried_transport_error: bool,
+    /// The run's deadline bounded this reply's time: the time the call was
+    /// given, in ms (second review L2).
+    deadline_ms: Option<u64>,
 }
 
 /// Time left until `deadline`.
@@ -692,7 +722,92 @@ mod tests {
             started.elapsed() < Duration::from_millis(1_500),
             "the deadline did not bound it"
         );
-        assert!(matches!(&err, AppError::Timeout { .. }), "{err:?}");
+        assert!(
+            matches!(&err, AppError::Timeout { what, .. } if *what == DEADLINE),
+            "{err:?}"
+        );
+    }
+
+    /// Second review M1: when the next retry wait would pass the deadline, the
+    /// client waits until the deadline and only then reports it — so the
+    /// pipeline's clock sees the deadline passed and stops the run early.
+    #[tokio::test]
+    async fn a_wait_past_the_deadline_sleeps_until_it_then_reports_it() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "2"))
+            .mount(&mock)
+            .await;
+        let started = std::time::Instant::now();
+        let mut request = search_request(&[], &[]);
+        request.time_left = Some(Duration::from_millis(300));
+        let err = client_for(&mock).search(&request).await.unwrap_err();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "gave up early: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(1_500),
+            "overran: {elapsed:?}"
+        );
+        assert!(
+            matches!(&err, AppError::Timeout { what, ms: 300 } if *what == DEADLINE),
+            "{err:?}"
+        );
+    }
+
+    /// Second review L2: a deadline that cuts off reading the body is reported
+    /// as the deadline, not as a request timeout. The stand-in sends headers
+    /// and then stalls, which wiremock cannot do.
+    #[tokio::test]
+    async fn a_body_cut_off_by_the_deadline_is_reported_as_the_deadline() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{",
+                )
+                .await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        });
+        let config = crate::config::Config {
+            request_timeout_ms: 30_000,
+            ..test_config()
+        };
+        let client =
+            ExaClient::with_base_url(&config, "exa-test-key", &format!("http://{address}"));
+        let mut request = search_request(&[], &[]);
+        request.time_left = Some(Duration::from_millis(300));
+        let err = client.search(&request).await.unwrap_err();
+        assert!(
+            matches!(&err, AppError::Timeout { what, .. } if *what == DEADLINE),
+            "{err:?}"
+        );
+    }
+
+    /// Second review L3: with no time left the client sends nothing, and says
+    /// so, so the run's cost can count the call as free rather than unknown.
+    #[tokio::test]
+    async fn with_no_time_left_nothing_is_sent() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        let mut request = search_request(&[], &[]);
+        request.time_left = Some(Duration::ZERO);
+        let err = client_for(&mock).search(&request).await.unwrap_err();
+        assert!(
+            matches!(&err, AppError::Timeout { what, .. } if *what == NOT_SENT),
+            "{err:?}"
+        );
     }
 
     /// 059 review finding 4: a reply that followed a retried network error

@@ -271,15 +271,18 @@ async fn run_metered_at(
                     }
                 }
                 Err(e) => {
-                    // A failed call may still have been billed (finding 4).
-                    search_cost.end(None);
+                    // A failed call may still have been billed (finding 4),
+                    // unless it sent nothing (second review L3).
+                    search_cost.end(unbilled(&e));
                     search_errors.push(e);
                 }
             }
         }
-        // A search cut off because the deadline arrived stops the run early,
-        // as the deadline always does, rather than failing it (finding 1).
-        if stats.searches == 0 && ceiling.probe().is_none() {
+        // Searches cut off because the deadline arrived stop the run early,
+        // as the deadline always does (finding 1) — but only a timeout does:
+        // a rejection or provider failure still fails the run (L1).
+        let deadline_cut = search_errors.iter().all(is_timeout) && ceiling.probe().is_some();
+        if stats.searches == 0 && !deadline_cut {
             if let Some(first) = search_errors.into_iter().next() {
                 // The whole search phase failed — the invocation fails with
                 // the provider's class (edge case: provider down).
@@ -314,12 +317,13 @@ async fn run_metered_at(
                 pages = pair_pages(&request.urls, contents.pages);
             }
             Err(error) => {
-                search_cost.end(None);
+                search_cost.end(unbilled(&error));
                 // 059 B1: this one request carries every source's text, so
                 // its failure is the phase's failure (023); `run_at` meters
                 // the spend so far onto the error (020). Cut off by the
-                // deadline instead, the run stops early (finding 1).
-                if ceiling.probe().is_none() {
+                // deadline instead — a timeout once the deadline has passed —
+                // the run stops early (finding 1, second review L1).
+                if !(is_timeout(&error) && ceiling.probe().is_some()) {
                     return Err(error);
                 }
             }
@@ -337,10 +341,12 @@ async fn run_metered_at(
             // redirect); the caller's domain lists apply to that one too, as
             // they did to every redirect hop of the old fetcher. A denied
             // page is dropped as filtered, never extracted or cited.
-            if page
-                .as_ref()
-                .is_some_and(|p| !domain_allowed(&p.url, &settings))
-            {
+            if let Some(denied) = page.as_ref().filter(|p| !domain_allowed(&p.url, &settings)) {
+                tracing::debug!(
+                    source = url.as_str(),
+                    returned = denied.url.as_str(),
+                    "source dropped: its page came back under a denied domain"
+                );
                 continue;
             }
             let id = format!("s{}", index + 1);
@@ -608,34 +614,55 @@ fn domain_allowed(url: &str, settings: &RunSettings) -> bool {
 }
 
 /// Pair the contents call's pages with the requested URLs, in request order
-/// (059 review finding 3): by the address Exa echoes as `id`, then by the
-/// page's own address, then — only when exactly one page and one URL are
-/// left — those two. Anything still unpaired stays `None`; text is never
-/// attached to a source by guesswork.
+/// (059 review finding 3, second review M2). Three passes over all pages, so
+/// the result does not depend on the order Exa returns them: every echoed
+/// `id` match first; then the page's own address, for pages still unpaired;
+/// then, when exactly one URL and one page are left, those two — but only if
+/// that page's `id` and address match no requested URL at all, so a duplicate
+/// or a page whose slot is taken is never placed under an unrelated source.
+/// Anything still unpaired stays `None`.
 pub(crate) fn pair_pages(requested: &[String], pages: Vec<Page>) -> Vec<Option<Page>> {
+    let keys: Vec<String> = requested.iter().map(|url| url_key(url)).collect();
     let mut paired: Vec<Option<Page>> = vec![None; requested.len()];
-    let position = |key: String, paired: &[Option<Page>]| {
-        requested
-            .iter()
-            .enumerate()
-            .position(|(i, url)| paired[i].is_none() && url_key(url) == key)
-    };
-    let mut leftovers = Vec::new();
+    let mut unpaired: Vec<Page> = Vec::new();
     for page in pages {
-        let slot = position(url_key(&page.requested_url), &paired)
-            .or_else(|| position(url_key(&page.url), &paired));
-        match slot {
+        let key = url_key(&page.requested_url);
+        match (0..keys.len()).find(|&i| paired[i].is_none() && keys[i] == key) {
+            Some(i) => paired[i] = Some(page),
+            None => unpaired.push(page),
+        }
+    }
+    let mut leftovers: Vec<Page> = Vec::new();
+    for page in unpaired {
+        let key = url_key(&page.url);
+        match (0..keys.len()).find(|&i| paired[i].is_none() && keys[i] == key) {
             Some(i) => paired[i] = Some(page),
             None => leftovers.push(page),
         }
     }
-    let open: Vec<usize> = (0..requested.len())
-        .filter(|i| paired[*i].is_none())
-        .collect();
-    if let ([i], [_]) = (open.as_slice(), leftovers.as_slice()) {
-        paired[*i] = leftovers.pop();
+    let matches_none = |page: &Page| {
+        let (id, own) = (url_key(&page.requested_url), url_key(&page.url));
+        !keys.iter().any(|k| *k == id || *k == own)
+    };
+    let open: Vec<usize> = (0..keys.len()).filter(|&i| paired[i].is_none()).collect();
+    if let ([i], [page]) = (open.as_slice(), leftovers.as_slice()) {
+        if matches_none(page) {
+            paired[*i] = leftovers.pop();
+        }
     }
     paired
+}
+
+/// The run's deadline or a request timeout cut the call off.
+fn is_timeout(error: &AppError) -> bool {
+    matches!(error.root(), AppError::Timeout { .. })
+}
+
+/// The cost a failed Exa call is credited with: nothing when it sent
+/// nothing (second review L3), otherwise unknown — it may have been billed.
+fn unbilled(error: &AppError) -> Option<f64> {
+    matches!(error.root(), AppError::Timeout { what, .. } if *what == crate::traits::search::NOT_SENT)
+        .then_some(0.0)
 }
 
 /// One source's text → claim-extraction pipeline. The text came from the
