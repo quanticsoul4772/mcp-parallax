@@ -2,7 +2,9 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    # No `synchronize`: a review per push spends subscription usage on every
+    # commit; reopen or mark ready-for-review to get a fresh one.
+    types: [opened, ready_for_review, reopened]
     # Optional: Only run on specific file changes
     # paths:
     #   - "src/**/*.ts"
@@ -36,12 +38,11 @@ jobs:
           # Use the built-in token so the action does not require the Claude GitHub
           # App to be installed (the OIDC->app-token exchange was failing with 401).
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Direct Anthropic API auth. The Claude Code OAuth path (the
-          # `claude_code_oauth_token` input) needs a Claude subscription; its
-          # token lapsed and every run died at the API gate with the
-          # $0-cost / 1-turn / is_error signature. Set the ANTHROPIC_API_KEY
-          # repo secret (`gh secret set ANTHROPIC_API_KEY`) for this to work.
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Claude subscription auth (Max plan usage, not API credit). The token
+          # comes from `claude setup-token` and expires; when runs fail with the
+          # $0-cost / 1-turn / is_error signature, renew it and reset the
+          # CLAUDE_CODE_OAUTH_TOKEN repo secret.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
