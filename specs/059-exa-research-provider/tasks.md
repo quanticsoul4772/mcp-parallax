@@ -73,8 +73,15 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 - [X] T022 CHANGELOG `Unreleased`: Changed (research on Exa, `sources[].truncated`, `search_cost_usd`) and Removed (Brave, the page fetcher, three variables, now startup errors)
 - [X] T023 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
 - [X] T024 Independent review of the branch diff by a fresh subagent; act on findings
-- [ ] T025 Live acceptance (quickstart.md): three runs of `acceptance_research` with `EXA_API_KEY`, one at `deep`; record findings, sources, truncated sources, Exa cost and elapsed time in quickstart.md (SC-001, research.md D2)
-- [ ] T026 Update the CLAUDE.md active-feature block for 059 (exact text approved first)
+- [X] T025 Live acceptance (quickstart.md): three runs of `acceptance_research` with `EXA_API_KEY`, one at `deep`; record findings, sources, truncated sources, Exa cost and elapsed time in quickstart.md (SC-001, research.md D2). Done in part 2026-11-22: nine questions passed on real Exa; the rest is deferred (see Deferred).
+- [X] T026 Update the CLAUDE.md active-feature block for 059 (exact text approved first)
+
+## Deferred
+
+- T025 remainder: the deep question (`deep-lite` latency and cost), the
+  false-premise check and the tiny-budget check. Both live attempts stopped
+  when the Anthropic credit ran out (quickstart.md); rerun once credit is
+  available again.
 
 ## Dependencies & Execution Order
 

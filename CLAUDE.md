@@ -293,23 +293,27 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**In progress: `059-exa-research-provider`**
-([plan](specs/059-exa-research-provider/plan.md)) — Exa replaces Brave for
-`research`: one Exa search per angle supplies both the sources and their
-text, so Parallax no longer fetches pages; `BRAVE_API_KEY`,
-`FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` are removed; the two `FETCH_*`
-are startup errors if still set, and `BRAVE_API_KEY` is one only when
-`EXA_API_KEY` is not set; Exa's cost per run is recorded as `search_cost_usd`.
-Spec and plan written; tasks not yet generated.
+**Active Spec Kit feature: `059-exa-research-provider`; all 26 tasks closed,
+part of the live check deferred**
+([plan](specs/059-exa-research-provider/plan.md)) — `research` runs on Exa:
+one Exa search per angle finds sources and one contents request returns the
+kept sources' text (paired by the requested address; redirects re-checked
+against the domain lists), so Parallax no longer fetches pages.
+`BRAVE_API_KEY`, `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` are removed (the
+two `FETCH_*` are startup errors if set, `BRAVE_API_KEY` only when
+`EXA_API_KEY` is unset). Exa calls retry with a capped `Retry-After` and are
+bounded by the run's deadline; each run's Exa cost is recorded as
+`search_cost_usd`. Nine live questions passed; the deep, false-premise and
+tiny-budget checks wait for API credit.
 
-**Active Spec Kit feature: `058-otel-trace-context`; all 20 tasks closed,
+**058 (`058-otel-trace-context`); all 20 tasks closed,
 the optional live check (T019) deferred**
 ([plan](specs/058-otel-trace-context/plan.md)) — when a tool request carries
 W3C trace context in `_meta` (`traceparent`, optionally `tracestate`; MCP
 2026-07-28), every span the call exports (invocation, checkpoint evaluation,
 push, consolidation) joins the caller's trace; without it, telemetry is
 unchanged, `baggage` is not read, and a sampled-off caller gets no span.
-`main` is at **v0.5.0** (tagged 2026-07-27) plus rmcp 3.11 (#151).
+`main` is at **v0.5.0** (tagged 2026-07-27) plus rmcp 3.11 (#151) and 058 (#152).
 
 **057 (`057-provider-rejected-outcome`); all 17 tasks closed**
 ([plan](specs/057-provider-rejected-outcome/plan.md)) — a model-provider HTTP

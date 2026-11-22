@@ -47,6 +47,10 @@ const QUESTIONS: &[(&str, Depth)] = &[
         Depth::Standard,
     ),
     (
+        "How do the Tokio and async-std runtimes differ in task scheduling and ecosystem support?",
+        Depth::Deep,
+    ),
+    (
         "Why did Rust 1.0, released in 2018, remove the garbage collector it shipped with?",
         Depth::Quick,
     ),
@@ -103,6 +107,10 @@ async fn main() {
     let (mut grounded, mut total) = (0_u32, 0_u32);
     let mut max_quick_ms = 0_u128;
     let mut max_standard_ms = 0_u128;
+    // 059: deep runs are timed to measure deep-lite, not judged — no deep
+    // target exists yet, and counting them as standard would judge standard
+    // runs by a deep one.
+    let mut max_deep_ms = 0_u128;
     let mut false_premise_confirmed = false;
 
     for (i, (question, depth)) in QUESTIONS.iter().enumerate() {
@@ -127,7 +135,8 @@ async fn main() {
         let elapsed = start.elapsed().as_millis();
         match *depth {
             Depth::Quick => max_quick_ms = max_quick_ms.max(elapsed),
-            _ => max_standard_ms = max_standard_ms.max(elapsed),
+            Depth::Standard => max_standard_ms = max_standard_ms.max(elapsed),
+            Depth::Deep => max_deep_ms = max_deep_ms.max(elapsed),
         }
 
         match outcome {
@@ -187,7 +196,7 @@ async fn main() {
     println!(
         "SC-001/002 grounded responses: {grounded}/{total} (target: all; typed structs end to end)"
     );
-    println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < 240000)");
+    println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < 240000)   max deep: {max_deep_ms} ms (measured, no target)");
     println!("SC-004 tiny-budget honesty: {tiny_ok}");
     println!("SC-007 false premise confirmed: {false_premise_confirmed} (target: false)");
 

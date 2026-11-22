@@ -30,3 +30,26 @@ After a run, the latest `research` row in `invocation_records` has a
 non-null `search_cost_usd` (when Exa reported costs), and with OTLP export
 configured the `parallax.research` span carries the same value as
 `parallax.search.cost_usd`.
+
+## Live acceptance results (2026-11-22)
+
+Debug build, `EXA_API_KEY` and `ANTHROPIC_API_KEY`, default model
+`claude-opus-4-8`. Two attempts at the planned three runs each stopped
+partway when the Anthropic credit balance ran out (HTTP 400 "credit balance
+is too low") — an account limit, not a code error. Nine questions passed
+across the two attempts, every citation resolving:
+
+| Question | Depth | Time | Sources | Findings | Exa cost |
+|---|---|---|---|---|---|
+| GitHub default branch protection | quick | 77 s / 72 s | 8 / 8 | 90 / 81 | $0.029 / $0.029 |
+| Voyage AI embedding families | quick | 81 s / 76 s | 8 / 8 | 84 / 86 | $0.029 / $0.029 |
+| Brave Search free-tier limits | quick | 68 s / 67 s | 7 / 7 | 75 / 75 | $0.029 / $0.029 |
+| SQLite WAL vs rollback | standard | 176 s / 184 s | 24 / 24 | 270 / 274 | $0.059 / $0.059 |
+| MCP and its transports | standard | 149 s | 25 | 263 | $0.060 |
+
+Quick runs stayed under 150 s and standard under 240 s (SC-003). Exa cost
+about $0.03 per quick and $0.06 per standard question; the Anthropic model
+calls used about $20 of credit in under ten minutes of runs. Not measured:
+the deep question (`deep-lite` latency and cost, research.md D2), the
+false-premise check, the tiny-budget check, and truncated-source counts
+(the example does not print them).
