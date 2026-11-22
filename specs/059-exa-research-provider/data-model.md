@@ -6,17 +6,28 @@
 |---|---|
 | query | the scoped angle |
 | count | `per_angle_count` (still capped at 20 per request) |
-| search type | from depth (research.md D2) |
+| search type | from depth (research.md D2: quick and standard `auto`, deep `deep-lite`) |
 | include domains | `constraints.domains_allow` (may be empty) |
 | exclude domains | `constraints.domains_deny` (may be empty) |
-| max age hours | `EXA_MAX_AGE_HOURS` (default 168) |
-| max characters | `EXTRACT_TEXT_MAX_CHARS` (16,000) |
 
 ## Search response
 
-- **Search hit**: `url`, `title`, `text` (possibly empty), `truncated`
-  (text length ≥ 99% of max characters).
+- **Search hit**: `url`, `title`.
 - **Request cost**: `costDollars.total` in USD, or none when Exa omits it.
+
+## Contents request (one per run, kept sources only)
+
+| Field | Source |
+|---|---|
+| urls | the kept candidates after dedup, domain filter and `max_sources` (≤ 60) |
+| max age hours | `EXA_MAX_AGE_HOURS` (default 168) |
+| max characters | `EXTRACT_TEXT_MAX_CHARS` (16,000) |
+
+## Contents response
+
+- **Page**: `url`, `title`, `text` (possibly empty), `truncated` (text
+  length ≥ 99% of max characters); a URL with an `error` status is absent.
+- **Request cost**: as for search.
 
 ## Run meter (existing, extended)
 

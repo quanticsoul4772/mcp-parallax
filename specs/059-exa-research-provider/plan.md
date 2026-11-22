@@ -6,12 +6,14 @@
 
 ## Summary
 
-`research` finds sources with Exa and takes each source's text from the same
-Exa search response, so Parallax no longer downloads or parses pages. One Exa
-`POST /search` per scoped angle carries the search type (from depth), the
-freshness limit, the per-source character cap and the caller's domain
-constraints; the response's text feeds the unchanged extraction, grounding,
-verification and synthesis phases. Brave, the page fetcher and their four
+`research` finds sources with Exa and takes their text from Exa, so Parallax
+no longer downloads or parses pages. One Exa `POST /search` per scoped angle
+carries the search type (from depth) and the caller's domain constraints and
+returns URLs; after dedup, the domain filter and the source cap, one
+`POST /contents` per run fetches the kept sources' text with the freshness
+limit and the per-source character cap, so text is paid for only on sources
+used. That text feeds the unchanged extraction, grounding, verification and
+synthesis phases. Brave, the page fetcher and their three
 settings are removed; a still-set removed variable is a startup error. Exa's
 reported cost per run is recorded in a new nullable `search_cost_usd` field
 and exported as `parallax.search.cost_usd`. The result gains one field,
@@ -34,8 +36,8 @@ and exported as `parallax.search.cost_usd`. The result gains one field,
 
 **Project Type**: single Rust crate
 
-**Performance Goals**: same number of provider requests per run as Brave
-(one per angle); no per-source requests
+**Performance Goals**: one provider request per angle plus one per run (the
+contents request); no per-source requests
 
 **Constraints**: off by default (no `EXA_API_KEY`, no research, no egress);
 loud configuration errors; no `unwrap`/`expect` in production paths
@@ -87,13 +89,13 @@ specs/059-exa-research-provider/
 ### Source Code (repository root)
 
 ```text
-src/client/exa.rs          # ExaClient: POST /search, retries with Retry-After, cost
+src/client/exa.rs          # ExaClient: POST /search and /contents, retries with Retry-After, cost
 src/client/brave.rs        # removed
-src/traits/search.rs       # SearchRequest (query, count, type, domains, max age, max chars) -> SearchResponse (hits with text, cost)
+src/traits/search.rs       # search(SearchRequest) -> hits + cost; contents(ContentsRequest) -> pages with text + cost
 src/traits/fetcher.rs      # removed
 src/research/fetch.rs      # removed (hygiene fetcher, robots, private-address guard)
 src/research/extract.rs    # readability removed; extraction prompt unchanged
-src/research/pipeline.rs   # text from hits; domains sent to search; cost metered
+src/research/pipeline.rs   # domains sent to search; one contents call for kept sources; cost metered
 src/research/contract.rs   # SourceRef.truncated
 src/research/mod.rs        # RunMeter: Exa cost sum + unknown flag
 src/config.rs              # EXA_API_KEY, EXA_MAX_AGE_HOURS; removed vars are errors
