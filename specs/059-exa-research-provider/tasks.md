@@ -17,8 +17,8 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 
 ## Phase 2: Foundational (blocks US1 and US3)
 
-- [ ] T001 Write failing unit tests in `src/traits/search.rs` for the widened seam: `search(&SearchRequest)` (query, count, search type, include and exclude domains) returning hits (url, title) and an optional request cost, and `contents(&ContentsRequest)` (urls, max age hours, max characters) returning pages (url, title, text, truncated) and an optional request cost, using the mock
-- [ ] T002 Widen `SearchProvider` in `src/traits/search.rs` with both methods; add `SearchType` (`auto`, `deep-lite`) and the depth mapping quick→auto, standard→auto, deep→deep-lite in `src/research/mod.rs` (research.md D2) with a unit test per depth; adapt `BraveClient` and the mocks to the new shape (Brave: hits as before, no cost; `contents` unsupported, never called while the pipeline still fetches) so the crate builds after this task (analyze A1)
+- [X] T001 Write failing unit tests in `src/traits/search.rs` for the widened seam: `search(&SearchRequest)` (query, count, search type, include and exclude domains) returning hits (url, title) and an optional request cost, and `contents(&ContentsRequest)` (urls, max age hours, max characters) returning pages (url, title, text, truncated) and an optional request cost, using the mock
+- [X] T002 Widen `SearchProvider` in `src/traits/search.rs` with both methods; add `SearchType` (`auto`, `deep-lite`) and the depth mapping quick→auto, standard→auto, deep→deep-lite in `src/research/mod.rs` (research.md D2) with a unit test per depth; adapt `BraveClient` and the mocks to the new shape (Brave: hits as before, no cost; `contents` unsupported, never called while the pipeline still fetches) so the crate builds after this task (analyze A1)
 
 **Checkpoint**: the seam compiles with the new shape; no provider implements it yet.
 

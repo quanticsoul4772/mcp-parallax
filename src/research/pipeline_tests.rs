@@ -11,7 +11,7 @@ use crate::research::Depth;
 use crate::traits::client::Completion;
 use crate::traits::clock::{MockTimeProvider, SystemClock};
 use crate::traits::fetcher::MockFetcher;
-use crate::traits::search::{MockSearchProvider, SearchHit};
+use crate::traits::search::{MockSearchProvider, SearchHit, SearchResults};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
@@ -154,15 +154,17 @@ fn article_html(text: &str) -> String {
 
 fn search_returning(urls: &'static [&'static str]) -> MockSearchProvider {
     let mut search = MockSearchProvider::new();
-    search.expect_search().returning(move |_, _| {
-        Ok(urls
-            .iter()
-            .map(|u| SearchHit {
-                url: (*u).to_string(),
-                title: format!("title of {u}"),
-                snippet: String::new(),
-            })
-            .collect())
+    search.expect_search().returning(move |_| {
+        Ok(SearchResults {
+            hits: urls
+                .iter()
+                .map(|u| SearchHit {
+                    url: (*u).to_string(),
+                    title: format!("title of {u}"),
+                })
+                .collect(),
+            cost_usd: None,
+        })
     });
     search
 }
@@ -884,7 +886,7 @@ async fn all_angles_failing_fails_the_invocation_with_the_provider_class() {
     let mut search = MockSearchProvider::new();
     search
         .expect_search()
-        .returning(|_, _| Err(AppError::SearchProvider("HTTP 503".into())));
+        .returning(|_| Err(AppError::SearchProvider("HTTP 503".into())));
     let deps = deps_with(client, search, Arc::new(SystemClock));
 
     let err = run(
@@ -914,13 +916,15 @@ async fn partial_angle_failure_degrades_and_counts() {
     );
     let failed = std::sync::atomic::AtomicBool::new(false);
     let mut search = MockSearchProvider::new();
-    search.expect_search().returning(move |_, _| {
+    search.expect_search().returning(move |_| {
         if failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            Ok(vec![SearchHit {
-                url: "https://example.com/only".into(),
-                title: "only".into(),
-                snippet: String::new(),
-            }])
+            Ok(SearchResults {
+                hits: vec![SearchHit {
+                    url: "https://example.com/only".into(),
+                    title: "only".into(),
+                }],
+                cost_usd: None,
+            })
         } else {
             Err(AppError::SearchProvider("HTTP 503".into()))
         }

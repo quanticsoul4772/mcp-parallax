@@ -24,14 +24,14 @@ use crate::research::settings::{per_angle_count, validate_params, RunSettings};
 use crate::research::synthesis::{assemble, synthesize_grounded, Synthesized};
 use crate::research::verdict::{self, source_credibility};
 use crate::research::{
-    claim_key, domain_matches, url_key, Claim, RunMeter, ScopePlan, SourceRecord, Support,
+    claim_key, domain_matches, url_key, Claim, Depth, RunMeter, ScopePlan, SourceRecord, Support,
     VerifiedClaim, MAX_SUB_QUESTIONS,
 };
 use crate::schema::validate;
 use crate::traits::client::ModelClient;
 use crate::traits::clock::TimeProvider;
 use crate::traits::fetcher::Fetcher;
-use crate::traits::search::SearchProvider;
+use crate::traits::search::{SearchProvider, SearchRequest};
 use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -227,20 +227,27 @@ async fn run_metered_at(
     let mut candidates: Vec<(String, String)> = Vec::new(); // (url, title)
     if ceiling.probe().is_none() {
         let per_angle = per_angle_count(&settings, plan.angles.len());
-        let searches = futures::future::join_all(
-            plan.angles
-                .iter()
-                .map(|angle| deps.search.search(angle, per_angle)),
-        )
-        .await;
+        let requests: Vec<SearchRequest> = plan
+            .angles
+            .iter()
+            .map(|angle| SearchRequest {
+                query: angle.clone(),
+                count: per_angle,
+                search_type: params.depth.unwrap_or(Depth::Standard).search_type(),
+                include_domains: settings.domains_allow.clone(),
+                exclude_domains: settings.domains_deny.clone(),
+            })
+            .collect();
+        let searches =
+            futures::future::join_all(requests.iter().map(|r| deps.search.search(r))).await;
 
         let mut seen_urls = std::collections::BTreeSet::new();
         let mut search_errors: Vec<AppError> = Vec::new();
         for outcome in searches {
             match outcome {
-                Ok(hits) => {
+                Ok(results) => {
                     stats.searches += 1;
-                    for hit in hits {
+                    for hit in results.hits {
                         if seen_urls.insert(url_key(&hit.url)) {
                             candidates.push((hit.url, hit.title));
                         }

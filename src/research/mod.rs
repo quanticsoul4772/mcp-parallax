@@ -70,6 +70,17 @@ pub struct DepthTier {
 const TOKENS_PER_CLAIM_PASS: u64 = 2_508;
 
 impl Depth {
+    /// The provider search mode for this tier (059 research.md D2): `auto`
+    /// for quick and standard, `deep-lite` for deep. Quick stays quick
+    /// through its smaller tier, not a lighter search mode.
+    #[must_use]
+    pub const fn search_type(self) -> crate::traits::search::SearchType {
+        match self {
+            Self::Quick | Self::Standard => crate::traits::search::SearchType::Auto,
+            Self::Deep => crate::traits::search::SearchType::DeepLite,
+        }
+    }
+
     /// The token budget this tier's own caps imply: every source fetched, every
     /// source yielding the maximum claims, every claim verified by the full
     /// ensemble.
@@ -356,6 +367,18 @@ pub fn domain_matches(host: &str, domain: &str) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// 059 research.md D2 (amended by A7): quick and standard search with
+    /// Exa's `auto`, deep with `deep-lite`; no legacy `fast`.
+    #[test]
+    fn each_depth_maps_to_its_exa_search_type() {
+        use crate::traits::search::SearchType;
+        assert_eq!(Depth::Quick.search_type(), SearchType::Auto);
+        assert_eq!(Depth::Standard.search_type(), SearchType::Auto);
+        assert_eq!(Depth::Deep.search_type(), SearchType::DeepLite);
+        assert_eq!(SearchType::Auto.as_str(), "auto");
+        assert_eq!(SearchType::DeepLite.as_str(), "deep-lite");
+    }
 
     #[test]
     fn tier_table_matches_the_design() {

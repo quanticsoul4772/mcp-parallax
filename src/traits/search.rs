@@ -1,34 +1,125 @@
 //! The search-provider boundary (research capability).
 //!
-//! One provider in v1 (Brave) behind the seam the design doc itself calls
-//! for (RESEARCH_PRIMITIVE.md §11) — providers are swappable and differ in
-//! rate/cost/latency.
+//! Providers sit behind the seam the design doc calls for
+//! (RESEARCH_PRIMITIVE.md §11). 059: a provider both finds sources
+//! (`search`) and returns their text (`contents`), so research downloads no
+//! page itself.
 
 use crate::error::AppError;
 
-/// One search hit: identity and snippet only — fetching is the
-/// [`crate::traits::fetcher::Fetcher`]'s job.
+/// The provider's search mode (059 research.md D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchType {
+    /// The provider's default mode.
+    Auto,
+    /// A lighter multi-step search, for deep research.
+    DeepLite,
+}
+
+impl SearchType {
+    /// The wire value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::DeepLite => "deep-lite",
+        }
+    }
+}
+
+/// One search query with the run's options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchRequest {
+    /// The query text (one scoped angle).
+    pub query: String,
+    /// Maximum hits wanted.
+    pub count: u8,
+    /// Search mode, from the research depth.
+    pub search_type: SearchType,
+    /// Only these domains, when non-empty.
+    pub include_domains: Vec<String>,
+    /// Never these domains.
+    pub exclude_domains: Vec<String>,
+}
+
+/// One search hit: identity only — text comes from [`SearchProvider::contents`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchHit {
     /// Result URL as returned by the provider.
     pub url: String,
     /// Result title.
     pub title: String,
-    /// Provider snippet/description (may be empty).
-    pub snippet: String,
 }
 
-/// A web-search backend.
+/// A search's hits and the request's reported cost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchResults {
+    /// Hits in provider order.
+    pub hits: Vec<SearchHit>,
+    /// Cost in USD as reported by the provider; `None` when not reported.
+    pub cost_usd: Option<f64>,
+}
+
+/// One contents request for the run's kept sources.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentsRequest {
+    /// The kept source URLs.
+    pub urls: Vec<String>,
+    /// Freshness limit in hours (`EXA_MAX_AGE_HOURS`).
+    pub max_age_hours: i32,
+    /// Per-page text cap in characters.
+    pub max_characters: usize,
+}
+
+/// One page's text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    /// The page URL.
+    pub url: String,
+    /// The page title (the URL when the provider gives none).
+    pub title: String,
+    /// The page text, possibly empty.
+    pub text: String,
+    /// The text reached the character cap ([`is_truncated`]).
+    pub truncated: bool,
+}
+
+/// The pages a contents request returned and its reported cost. A URL the
+/// provider could not read is absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContentsResults {
+    /// Pages in provider order.
+    pub pages: Vec<Page>,
+    /// Cost in USD as reported by the provider; `None` when not reported.
+    pub cost_usd: Option<f64>,
+}
+
+/// Whether text of `chars` characters was cut at `max_characters`: the
+/// provider does not report truncation, so text at or above 99% of the cap
+/// counts as cut (059 research.md D4).
+#[must_use]
+pub const fn is_truncated(chars: usize, max_characters: usize) -> bool {
+    chars > 0 && chars.saturating_mul(100) >= max_characters.saturating_mul(99)
+}
+
+/// A web-search backend that also returns page text.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait SearchProvider: Send + Sync {
-    /// Run one search query, returning up to `count` hits.
+    /// Run one search query.
     ///
     /// # Errors
     ///
     /// Returns [`AppError`] classified per the outcome taxonomy
     /// (`SearchProvider`, `Timeout`, `RetriesExhausted`).
-    async fn search(&self, query: &str, count: u8) -> Result<Vec<SearchHit>, AppError>;
+    async fn search(&self, request: &SearchRequest) -> Result<SearchResults, AppError>;
+
+    /// Fetch the text of the given pages.
+    ///
+    /// # Errors
+    ///
+    /// As for [`SearchProvider::search`].
+    async fn contents(&self, request: &ContentsRequest) -> Result<ContentsResults, AppError>;
 }
 
 #[cfg(test)]
@@ -36,22 +127,83 @@ pub trait SearchProvider: Send + Sync {
 mod tests {
     use super::*;
 
+    fn request(count: u8) -> SearchRequest {
+        SearchRequest {
+            query: "q".into(),
+            count,
+            search_type: SearchType::Auto,
+            include_domains: vec!["example.com".into()],
+            exclude_domains: vec![],
+        }
+    }
+
+    /// 059 T001: `search` takes the per-run request (type and domain lists)
+    /// and returns hits plus the request's reported cost.
     #[tokio::test]
     async fn mock_search_provider_honors_the_contract() {
         let mut mock = MockSearchProvider::new();
-        mock.expect_search().returning(|query, count| {
-            assert_eq!(query, "q");
-            Ok((0..count)
-                .map(|i| SearchHit {
-                    url: format!("https://example.com/{i}"),
-                    title: format!("hit {i}"),
-                    snippet: String::new(),
-                })
-                .collect())
+        mock.expect_search().returning(|req| {
+            assert_eq!(req.query, "q");
+            assert_eq!(req.search_type, SearchType::Auto);
+            assert_eq!(req.include_domains, vec!["example.com".to_string()]);
+            Ok(SearchResults {
+                hits: (0..req.count)
+                    .map(|i| SearchHit {
+                        url: format!("https://example.com/{i}"),
+                        title: format!("hit {i}"),
+                    })
+                    .collect(),
+                cost_usd: Some(0.007),
+            })
         });
 
-        let hits = mock.search("q", 3).await.unwrap();
-        assert_eq!(hits.len(), 3);
-        assert_eq!(hits[0].url, "https://example.com/0");
+        let results = mock.search(&request(3)).await.unwrap();
+        assert_eq!(results.hits.len(), 3);
+        assert_eq!(results.hits[0].url, "https://example.com/0");
+        assert_eq!(results.cost_usd, Some(0.007));
+    }
+
+    /// 059 T001: `contents` takes the kept URLs with the freshness limit and
+    /// character cap, and returns each page's text, its truncated flag, and
+    /// the request's cost (absent when the provider reports none).
+    #[tokio::test]
+    async fn mock_contents_honors_the_contract() {
+        let mut mock = MockSearchProvider::new();
+        mock.expect_contents().returning(|req| {
+            assert_eq!(req.urls, vec!["https://example.com/a".to_string()]);
+            assert_eq!(req.max_age_hours, 168);
+            assert_eq!(req.max_characters, 16_000);
+            Ok(ContentsResults {
+                pages: vec![Page {
+                    url: req.urls[0].clone(),
+                    title: "A".into(),
+                    text: "body".into(),
+                    truncated: false,
+                }],
+                cost_usd: None,
+            })
+        });
+
+        let results = mock
+            .contents(&ContentsRequest {
+                urls: vec!["https://example.com/a".into()],
+                max_age_hours: 168,
+                max_characters: 16_000,
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.pages[0].text, "body");
+        assert!(!results.pages[0].truncated);
+        assert_eq!(results.cost_usd, None);
+    }
+
+    /// 059 research.md D4: Exa does not report truncation, so text at or
+    /// above 99% of the cap is treated as cut (the reference's rule).
+    #[test]
+    fn text_at_ninety_nine_percent_of_the_cap_is_truncated() {
+        assert!(is_truncated(16_000, 16_000));
+        assert!(is_truncated(15_840, 16_000));
+        assert!(!is_truncated(15_839, 16_000));
+        assert!(!is_truncated(0, 16_000));
     }
 }

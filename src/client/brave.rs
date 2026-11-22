@@ -11,7 +11,9 @@
 
 use crate::config::Config;
 use crate::error::AppError;
-use crate::traits::search::{SearchHit, SearchProvider};
+use crate::traits::search::{
+    ContentsRequest, ContentsResults, SearchHit, SearchProvider, SearchRequest, SearchResults,
+};
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -94,7 +96,8 @@ impl BraveClient {
 
 #[async_trait::async_trait]
 impl SearchProvider for BraveClient {
-    async fn search(&self, query: &str, count: u8) -> Result<Vec<SearchHit>, AppError> {
+    async fn search(&self, request: &SearchRequest) -> Result<SearchResults, AppError> {
+        let (query, count) = (request.query.as_str(), request.count);
         let attempts_max = self.max_retries.saturating_add(1);
         let mut last_error = String::new();
 
@@ -138,23 +141,33 @@ impl SearchProvider for BraveClient {
             })?;
             // An absent `web` key is a valid empty result (e.g. a query with
             // no web hits), not an error — the pipeline reports honest gaps.
-            return Ok(payload
-                .web
-                .map(|w| w.results)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|r| SearchHit {
-                    url: r.url,
-                    title: r.title,
-                    snippet: r.description,
-                })
-                .collect());
+            return Ok(SearchResults {
+                hits: payload
+                    .web
+                    .map(|w| w.results)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| SearchHit {
+                        url: r.url,
+                        title: r.title,
+                    })
+                    .collect(),
+                // Brave bills per request and reports no cost.
+                cost_usd: None,
+            });
         }
 
         Err(AppError::RetriesExhausted {
             attempts: attempts_max,
             last: last_error,
         })
+    }
+
+    async fn contents(&self, _request: &ContentsRequest) -> Result<ContentsResults, AppError> {
+        Err(AppError::SearchProvider(
+            "Brave returns no page text; research fetches pages itself while Brave is the provider"
+                .into(),
+        ))
     }
 }
 
@@ -174,8 +187,6 @@ struct WebResult {
     url: String,
     #[serde(default)]
     title: String,
-    #[serde(default)]
-    description: String,
 }
 
 #[cfg(test)]
@@ -190,6 +201,16 @@ mod tests {
         Config {
             brave_api_key: Some("brave-test-key".into()),
             ..crate::config::test_config()
+        }
+    }
+
+    fn request(query: &str, count: u8) -> SearchRequest {
+        SearchRequest {
+            query: query.into(),
+            count,
+            search_type: crate::traits::search::SearchType::Auto,
+            include_domains: vec![],
+            exclude_domains: vec![],
         }
     }
 
@@ -233,10 +254,13 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let hits = client_for(&mock).search("rust", 2).await.unwrap();
+        let hits = client_for(&mock)
+            .search(&request("rust", 2))
+            .await
+            .unwrap()
+            .hits;
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].url, "https://example.com/a");
-        assert_eq!(hits[0].snippet, "first");
         assert_eq!(hits[1].title, "B");
     }
 
@@ -248,7 +272,11 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let hits = client_for(&mock).search("obscure", 5).await.unwrap();
+        let hits = client_for(&mock)
+            .search(&request("obscure", 5))
+            .await
+            .unwrap()
+            .hits;
         assert!(hits.is_empty());
     }
 
@@ -261,7 +289,10 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let err = client_for(&mock).search("q", 5).await.unwrap_err();
+        let err = client_for(&mock)
+            .search(&request("q", 5))
+            .await
+            .unwrap_err();
         match err {
             AppError::RetriesExhausted { attempts, ref last } => {
                 assert_eq!(attempts, 3);
@@ -285,7 +316,11 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let hits = client_for(&mock).search("q", 2).await.unwrap();
+        let hits = client_for(&mock)
+            .search(&request("q", 2))
+            .await
+            .unwrap()
+            .hits;
         assert_eq!(hits.len(), 2);
     }
 
@@ -302,7 +337,10 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let err = client_for(&mock).search("q", 2).await.unwrap_err();
+        let err = client_for(&mock)
+            .search(&request("q", 2))
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, AppError::Timeout { ms: 2_000, .. }),
             "got: {err}"
@@ -318,7 +356,10 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let err = client_for(&mock).search("q", 2).await.unwrap_err();
+        let err = client_for(&mock)
+            .search(&request("q", 2))
+            .await
+            .unwrap_err();
         match err {
             AppError::SearchProvider(msg) => {
                 assert!(
@@ -338,7 +379,10 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let err = client_for(&mock).search("q", 2).await.unwrap_err();
+        let err = client_for(&mock)
+            .search(&request("q", 2))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::SearchProvider(_)), "got: {err}");
         assert!(err.to_string().contains("unreadable"));
     }
