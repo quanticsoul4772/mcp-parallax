@@ -7,6 +7,7 @@ use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+pub mod classify;
 pub mod invocation;
 
 /// What a runner timeout names (research.md D7).
