@@ -134,6 +134,7 @@ async fn main() {
             deps.concurrency,
             &cost,
             &pages,
+            &mcp_parallax::telemetry::NonModelUsage::default(),
         )
         .await;
         let exa_cost = cost

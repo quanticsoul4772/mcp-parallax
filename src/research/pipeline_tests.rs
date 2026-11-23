@@ -364,6 +364,7 @@ async fn the_runs_exa_cost_sums_every_search_and_the_contents_call() {
         4,
         &cost,
         &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
     .unwrap();
@@ -688,6 +689,7 @@ async fn a_call_that_sent_nothing_leaves_the_cost_known() {
         4,
         &cost,
         &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
     .unwrap();
@@ -734,6 +736,7 @@ async fn a_failed_exa_call_makes_the_runs_cost_unknown() {
         4,
         &cost,
         &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
     .unwrap();
@@ -2602,6 +2605,7 @@ async fn the_run_reports_pages_fetched_and_kept() {
         4,
         &crate::telemetry::SearchCost::default(),
         &pages,
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
     .unwrap();
@@ -2702,9 +2706,70 @@ async fn kept_never_exceeds_fetched() {
         4,
         &crate::telemetry::SearchCost::default(),
         &pages,
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
     .unwrap();
     assert_eq!(pages.get(), Some((5, 5)));
     assert_eq!(result.stats.sources_kept, 5);
+}
+
+/// Review finding 4: a malformed reply's billed tokens (carried on the
+/// error) reach the run's usage, and the skip is still `malformed_reply`.
+#[tokio::test]
+async fn a_malformed_replys_billed_tokens_reach_the_usage() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(|_, _| {
+        Err(
+            AppError::EmbeddingProvider("out-of-contract rerank reply: index 2 not scored".into())
+                .metered(50, 0),
+        )
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+    let (result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    let rerank: Vec<_> = usage.iter().filter(|(m, _)| *m == "rerank-3").collect();
+    assert_eq!(rerank.len(), 1, "{:?}", usage.models());
+    assert_eq!(rerank[0].1.input_tokens, 50);
+    let reason = result.stats.rerank_skipped.unwrap();
+    assert!(reason.starts_with("malformed_reply"), "{reason}");
+}
+
+/// Review finding 3: when the run fails after the rerank, the rerank's
+/// usage is still reported for the failed run's record.
+#[tokio::test]
+async fn a_failed_run_still_reports_the_rerank_usage() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the shared claim holds"] }),
+        |_, _| supported(),
+        |_| json!({ "not": "a synthesis" }),
+    );
+    let mut deps = deps_with(client, search_returning(EIGHT), Arc::new(SystemClock));
+    deps.reranker = Some(Arc::new(top_k_reranker()));
+    let side = crate::telemetry::NonModelUsage::default();
+    let outcome = run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        4,
+        &crate::telemetry::SearchCost::default(),
+        &crate::telemetry::PageCounts::default(),
+        &side,
+    )
+    .await;
+    assert!(outcome.is_err(), "synthesis must fail");
+    let usage = side.snapshot();
+    let rerank: Vec<_> = usage.iter().filter(|(m, _)| *m == "rerank-3").collect();
+    assert_eq!(rerank.len(), 1);
+    assert_eq!(rerank[0].1.input_tokens, 100);
 }

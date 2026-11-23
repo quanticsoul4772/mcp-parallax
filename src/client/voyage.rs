@@ -201,9 +201,21 @@ impl Reranker for VoyageClient {
 
 /// Map a 2xx rerank reply to a score per document in input order. Every
 /// input index exactly once, or the reply is out of contract (061 contract).
+///
+/// An out-of-contract reply was still billed, so its tokens ride on the
+/// error (061 review finding 4).
 fn interpret_rerank(payload: RerankResponse, count: usize) -> Result<RerankResult, AppError> {
+    let total_tokens = payload.usage.total_tokens;
+    let scores = scores_in_order(payload.data, count).map_err(|e| e.metered(total_tokens, 0))?;
+    Ok(RerankResult {
+        scores,
+        total_tokens,
+    })
+}
+
+fn scores_in_order(data: Vec<RerankDatum>, count: usize) -> Result<Vec<f32>, AppError> {
     let mut scores: Vec<Option<f32>> = vec![None; count];
-    for datum in payload.data {
+    for datum in data {
         let slot = scores.get_mut(datum.index).ok_or_else(|| {
             AppError::EmbeddingProvider(format!(
                 "out-of-contract rerank reply: index {} out of range",
@@ -217,7 +229,7 @@ fn interpret_rerank(payload: RerankResponse, count: usize) -> Result<RerankResul
             )));
         }
     }
-    let scores = scores
+    scores
         .into_iter()
         .enumerate()
         .map(|(i, s)| {
@@ -227,11 +239,7 @@ fn interpret_rerank(payload: RerankResponse, count: usize) -> Result<RerankResul
                 ))
             })
         })
-        .collect::<Result<Vec<f32>, AppError>>()?;
-    Ok(RerankResult {
-        scores,
-        total_tokens: payload.usage.total_tokens,
-    })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,6 +327,23 @@ mod tests {
         })
     }
 
+    /// 061 review finding 4: an out-of-contract reply was still billed; its
+    /// tokens ride on the error.
+    #[test]
+    fn a_malformed_rerank_reply_keeps_its_billed_tokens() {
+        let payload: RerankResponse = serde_json::from_value(serde_json::json!({
+            "data": [
+                { "index": 0, "relevance_score": 0.9 },
+                { "index": 1, "relevance_score": 0.8 }
+            ],
+            "usage": { "total_tokens": 50_000 }
+        }))
+        .unwrap();
+        let error = interpret_rerank(payload, 3).unwrap_err();
+        assert_eq!(error.billed(), (50_000, 0));
+        assert!(error.to_string().contains("out-of-contract"), "{error}");
+    }
+
     fn docs() -> Vec<String> {
         vec!["alpha".into(), "beta".into(), "gamma".into()]
     }
@@ -380,7 +405,7 @@ mod tests {
                 .await;
             let err = client_for(&mock).rerank("q", &docs()).await.unwrap_err();
             assert!(
-                matches!(err, AppError::EmbeddingProvider(_)),
+                matches!(err.root(), AppError::EmbeddingProvider(_)),
                 "{reply}: {err:?}"
             );
         }

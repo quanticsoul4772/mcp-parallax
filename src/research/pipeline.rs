@@ -179,6 +179,7 @@ pub async fn run(
         deps.concurrency,
         &crate::telemetry::SearchCost::default(),
         &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
 }
@@ -199,9 +200,19 @@ pub async fn run_at(
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
     pages: &crate::telemetry::PageCounts,
+    non_model: &crate::telemetry::NonModelUsage,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered_at(deps, params, &meter, concurrency, search_cost, pages).await;
+    let outcome = run_metered_at(
+        deps,
+        params,
+        &meter,
+        concurrency,
+        search_cost,
+        pages,
+        non_model,
+    )
+    .await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -223,6 +234,7 @@ async fn run_metered_at(
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
     pages_counted: &crate::telemetry::PageCounts,
+    non_model: &crate::telemetry::NonModelUsage,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
@@ -365,6 +377,7 @@ async fn run_metered_at(
         settings.keep_sources,
         ceiling.time_left(),
         meter,
+        non_model,
     )
     .await;
     stats.rerank_skipped = skipped;
@@ -738,7 +751,16 @@ async fn rerank_pages(
     keep: usize,
     time_left: std::time::Duration,
     meter: &RunMeter,
+    non_model: &crate::telemetry::NonModelUsage,
 ) -> (Vec<bool>, Vec<Option<f32>>, Option<String>) {
+    // 061 D8: rerank tokens reach the run's usage under the reranker's model,
+    // and the side accumulator a failed run's record reads (review finding 3).
+    let bill = |tokens: u64, model: &str| {
+        if tokens > 0 {
+            meter.add_usage(model, tokens);
+            non_model.add(model, tokens);
+        }
+    };
     let count = pages.len();
     let unchanged = |reason: Option<String>| (vec![true; count], vec![None; count], reason);
     let Some(reranker) = &deps.reranker else {
@@ -769,6 +791,8 @@ async fn rerank_pages(
             return unchanged(Some("timeout".to_string()));
         }
         Ok(Err(error)) => {
+            // Review finding 4: a malformed reply was still billed.
+            bill(error.billed().0, reranker.model_id());
             let message = error.to_string();
             let reason = if message.contains("out-of-contract") {
                 format!("malformed_reply: {message}")
@@ -780,8 +804,7 @@ async fn rerank_pages(
         }
         Ok(Ok(result)) => result,
     };
-    // 061 D8: the rerank's tokens reach the run's usage under its model.
-    meter.add_usage(reranker.model_id(), result.total_tokens);
+    bill(result.total_tokens, reranker.model_id());
     if result.scores.len() != documents.len() {
         let reason = format!(
             "malformed_reply: {} scores for {} pages",

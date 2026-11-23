@@ -73,6 +73,9 @@ pub(super) struct RecordDims {
     search_cost: Option<Arc<crate::telemetry::SearchCost>>,
     /// The research run's page counts (061); `None` for other tools.
     pages: Option<Arc<crate::telemetry::PageCounts>>,
+    /// The research run's non-model usage (061 review finding 3); `None`
+    /// for other tools.
+    non_model: Option<Arc<crate::telemetry::NonModelUsage>>,
 }
 
 impl RecordDims {
@@ -84,6 +87,7 @@ impl RecordDims {
             passes: None,
             search_cost: None,
             pages: None,
+            non_model: None,
         }
     }
 
@@ -95,6 +99,7 @@ impl RecordDims {
             passes,
             search_cost: None,
             pages: None,
+            non_model: None,
         }
     }
 }
@@ -947,6 +952,7 @@ impl Parallax {
         // every exit and added to by the pipeline on every Exa call.
         let search_cost = Arc::new(crate::telemetry::SearchCost::default());
         let pages = Arc::new(crate::telemetry::PageCounts::default());
+        let non_model = Arc::new(crate::telemetry::NonModelUsage::default());
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a
@@ -982,11 +988,22 @@ impl Parallax {
                 depth: Some(depth),
                 search_cost: Some(Arc::clone(&search_cost)),
                 pages: Some(Arc::clone(&pages)),
+                non_model: Some(Arc::clone(&non_model)),
                 ..RecordDims::default()
             },
             ct,
             caller,
-            async { pipeline::run_at(&deps, &params, concurrency, &search_cost, &pages).await },
+            async {
+                pipeline::run_at(
+                    &deps,
+                    &params,
+                    concurrency,
+                    &search_cost,
+                    &pages,
+                    &non_model,
+                )
+                .await
+            },
         )
         .await
     }

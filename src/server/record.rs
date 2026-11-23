@@ -47,6 +47,8 @@ pub(super) struct RecordGuard {
     search_cost: Option<Arc<crate::telemetry::SearchCost>>,
     /// The research run's page counts (061), or `None`.
     pages: Option<Arc<crate::telemetry::PageCounts>>,
+    /// The research run's non-model usage (061 review finding 3), or `None`.
+    non_model: Option<Arc<crate::telemetry::NonModelUsage>>,
     /// The invocation's `claude_cli` cost meter (060 D11), scoped around its
     /// work by the server; read when the invocation finishes with usage.
     cli_cost: Arc<crate::telemetry::CliCost>,
@@ -80,6 +82,7 @@ impl RecordGuard {
             passes: dims.passes,
             search_cost: dims.search_cost,
             pages: dims.pages,
+            non_model: dims.non_model,
             cli_cost: Arc::new(crate::telemetry::CliCost::default()),
             caller,
             started_at,
@@ -92,8 +95,22 @@ impl RecordGuard {
         Arc::clone(&self.cli_cost)
     }
 
-    pub(super) async fn finish(mut self, usage: &ModelUsage, outcome: Outcome) {
+    /// A run that did not succeed returns no usage of its own beyond the
+    /// tokens its error carried; its non-model usage (the rerank) is added
+    /// here. A success's usage already holds it (061 review finding 3).
+    fn with_non_model(&self, usage: &ModelUsage, outcome: Outcome) -> ModelUsage {
+        let mut usage = usage.clone();
+        if outcome != Outcome::Success {
+            if let Some(side) = &self.non_model {
+                usage.merge(&side.snapshot());
+            }
+        }
+        usage
+    }
+
+    pub(super) async fn finish(mut self, model_usage: &ModelUsage, outcome: Outcome) {
         self.done = true;
+        let usage = &self.with_non_model(model_usage, outcome);
         let record = InvocationRecord::create(
             self.clock.as_ref(),
             &self.session_id,
@@ -112,7 +129,7 @@ impl RecordGuard {
         .with_pages(self.pages.as_ref().and_then(|p| p.get()))
         // The CLI's figure only beside the tokens it priced: an exit that
         // records no usage records no cost either.
-        .with_cli_cost(if usage.is_empty() {
+        .with_cli_cost(if model_usage.is_empty() {
             None
         } else {
             self.cli_cost.total()
@@ -140,7 +157,7 @@ impl Drop for RecordGuard {
             &self.session_id,
             &self.tool,
             &self.model,
-            &ModelUsage::default(),
+            &self.with_non_model(&ModelUsage::default(), Outcome::Cancelled),
             Outcome::Cancelled,
             self.started_at,
         )
@@ -162,5 +179,75 @@ impl Drop for RecordGuard {
             // dropping the record (FR-010).
             tracing::error!("cancelled-invocation record not persisted: no tokio runtime");
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::traits::clock::SystemClock;
+    use crate::traits::storage::MockStorage;
+
+    fn guard_capturing(
+        side: Arc<crate::telemetry::NonModelUsage>,
+    ) -> (RecordGuard, Arc<std::sync::Mutex<Vec<InvocationRecord>>>) {
+        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&written);
+        let mut storage = MockStorage::new();
+        storage.expect_record_invocation().returning(move |r| {
+            sink.lock().unwrap().push(r.clone());
+            Ok(())
+        });
+        let guard = RecordGuard::new(
+            Arc::new(storage),
+            Arc::new(SystemClock),
+            "s".into(),
+            "research".into(),
+            "claude-sonnet-5-5".into(),
+            super::super::RecordDims {
+                non_model: Some(side),
+                ..super::super::RecordDims::default()
+            },
+            None,
+        );
+        (guard, written)
+    }
+
+    /// 061 review finding 3: a failed run's record carries the non-model
+    /// usage (the rerank) beside the model tokens the error carried.
+    #[tokio::test]
+    async fn a_failed_record_carries_the_non_model_usage() {
+        let side = Arc::new(crate::telemetry::NonModelUsage::default());
+        side.add("rerank-3", 100);
+        let (guard, written) = guard_capturing(Arc::clone(&side));
+        guard
+            .finish(
+                &ModelUsage::single("claude-sonnet-5-5", 10, 5),
+                Outcome::ValidationFailure,
+            )
+            .await;
+        let records = written.lock().unwrap().clone();
+        assert!(records[0].models.contains(&"rerank-3".to_string()));
+        assert_eq!((records[0].input_tokens, records[0].output_tokens), (10, 5));
+    }
+
+    /// On success the run's own usage already holds the rerank: no double count.
+    #[tokio::test]
+    async fn a_successful_record_does_not_count_the_rerank_twice() {
+        let side = Arc::new(crate::telemetry::NonModelUsage::default());
+        side.add("rerank-3", 100);
+        let (guard, written) = guard_capturing(Arc::clone(&side));
+        let mut usage = ModelUsage::single("claude-sonnet-5-5", 10, 5);
+        usage.add("rerank-3", 100, 0);
+        guard.finish(&usage, Outcome::Success).await;
+        let records = written.lock().unwrap().clone();
+        let rerank: Vec<_> = records[0]
+            .usage_by_model
+            .iter()
+            .filter(|(m, _)| *m == "rerank-3")
+            .map(|(_, u)| u.input_tokens)
+            .collect();
+        assert_eq!(rerank, vec![100]);
     }
 }

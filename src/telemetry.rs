@@ -118,12 +118,13 @@ impl ModelUsage {
     /// existing token columns carry.
     #[must_use]
     pub fn totals(&self) -> (u64, u64) {
-        self.by_model.values().fold((0, 0), |(input, output), u| {
-            (
-                input.saturating_add(u.input_tokens),
-                output.saturating_add(u.output_tokens),
-            )
-        })
+        self.model_entries()
+            .fold((0, 0), |(input, output), (_, u)| {
+                (
+                    input.saturating_add(u.input_tokens),
+                    output.saturating_add(u.output_tokens),
+                )
+            })
     }
 
     /// The model that consumed the most tokens — the attributed model (018 D5).
@@ -136,8 +137,7 @@ impl ModelUsage {
     /// model, which is what keeps unrouted records byte-identical.
     #[must_use]
     pub fn dominant(&self) -> Option<&str> {
-        self.by_model
-            .iter()
+        self.model_entries()
             .max_by(|(a_model, a), (b_model, b)| {
                 let a_total = a.input_tokens.saturating_add(a.output_tokens);
                 let b_total = b.input_tokens.saturating_add(b.output_tokens);
@@ -146,6 +146,13 @@ impl ModelUsage {
                 a_total.cmp(&b_total).then(b_model.cmp(a_model))
             })
             .map(|(model, _)| model.as_str())
+    }
+
+    /// Entries that are model calls: everything but [`NON_MODEL_USAGE`].
+    fn model_entries(&self) -> impl Iterator<Item = (&String, &Usage)> {
+        self.by_model
+            .iter()
+            .filter(|(model, _)| !NON_MODEL_USAGE.contains(&model.as_str()))
     }
 
     /// Participating models, sorted. Only models that actually ran (FR-015b).
@@ -270,6 +277,33 @@ impl CliCost {
         let state = self.state.lock().ok()?;
         #[allow(clippy::cast_precision_loss)] // micro-dollar sums are far below 2^52
         (state.calls > 0 && !state.unreported).then(|| state.micros as f64 / 1_000_000.0)
+    }
+}
+
+/// Usage that is billed and priced but is not a model call (061 review
+/// finding 6): kept in a record's per-model usage and cost, left out of its
+/// token totals and its attributed model.
+pub const NON_MODEL_USAGE: &[&str] = &["rerank-3"];
+
+/// A run's non-model usage (061 review finding 3: the rerank), held apart
+/// so the record of a run that fails afterwards still carries it.
+#[derive(Debug, Default)]
+pub struct NonModelUsage {
+    usage: std::sync::Mutex<ModelUsage>,
+}
+
+impl NonModelUsage {
+    /// Add input tokens billed under `model`.
+    pub fn add(&self, model: &str, input_tokens: u64) {
+        if let Ok(mut usage) = self.usage.lock() {
+            usage.add(model, input_tokens, 0);
+        }
+    }
+
+    /// What has been added so far.
+    #[must_use]
+    pub fn snapshot(&self) -> ModelUsage {
+        self.usage.lock().map(|u| u.clone()).unwrap_or_default()
     }
 }
 
@@ -629,6 +663,24 @@ mod tests {
         assert_eq!(pages.get(), None);
         pages.set(25, 15);
         assert_eq!(pages.get(), Some((25, 15)));
+    }
+
+    /// 061 review finding 6: rerank tokens are usage and cost, not model
+    /// tokens: they stay out of the token totals and can never be the
+    /// attributed model.
+    #[test]
+    fn rerank_usage_is_priced_but_not_model_tokens() {
+        let mut usage = ModelUsage::default();
+        usage.add("claude-haiku-5-5", 100, 10);
+        usage.add("rerank-3", 1_000_000, 0);
+        assert_eq!(usage.totals(), (100, 10));
+        assert_eq!(usage.dominant(), Some("claude-haiku-5-5"));
+        assert!((usage.cost_usd() - cost_usd("claude-haiku-5-5", 100, 10) - 0.05).abs() < 1e-9);
+        assert!(NON_MODEL_USAGE.contains(&crate::client::voyage::RERANK_MODEL));
+        let side = NonModelUsage::default();
+        assert!(side.snapshot().is_empty());
+        side.add("rerank-3", 7);
+        assert_eq!(side.snapshot().iter().count(), 1);
     }
 
     fn fixed_clock() -> MockTimeProvider {
