@@ -27,7 +27,7 @@ Tests come first in each story and are seen failing before the code.
 - [X] T006 `CHANGELOG.md` `[Unreleased]` entry (FR-004; exact text approved first)
 - [X] T007 Independent review: a fresh subagent given only the diff, told to trace every caller (brief approved first); findings asked one by one
 - [X] T008 Live check (SC-001/002): after the rebuild, one standard and one deep `research` call on `claude_cli`; record the results in `specs/062-claude-cli-research-deadlines/quickstart.md` (text approved first)
-- [ ] T009 CLAUDE.md active-feature block (exact text approved first)
+- [X] T009 CLAUDE.md active-feature block (exact text approved first)
 
 ## Dependencies
 
