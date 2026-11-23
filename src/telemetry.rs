@@ -25,7 +25,7 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
     ("claude-haiku-5-5", 0.10, 0.50),
     ("claude-fable-5", 10.00, 50.00),
     ("claude-opus-5", 5.00, 25.00),
-    ("claude-sonnet-5", 3.00, 15.00),
+    ("claude-sonnet-5", 2.00, 10.00),
     ("claude-opus-4-8", 5.00, 25.00),
     ("claude-opus-4-7", 5.00, 25.00),
     ("claude-opus-4-6", 5.00, 25.00),
@@ -876,6 +876,18 @@ mod tests {
         assert!((all_at_opus - 60.0).abs() < 1e-9);
         assert!((all_at_haiku - 12.0).abs() < 1e-9);
         assert!(usage.cost_usd() < all_at_opus && usage.cost_usd() > all_at_haiku);
+    }
+
+    /// The Sonnet 5 row carries Anthropic's current first-party rate, $2/$10
+    /// (the claude-api model table cached 2026-11-03); it had stayed at the
+    /// $3/$15 cached 2026-07-24.
+    #[test]
+    fn sonnet_5_prices_at_the_current_rate() {
+        let cost = cost_usd("claude-sonnet-5", 1_000_000, 1_000_000);
+        assert!(
+            (cost - 12.0).abs() < 1e-9,
+            "sonnet 5 prices at 2/10, got {cost}"
+        );
     }
 
     // T022 / FR-011 / FR-012.

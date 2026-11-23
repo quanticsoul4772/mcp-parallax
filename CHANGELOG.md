@@ -290,6 +290,10 @@ arc.
 
 ### Fixed
 
+* **Sonnet 5 cost estimates** — the `claude-sonnet-5` price row now carries
+  the current $2/$10 per million tokens; it had stayed at $3/$15, so records
+  for calls routed to it over-stated cost by half.
+
 * **The config scans' comment stripper reads char literals and raw strings** —
   `strip_comments` knew only `"…"` strings, so a `'"'` char literal, or a raw
   string that ends in a backslash (`r"C:\"`) or holds a quote, flipped its idea
