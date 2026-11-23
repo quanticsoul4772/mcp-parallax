@@ -138,6 +138,7 @@ fn deps_with_client(
         input_max_chars: 50_000,
         concurrency: 4,
         max_age_hours: 168,
+        backend: crate::config::Backend::Anthropic,
         // These fixtures share one scripted client, so every call site reports
         // the same model and existing token assertions are unchanged.
         routing: crate::routing::RoutingTable::single(
@@ -2831,4 +2832,116 @@ async fn a_rerank_still_running_is_cut_off_when_time_runs_out() {
         "waited for the reranker: {elapsed:?}"
     );
     assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
+}
+
+// ---- 062: research deadlines that fit claude_cli ------------------------------
+
+/// The run's resolved deadline for a backend, depth and optional caller value.
+fn resolved_deadline(
+    backend: crate::config::Backend,
+    depth: Depth,
+    caller: Option<u64>,
+) -> Result<u64, AppError> {
+    let mut deps = deps_with(
+        shared_claim_client(),
+        MockSearchProvider::new(),
+        Arc::new(SystemClock),
+    );
+    deps.backend = backend;
+    let p = ResearchParams {
+        constraints: caller.map(|d| Constraints {
+            deadline_ms: Some(d),
+            ..Constraints::default()
+        }),
+        ..params("q?", Some(depth))
+    };
+    crate::research::settings::validate_params(&deps, &p).map(|s| s.deadline_ms)
+}
+
+/// 062 T002 (US1, FR-001): on claude_cli the defaults are 120 / 660 / 1980 s.
+#[test]
+fn claude_cli_gets_longer_default_deadlines() {
+    use crate::config::Backend::ClaudeCli;
+    assert_eq!(
+        resolved_deadline(ClaudeCli, Depth::Quick, None).unwrap(),
+        120_000
+    );
+    assert_eq!(
+        resolved_deadline(ClaudeCli, Depth::Standard, None).unwrap(),
+        660_000
+    );
+    assert_eq!(
+        resolved_deadline(ClaudeCli, Depth::Deep, None).unwrap(),
+        1_980_000
+    );
+}
+
+/// 062 T003 (US1): on claude_cli, a standard run is still working 600 s in.
+#[tokio::test]
+async fn a_claude_cli_standard_run_is_not_stopped_at_600_seconds() {
+    let started = DateTime::parse_from_rfc3339("2026-11-23T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let mut clock = MockTimeProvider::new();
+    let calls = std::sync::atomic::AtomicU32::new(0);
+    clock.expect_now().returning(move || {
+        // The first reading is the run's start; every later one is 600 s in.
+        if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            started
+        } else {
+            started + chrono::Duration::seconds(600)
+        }
+    });
+    let mut deps = deps_with(
+        shared_claim_client(),
+        search_returning(EIGHT),
+        Arc::new(clock),
+    );
+    deps.backend = crate::config::Backend::ClaudeCli;
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Standard)))
+        .await
+        .unwrap();
+    assert!(
+        !result.stats.stopped_early,
+        "{:?}",
+        result.stats.stop_reason
+    );
+}
+
+/// 062 T005 (US2, FR-002): the other backends keep 120 / 240 / 480 s.
+#[test]
+fn other_backends_keep_todays_default_deadlines() {
+    use crate::config::Backend::{Anthropic, OpenAiCompat};
+    for backend in [Anthropic, OpenAiCompat] {
+        assert_eq!(
+            resolved_deadline(backend, Depth::Quick, None).unwrap(),
+            120_000
+        );
+        assert_eq!(
+            resolved_deadline(backend, Depth::Standard, None).unwrap(),
+            240_000
+        );
+        assert_eq!(
+            resolved_deadline(backend, Depth::Deep, None).unwrap(),
+            480_000
+        );
+    }
+}
+
+/// 062 T005 (US2, FR-003): a caller deadline wins on every backend, and the
+/// 5000 ms minimum still applies on claude_cli.
+#[test]
+fn a_caller_deadline_wins_on_every_backend() {
+    use crate::config::Backend::{Anthropic, ClaudeCli, OpenAiCompat};
+    for backend in [Anthropic, OpenAiCompat, ClaudeCli] {
+        assert_eq!(
+            resolved_deadline(backend, Depth::Standard, Some(90_000)).unwrap(),
+            90_000
+        );
+        assert_eq!(
+            resolved_deadline(backend, Depth::Deep, Some(900_000)).unwrap(),
+            900_000
+        );
+    }
+    assert!(resolved_deadline(ClaudeCli, Depth::Standard, Some(4_999)).is_err());
 }

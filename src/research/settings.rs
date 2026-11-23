@@ -59,7 +59,14 @@ pub fn validate_params(
         }
     }
 
-    let tier = params.depth.unwrap_or(Depth::Standard).tier();
+    let depth = params.depth.unwrap_or(Depth::Standard);
+    let tier = depth.tier();
+    // 062: longer default deadlines on claude_cli; other backends unchanged.
+    let default_deadline_ms = if deps.backend == crate::config::Backend::ClaudeCli {
+        depth.claude_cli_deadline_ms()
+    } else {
+        tier.default_deadline_ms
+    };
     let constraints = params.constraints.clone().unwrap_or_default();
     if let Some(n) = constraints.max_sources {
         if !(1..=60).contains(&n) {
@@ -101,7 +108,7 @@ pub fn validate_params(
         max_sources,
         keep_sources: tier.keep_sources.min(max_sources),
         verify_k: tier.verify_k,
-        deadline_ms: constraints.deadline_ms.unwrap_or(tier.default_deadline_ms),
+        deadline_ms: constraints.deadline_ms.unwrap_or(default_deadline_ms),
         budget_tokens: constraints
             .budget_tokens
             .unwrap_or(tier.default_budget_tokens),

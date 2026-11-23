@@ -13,6 +13,12 @@ arc.
 
 ### Added
 
+* **Research deadlines that fit claude_cli (062)** — on
+  `PARALLAX_BACKEND=claude_cli`, research's default deadlines are 120 s
+  (quick, unchanged), 660 s (standard, was 240 s) and 1980 s (deep, was
+  480 s), because every model call there is a `claude -p` process: full runs
+  measured at 538 s and 1632 s, so claims were cut off. A caller's
+  `constraints.deadline_ms` still wins; other backends are unchanged.
 * **Research reads only the most relevant pages (061)** — with
   `VOYAGE_API_KEY` set, research reranks the fetched pages against the
   question with Voyage `rerank-3` and extracts claims only from the top

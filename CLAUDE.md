@@ -293,7 +293,16 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `061-research-rerank`; all 18 tasks closed**
+**Active Spec Kit feature: `062-claude-cli-research-deadlines`; all 9 tasks
+closed** ([plan](specs/062-claude-cli-research-deadlines/plan.md)) — on
+`PARALLAX_BACKEND=claude_cli`, research's default deadlines are 120 s (quick),
+660 s (standard) and 1980 s (deep), about 1.2x full runs measured at
+concurrency 4 (93 / 538 / 1632 s); other backends keep 120 / 240 / 480 s and a
+caller's `deadline_ms` still wins. The first values (360 / 720 s) failed live
+because they were estimated from runs that had themselves been cut off. Deep
+runs use about 80% of the 5.5 M token budget.
+
+**061 (`061-research-rerank`); all 18 tasks closed**
 ([plan](specs/061-research-rerank/plan.md)) — with `VOYAGE_API_KEY` set,
 research reranks the fetched pages against the question with Voyage
 `rerank-3` and extracts claims only from the top 5 / 15 / 35 by depth; a

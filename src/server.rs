@@ -397,6 +397,7 @@ impl Parallax {
                 verify_client: pool.for_site(CallSite::ResearchVerify),
                 synth_client: pool.for_site(CallSite::ResearchSynthesize),
                 routing: config.routing.clone(),
+                backend: config.backend,
                 search,
                 clock: Arc::clone(&clock),
                 scope_mode: mode(pipeline::SCOPE_MODE_ID)?,
