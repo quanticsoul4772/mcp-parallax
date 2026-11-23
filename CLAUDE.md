@@ -293,14 +293,20 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**In progress: `060-claude-cli-backend`**
-([plan](specs/060-claude-cli-backend/plan.md)) — a `claude_cli` backend runs
-every model call through the operator's own signed-in Claude Code
-(`claude -p`, isolated: no MCP servers, tools, settings or hooks; API-billing
-variables removed from its environment), so Parallax works without API
-credit. Spec and plan written; tasks not yet generated.
+**Active Spec Kit feature: `060-claude-cli-backend`; all 29 tasks closed,
+the research live check deferred**
+([plan](specs/060-claude-cli-backend/plan.md)) — `PARALLAX_BACKEND=claude_cli`
+runs every model call through the operator's own signed-in Claude Code
+(`claude -p`), so Parallax works without API credit. Each call is isolated (no
+MCP servers or tools, `--safe-mode`, CLAUDE.md and auto memory off, a fresh
+private folder, API-billing variables removed), capped at
+`CLAUDE_CLI_CONCURRENCY` processes, and classified into named outcomes (new:
+`usage_limit`). Records carry the CLI's own cost estimate as
+`cost_basis = cli_estimate`. A live run passed on the subscription (7 tools,
+20/20 schema-valid, 33/33 isolated). The review fixes reached main in #156,
+after #155 merged without them.
 
-**Active Spec Kit feature: `059-exa-research-provider`; all 26 tasks closed,
+**059 (`059-exa-research-provider`); all 26 tasks closed,
 part of the live check deferred**
 ([plan](specs/059-exa-research-provider/plan.md)) — `research` runs on Exa:
 one Exa search per angle finds sources and one contents request returns the

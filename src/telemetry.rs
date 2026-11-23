@@ -433,13 +433,27 @@ impl InvocationRecord {
     /// Stamp the CLI's own cost figure onto the record (060 D11): with one,
     /// it becomes [`Self::cost_usd`], marked [`CostBasis::CliEstimate`];
     /// without one the price-table figure stands.
+    ///
+    /// The CLI figure covers the Claude models only; any other model in the
+    /// invocation (an embedding model) keeps its price-table cost beside it
+    /// (060 review finding 5).
     #[must_use]
-    pub const fn with_cli_cost(mut self, cli_cost_usd: Option<f64>) -> Self {
+    pub fn with_cli_cost(mut self, cli_cost_usd: Option<f64>) -> Self {
         if let Some(usd) = cli_cost_usd {
-            self.cost_usd = usd;
+            self.cost_usd = usd + self.non_claude_cost();
             self.cost_basis = Some(CostBasis::CliEstimate);
         }
         self
+    }
+
+    /// The price-table cost of the models that did not run through the CLI.
+    #[must_use]
+    pub fn non_claude_cost(&self) -> f64 {
+        self.usage_by_model
+            .iter()
+            .filter(|(model, _)| !model.starts_with("claude"))
+            .map(|(model, u)| cost_usd(model, u.input_tokens, u.output_tokens))
+            .sum()
     }
 
     /// Stamp the run's Exa cost onto the record (059 FR-010).
@@ -522,6 +536,26 @@ impl InvocationRecord {
 mod tests {
     use super::*;
     use crate::traits::clock::MockTimeProvider;
+
+    /// 060 review finding 5: the CLI figure replaces only the Claude models'
+    /// share; an embedding model's price-table cost stays in the total.
+    #[test]
+    fn the_cli_figure_keeps_the_embedding_cost() {
+        let clock = fixed_clock();
+        let mut usage = ModelUsage::single("claude-sonnet-5-5", 1_000, 100);
+        usage.add("voyage-4", 1_000_000, 0); // $0.06 at the voyage-4 row
+        let record = InvocationRecord::create(
+            &clock,
+            "s",
+            "save",
+            "claude-sonnet-5-5",
+            &usage,
+            Outcome::Success,
+            clock.now(),
+        )
+        .with_cli_cost(Some(0.01));
+        assert!((record.cost_usd - 0.07).abs() < 1e-9, "{}", record.cost_usd);
+    }
 
     fn fixed_clock() -> MockTimeProvider {
         let fixed = DateTime::parse_from_rfc3339("2026-11-22T00:00:00Z")

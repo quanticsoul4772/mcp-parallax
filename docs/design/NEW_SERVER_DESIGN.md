@@ -312,6 +312,14 @@ defense-in-depth, but the happy path is schema-guaranteed by the API. *Removes:*
 `extract_json` and its fallbacks, parse/schema defect detection, and the entire "heal
 my own parsers" rationale for the self-improvement/self-heal subsystems.
 
+> **Amendment (2026-11-22, feature 060).** A third backend, `claude_cli`,
+> reaches the same contract through the operator's own Claude Code CLI
+> (`claude -p --json-schema`), for operators without API credit. The CLI
+> validates the structured output after generation rather than constraining
+> decoding, so on this backend the local validator and its single retry carry
+> the guarantee, as they already do on the openai_compat lower rungs. Live:
+> 20/20 first-attempt schema-valid replies.
+
 ### 2. Improvement is offline
 
 The server emits structured metrics and traces. A **separate offline job** reads them,

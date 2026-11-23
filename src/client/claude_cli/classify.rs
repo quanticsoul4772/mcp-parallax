@@ -17,6 +17,8 @@ const STDERR_CAP: usize = 2_000;
 #[derive(Debug, Deserialize)]
 struct Reply {
     subtype: Option<String>,
+    is_error: Option<bool>,
+    terminal_reason: Option<String>,
     stop_reason: Option<String>,
     api_error_status: Option<u16>,
     /// The CLI's message: the answer text, or the error text on a failure.
@@ -80,7 +82,12 @@ pub fn classify(output: &CliOutput) -> Result<Completion, AppError> {
     if reply.stop_reason.as_deref() == Some("refusal") {
         return Err(AppError::Refusal(message));
     }
-    let names_usage_limit = {
+    // Only an error reply's text is the CLI speaking; on a success it is the
+    // model's answer, which may mention a usage limit (060 review finding 2).
+    let ended_in_error = (reply.is_error == Some(true)
+        || reply.terminal_reason.as_deref() == Some("api_error"))
+        && reply.structured_output.is_none();
+    let names_usage_limit = ended_in_error && {
         let lower = message.to_lowercase();
         USAGE_LIMIT_MARKERS.iter().any(|m| lower.contains(m))
     };
@@ -275,6 +282,19 @@ mod tests {
             );
             assert_eq!(err.outcome(), crate::error::Outcome::UsageLimit);
         }
+    }
+
+    /// 060 review finding 2: a successful answer whose text mentions a usage
+    /// limit is a successful answer, not the operator's limit.
+    #[test]
+    fn a_successful_answer_mentioning_a_usage_limit_is_a_success() {
+        let out = classify(&reply(&json!({
+            "subtype": "success", "is_error": false,
+            "result": "The claim about the Pro plan's usage limit is refuted; you hit your limit after 5 hours.",
+            "structured_output": {"verdict": "refuted"}
+        })))
+        .unwrap();
+        assert_eq!(out.value, json!({"verdict": "refuted"}));
     }
 
     /// 060 T021 (US4): any other 4xx is a provider rejection carrying the

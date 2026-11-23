@@ -95,7 +95,7 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `ANTHROPIC_API_KEY` | when `PARALLAX_BACKEND=anthropic` (the default) | — | Anthropic API key (empty or unset fails startup when the anthropic backend is selected) |
 | `ANTHROPIC_MODEL` | no | `claude-opus-4-8` | Default model id for the anthropic backend |
 | `ANTHROPIC_API_BASE` | no | `https://api.anthropic.com` | API endpoint. Exists so the whole client pool — including the per-effort variants 028 builds — can be pointed at a test double or a proxy; before it, a call carrying an effort bypassed the injected client and reached the live endpoint |
-| `PARALLAX_BACKEND` | no | `anthropic` | Model backend for every call site: `anthropic` (native Messages) or `openai_compat` (Chat Completions — OpenAI, Azure's compat surface, Ollama, vLLM, LM Studio) |
+| `PARALLAX_BACKEND` | no | `anthropic` | Model backend for every call site: `anthropic` (native Messages), `openai_compat` (Chat Completions — OpenAI, Azure's compat surface, Ollama, vLLM, LM Studio), or `claude_cli` (your own signed-in Claude Code; no API key — see below) |
 | `OPENAI_API_KEY` | when `PARALLAX_BACKEND=openai_compat` and the endpoint is the default OpenAI one | — | OpenAI-compatible API key. A custom endpoint may run keyless — Ollama, LM Studio, vLLM leave it unset, and the `Authorization` header is then omitted entirely |
 | `OPENAI_MODEL` | when `PARALLAX_BACKEND=openai_compat` | — | Model id on the openai_compat endpoint — model names are provider-specific, so there is no default and startup fails without one |
 | `OPENAI_API_BASE` | no | `https://api.openai.com/v1` | OpenAI-compatible API endpoint, `/v1`-suffixed by convention |
@@ -151,6 +151,27 @@ both backends. Switching providers is a config change — no call-site edits.
 - **Credentials** stay in environment variables only, never in tool arguments.
   `OPENAI_API_KEY` is required only for the default OpenAI endpoint; a custom
   endpoint may run keyless, and the `Authorization` header is then omitted.
+
+### Running on your Claude subscription (`claude_cli`)
+
+`PARALLAX_BACKEND=claude_cli` sends every model call through the Claude Code
+CLI already installed and signed in on your machine, so Parallax runs on your
+Claude subscription instead of API credit. No `ANTHROPIC_API_KEY` is needed.
+
+- **Your login, your use.** Parallax runs the operator's own `claude` and never
+  reads, stores or passes credentials; signing in stays in Claude Code. The
+  backend is off by default.
+- **Isolated calls.** Each call runs `claude -p` with no MCP servers (so it
+  cannot call Parallax back), no tools, `--safe-mode` (no CLAUDE.md, hooks,
+  skills or plugins), memory files disabled, a fresh private working folder,
+  and API-billing variables removed from its environment.
+- **Settings.** `CLAUDE_CLI_PATH` (default `claude`; the native executable, not
+  a `.cmd` launcher), `CLAUDE_CLI_MODEL` (default `claude-sonnet-5-5`; research
+  extraction defaults to `claude-haiku-5-5`), `CLAUDE_CLI_CONCURRENCY` (default
+  4 processes at once). `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*` still apply.
+- **Limits and cost.** Calls count against your subscription's usage limits. A
+  reached limit is reported as `usage_limit` and not retried. Records carry the
+  CLI's API-price estimate with `cost_basis = cli_estimate`, never a charge.
 
 ### Per-call-site routing: `PARALLAX_MODEL_*` and `PARALLAX_EFFORT_*`
 
