@@ -85,6 +85,7 @@ fn deps(config: &Config) -> ResearchDeps {
         concurrency: usize::from(config.research_concurrency),
         max_age_hours: config.exa_max_age_hours,
         routing: config.routing.clone(),
+        backend: config.backend,
     }
 }
 

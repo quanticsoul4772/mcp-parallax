@@ -6,15 +6,15 @@ Tests come first in each story and are seen failing before the code.
 
 ## Phase 1: Foundational (blocks both stories)
 
-- [ ] T001 Add `backend: crate::config::Backend` to `ResearchDeps` in `src/research/pipeline.rs`, set from `config.backend` in `src/server.rs` and `examples/acceptance_research.rs`, and to `Backend::Anthropic` in the deps builder of `src/research/pipeline_tests.rs` (no behavior change; gate green)
+- [X] T001 Add `backend: crate::config::Backend` to `ResearchDeps` in `src/research/pipeline.rs`, set from `config.backend` in `src/server.rs` and `examples/acceptance_research.rs`, and to `Backend::Anthropic` in the deps builder of `src/research/pipeline_tests.rs` (no behavior change; gate green)
 
 ## Phase 2: User Story 1 — Standard and deep research finish on the subscription (P1)
 
 **Independent test**: on `claude_cli`, the default deadline is 120 / 360 / 720 s by depth, and a standard run is not stopped at 300 s.
 
-- [ ] T002 [US1] Failing tests in `src/research/settings.rs`: with `Backend::ClaudeCli` and no caller deadline, `validate_params` gives 120 000 / 360 000 / 720 000 ms for quick / standard / deep
-- [ ] T003 [US1] Failing test in `src/research/pipeline_tests.rs`: on `claude_cli`, a standard run whose test clock reads 300 s elapsed is not stopped early by the deadline
-- [ ] T004 [US1] Add the `claude_cli` deadline table (`Depth::claude_cli_deadline_ms`) in `src/research/mod.rs` and choose the default by backend in `src/research/settings.rs`; T002–T003 pass; commit
+- [X] T002 [US1] Failing tests in `src/research/settings.rs`: with `Backend::ClaudeCli` and no caller deadline, `validate_params` gives 120 000 / 360 000 / 720 000 ms for quick / standard / deep
+- [X] T003 [US1] Failing test in `src/research/pipeline_tests.rs`: on `claude_cli`, a standard run whose test clock reads 300 s elapsed is not stopped early by the deadline
+- [X] T004 [US1] Add the `claude_cli` deadline table (`Depth::claude_cli_deadline_ms`) in `src/research/mod.rs` and choose the default by backend in `src/research/settings.rs`; T002–T003 pass; commit
 
 ## Phase 3: User Story 2 — Nothing changes anywhere else (P1)
 

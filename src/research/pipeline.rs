@@ -79,6 +79,9 @@ pub struct ResearchDeps {
     /// token usage can be attributed without asking a client what it is
     /// (the `ModelClient` trait deliberately does not say — research D2).
     pub routing: crate::routing::RoutingTable,
+    /// The selected model backend (062): research's default deadlines are
+    /// longer on `claude_cli`.
+    pub backend: crate::config::Backend,
 }
 
 /// The run's enforced ceilings: the budget meter and the wall clock, with a
