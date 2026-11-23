@@ -2773,3 +2773,62 @@ async fn a_failed_run_still_reports_the_rerank_usage() {
     assert_eq!(rerank.len(), 1);
     assert_eq!(rerank[0].1.input_tokens, 100);
 }
+
+/// Review finding 5: when the deadline has already passed by the time the
+/// pages are in, Voyage is not called at all; the skip is `timeout`.
+#[tokio::test]
+async fn a_rerank_after_the_deadline_is_not_called() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(move |req| {
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| page(u, &format!("Content of {u}."), false))
+                .collect(),
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().times(0);
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, usage) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
+    assert!(result.stats.stopped_early);
+    assert!(!usage.models().contains(&"rerank-3".to_string()));
+}
+
+/// Review test gap: a rerank still running when the time left runs out is
+/// cut off then, on the real clock, and the run completes.
+#[tokio::test]
+async fn a_rerank_still_running_is_cut_off_when_time_runs_out() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(client, search_returning(EIGHT), Arc::new(SystemClock));
+    deps.reranker = Some(Arc::new(SlowReranker));
+    let started = std::time::Instant::now();
+    let (result, _usage) = run(&deps, &with_deadline(5_000)).await.unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_secs(4),
+        "cut off early: {elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "waited for the reranker: {elapsed:?}"
+    );
+    assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
+}

@@ -784,6 +784,12 @@ async fn rerank_pages(
                 .map(|p| p.text.clone())
         })
         .collect();
+    // Review finding 5: the deadline already passed during the searches —
+    // don't start a paid call that could only be cut off at once.
+    if time_left.is_zero() {
+        tracing::warn!("rerank skipped: the run's deadline passed first");
+        return unchanged(Some("timeout".to_string()));
+    }
     let result = match tokio::time::timeout(time_left, reranker.rerank(question, &documents)).await
     {
         Err(_elapsed) => {
