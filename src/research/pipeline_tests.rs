@@ -2907,3 +2907,41 @@ async fn a_claude_cli_standard_run_is_not_stopped_at_300_seconds() {
         result.stats.stop_reason
     );
 }
+
+/// 062 T005 (US2, FR-002): the other backends keep 120 / 240 / 480 s.
+#[test]
+fn other_backends_keep_todays_default_deadlines() {
+    use crate::config::Backend::{Anthropic, OpenAiCompat};
+    for backend in [Anthropic, OpenAiCompat] {
+        assert_eq!(
+            resolved_deadline(backend, Depth::Quick, None).unwrap(),
+            120_000
+        );
+        assert_eq!(
+            resolved_deadline(backend, Depth::Standard, None).unwrap(),
+            240_000
+        );
+        assert_eq!(
+            resolved_deadline(backend, Depth::Deep, None).unwrap(),
+            480_000
+        );
+    }
+}
+
+/// 062 T005 (US2, FR-003): a caller deadline wins on every backend, and the
+/// 5000 ms minimum still applies on claude_cli.
+#[test]
+fn a_caller_deadline_wins_on_every_backend() {
+    use crate::config::Backend::{Anthropic, ClaudeCli, OpenAiCompat};
+    for backend in [Anthropic, OpenAiCompat, ClaudeCli] {
+        assert_eq!(
+            resolved_deadline(backend, Depth::Standard, Some(90_000)).unwrap(),
+            90_000
+        );
+        assert_eq!(
+            resolved_deadline(backend, Depth::Deep, Some(900_000)).unwrap(),
+            900_000
+        );
+    }
+    assert!(resolved_deadline(ClaudeCli, Depth::Standard, Some(4_999)).is_err());
+}

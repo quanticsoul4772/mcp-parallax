@@ -20,7 +20,7 @@ Tests come first in each story and are seen failing before the code.
 
 **Independent test**: other backends keep 120 / 240 / 480 s; a caller deadline wins on every backend.
 
-- [ ] T005 [US2] Tests in `src/research/settings.rs`: `Backend::Anthropic` and `Backend::OpenAiCompat` give 120 000 / 240 000 / 480 000 ms; a caller `deadline_ms` is used as given on all three backends; below 5000 ms is still rejected on `claude_cli`; commit (these pass on T004's code; a failure is a defect in T004 and is asked about)
+- [X] T005 [US2] Tests in `src/research/settings.rs`: `Backend::Anthropic` and `Backend::OpenAiCompat` give 120 000 / 240 000 / 480 000 ms; a caller `deadline_ms` is used as given on all three backends; below 5000 ms is still rejected on `claude_cli`; commit (these pass on T004's code; a failure is a defect in T004 and is asked about)
 
 ## Phase 4: Polish
 
