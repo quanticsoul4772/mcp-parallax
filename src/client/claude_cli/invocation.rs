@@ -67,6 +67,9 @@ pub fn build(spec: &CallSpec<'_>) -> CliRequest {
         "",
         "--setting-sources",
         "project",
+        // 060 review finding 1: no CLAUDE.md, auto memory, hooks, skills or
+        // plugins; authentication and model selection work normally.
+        "--safe-mode",
         "--no-session-persistence",
         "--max-turns",
         MAX_TURNS,
@@ -82,7 +85,19 @@ pub fn build(spec: &CallSpec<'_>) -> CliRequest {
         args,
         stdin: spec.prompt.to_string(),
         env_remove: ENV_REMOVE.iter().map(|v| (*v).to_string()).collect(),
-        env_set: vec![(EFFORT_VAR.to_string(), level.to_string())],
+        env_set: vec![
+            (EFFORT_VAR.to_string(), level.to_string()),
+            // 060 review finding 1: memory files stay off whatever the
+            // operator's environment says (verified live 2026-11-22).
+            (
+                "CLAUDE_CODE_DISABLE_CLAUDE_MDS".to_string(),
+                "1".to_string(),
+            ),
+            (
+                "CLAUDE_CODE_DISABLE_AUTO_MEMORY".to_string(),
+                "1".to_string(),
+            ),
+        ],
         cwd: spec.cwd.to_path_buf(),
         timeout: spec.timeout,
     }
@@ -131,6 +146,7 @@ mod tests {
                 "",
                 "--setting-sources",
                 "project",
+                "--safe-mode",
                 "--no-session-persistence",
                 "--max-turns",
                 "4",
@@ -178,7 +194,13 @@ mod tests {
     /// `unset`, which tells the CLI to send no effort level.
     #[test]
     fn the_effort_level_is_the_routed_one_or_unset() {
-        let level = |req: &crate::traits::runner::CliRequest| req.env_set.clone();
+        let level = |req: &crate::traits::runner::CliRequest| {
+            req.env_set
+                .iter()
+                .filter(|(name, _)| name == "CLAUDE_CODE_EFFORT_LEVEL")
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
             level(&build_for(None)),
             [("CLAUDE_CODE_EFFORT_LEVEL".to_string(), "unset".to_string())]
@@ -196,6 +218,32 @@ mod tests {
                     "CLAUDE_CODE_EFFORT_LEVEL".to_string(),
                     effort.as_str().to_string()
                 )]
+            );
+        }
+    }
+
+    /// 060 review finding 1 (FR-003): no CLAUDE.md, auto memory, hooks,
+    /// skills or plugins reach a call. `--safe-mode` turns customizations off
+    /// while keeping the subscription login; the two variables turn memory
+    /// files off whatever the operator's environment says. Verified live on
+    /// 2026-11-22: a planted parent-folder CLAUDE.md steered the answer
+    /// without these and did not with them.
+    #[test]
+    fn memory_files_and_customizations_are_off() {
+        let req = build_for(None);
+        assert!(
+            req.args.contains(&"--safe-mode".to_string()),
+            "{:?}",
+            req.args
+        );
+        for (name, value) in [
+            ("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "1"),
+            ("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1"),
+        ] {
+            assert!(
+                req.env_set.contains(&(name.to_string(), value.to_string())),
+                "{name} not set: {:?}",
+                req.env_set
             );
         }
     }

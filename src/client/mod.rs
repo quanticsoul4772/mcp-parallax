@@ -47,13 +47,7 @@ pub fn build_model_client(
             model,
             effort,
         )),
-        Backend::ClaudeCli => Arc::new(ClaudeCliClient::with_runner(
-            config,
-            claude_cli::process_runner(config),
-            &claude_cli::process_folder(),
-            model,
-            effort,
-        )),
+        Backend::ClaudeCli => Arc::new(claude_cli::build_cli_client(config, model, effort)),
     }
 }
 
