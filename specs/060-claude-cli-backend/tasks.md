@@ -36,7 +36,7 @@ US3 and US4 build on US1's client.
 - [X] T009 [US1] Implement those rows in `src/client/claude_cli/classify.rs` (pure)
 - [X] T010 [US1] Write failing tests for `ClaudeCliClient` in `src/client/claude_cli.rs` with a runner double: `complete()` sends the invocation and returns the classified result; `build_model_client` in `src/client/mod.rs` returns it for `Backend::ClaudeCli` for every routed `(model, effort)`
 - [X] T011 [US1] Add `Backend::ClaudeCli` (`claude_cli`) to `src/config.rs`, tests first: `ANTHROPIC_API_KEY` not required on it, `default_model()` returns `CLAUDE_CLI_MODEL`, routing falls through to `DefaultVar::ClaudeCliModel`; implement `ClaudeCliClient` (`ModelClient`), the per-process empty folder, and the `Backend::ClaudeCli` arm in `src/client/mod.rs`
-- [ ] T012 [US1] Write failing integration tests in `tests/integration.rs`: a server on `claude_cli` with a runner double and no API key lists the same always-on tools as `anthropic` (spec US1 scenario 1); `decide`, `verify`, `unstick`, `diverge`, `elicit`, `check` and `grounded_verify` each return a valid result; a first reply failing the schema then a valid one completes through the existing single retry (scenario 4); make them pass
+- [X] T012 [US1] Write failing integration tests in `tests/integration.rs`: a server on `claude_cli` with a runner double and no API key lists the same always-on tools as `anthropic` (spec US1 scenario 1); `decide`, `verify`, `unstick`, `diverge`, `elicit`, `check` and `grounded_verify` each return a valid result; a first reply failing the schema then a valid one completes through the existing single retry (scenario 4); make them pass
 
 **Checkpoint**: US1 complete against doubles.
 
