@@ -353,8 +353,11 @@ async fn run_metered_at(
             *page = None;
         }
     }
+    // Review finding 2: pages that came back with text (denied ones are
+    // already gone); `kept` below counts only those sent to extraction.
     let pages_fetched =
-        u32::try_from(pages.iter().filter(|p| p.is_some()).count()).unwrap_or(u32::MAX);
+        u32::try_from(pages.iter().filter(|p| has_text(p.as_ref())).count()).unwrap_or(u32::MAX);
+    let mut pages_kept: u32 = 0;
     let (kept, relevance, skipped) = rerank_pages(
         deps,
         &params.question,
@@ -377,6 +380,9 @@ async fn run_metered_at(
             if denied[index] || !kept[index] {
                 continue;
             }
+            if has_text(page.as_ref()) {
+                pages_kept += 1;
+            }
             let id = format!("s{}", index + 1);
             task_relevance.push(relevance[index]);
             tasks.push(extract_source(
@@ -389,8 +395,8 @@ async fn run_metered_at(
                 page,
             ));
         }
-        stats.sources_kept = u32::try_from(tasks.len()).unwrap_or(u32::MAX);
-        pages_counted.set(pages_fetched, stats.sources_kept);
+        stats.sources_kept = pages_kept;
+        pages_counted.set(pages_fetched, pages_kept);
         let mut failures: Vec<AppError> = Vec::new();
         for (outcome, score) in futures::future::join_all(tasks)
             .await
@@ -634,6 +640,12 @@ async fn scope(
 
 /// The caller's domain lists applied to one address: not denied, and allowed
 /// when an allow list is given.
+/// A page that came back with non-empty text: what the reranker scores and
+/// what the page counts count (061).
+fn has_text(page: Option<&Page>) -> bool {
+    page.is_some_and(|p| !p.text.trim().is_empty())
+}
+
 fn domain_allowed(url: &str, settings: &RunSettings) -> bool {
     reqwest::Url::parse(url)
         .ok()
@@ -735,7 +747,7 @@ async fn rerank_pages(
     let scorable: Vec<usize> = pages
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.as_ref().is_some_and(|p| !p.text.trim().is_empty()))
+        .filter(|(_, p)| has_text(p.as_ref()))
         .map(|(i, _)| i)
         .collect();
     if scorable.len() <= keep {

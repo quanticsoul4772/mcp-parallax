@@ -2673,3 +2673,38 @@ async fn a_denied_page_takes_no_top_k_slot_and_is_not_reranked() {
     assert_eq!(client.count_containing("extract falsifiable claims"), 5);
     assert_eq!(result.stats.sources_kept, 5);
 }
+
+/// Review finding 2: fetched counts pages that came back with text; kept
+/// counts only those that went to extraction, so kept never exceeds fetched.
+/// Here 8 candidates, 6 pages back, one of them empty: 5 and 5.
+#[tokio::test]
+async fn kept_never_exceeds_fetched() {
+    let client = shared_claim_client();
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(|req| {
+        let pages = req
+            .urls
+            .iter()
+            .take(6)
+            .enumerate()
+            .map(|(i, u)| page(u, if i == 5 { "  " } else { "Some text." }, false))
+            .collect();
+        Ok(ContentsResults {
+            pages,
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+    let pages = crate::telemetry::PageCounts::default();
+    let (result, _usage) = run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        4,
+        &crate::telemetry::SearchCost::default(),
+        &pages,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pages.get(), Some((5, 5)));
+    assert_eq!(result.stats.sources_kept, 5);
+}
