@@ -14,6 +14,7 @@ pub(crate) mod outcome;
 pub mod pipeline;
 pub mod prompts;
 pub mod rerank;
+pub mod screen;
 pub(crate) mod settings;
 pub(crate) mod synthesis;
 pub mod verdict;

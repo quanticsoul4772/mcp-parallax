@@ -6,8 +6,8 @@ Tests come first in each story and are seen failing before the code.
 
 ## Phase 1: Foundational
 
-- [ ] T001 Failing unit tests in `src/research/screen.rs` (new module, `pub mod screen` in `src/research/mod.rs`): one string per family is flagged with its name (`instruction_override`, `role_marker`, `hidden_text`); case and extra whitespace are tolerated; each name appears once however often it matches; clean text returns nothing; the two narrowed phrases do not fire on "you are now ready" or "an article about the system prompt"
-- [ ] T002 Implement `screen(text) -> Vec<&'static str>` per research.md D1–D2; T001 passes; commit
+- [X] T001 Failing unit tests in `src/research/screen.rs` (new module, `pub mod screen` in `src/research/mod.rs`): one string per family is flagged with its name (`instruction_override`, `role_marker`, `hidden_text`); case and extra whitespace are tolerated; each name appears once however often it matches; clean text returns nothing; the two narrowed phrases do not fire on "you are now ready" or "an article about the system prompt"
+- [X] T002 Implement `screen(text) -> Vec<&'static str>` per research.md D1–D2; T001 passes; commit
 
 ## Phase 2: User Story 1 — The caller sees which sources carry injection attempts (P1)
 
