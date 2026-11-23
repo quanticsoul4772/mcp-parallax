@@ -421,6 +421,34 @@ pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) 
 
 /// Metric emission for one invocation, split out of [`emit_invocation`] to
 /// keep each function within the project's length budget (Principle VII).
+/// The cost-metric emissions for one record, one per model, summing to the
+/// record's `cost_usd` (060 review finding 4). On the CLI basis the Claude
+/// models' share is one figure, attributed to the record's model; any other
+/// model keeps its own price-table emission.
+fn cost_emissions(record: &InvocationRecord) -> Vec<(String, f64)> {
+    let priced = |model: &str, usage: crate::telemetry::Usage| {
+        crate::telemetry::cost_usd(model, usage.input_tokens, usage.output_tokens)
+    };
+    if record.cost_basis == Some(crate::telemetry::CostBasis::CliEstimate) {
+        let mut out: Vec<(String, f64)> = record
+            .usage_by_model
+            .iter()
+            .filter(|(model, _)| !model.starts_with("claude"))
+            .map(|(model, usage)| (model.to_string(), priced(model, usage)))
+            .collect();
+        out.push((
+            record.model.clone(),
+            record.cost_usd - record.non_claude_cost(),
+        ));
+        return out;
+    }
+    record
+        .usage_by_model
+        .iter()
+        .map(|(model, usage)| (model.to_string(), priced(model, usage)))
+        .collect()
+}
+
 fn emit_invocation_metrics(
     handles: &Handles,
     record: &InvocationRecord,
@@ -448,14 +476,16 @@ fn emit_invocation_metrics(
     // deliberately NOT split: adding per model would stop it counting
     // invocations. With one model every emission below is byte-identical to
     // pre-018 (SC-004).
-    for (model, usage) in record.usage_by_model.iter() {
+    for (model, cost) in cost_emissions(record) {
         handles.cost.add(
-            crate::telemetry::cost_usd(model, usage.input_tokens, usage.output_tokens),
+            cost,
             &[
                 KeyValue::new("parallax.tool", record.tool.clone()),
-                KeyValue::new(GEN_AI_REQUEST_MODEL, model.to_string()),
+                KeyValue::new(GEN_AI_REQUEST_MODEL, model),
             ],
         );
+    }
+    for (model, usage) in record.usage_by_model.iter() {
         for (kind, count) in [
             ("input", usage.input_tokens),
             ("output", usage.output_tokens),
@@ -1132,6 +1162,21 @@ mod tests {
                 kv.key
             );
         }
+    }
+
+    /// 060 review finding 4: the cost metric adds what the record states, so
+    /// the metric, the span and the stored row cannot disagree.
+    #[test]
+    fn the_cost_metric_adds_what_the_record_states() {
+        let mut record = sample_invocation(Outcome::Success);
+        let sum = |r: &InvocationRecord| cost_emissions(r).iter().map(|(_, c)| c).sum::<f64>();
+        assert!(
+            (sum(&record) - record.cost_usd).abs() < 1e-12,
+            "price table"
+        );
+        record.cost_usd = 0.0123;
+        record.cost_basis = Some(crate::telemetry::CostBasis::CliEstimate);
+        assert!((sum(&record) - 0.0123).abs() < 1e-12, "cli estimate");
     }
 
     #[test]

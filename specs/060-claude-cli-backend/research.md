@@ -32,12 +32,21 @@ folder (no user or project settings, hooks or plugins), `--no-session-persistenc
 and `--max-turns`. Structured output took 2 turns in the spike; 4 leaves room
 for the CLI's own structured-output retry without letting a call loop.
 
-**Alternatives**: `--bare` (documented not to read `CLAUDE_CODE_OAUTH_TOKEN`,
-and it is aimed at API-key use); `--setting-sources ""` (not documented as
-accepted).
+**Alternatives**: `--bare` (documented not to use the subscription login);
+`--setting-sources ""` (not documented as accepted).
 
-**Empty folder**: one folder per server process, created at first use under
-the OS temp directory and never written to.
+**Amendment (2026-11-22, review finding 1).** The flags above did not stop
+Claude Code reading `CLAUDE.md` files from the working folder and every
+folder above it (on Windows, through the home folder), nor project settings
+and hooks from a predictable, reused folder. A live check proved it: a
+`CLAUDE.md` planted in a parent folder steered the answer to "PWNED". Every
+call now also passes `--safe-mode` (customizations off, authentication and
+model selection normal) and sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`; with them the same check answered
+"clean".
+
+**Working folder**: one per server process, created fresh with a unique name
+under the OS temp directory; an existing folder is never reused.
 
 ## D3 — Environment
 
@@ -69,7 +78,9 @@ the operator did not set (the 040 lesson on attribution).
 **Price row**: `claude-haiku-5-5` needs a row in `telemetry.rs` (the
 every-default-has-a-price test, 041). The rate is confirmed from Anthropic's
 published pricing at implementation, not guessed. `claude-sonnet-5-5`
-already matches the `claude-sonnet-5` row.
+needs its own row too: price lookup is by exact id, so it did not match the
+`claude-sonnet-5` row (corrected 2026-11-22, review finding 8; rows added at
+$2/$10 and $0.10/$0.50).
 
 ## D5 — Concurrency
 

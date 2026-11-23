@@ -15,6 +15,7 @@ assert against this document through the `CliRunner` double.
   --mcp-config {"mcpServers":{}}
   --tools ""
   --setting-sources project
+  --safe-mode
   --no-session-persistence
   --max-turns 4
   --system-prompt <SYSTEM_PROMPT>
@@ -35,11 +36,15 @@ Inherited, minus: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
 `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_EFFORT_LEVEL`.
 Plus: `CLAUDE_CODE_EFFORT_LEVEL=<low|medium|high|xhigh|max>` for a routed or
-per-call effort, else `CLAUDE_CODE_EFFORT_LEVEL=unset`.
+per-call effort, else `CLAUDE_CODE_EFFORT_LEVEL=unset`; and
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`.
 
 ## Working folder
 
-One empty folder per server process, under the OS temp directory.
+One folder per server process, created fresh with a unique name under the
+OS temp directory (`create_dir`, so an existing folder is never reused;
+private to the operator on Unix). A `.cmd`/`.bat` `CLAUDE_CLI_PATH` is
+refused at startup: a timeout could kill only the shell.
 
 ## Bounds
 

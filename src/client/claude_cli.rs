@@ -25,7 +25,7 @@ pub struct ClaudeCliClient {
     program: String,
     model: String,
     effort: Option<Effort>,
-    cwd: PathBuf,
+    folder: Folder,
     timeout: Duration,
     max_retries: u32,
     backoff_base_ms: u64,
@@ -47,7 +47,7 @@ impl ClaudeCliClient {
             program: config.claude_cli_path.clone(),
             model: model.to_string(),
             effort,
-            cwd: cwd.to_path_buf(),
+            folder: Folder::Given(cwd.to_path_buf()),
             timeout: Duration::from_millis(config.request_timeout_ms),
             max_retries: config.max_retries,
             backoff_base_ms: 500,
@@ -56,6 +56,12 @@ impl ClaudeCliClient {
 }
 
 impl ClaudeCliClient {
+    /// The runner this client runs calls through (tests compare it).
+    #[cfg(test)]
+    pub(crate) const fn runner_handle(&self) -> &Arc<dyn CliRunner> {
+        &self.runner
+    }
+
     /// Set the pause before the first retry (each later one grows by the
     /// same step). Tests shorten it.
     #[must_use]
@@ -65,38 +71,95 @@ impl ClaudeCliClient {
     }
 }
 
-/// The empty working folder this server process gives every CLI call: under
-/// the OS temp folder, named for the process, created on first use and never
-/// written to by Parallax (research.md D2).
+/// Where a client's calls run.
+enum Folder {
+    /// A folder the caller chose (tests); used as given, never created.
+    Given(PathBuf),
+    /// This process's private working folder (see [`process_folder`]).
+    Process,
+}
+
+/// The working folder every CLI call of this process runs in: created once,
+/// fresh and uniquely named under the OS temp folder (060 review finding 1).
+fn process_folder() -> Result<&'static Path, AppError> {
+    static FOLDER: std::sync::OnceLock<Result<PathBuf, String>> = std::sync::OnceLock::new();
+    FOLDER
+        .get_or_init(|| create_private_folder(&std::env::temp_dir()).map_err(|e| e.to_string()))
+        .as_deref()
+        .map_err(|e| {
+            AppError::Client(format!(
+                "could not create the claude CLI working folder: {e}"
+            ))
+        })
+}
+
+/// Create a fresh, uniquely named, empty working folder under `parent`.
+///
+/// 060 review finding 1: `create_dir` fails on an existing path, so a folder
+/// someone else prepared is never reused; on Unix it is private to the
+/// operator.
+///
+/// # Errors
+///
+/// The I/O error when the folder cannot be created.
+pub fn create_private_folder(parent: &Path) -> std::io::Result<PathBuf> {
+    let folder = parent.join(format!(
+        "parallax-claude-cli-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir(&folder)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(folder)
+}
+
+/// Build the backend's client for one routed `(model, effort)`: the shared
+/// process runner and the process's working folder.
 #[must_use]
-pub fn process_folder() -> PathBuf {
-    std::env::temp_dir().join(format!("parallax-claude-cli-{}", std::process::id()))
+pub fn build_cli_client(config: &Config, model: &str, effort: Option<Effort>) -> ClaudeCliClient {
+    let mut client =
+        ClaudeCliClient::with_runner(config, process_runner(config), Path::new(""), model, effort);
+    client.folder = Folder::Process;
+    client
 }
 
 #[async_trait::async_trait]
 impl ModelClient for ClaudeCliClient {
     async fn complete(&self, prompt: &str, schema: &Value) -> Result<Completion, AppError> {
-        std::fs::create_dir_all(&self.cwd).map_err(|e| {
-            AppError::Client(format!(
-                "could not create the claude CLI working folder {}: {e}",
-                self.cwd.display()
-            ))
-        })?;
+        let cwd: &Path = match &self.folder {
+            Folder::Given(path) => path,
+            Folder::Process => process_folder()?,
+        };
         let request = invocation::build(&invocation::CallSpec {
             program: &self.program,
             model: &self.model,
             effort: self.effort,
             schema,
             prompt,
-            cwd: &self.cwd,
+            cwd,
             timeout: self.timeout,
         });
+        // 060 review finding 3: a call that ran but left no reply still counts
+        // in the invocation's meter, as one without a figure.
+        let unmetered = || {
+            let _outside_an_invocation = crate::telemetry::CLI_COST.try_with(|m| m.record(None));
+        };
         // A provider 5xx is retried under `MAX_RETRIES`, with a growing pause;
         // every other result, a usage limit included, is final (D8, D10).
         let mut attempts: u32 = 0;
         loop {
             attempts += 1;
-            let output = self.runner.run(&request).await?;
+            let output = match self.runner.run(&request).await {
+                Ok(output) => output,
+                Err(e) => {
+                    unmetered();
+                    return Err(e);
+                }
+            };
             if !classify::is_server_error(&output) {
                 let result = classify::classify(&output);
                 // 060 D11: the invocation's meter gets this call's figure; a
@@ -110,6 +173,7 @@ impl ModelClient for ClaudeCliClient {
                 let last = classify::classify(&output)
                     .err()
                     .map_or_else(String::new, |e| e.to_string());
+                unmetered();
                 return Err(AppError::RetriesExhausted { attempts, last });
             }
             tokio::time::sleep(Duration::from_millis(
@@ -178,6 +242,18 @@ pub fn process_runner(config: &Config) -> Arc<dyn CliRunner> {
 /// [`AppError::Client`] naming `CLAUDE_CLI_PATH` when the program cannot be
 /// started or exits non-zero.
 pub async fn check_cli(config: &Config, runner: &dyn CliRunner) -> Result<String, AppError> {
+    // 060 review finding 7: a launcher script runs the CLI under a shell, and
+    // a timeout would kill only the shell, leaving the real CLI running.
+    let is_script = Path::new(&config.claude_cli_path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"));
+    if is_script {
+        return Err(AppError::Client(format!(
+            "CLAUDE_CLI_PATH `{}` is a launcher script; point it at the native claude.exe \
+             (a timeout cannot stop a CLI started through a script)",
+            config.claude_cli_path
+        )));
+    }
     let request = CliRequest {
         program: config.claude_cli_path.clone(),
         args: vec!["--version".into()],
@@ -258,12 +334,18 @@ impl CliRunner for TokioCliRunner {
                     what: TIMEOUT_WHAT,
                     ms: u64::try_from(request.timeout.as_millis()).unwrap_or(u64::MAX),
                 })?;
-        written.map_err(|e| {
-            AppError::Client(format!(
-                "writing stdin to `{}` failed: {e}",
-                request.program
-            ))
-        })?;
+        // A child that exits without reading all of its stdin (an argument
+        // error, an early rejection) breaks the pipe; its own reply is the
+        // useful answer then, so only other write errors fail the run (060
+        // review finding 6).
+        if let Err(e) = written {
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(AppError::Client(format!(
+                    "writing stdin to `{}` failed: {e}",
+                    request.program
+                )));
+            }
+        }
         let output = output.map_err(|e| {
             AppError::Client(format!("waiting for `{}` failed: {e}", request.program))
         })?;
@@ -442,15 +524,110 @@ mod tests {
         );
     }
 
-    /// 060 T014: every client the backend builds shares one process-wide
-    /// runner, so the cap is server-wide, not per client.
+    /// 060 T014, review finding 8: the clients the backend builds hold the
+    /// process-wide runner itself, so the cap is server-wide, not per client.
     #[test]
     fn every_built_client_shares_the_process_runner() {
         let config = crate::config::test_config();
-        assert!(Arc::ptr_eq(
-            &process_runner(&config),
-            &process_runner(&config)
-        ));
+        let a = build_cli_client(&config, "claude-sonnet-5-5", None);
+        let b = build_cli_client(&config, "claude-haiku-5-5", None);
+        assert!(Arc::ptr_eq(a.runner_handle(), b.runner_handle()));
+        assert!(Arc::ptr_eq(a.runner_handle(), &process_runner(&config)));
+    }
+
+    /// 060 review finding 1: the working folder is one Parallax creates
+    /// itself, fresh and uniquely named; an existing folder is never reused.
+    #[test]
+    fn the_working_folder_is_fresh_and_never_reused() {
+        let parent = tempfile::tempdir().unwrap();
+        let a = create_private_folder(parent.path()).unwrap();
+        let b = create_private_folder(parent.path()).unwrap();
+        assert_ne!(a, b, "each folder is new");
+        assert!(a.is_dir() && std::fs::read_dir(&a).unwrap().next().is_none());
+        assert!(create_private_folder(&parent.path().join("missing")).is_err());
+    }
+
+    /// 060 review finding 3: a call that ran but produced no reply (a runner
+    /// failure, or retries running out) still counts in the meter, so the
+    /// invocation's CLI total becomes unknown rather than a partial sum.
+    #[tokio::test]
+    async fn a_call_without_a_reply_makes_the_meter_total_unknown() {
+        let mut runner = crate::traits::runner::MockCliRunner::new();
+        let mut seq = mockall::Sequence::new();
+        runner
+            .expect_run()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(ok_reply_with_cost()));
+        runner
+            .expect_run()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                Err(AppError::Timeout {
+                    what: "claude CLI",
+                    ms: 1,
+                })
+            });
+        let client = retrying_client(runner);
+        let meter = Arc::new(crate::telemetry::CliCost::default());
+        crate::telemetry::CLI_COST
+            .scope(meter.clone(), async {
+                client.complete("a", &serde_json::json!({})).await.unwrap();
+                client
+                    .complete("b", &serde_json::json!({}))
+                    .await
+                    .unwrap_err();
+            })
+            .await;
+        assert_eq!(meter.total(), None);
+
+        let mut exhausted = crate::traits::runner::MockCliRunner::new();
+        exhausted
+            .expect_run()
+            .times(2)
+            .returning(|_| Ok(status_reply(500)));
+        let client = retrying_client(exhausted);
+        let meter = Arc::new(crate::telemetry::CliCost::default());
+        crate::telemetry::CLI_COST
+            .scope(meter.clone(), async {
+                client
+                    .complete("c", &serde_json::json!({}))
+                    .await
+                    .unwrap_err();
+            })
+            .await;
+        assert_eq!(meter.total(), None, "an exhausted call is counted too");
+    }
+
+    fn ok_reply_with_cost() -> crate::traits::runner::CliOutput {
+        crate::traits::runner::CliOutput {
+            exit_code: Some(0),
+            stdout: serde_json::json!({
+                "subtype": "success", "structured_output": {}, "total_cost_usd": 0.001
+            })
+            .to_string(),
+            stderr: String::new(),
+        }
+    }
+
+    /// 060 review finding 7 (FR-011): a `.cmd` or `.bat` launcher is refused
+    /// at startup, because a timeout would kill only the shell and leave the
+    /// real CLI running; nothing is started.
+    #[tokio::test]
+    async fn a_launcher_script_is_refused_at_startup() {
+        for path in ["C:/npm/claude.cmd", "C:/tools/CLAUDE.BAT"] {
+            let config = crate::config::Config {
+                claude_cli_path: path.into(),
+                ..crate::config::test_config()
+            };
+            let runner = crate::traits::runner::MockCliRunner::new();
+            let err = check_cli(&config, &runner).await.unwrap_err().to_string();
+            assert!(
+                err.contains("CLAUDE_CLI_PATH") && err.contains("claude.exe"),
+                "{path}: {err}"
+            );
+        }
     }
 
     fn status_reply(status: u16) -> crate::traits::runner::CliOutput {
@@ -729,6 +906,45 @@ mod tests {
             started.elapsed() < Duration::from_secs(10),
             "waited for the program"
         );
+    }
+
+    /// 060 review finding 8 (FR-011): the timed-out process is dead, not just
+    /// abandoned: a stand-in that would write a marker after 2 s never does.
+    #[tokio::test]
+    async fn a_timed_out_process_is_dead() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("still-alive");
+        // The marker is written into the stand-in's own working folder, so
+        // the command needs no quoted path (Windows argument escaping would
+        // mangle one and the marker would never appear, alive or not).
+        let mut req = if cfg!(windows) {
+            standin(
+                "cmd",
+                &["/C", "ping -n 3 127.0.0.1 >NUL && type nul > still-alive"],
+                Duration::from_millis(300),
+            )
+        } else {
+            standin(
+                "sh",
+                &["-c", "sleep 2; touch still-alive"],
+                Duration::from_millis(300),
+            )
+        };
+        req.cwd = dir.path().to_path_buf();
+        assert!(TokioCliRunner.run(&req).await.is_err());
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert!(!marker.exists(), "the process outlived its timeout");
+    }
+
+    /// 060 review finding 6: a program that exits without reading its stdin
+    /// still returns its own output; the broken pipe does not replace it.
+    #[tokio::test]
+    async fn output_wins_over_a_broken_stdin_pipe() {
+        let mut req = standin("rustc", &["--version"], Duration::from_secs(60));
+        req.stdin = "x".repeat(4 * 1024 * 1024);
+        let out = TokioCliRunner.run(&req).await.unwrap();
+        assert_eq!(out.exit_code, Some(0), "{out:?}");
+        assert!(out.stdout.starts_with("rustc "), "{out:?}");
     }
 
     /// 060 T003: a program that cannot be started is a client error naming it.
