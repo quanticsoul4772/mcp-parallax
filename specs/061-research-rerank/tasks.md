@@ -44,8 +44,8 @@ None: no new dependency.
 
 **Independent test**: with a failing reranker double, research completes with every page extracted and `stats.rerank_skipped` set.
 
-- [ ] T011 [US2] Write failing pipeline tests: a reranker error, a reranker still running at the run's deadline, and a malformed reply each give a successful run with every scorable page extracted and `stats.rerank_skipped` naming the reason
-- [ ] T012 [US2] Implement the fallback and the deadline bound on the rerank call in `src/research/pipeline.rs`
+- [X] T011 [US2] Write failing pipeline tests: a reranker error, a reranker still running at the run's deadline, and a malformed reply each give a successful run with every scorable page extracted and `stats.rerank_skipped` naming the reason
+- [X] T012 [US2] Implement the fallback and the deadline bound on the rerank call in `src/research/pipeline.rs`
 
 **Checkpoint**: US2 complete.
 

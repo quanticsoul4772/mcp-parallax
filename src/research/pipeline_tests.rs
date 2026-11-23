@@ -2381,3 +2381,121 @@ async fn an_empty_page_is_not_sent_to_the_reranker() {
     assert_eq!(client.count_containing("extract falsifiable claims"), 5);
     assert_eq!(result.stats.sources_kept, 5);
 }
+
+// ---- 061 US2: a failed rerank never fails the run ----------------------------
+
+/// 061 T011 (US2, FR-005): a reranker error leaves today's behavior: every
+/// page is extracted, nothing is scored, and the reason is recorded.
+#[tokio::test]
+async fn a_rerank_error_falls_back_and_records_why() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .returning(|_, _| Err(AppError::EmbeddingProvider("HTTP 503".into())));
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 8);
+    assert_eq!(result.stats.sources_kept, 8);
+    let reason = result.stats.rerank_skipped.clone().unwrap();
+    assert!(reason.starts_with("provider_error"), "{reason}");
+    assert!(result.sources.iter().all(|s| s.relevance.is_none()));
+}
+
+/// 061 T011 (US2, FR-005): a reply that does not score every page is a
+/// malformed reply: the same fallback, with that reason.
+#[tokio::test]
+async fn a_malformed_rerank_reply_falls_back_and_records_why() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(|_, _| {
+        Ok(crate::traits::rerank::RerankResult {
+            scores: vec![0.5, 0.4, 0.3],
+            total_tokens: 1,
+        })
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 8);
+    let reason = result.stats.rerank_skipped.unwrap();
+    assert!(reason.starts_with("malformed_reply"), "{reason}");
+}
+
+/// A reranker that never answers in time.
+struct SlowReranker;
+
+#[async_trait::async_trait]
+impl crate::traits::rerank::Reranker for SlowReranker {
+    async fn rerank(
+        &self,
+        _: &str,
+        _: &[String],
+    ) -> Result<crate::traits::rerank::RerankResult, AppError> {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        Err(AppError::EmbeddingProvider("too late".into()))
+    }
+
+    fn model_id(&self) -> &'static str {
+        "rerank-3"
+    }
+}
+
+/// 061 T011 (US2, FR-007): the rerank call is bounded by the run's deadline;
+/// cut off, the run still completes and records `timeout`, never an error.
+#[tokio::test]
+async fn a_rerank_cut_off_by_the_deadline_is_recorded_not_fatal() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(move |req| {
+        // The deadline passes once the pages are in.
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| page(u, &format!("Content of {u}."), false))
+                .collect(),
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    deps.reranker = Some(Arc::new(SlowReranker));
+
+    let started = std::time::Instant::now();
+    let (result, _usage) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "waited for the reranker"
+    );
+    assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
+    assert!(result.stats.stopped_early);
+}

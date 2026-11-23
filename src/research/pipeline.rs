@@ -333,8 +333,15 @@ async fn run_metered_at(
         }
     }
     // ---- (3b) RERANK (061) — only the top pages reach extraction ---------
-    let (kept, relevance) =
-        rerank_pages(deps, &params.question, &pages, settings.keep_sources).await?;
+    let (kept, relevance, skipped) = rerank_pages(
+        deps,
+        &params.question,
+        &pages,
+        settings.keep_sources,
+        ceiling.time_left(),
+    )
+    .await;
+    stats.rerank_skipped = skipped;
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
@@ -689,21 +696,28 @@ fn unbilled(error: &AppError) -> Option<f64> {
 /// source, and a page with no text is an empty one (FR-013). The ceiling is
 /// re-probed after the permit — a budget blown mid-phase stops queued
 /// sources, not just the next phase.
-/// Which candidates reach extraction, and each page's relevance (061).
+/// Which candidates reach extraction, each page's relevance, and why a
+/// configured rerank did not run (061).
 ///
 /// Without a reranker, or with no more scorable pages (non-empty text) than
 /// the keep count, every candidate is kept and nothing is scored. Otherwise
 /// the scorable pages are reranked in fetched order and the top `keep` go on;
 /// pages without text are not sent and stay out, as before (D7).
+///
+/// A failed rerank never fails the run (FR-005, the operator-approved
+/// exception): an error, a malformed reply, or the call outlasting
+/// `time_left` keeps every candidate, scores nothing, and returns the reason.
 async fn rerank_pages(
     deps: &ResearchDeps,
     question: &str,
     pages: &[Option<Page>],
     keep: usize,
-) -> Result<(Vec<bool>, Vec<Option<f32>>), AppError> {
+    time_left: std::time::Duration,
+) -> (Vec<bool>, Vec<Option<f32>>, Option<String>) {
     let count = pages.len();
+    let unchanged = |reason: Option<String>| (vec![true; count], vec![None; count], reason);
     let Some(reranker) = &deps.reranker else {
-        return Ok((vec![true; count], vec![None; count]));
+        return unchanged(None);
     };
     let scorable: Vec<usize> = pages
         .iter()
@@ -712,7 +726,7 @@ async fn rerank_pages(
         .map(|(i, _)| i)
         .collect();
     if scorable.len() <= keep {
-        return Ok((vec![true; count], vec![None; count]));
+        return unchanged(None);
     }
     let documents: Vec<String> = scorable
         .iter()
@@ -723,13 +737,32 @@ async fn rerank_pages(
                 .map(|p| p.text.clone())
         })
         .collect();
-    let result = reranker.rerank(question, &documents).await?;
+    let result = match tokio::time::timeout(time_left, reranker.rerank(question, &documents)).await
+    {
+        Err(_elapsed) => {
+            tracing::warn!("rerank skipped: the run's deadline passed first");
+            return unchanged(Some("timeout".to_string()));
+        }
+        Ok(Err(error)) => {
+            let message = error.to_string();
+            let reason = if message.contains("out-of-contract") {
+                format!("malformed_reply: {message}")
+            } else {
+                format!("provider_error: {message}")
+            };
+            tracing::warn!(%reason, "rerank skipped");
+            return unchanged(Some(reason));
+        }
+        Ok(Ok(result)) => result,
+    };
     if result.scores.len() != documents.len() {
-        return Err(AppError::EmbeddingProvider(format!(
-            "rerank returned {} scores for {} pages",
+        let reason = format!(
+            "malformed_reply: {} scores for {} pages",
             result.scores.len(),
             documents.len()
-        )));
+        );
+        tracing::warn!(%reason, "rerank skipped");
+        return unchanged(Some(reason));
     }
     let mut kept = vec![false; count];
     let mut relevance = vec![None; count];
@@ -739,7 +772,7 @@ async fn rerank_pages(
     for top in crate::research::rerank::keep_top(&result.scores, keep) {
         kept[scorable[top]] = true;
     }
-    Ok((kept, relevance))
+    (kept, relevance, None)
 }
 
 async fn extract_source(
