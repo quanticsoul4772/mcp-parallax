@@ -199,6 +199,9 @@ impl Parallax {
         match config.backend {
             crate::config::Backend::OpenAiCompat => &config.openai_api_base,
             crate::config::Backend::Anthropic => &config.anthropic_api_base,
+            // The CLI is this backend's destination; the model calls it makes
+            // go to Anthropic under the operator's own sign-in (060).
+            crate::config::Backend::ClaudeCli => &config.claude_cli_path,
         }
     }
 

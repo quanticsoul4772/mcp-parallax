@@ -70,11 +70,14 @@ pub enum Backend {
     /// OpenAI Chat Completions: OpenAI, Azure's OpenAI-compatible surface,
     /// Ollama, vLLM, LM Studio.
     OpenAiCompat,
+    /// The operator's own signed-in Claude Code CLI, one isolated `claude -p`
+    /// process per model call (060); no API key.
+    ClaudeCli,
 }
 
 impl Backend {
     /// Every backend, for validation and reporting.
-    pub const ALL: [Self; 2] = [Self::Anthropic, Self::OpenAiCompat];
+    pub const ALL: [Self; 3] = [Self::Anthropic, Self::OpenAiCompat, Self::ClaudeCli];
 
     /// The operator-facing spelling.
     #[must_use]
@@ -82,6 +85,7 @@ impl Backend {
         match self {
             Self::Anthropic => "anthropic",
             Self::OpenAiCompat => "openai_compat",
+            Self::ClaudeCli => "claude_cli",
         }
     }
 
@@ -301,26 +305,13 @@ impl Config {
         // depends on which endpoint the calls will hit.
         let openai_api_base = std::env::var("OPENAI_API_BASE")
             .unwrap_or_else(|_| DEFAULT_OPENAI_API_BASE.to_string());
-        let (anthropic_api_key, openai_api_key, openai_model) = match backend {
-            Backend::Anthropic => {
-                let key = std::env::var("ANTHROPIC_API_KEY")
-                    .map_err(|_| ConfigError::MissingRequired("ANTHROPIC_API_KEY"))?;
-                if key.trim().is_empty() {
-                    return Err(ConfigError::MissingRequired("ANTHROPIC_API_KEY"));
-                }
-                (key, String::new(), String::new())
-            }
-            Backend::OpenAiCompat => {
-                let key =
-                    resolve_openai_api_key(&openai_api_base, std::env::var("OPENAI_API_KEY").ok())?;
-                let model = std::env::var("OPENAI_MODEL")
-                    .map_err(|_| ConfigError::MissingRequired("OPENAI_MODEL"))?;
-                if model.trim().is_empty() {
-                    return Err(ConfigError::MissingRequired("OPENAI_MODEL"));
-                }
-                (String::new(), key, model)
-            }
-        };
+        let (anthropic_api_key, openai_api_key, openai_model) = backend_credentials(
+            backend,
+            &openai_api_base,
+            std::env::var("ANTHROPIC_API_KEY").ok(),
+            std::env::var("OPENAI_API_KEY").ok(),
+            std::env::var("OPENAI_MODEL").ok(),
+        )?;
 
         let anthropic_api_base = std::env::var("ANTHROPIC_API_BASE")
             .unwrap_or_else(|_| crate::client::anthropic::ANTHROPIC_API_BASE.to_string());
@@ -330,14 +321,25 @@ impl Config {
             std::env::var("OPENAI_STRUCTURED_OUTPUT").unwrap_or_else(|_| "auto".to_string());
         let openai_structured_output = StructuredOutput::parse(&structured_raw)
             .ok_or(ConfigError::Invalid("OPENAI_STRUCTURED_OUTPUT"))?;
+        // Read in the form the config-facts scan recognizes, so the documented
+        // defaults are checked against these constants (040). The model is
+        // read before routing, which falls through to it on claude_cli.
+        let claude_cli_path = reject_blank(
+            "CLAUDE_CLI_PATH",
+            std::env::var("CLAUDE_CLI_PATH")
+                .unwrap_or_else(|_| DEFAULT_CLAUDE_CLI_PATH.to_string()),
+        )?;
+        let claude_cli_model = reject_blank(
+            "CLAUDE_CLI_MODEL",
+            std::env::var("CLAUDE_CLI_MODEL")
+                .unwrap_or_else(|_| DEFAULT_CLAUDE_CLI_MODEL.to_string()),
+        )?;
         // Routing resolves over the selected backend's default model, and
         // records which variable that default came from so the startup table
         // names the real supplier. A bad `PARALLAX_MODEL_*` variable stops
         // startup here, before any client is built (SC-005).
-        let (default_model, default_var) = match backend {
-            Backend::Anthropic => (&anthropic_model, DefaultVar::AnthropicModel),
-            Backend::OpenAiCompat => (&openai_model, DefaultVar::OpenAiModel),
-        };
+        let (default_model, default_var) =
+            backend_default(backend, &anthropic_model, &openai_model, &claude_cli_model);
         let routing = RoutingTable::from_env(default_model, default_var)?;
         let verify_ensemble_k = validate_ensemble_k(parse_env("VERIFY_ENSEMBLE_K", 3)?)?;
         // INPUT_MAX_CHARS is canonical; VERIFY_MAX_CLAIM_CHARS is the 002-era
@@ -359,18 +361,6 @@ impl Config {
             validate_exa_max_age_hours(parse_env("EXA_MAX_AGE_HOURS", EXA_MAX_AGE_HOURS_DEFAULT)?)?;
         let research_concurrency =
             validate_research_concurrency(parse_env("RESEARCH_CONCURRENCY", 8)?)?;
-        // Read in the form the config-facts scan recognizes, so the documented
-        // defaults are checked against these constants (040).
-        let claude_cli_path = reject_blank(
-            "CLAUDE_CLI_PATH",
-            std::env::var("CLAUDE_CLI_PATH")
-                .unwrap_or_else(|_| DEFAULT_CLAUDE_CLI_PATH.to_string()),
-        )?;
-        let claude_cli_model = reject_blank(
-            "CLAUDE_CLI_MODEL",
-            std::env::var("CLAUDE_CLI_MODEL")
-                .unwrap_or_else(|_| DEFAULT_CLAUDE_CLI_MODEL.to_string()),
-        )?;
         let claude_cli_concurrency = validate_claude_cli_concurrency(parse_env(
             "CLAUDE_CLI_CONCURRENCY",
             DEFAULT_CLAUDE_CLI_CONCURRENCY,
@@ -432,13 +422,65 @@ impl Config {
     }
 
     /// The default model id every unrouted call site resolves to: the selected
-    /// backend's model (`ANTHROPIC_MODEL` or `OPENAI_MODEL`).
+    /// backend's model (`ANTHROPIC_MODEL`, `OPENAI_MODEL` or `CLAUDE_CLI_MODEL`).
     #[must_use]
     pub fn default_model(&self) -> &str {
-        match self.backend {
-            Backend::Anthropic => &self.anthropic_model,
-            Backend::OpenAiCompat => &self.openai_model,
+        backend_default(
+            self.backend,
+            &self.anthropic_model,
+            &self.openai_model,
+            &self.claude_cli_model,
+        )
+        .0
+    }
+}
+
+/// The selected backend's default model and the variable that supplied it,
+/// so the routing table names the real supplier.
+fn backend_default<'a>(
+    backend: Backend,
+    anthropic_model: &'a str,
+    openai_model: &'a str,
+    claude_cli_model: &'a str,
+) -> (&'a str, DefaultVar) {
+    match backend {
+        Backend::Anthropic => (anthropic_model, DefaultVar::AnthropicModel),
+        Backend::OpenAiCompat => (openai_model, DefaultVar::OpenAiModel),
+        Backend::ClaudeCli => (claude_cli_model, DefaultVar::ClaudeCliModel),
+    }
+}
+
+/// The credentials the selected backend requires, as
+/// `(anthropic_api_key, openai_api_key, openai_model)` — never more than one
+/// backend's: `ANTHROPIC_API_KEY` iff anthropic, `OPENAI_MODEL` (plus
+/// `OPENAI_API_KEY` on the default OpenAI endpoint) iff openai_compat, and
+/// nothing on claude_cli, which signs in through the operator's Claude Code
+/// (060 FR-002). The raw values are read in `from_env`, where the
+/// config-facts scan sees each variable.
+fn backend_credentials(
+    backend: Backend,
+    openai_api_base: &str,
+    anthropic_api_key: Option<String>,
+    openai_api_key: Option<String>,
+    openai_model: Option<String>,
+) -> Result<(String, String, String), ConfigError> {
+    match backend {
+        Backend::Anthropic => {
+            let key = anthropic_api_key.ok_or(ConfigError::MissingRequired("ANTHROPIC_API_KEY"))?;
+            if key.trim().is_empty() {
+                return Err(ConfigError::MissingRequired("ANTHROPIC_API_KEY"));
+            }
+            Ok((key, String::new(), String::new()))
         }
+        Backend::OpenAiCompat => {
+            let key = resolve_openai_api_key(openai_api_base, openai_api_key)?;
+            let model = openai_model.ok_or(ConfigError::MissingRequired("OPENAI_MODEL"))?;
+            if model.trim().is_empty() {
+                return Err(ConfigError::MissingRequired("OPENAI_MODEL"));
+            }
+            Ok((String::new(), key, model))
+        }
+        Backend::ClaudeCli => Ok((String::new(), String::new(), String::new())),
     }
 }
 
@@ -850,6 +892,61 @@ mod tests {
             resolve_openai_api_key("https://api.openai.com/v1/", None),
             Err(ConfigError::MissingRequired("OPENAI_API_KEY"))
         ));
+    }
+
+    /// 060 T011: `claude_cli` parses, and no API key is required on it; the
+    /// anthropic backend still requires its key.
+    #[test]
+    fn claude_cli_parses_and_needs_no_api_key() {
+        assert_eq!(Backend::parse("claude_cli"), Some(Backend::ClaudeCli));
+        assert_eq!(Backend::parse(" CLAUDE_CLI "), Some(Backend::ClaudeCli));
+        assert_eq!(Backend::ClaudeCli.as_str(), "claude_cli");
+        assert!(Backend::ALL.contains(&Backend::ClaudeCli));
+        assert_eq!(
+            backend_credentials(
+                Backend::ClaudeCli,
+                DEFAULT_OPENAI_API_BASE,
+                None,
+                None,
+                None
+            )
+            .unwrap(),
+            (String::new(), String::new(), String::new())
+        );
+        assert!(matches!(
+            backend_credentials(
+                Backend::Anthropic,
+                DEFAULT_OPENAI_API_BASE,
+                None,
+                None,
+                None
+            ),
+            Err(ConfigError::MissingRequired("ANTHROPIC_API_KEY"))
+        ));
+    }
+
+    /// 060 T011: on `claude_cli` the default model is `CLAUDE_CLI_MODEL`, and
+    /// the routing table reports it as that variable.
+    #[test]
+    fn claude_cli_default_model_is_claude_cli_model() {
+        let cfg = Config {
+            backend: Backend::ClaudeCli,
+            claude_cli_model: "claude-sonnet-5-5".into(),
+            ..test_config()
+        };
+        assert_eq!(cfg.default_model(), "claude-sonnet-5-5");
+        assert_eq!(
+            backend_default(Backend::ClaudeCli, "a", "o", "c"),
+            ("c", DefaultVar::ClaudeCliModel)
+        );
+        assert_eq!(
+            backend_default(Backend::Anthropic, "a", "o", "c"),
+            ("a", DefaultVar::AnthropicModel)
+        );
+        assert_eq!(
+            backend_default(Backend::OpenAiCompat, "a", "o", "c"),
+            ("o", DefaultVar::OpenAiModel)
+        );
     }
 
     /// 060 T005: `CLAUDE_CLI_CONCURRENCY` loads in 1..=32; anything outside is

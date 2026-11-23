@@ -8,6 +8,7 @@ pub mod pool;
 pub mod voyage;
 
 pub use anthropic::AnthropicClient;
+pub use claude_cli::ClaudeCliClient;
 pub use exa::ExaClient;
 pub use openai_compat::OpenAiCompatClient;
 pub use voyage::VoyageClient;
@@ -43,6 +44,13 @@ pub fn build_model_client(
             config,
             http,
             &config.openai_api_base,
+            model,
+            effort,
+        )),
+        Backend::ClaudeCli => Arc::new(ClaudeCliClient::with_runner(
+            config,
+            Arc::new(claude_cli::TokioCliRunner),
+            &claude_cli::process_folder(),
             model,
             effort,
         )),
