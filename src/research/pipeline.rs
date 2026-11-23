@@ -336,6 +336,23 @@ async fn run_metered_at(
         }
     }
     // ---- (3b) RERANK (061) — only the top pages reach extraction ---------
+    // Finding 2 (059): the page may come back under another address (a
+    // redirect); the caller's domain lists apply to that one too, as they did
+    // to every redirect hop of the old fetcher. A denied page is dropped as
+    // filtered, never extracted or cited — and, since 061 review finding 1,
+    // before the rerank, so it takes no top-K slot and its text is not sent.
+    let mut denied = vec![false; pages.len()];
+    for (index, ((url, _title), page)) in candidates.iter().zip(pages.iter_mut()).enumerate() {
+        if let Some(moved) = page.as_ref().filter(|p| !domain_allowed(&p.url, &settings)) {
+            tracing::debug!(
+                source = url.as_str(),
+                returned = moved.url.as_str(),
+                "source dropped: its page came back under a denied domain"
+            );
+            denied[index] = true;
+            *page = None;
+        }
+    }
     let pages_fetched =
         u32::try_from(pages.iter().filter(|p| p.is_some()).count()).unwrap_or(u32::MAX);
     let (kept, relevance, skipped) = rerank_pages(
@@ -357,19 +374,7 @@ async fn run_metered_at(
             if ceiling.probe().is_some() {
                 break;
             }
-            if !kept[index] {
-                continue;
-            }
-            // Finding 2: the page may come back under another address (a
-            // redirect); the caller's domain lists apply to that one too, as
-            // they did to every redirect hop of the old fetcher. A denied
-            // page is dropped as filtered, never extracted or cited.
-            if let Some(denied) = page.as_ref().filter(|p| !domain_allowed(&p.url, &settings)) {
-                tracing::debug!(
-                    source = url.as_str(),
-                    returned = denied.url.as_str(),
-                    "source dropped: its page came back under a denied domain"
-                );
+            if denied[index] || !kept[index] {
                 continue;
             }
             let id = format!("s{}", index + 1);

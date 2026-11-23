@@ -2607,3 +2607,69 @@ async fn the_run_reports_pages_fetched_and_kept() {
     .unwrap();
     assert_eq!(pages.get(), Some((8, 5)));
 }
+
+// ---- 061 review findings -------------------------------------------------------
+
+/// Review finding 1: a page that came back under a denied domain is dropped
+/// before the rerank, so it takes no top-K slot and its text never reaches
+/// the reranker; the next-best allowed pages fill the cut.
+#[tokio::test]
+async fn a_denied_page_takes_no_top_k_slot_and_is_not_reranked() {
+    let client = shared_claim_client();
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(|req| {
+        let pages = req
+            .urls
+            .iter()
+            .enumerate()
+            .map(|(i, u)| {
+                if i < 2 {
+                    let mut moved =
+                        page(&format!("https://evil.example/{i}"), "Denied text.", false);
+                    moved.requested_url = u.clone();
+                    moved
+                } else {
+                    page(u, &format!("Content of {u}."), false)
+                }
+            })
+            .collect();
+        Ok(ContentsResults {
+            pages,
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen_in = Arc::clone(&seen);
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(move |_, documents| {
+        seen_in.lock().unwrap().extend(documents.iter().cloned());
+        // Denied pages, if sent, would win every slot.
+        let scores = documents
+            .iter()
+            .map(|d| if d.contains("Denied") { 1.0 } else { 0.5 })
+            .collect();
+        Ok(crate::traits::rerank::RerankResult {
+            scores,
+            total_tokens: 1,
+        })
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+    let p = ResearchParams {
+        constraints: Some(Constraints {
+            domains_deny: Some(vec!["evil.example".into()]),
+            ..Constraints::default()
+        }),
+        ..params("does it hold?", Some(Depth::Quick))
+    };
+
+    let (result, _usage) = run(&deps, &p).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 6, "only the six allowed pages are reranked");
+    assert!(seen.iter().all(|d| !d.contains("Denied")));
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    assert_eq!(result.stats.sources_kept, 5);
+}
