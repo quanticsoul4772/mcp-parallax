@@ -14,6 +14,14 @@ use serde::Deserialize;
 /// concentrate early.
 pub const EXTRACT_TEXT_MAX_CHARS: usize = 16_000;
 
+/// The page text extraction reads: trimmed and capped at
+/// [`EXTRACT_TEXT_MAX_CHARS`]. Shared with the injection screen (063) so the
+/// screened text and the extracted text cannot drift apart.
+#[must_use]
+pub fn capped_text(text: &str) -> String {
+    text.trim().chars().take(EXTRACT_TEXT_MAX_CHARS).collect()
+}
+
 /// The extraction mode's prompt template (placeholders: title, text).
 pub const EXTRACT_PROMPT_TEMPLATE: &str = "\
 You extract falsifiable claims from one web page. A falsifiable claim is a \

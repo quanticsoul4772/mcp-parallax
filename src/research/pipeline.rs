@@ -389,6 +389,7 @@ async fn run_metered_at(
     {
         let mut tasks = Vec::new();
         let mut task_relevance: Vec<Option<f32>> = Vec::new();
+        let mut task_patterns: Vec<Vec<&'static str>> = Vec::new();
         for (index, ((url, _title), page)) in candidates.iter().zip(pages).enumerate() {
             if ceiling.probe().is_some() {
                 break;
@@ -400,6 +401,27 @@ async fn run_metered_at(
                 pages_kept += 1;
             }
             let id = format!("s{}", index + 1);
+            // 063: screen what the extraction prompt will carry (title and
+            // capped text) before the call, so a page whose extraction then
+            // fails is still screened and counted. Warn only.
+            let patterns = page
+                .as_ref()
+                .filter(|p| has_text(Some(p)))
+                .map(|p| {
+                    crate::research::screen::screen_page(&p.title, &extract::capped_text(&p.text))
+                })
+                .unwrap_or_default();
+            if let Some(p) = page.as_ref().filter(|_| !patterns.is_empty()) {
+                tracing::info!(url = p.url.as_str(), patterns = ?patterns, "page flagged by the injection screen");
+                stats
+                    .flagged_pages
+                    .push(crate::research::contract::FlaggedPage {
+                        id: id.clone(),
+                        url: p.url.clone(),
+                        injection_patterns: patterns.iter().map(|n| (*n).to_string()).collect(),
+                    });
+            }
+            task_patterns.push(patterns);
             task_relevance.push(relevance[index]);
             tasks.push(extract_source(
                 deps,
@@ -412,19 +434,19 @@ async fn run_metered_at(
             ));
         }
         stats.sources_kept = pages_kept;
+        stats.pages_flagged = u32::try_from(stats.flagged_pages.len()).unwrap_or(u32::MAX);
         pages_counted.set(pages_fetched, pages_kept);
         let mut failures: Vec<AppError> = Vec::new();
-        for (outcome, score) in futures::future::join_all(tasks)
+        for ((outcome, score), patterns) in futures::future::join_all(tasks)
             .await
             .into_iter()
             .zip(task_relevance)
+            .zip(task_patterns)
         {
             match outcome {
                 SourceOutcome::Extracted(mut record) => {
                     record.relevance = score;
-                    if !record.injection_patterns.is_empty() {
-                        stats.pages_flagged += 1;
-                    }
+                    record.injection_patterns = patterns;
                     sources.push(*record);
                 }
                 SourceOutcome::Empty => {}
@@ -864,12 +886,7 @@ async fn extract_source(
     // Not a failure: the page was read and held no text. A run where every
     // candidate is like that genuinely has no findings, and saying so is the
     // truthful answer.
-    let text: String = page
-        .text
-        .trim()
-        .chars()
-        .take(extract::EXTRACT_TEXT_MAX_CHARS)
-        .collect();
+    let text = extract::capped_text(&page.text);
     if text.is_empty() {
         tracing::debug!(url, "source dropped: no text");
         return SourceOutcome::Empty;
@@ -911,11 +928,6 @@ async fn extract_source(
         .ok()
         .and_then(|u| u.host_str().map(String::from))
         .unwrap_or_default();
-    // 063: screen exactly the text the extraction call read; warn only.
-    let injection_patterns = crate::research::screen::screen(&readable.text);
-    if !injection_patterns.is_empty() {
-        tracing::info!(url, patterns = ?injection_patterns, "source flagged by the injection screen");
-    }
     SourceOutcome::Extracted(Box::new(SourceRecord {
         id,
         url: page.url,
@@ -926,7 +938,7 @@ async fn extract_source(
         text: readable.text,
         truncated: page.truncated,
         relevance: None,
-        injection_patterns,
+        injection_patterns: Vec::new(),
     }))
 }
 

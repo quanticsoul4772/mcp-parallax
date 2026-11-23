@@ -166,6 +166,17 @@ pub struct SourceRef {
     pub injection_patterns: Vec<String>,
 }
 
+/// A page the injection screen flagged (063).
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct FlaggedPage {
+    /// Run-scoped id; matches `sources` when the page is cited.
+    pub id: String,
+    /// The page's URL as the provider returned it.
+    pub url: String,
+    /// The patterns found, sorted.
+    pub injection_patterns: Vec<String>,
+}
+
 /// Honest run accounting (FR-007: no silent truncation).
 #[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema)]
 pub struct Stats {
@@ -182,8 +193,12 @@ pub struct Stats {
     pub sources_kept: u32,
     /// Why a configured rerank did not run (061 FR-005), or null.
     pub rerank_skipped: Option<String>,
-    /// Pages that reached extraction with at least one injection pattern (063).
+    /// Pages selected for extraction with at least one injection pattern
+    /// (063); the length of `flagged_pages`.
     pub pages_flagged: u32,
+    /// Every page selected for extraction that the injection screen flagged,
+    /// cited or not (063 review finding 3).
+    pub flagged_pages: Vec<FlaggedPage>,
     /// Claims extracted across sources.
     pub claims_extracted: u32,
     /// Claims after semantic dedup.

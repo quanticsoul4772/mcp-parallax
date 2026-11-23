@@ -45,6 +45,13 @@ const fn is_hidden(c: char) -> bool {
     )
 }
 
+/// Screen what an extraction prompt carries for one page: its title and
+/// its capped text (063 review findings 1-2).
+#[must_use]
+pub fn screen_page(title: &str, capped_text: &str) -> Vec<&'static str> {
+    screen(&format!("{title}\n{capped_text}"))
+}
+
 /// The names of the pattern families found in `text`, sorted and distinct.
 #[must_use]
 pub fn screen(text: &str) -> Vec<&'static str> {
