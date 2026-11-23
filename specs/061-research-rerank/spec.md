@@ -79,7 +79,8 @@ the token use and the per-source scores.
 
 ### Edge Cases
 
-- A page with empty text after trimming is scored as least relevant.
+- A page with empty text is not sent to the reranker; it stays dropped as
+  empty, as before this feature (plan D7).
 - Two pages with equal scores keep today's relative order.
 - A rerank reply missing a page's score is treated as a failed rerank (FR-005).
 

@@ -14,7 +14,8 @@ Set `VOYAGE_API_KEY` (it also enables the memory tools). Nothing else.
 
 ## Live acceptance
 
-`cargo run --example acceptance_research` on the same questions with and
+`PARALLAX_BACKEND=claude_cli cargo run --example acceptance_research` (on
+the operator's subscription; no API credit) on the same questions with and
 without `VOYAGE_API_KEY`: compare extraction calls per run at standard depth
 (SC-001, ≥ 30% fewer) and confirm every answer cites only kept sources and
 passes the grounding gate (SC-002). Results are recorded below after the run.

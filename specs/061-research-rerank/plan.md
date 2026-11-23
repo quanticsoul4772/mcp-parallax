@@ -57,6 +57,9 @@ src/
 ├── research/contract.rs    # Stats.sources_kept, Stats.rerank_skipped,
 │                           # SourceRef.relevance
 ├── server.rs               # wire the Voyage client as the reranker
-└── telemetry.rs            # price row: rerank-3 $0.05 per M tokens
+├── telemetry.rs            # price row: rerank-3; record pages_fetched/kept
+├── storage/sqlite.rs       # two nullable record columns
+└── observability.rs        # span attributes for the page counts
+examples/acceptance_research.rs  # backend selection (claude_cli) for the live run
 specs/004-research-layer/contracts/research.tool.json   # output fields
 ```

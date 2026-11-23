@@ -69,4 +69,6 @@ entirely (nothing to cut) and every page is kept.
 so they appear in `usage_by_model` and `cost_usd`, beside the CLI figure on
 `claude_cli` (060 review finding 5). The result's `stats` gain
 `sources_kept` and `rerank_skipped`; each source gains `relevance` (the
-score, absent when no rerank ran).
+score, absent when no rerank ran). The invocation record also carries
+`pages_fetched` and `pages_kept` (nullable, research only) so the cut is
+queryable after the result is gone (FR-006; analyze A2).

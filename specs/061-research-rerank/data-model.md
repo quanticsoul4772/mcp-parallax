@@ -23,6 +23,16 @@
 | `stats.rerank_skipped` | string, optional | why a configured rerank did not run: `provider_error: …`, `timeout`, `malformed_reply: …`; absent when it ran, when there was nothing to cut, or with no reranker configured |
 | `sources[].relevance` | number, optional | the page's rerank score; absent when no rerank ran |
 
+## Invocation record (changed; analyze A2)
+
+| Column | Type | Notes |
+|---|---|---|
+| `pages_fetched` | integer, nullable | research only: pages whose text came back |
+| `pages_kept` | integer, nullable | research only: pages that reached extraction |
+
+Exported as span attributes `parallax.research.pages_fetched` and
+`parallax.research.pages_kept`.
+
 ## Usage and price (changed)
 
 `usage_by_model` gains a `rerank-3` entry (input tokens only) on runs that
