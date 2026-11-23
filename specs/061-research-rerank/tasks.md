@@ -65,7 +65,7 @@ None: no new dependency.
 - [X] T015 README research section, `CHANGELOG.md` `[Unreleased]` entry, and a dated `docs/design/SDK_LANDSCAPE.md` amendment naming `rerank-3` (exact text of each approved first)
 - [ ] T016 Independent review: a fresh subagent given only the diff, told to trace every caller (brief approved first); findings asked one by one
 - [X] T017 Live acceptance (quickstart.md): `examples/acceptance_research.rs` gains backend selection (`PARALLAX_BACKEND=claude_cli` runs its model calls through the operator's Claude Code, so no API credit is needed; analyze A1); then run it at standard depth on the same questions with and without `VOYAGE_API_KEY`, compare pages extracted (SC-001, ≥ 30% fewer) and confirm grounded answers citing only kept sources (SC-002); record the results
-- [ ] T018 Update the CLAUDE.md active-feature block for 061 (exact text approved first)
+- [X] T018 Update the CLAUDE.md active-feature block for 061 (exact text approved first)
 
 ## Dependencies & Execution Order
 
