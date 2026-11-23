@@ -44,7 +44,7 @@ isolation settings and without the API key in its environment.
    model call runs, **Then** the CLI's environment does not contain it.
 3. **Given** a model call, **When** the CLI runs, **Then** it runs with no MCP
    servers, no tools, no user or project settings, an empty working folder,
-   and Parallax's system prompt for that call.
+   and Parallax's fixed system prompt.
 4. **Given** the CLI returns output that fails the call's schema, **When** the
    existing single violation-fed retry also fails, **Then** the call fails as
    a validation failure, as on the other backends.
@@ -137,9 +137,9 @@ each error's wording and recorded outcome.
   the prompt reaches the CLI by a path with no such limit.
 - `verify` with several passes starts several CLI processes at once: each
   is isolated and none shares a session.
-- Effort settings on this backend: [resolved in the plan, depending on
-  whether the CLI accepts an effort setting; if it does not, a configured
-  effort is a startup error on this backend, not silently ignored].
+- Effort settings on this backend: a routed or per-call effort reaches the
+  CLI as its effort level; with none, the CLI is told to send no effort
+  level (plan D6).
 
 ## Requirements *(mandatory)*
 
@@ -150,8 +150,8 @@ each error's wording and recorded outcome.
 - **FR-002**: With this backend selected, the Anthropic API key MUST NOT be
   required at startup.
 - **FR-003**: Every model call MUST run the CLI with no MCP servers, no tools,
-  no user or project settings or hooks, an empty working folder, and the
-  call's system prompt.
+  no user or project settings or hooks, an empty working folder, and
+  Parallax's fixed system prompt.
 - **FR-004**: The CLI's environment MUST NOT contain the Anthropic API key or
   auth-token variables, whatever the operator's environment holds.
 - **FR-005**: Parallax MUST NOT read, store, log or pass any Claude
