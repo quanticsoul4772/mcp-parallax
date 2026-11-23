@@ -293,6 +293,13 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
+**In progress: `061-research-rerank`**
+([plan](specs/061-research-rerank/plan.md)) — research reranks the fetched
+pages against the question with Voyage `rerank-3` (when `VOYAGE_API_KEY` is
+set) and extracts claims only from the top 5 / 15 / 35 by depth, so a run makes
+about 40% fewer extraction calls; a failed rerank leaves today's behavior and
+is recorded. Spec and plan written; tasks not yet generated.
+
 **Active Spec Kit feature: `060-claude-cli-backend`; all 29 tasks closed,
 the research live check deferred**
 ([plan](specs/060-claude-cli-backend/plan.md)) — `PARALLAX_BACKEND=claude_cli`

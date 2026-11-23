@@ -7,7 +7,7 @@
 **Status**: Draft
 
 **Input**: Rerank research pages by relevance after their text is fetched, with
-Voyage rerank-2.5, and extract claims only from the most relevant ones, so a
+Voyage rerank-3 (the provider's current reranker; rerank-2.5 is listed as an older model, 2026-11-23), and extract claims only from the most relevant ones, so a
 research run makes fewer model calls. On when VOYAGE_API_KEY is set; a failed
 rerank falls back to today's order and is recorded (operator-approved exception
 to the no-fallback rule).
@@ -88,7 +88,7 @@ the token use and the per-source scores.
 ### Functional Requirements
 
 - **FR-001**: With VOYAGE_API_KEY set, research MUST score each fetched page's
-  text against the question with Voyage rerank-2.5 before extraction.
+  text against the question with Voyage rerank-3 before extraction.
 - **FR-002**: Only the top K pages by score MUST reach extraction; K is a
   per-depth keep count below that depth's source limit (defaults set in the
   plan).
@@ -121,7 +121,7 @@ the token use and the per-source scores.
 
 ## Assumptions
 
-- Voyage rerank-2.5 accepts the question plus up to the deep-depth page count
+- Voyage rerank-3 accepts the question plus up to the deep-depth page count
   in one request; the plan confirms the request limits.
 - Page text is trimmed to the existing per-source cap before reranking.
 - Reranking by title before fetching is out of scope (scored 42).
