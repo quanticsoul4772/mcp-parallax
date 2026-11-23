@@ -30,8 +30,8 @@ US3 and US4 build on US1's client.
 
 **Independent test**: with `PARALLAX_BACKEND=claude_cli`, no API key and a runner double, every listed tool returns a valid result and every call reached the double per the contract.
 
-- [ ] T006 [US1] Write failing tests in `src/client/claude_cli/invocation.rs`: arguments exactly as `contracts/claude-cli-call.md` §Arguments, in order; the prompt is stdin and in no argument; the six variables are removed; `CLAUDE_CODE_EFFORT_LEVEL` is the routed level or `unset`; the working folder is the process's empty folder; variables are removed by name only, and a call's debug log contains no environment values (FR-005, analyze A5)
-- [ ] T007 [US1] Implement argument and environment building in `src/client/claude_cli/invocation.rs` (pure)
+- [X] T006 [US1] Write failing tests in `src/client/claude_cli/invocation.rs`: arguments exactly as `contracts/claude-cli-call.md` §Arguments, in order; the prompt is stdin and in no argument; the six variables are removed; `CLAUDE_CODE_EFFORT_LEVEL` is the routed level or `unset`; the working folder is the process's empty folder; variables are removed by name only, and a call's debug log contains no environment values (FR-005, analyze A5)
+- [X] T007 [US1] Implement argument and environment building in `src/client/claude_cli/invocation.rs` (pure)
 - [ ] T008 [US1] Write failing tests in `src/client/claude_cli/classify.rs` for the non-error rows of the contract table: success with `structured_output` → `Completion` (input tokens = input + cache creation + cache read; cost micros = round(`total_cost_usd` × 10^6)); success without `structured_output`, `error_max_structured_output_retries` and `error_max_turns` → `ValidationFailure`; stdout not one JSON object → `Client` with stderr capped at 2,000 characters
 - [ ] T009 [US1] Implement those rows in `src/client/claude_cli/classify.rs` (pure)
 - [ ] T010 [US1] Write failing tests for `ClaudeCliClient` in `src/client/claude_cli.rs` with a runner double: `complete()` sends the invocation and returns the classified result; `build_model_client` in `src/client/mod.rs` returns it for `Backend::ClaudeCli` for every routed `(model, effort)`

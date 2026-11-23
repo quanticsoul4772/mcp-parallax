@@ -7,6 +7,8 @@ use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+pub mod invocation;
+
 /// What a runner timeout names (research.md D7).
 const TIMEOUT_WHAT: &str = "claude CLI";
 
