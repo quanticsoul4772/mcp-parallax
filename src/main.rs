@@ -196,6 +196,12 @@ MODEL BACKEND (one backend for every call site, chosen at startup):
     OPENAI_STRUCTURED_OUTPUT      Structured-output ladder for openai_compat:
                                   auto, json_schema, json_object, tool_shim,
                                   prompt_only (default: auto)
+    CLAUDE_CLI_PATH               Claude Code CLI for the claude_cli backend
+                                  (default: claude)
+    CLAUDE_CLI_MODEL              Default model on claude_cli
+                                  (default: claude-sonnet-5-5)
+    CLAUDE_CLI_CONCURRENCY        Live Claude Code processes at once, 1..=32
+                                  (default: 4)
 
 CORE (always read):
     INPUT_MAX_CHARS               Max input length (default: 50000)

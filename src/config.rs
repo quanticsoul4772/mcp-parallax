@@ -35,6 +35,21 @@ pub const EXA_MAX_AGE_HOURS_DEFAULT: i32 = 168;
 /// Server-side ceiling on research concurrency.
 pub const RESEARCH_CONCURRENCY_MAX: u8 = 32;
 
+/// Default Claude Code CLI to run on the `claude_cli` backend (060):
+/// the command name, resolved on the operator's path. `CLAUDE_CLI_PATH`.
+pub const DEFAULT_CLAUDE_CLI_PATH: &str = "claude";
+
+/// Default model on the `claude_cli` backend (060 research.md D4).
+/// `CLAUDE_CLI_MODEL`.
+pub const DEFAULT_CLAUDE_CLI_MODEL: &str = "claude-sonnet-5-5";
+
+/// Default cap on live Claude Code CLI processes, server-wide (060 D5).
+/// `CLAUDE_CLI_CONCURRENCY`.
+pub const DEFAULT_CLAUDE_CLI_CONCURRENCY: u8 = 4;
+
+/// Upper bound for `CLAUDE_CLI_CONCURRENCY`.
+pub const CLAUDE_CLI_CONCURRENCY_MAX: u8 = 32;
+
 /// Default total assembled-evidence ceiling for grounded-verify, in bytes
 /// (256 KiB). `GROUNDED_VERIFY_MAX_BYTES`.
 pub const DEFAULT_GROUNDED_VERIFY_MAX_BYTES: usize = 262_144;
@@ -193,6 +208,16 @@ pub struct Config {
     /// Concurrent extract/verify cap for research runs.
     /// `RESEARCH_CONCURRENCY`, default `8`; must be in `1..=32`.
     pub research_concurrency: u8,
+    /// The Claude Code CLI the `claude_cli` backend runs (060).
+    /// `CLAUDE_CLI_PATH`, default [`DEFAULT_CLAUDE_CLI_PATH`].
+    pub claude_cli_path: String,
+    /// The `claude_cli` backend's default model (060 D4). `CLAUDE_CLI_MODEL`,
+    /// default [`DEFAULT_CLAUDE_CLI_MODEL`].
+    pub claude_cli_model: String,
+    /// Live Claude Code CLI processes allowed at once, server-wide (060 D5).
+    /// `CLAUDE_CLI_CONCURRENCY`, default [`DEFAULT_CLAUDE_CLI_CONCURRENCY`];
+    /// must be in `1..=32`.
+    pub claude_cli_concurrency: u8,
     /// Extra pre-action gate risk patterns (checkpoint layer, FR-013) —
     /// comma-separated substrings extending the built-in set.
     /// `CHECKPOINT_GATE_PATTERNS`, default empty. A present value with an
@@ -334,6 +359,22 @@ impl Config {
             validate_exa_max_age_hours(parse_env("EXA_MAX_AGE_HOURS", EXA_MAX_AGE_HOURS_DEFAULT)?)?;
         let research_concurrency =
             validate_research_concurrency(parse_env("RESEARCH_CONCURRENCY", 8)?)?;
+        // Read in the form the config-facts scan recognizes, so the documented
+        // defaults are checked against these constants (040).
+        let claude_cli_path = reject_blank(
+            "CLAUDE_CLI_PATH",
+            std::env::var("CLAUDE_CLI_PATH")
+                .unwrap_or_else(|_| DEFAULT_CLAUDE_CLI_PATH.to_string()),
+        )?;
+        let claude_cli_model = reject_blank(
+            "CLAUDE_CLI_MODEL",
+            std::env::var("CLAUDE_CLI_MODEL")
+                .unwrap_or_else(|_| DEFAULT_CLAUDE_CLI_MODEL.to_string()),
+        )?;
+        let claude_cli_concurrency = validate_claude_cli_concurrency(parse_env(
+            "CLAUDE_CLI_CONCURRENCY",
+            DEFAULT_CLAUDE_CLI_CONCURRENCY,
+        )?)?;
         let checkpoint_gate_patterns =
             parse_gate_patterns(std::env::var("CHECKPOINT_GATE_PATTERNS").ok().as_deref())?;
         let grounded_verify_root = std::env::var("GROUNDED_VERIFY_ROOT")
@@ -376,6 +417,9 @@ impl Config {
             exa_api_key,
             exa_max_age_hours,
             research_concurrency,
+            claude_cli_path,
+            claude_cli_model,
+            claude_cli_concurrency,
             checkpoint_gate_patterns,
             grounded_verify_root,
             grounded_verify_max_bytes,
@@ -450,6 +494,25 @@ fn validate_research_concurrency(n: u8) -> Result<u8, ConfigError> {
         Ok(n)
     } else {
         Err(ConfigError::Invalid("RESEARCH_CONCURRENCY"))
+    }
+}
+
+/// `CLAUDE_CLI_CONCURRENCY` must be in `1..=CLAUDE_CLI_CONCURRENCY_MAX`.
+fn validate_claude_cli_concurrency(n: u8) -> Result<u8, ConfigError> {
+    if (1..=CLAUDE_CLI_CONCURRENCY_MAX).contains(&n) {
+        Ok(n)
+    } else {
+        Err(ConfigError::Invalid("CLAUDE_CLI_CONCURRENCY"))
+    }
+}
+
+/// A string setting may be unset (its default applies) but never blank: a
+/// blank value is a startup error naming `name`, not a silent default.
+fn reject_blank(name: &'static str, value: String) -> Result<String, ConfigError> {
+    if value.trim().is_empty() {
+        Err(ConfigError::Invalid(name))
+    } else {
+        Ok(value)
     }
 }
 
@@ -558,6 +621,9 @@ pub(crate) fn test_config() -> Config {
         exa_api_key: None,
         exa_max_age_hours: EXA_MAX_AGE_HOURS_DEFAULT,
         research_concurrency: 8,
+        claude_cli_path: DEFAULT_CLAUDE_CLI_PATH.into(),
+        claude_cli_model: DEFAULT_CLAUDE_CLI_MODEL.into(),
+        claude_cli_concurrency: DEFAULT_CLAUDE_CLI_CONCURRENCY,
         checkpoint_gate_patterns: vec![],
         grounded_verify_root: None,
         grounded_verify_max_bytes: DEFAULT_GROUNDED_VERIFY_MAX_BYTES,
@@ -784,6 +850,48 @@ mod tests {
             resolve_openai_api_key("https://api.openai.com/v1/", None),
             Err(ConfigError::MissingRequired("OPENAI_API_KEY"))
         ));
+    }
+
+    /// 060 T005: `CLAUDE_CLI_CONCURRENCY` loads in 1..=32; anything outside is
+    /// a startup error naming the variable.
+    #[test]
+    fn claude_cli_concurrency_bounds_name_the_variable() {
+        for n in [1, 4, 32] {
+            assert_eq!(validate_claude_cli_concurrency(n).unwrap(), n);
+        }
+        for n in [0, 33] {
+            let err = validate_claude_cli_concurrency(n).unwrap_err();
+            assert!(
+                err.to_string().contains("CLAUDE_CLI_CONCURRENCY"),
+                "{n}: {err}"
+            );
+        }
+    }
+
+    /// 060 T005 (research.md D4, D5): the documented defaults.
+    #[test]
+    fn claude_cli_defaults_are_the_documented_values() {
+        assert_eq!(DEFAULT_CLAUDE_CLI_PATH, "claude");
+        assert_eq!(DEFAULT_CLAUDE_CLI_MODEL, "claude-sonnet-5-5");
+        assert_eq!(DEFAULT_CLAUDE_CLI_CONCURRENCY, 4);
+        let cfg = test_config();
+        assert_eq!(cfg.claude_cli_path, DEFAULT_CLAUDE_CLI_PATH);
+        assert_eq!(cfg.claude_cli_model, DEFAULT_CLAUDE_CLI_MODEL);
+        assert_eq!(cfg.claude_cli_concurrency, DEFAULT_CLAUDE_CLI_CONCURRENCY);
+    }
+
+    /// 060 T005: a blank `CLAUDE_CLI_PATH` or `CLAUDE_CLI_MODEL` is a startup
+    /// error naming it, never a silent fall-back to the default.
+    #[test]
+    fn a_blank_claude_cli_setting_is_an_error_naming_it() {
+        for name in ["CLAUDE_CLI_PATH", "CLAUDE_CLI_MODEL"] {
+            let err = reject_blank(name, "  ".into()).unwrap_err();
+            assert!(err.to_string().contains(name), "{err}");
+        }
+        assert_eq!(
+            reject_blank("CLAUDE_CLI_PATH", "C:/tools/claude.exe".into()).unwrap(),
+            "C:/tools/claude.exe"
+        );
     }
 
     #[test]

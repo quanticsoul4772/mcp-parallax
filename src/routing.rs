@@ -304,6 +304,8 @@ pub enum DefaultVar {
     AnthropicModel,
     /// `OPENAI_MODEL` — the openai_compat backend's default.
     OpenAiModel,
+    /// `CLAUDE_CLI_MODEL` — the claude_cli backend's default (060).
+    ClaudeCliModel,
 }
 
 impl DefaultVar {
@@ -313,6 +315,7 @@ impl DefaultVar {
         match self {
             Self::AnthropicModel => "ANTHROPIC_MODEL",
             Self::OpenAiModel => "OPENAI_MODEL",
+            Self::ClaudeCliModel => "CLAUDE_CLI_MODEL",
         }
     }
 }
@@ -627,6 +630,17 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect()
+    }
+
+    /// 060 T005: the `claude_cli` backend's default model is reported as
+    /// `CLAUDE_CLI_MODEL`, the variable that supplied it.
+    #[test]
+    fn the_claude_cli_default_route_names_claude_cli_model() {
+        assert_eq!(DefaultVar::ClaudeCliModel.name(), "CLAUDE_CLI_MODEL");
+        let table =
+            RoutingTable::resolve(vars(&[]), "claude-sonnet-5-5", DefaultVar::ClaudeCliModel)
+                .unwrap();
+        assert_eq!(table.report()[0].3, "CLAUDE_CLI_MODEL");
     }
 
     /// 022: unset means unset. The whole feature is off by default, and the
