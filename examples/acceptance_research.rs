@@ -180,6 +180,12 @@ async fn main() {
                     result.stats.rerank_skipped,
                     result.answer.chars().take(220).collect::<String>()
                 );
+                for flagged in &result.stats.flagged_pages {
+                    println!(
+                        "   FLAGGED {} {:?} {}",
+                        flagged.id, flagged.injection_patterns, flagged.url
+                    );
+                }
             }
             Err(e) => println!("[ERROR {elapsed}ms] {question}: {e}\n"),
         }
