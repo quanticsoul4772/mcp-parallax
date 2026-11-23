@@ -8,6 +8,7 @@
 pub mod client;
 pub mod clock;
 pub mod embedder;
+pub mod rerank;
 pub mod runner;
 pub mod search;
 pub mod source;

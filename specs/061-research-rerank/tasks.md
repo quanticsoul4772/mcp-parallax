@@ -16,8 +16,8 @@ None: no new dependency.
 
 ## Phase 2: Foundational (blocks every story)
 
-- [ ] T001 Write failing tests in `src/traits/rerank.rs` for the `Reranker` seam through its mock: `rerank(query, documents)` returns a `RerankResult` (a score per document in input order, total tokens) or an error
-- [ ] T002 Implement `Reranker` and `RerankResult` in `src/traits/rerank.rs`; export from `src/traits/mod.rs`
+- [X] T001 Write failing tests in `src/traits/rerank.rs` for the `Reranker` seam through its mock: `rerank(query, documents)` returns a `RerankResult` (a score per document in input order, total tokens) or an error
+- [X] T002 Implement `Reranker` and `RerankResult` in `src/traits/rerank.rs`; export from `src/traits/mod.rs`
 - [ ] T003 Write failing tests in a new public `src/research/rerank.rs` for `keep_top(scores, k)`: the indices of the top `k` scores in fetched order; ties keep fetched order; `k` at or above the count keeps every index; no scores keeps none
 - [ ] T004 Implement `keep_top` in `src/research/rerank.rs` (pure)
 - [ ] T005 Add `keep_sources` to the research `Tier` in `src/research/mod.rs` (quick 5, standard 15, deep 35), tests first: each below its tier's `max_sources`
