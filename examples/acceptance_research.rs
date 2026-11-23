@@ -7,12 +7,13 @@
 //! confirmed. Results recorded in `specs/004-research-layer/quickstart.md`.
 //!
 //! Run: `ANTHROPIC_API_KEY=... EXA_API_KEY=... cargo run --release --example acceptance_research`
+//! (061: `PARALLAX_BACKEND=claude_cli` selects the backend; set `VOYAGE_API_KEY=...` to rerank.)
 
 // Acceptance tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use mcp_parallax::client::{AnthropicClient, ExaClient};
+use mcp_parallax::client::{default_model_client, ExaClient};
 use mcp_parallax::config::Config;
 use mcp_parallax::modes::verify::VERIFY_ID;
 use mcp_parallax::modes::{verify, ModeRegistry};
@@ -64,10 +65,11 @@ fn deps(config: &Config) -> ResearchDeps {
     ResearchDeps {
         // 018: routable per call site; this acceptance harness runs them all
         // on the configured default.
-        scope_client: Arc::new(AnthropicClient::new(config)),
-        extract_client: Arc::new(AnthropicClient::new(config)),
-        verify_client: Arc::new(AnthropicClient::new(config)),
-        synth_client: Arc::new(AnthropicClient::new(config)),
+        // 061 A1: the selected backend (PARALLAX_BACKEND), default model.
+        scope_client: default_model_client(config),
+        extract_client: default_model_client(config),
+        verify_client: default_model_client(config),
+        synth_client: default_model_client(config),
         search: Arc::new(ExaClient::new(config).expect("exa key present")),
         // 061: research reranks its pages exactly when VOYAGE_API_KEY is set.
         reranker: config.voyage_api_key.as_ref().map(|_| {
@@ -162,9 +164,11 @@ async fn main() {
                             && f.claim.contains("2018")
                     }) && result.answer.contains("released in 2018");
                 }
+                let (fetched, kept) = pages.get().unwrap_or_default();
                 println!(
                     "[{elapsed}ms]{} {question}\n   confidence {:.2}; {} findings, {} sources, \
-                     {} gaps; stopped_early={} ({:?}); Exa cost {exa_cost}\n   -> {}\n",
+                     {} gaps; stopped_early={} ({:?}); Exa cost {exa_cost}\n   \
+                     pages kept {kept} of {fetched} fetched; rerank_skipped {:?}\n   -> {}\n",
                     if ok { "" } else { " ** UNGROUNDED **" },
                     result.confidence,
                     result.key_findings.len(),
@@ -172,6 +176,7 @@ async fn main() {
                     result.gaps.len(),
                     result.stats.stopped_early,
                     result.stats.stop_reason,
+                    result.stats.rerank_skipped,
                     result.answer.chars().take(220).collect::<String>()
                 );
             }
