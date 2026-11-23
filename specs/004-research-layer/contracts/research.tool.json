@@ -264,6 +264,18 @@
                 "number",
                 "null"
               ]
+            },
+            "injection_patterns": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "hidden_text",
+                  "instruction_override",
+                  "role_marker"
+                ]
+              },
+              "description": "063: names of the prompt-injection patterns found in this source's page text, sorted; empty when none. Warn only: the page was still read."
             }
           },
           "required": [
@@ -273,7 +285,8 @@
             "fetched_at",
             "credibility",
             "truncated",
-            "relevance"
+            "relevance",
+            "injection_patterns"
           ],
           "additionalProperties": false
         },
@@ -307,6 +320,11 @@
               "string",
               "null"
             ]
+          },
+          "pages_flagged": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "063: pages that reached extraction with at least one injection pattern."
           },
           "claims_extracted": {
             "type": "integer",
@@ -355,6 +373,7 @@
           "sources_fetched",
           "sources_kept",
           "rerank_skipped",
+          "pages_flagged",
           "claims_extracted",
           "claims_after_dedup",
           "claims_verified",

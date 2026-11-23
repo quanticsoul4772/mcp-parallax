@@ -11,8 +11,8 @@ Tests come first in each story and are seen failing before the code.
 
 ## Phase 2: User Story 1 — The caller sees which sources carry injection attempts (P1)
 
-- [ ] T003 [US1] Failing pipeline tests in `src/research/pipeline_tests.rs`: a run with one page containing an injection phrase marks exactly that source and counts 1 flagged page; a run with clean pages has empty lists and a count of 0
-- [ ] T004 [US1] Add `SourceRecord.injection_patterns` (`src/research/mod.rs`), screen the extracted text in `extract_source` (`src/research/pipeline.rs`), add `SourceRef.injection_patterns` and `Stats.pages_flagged` (`src/research/contract.rs`), copy and count in `src/research/outcome.rs`, and update `specs/004-research-layer/contracts/research.tool.json` (exact text approved first); T003 passes; commit
+- [X] T003 [US1] Failing pipeline tests in `src/research/pipeline_tests.rs`: a run with one page containing an injection phrase marks exactly that source and counts 1 flagged page; a run with clean pages has empty lists and a count of 0
+- [X] T004 [US1] Add `SourceRecord.injection_patterns` (`src/research/mod.rs`), screen the extracted text in `extract_source` (`src/research/pipeline.rs`), add `SourceRef.injection_patterns` and `Stats.pages_flagged` (`src/research/contract.rs`), copy and count in `src/research/outcome.rs`, and update `specs/004-research-layer/contracts/research.tool.json` (exact text approved first); T003 passes; commit
 
 ## Phase 3: User Story 2 — Warn, never block (P1)
 

@@ -422,6 +422,9 @@ async fn run_metered_at(
             match outcome {
                 SourceOutcome::Extracted(mut record) => {
                     record.relevance = score;
+                    if !record.injection_patterns.is_empty() {
+                        stats.pages_flagged += 1;
+                    }
                     sources.push(*record);
                 }
                 SourceOutcome::Empty => {}
@@ -908,6 +911,11 @@ async fn extract_source(
         .ok()
         .and_then(|u| u.host_str().map(String::from))
         .unwrap_or_default();
+    // 063: screen exactly the text the extraction call read; warn only.
+    let injection_patterns = crate::research::screen::screen(&readable.text);
+    if !injection_patterns.is_empty() {
+        tracing::info!(url, patterns = ?injection_patterns, "source flagged by the injection screen");
+    }
     SourceOutcome::Extracted(Box::new(SourceRecord {
         id,
         url: page.url,
@@ -918,6 +926,7 @@ async fn extract_source(
         text: readable.text,
         truncated: page.truncated,
         relevance: None,
+        injection_patterns,
     }))
 }
 

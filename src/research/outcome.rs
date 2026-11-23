@@ -90,6 +90,11 @@ pub fn assemble_result(outcome: Outcome<'_>, stats: Stats) -> ResearchResult {
             credibility: s.credibility,
             truncated: s.truncated,
             relevance: s.relevance,
+            injection_patterns: s
+                .injection_patterns
+                .iter()
+                .map(|p| (*p).to_string())
+                .collect(),
         })
         .collect();
 

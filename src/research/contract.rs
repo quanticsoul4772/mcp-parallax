@@ -161,6 +161,9 @@ pub struct SourceRef {
     pub truncated: bool,
     /// The page's rerank relevance score (061); absent when no rerank ran.
     pub relevance: Option<f32>,
+    /// Names of the prompt-injection patterns found in this source's page
+    /// text, sorted; empty when none (063). Warn only: the page was read.
+    pub injection_patterns: Vec<String>,
 }
 
 /// Honest run accounting (FR-007: no silent truncation).
@@ -179,6 +182,8 @@ pub struct Stats {
     pub sources_kept: u32,
     /// Why a configured rerank did not run (061 FR-005), or null.
     pub rerank_skipped: Option<String>,
+    /// Pages that reached extraction with at least one injection pattern (063).
+    pub pages_flagged: u32,
     /// Claims extracted across sources.
     pub claims_extracted: u32,
     /// Claims after semantic dedup.
