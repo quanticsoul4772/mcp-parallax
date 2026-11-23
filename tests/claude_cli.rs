@@ -475,3 +475,30 @@ async fn the_checkpoint_review_runs_through_the_cli() {
     assert_eq!(storage.list_checkpoints().await.unwrap().len(), 1);
     client.cancel().await.unwrap();
 }
+
+/// 060 T019 (US3, D11): a `verify` run on the backend records the CLI's own
+/// figure (three passes at $0.001), marked as an estimate on the record.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_record_carries_the_cli_figure_marked_as_an_estimate() {
+    let cli = FakeCli::replying(vec![
+        json!({"verdict": "refuted", "findings": ["1066, not 1067"]}),
+    ]);
+    let (client, storage, _server) = serve_cli(&cli_config(), cli).await;
+    let result = client
+        .call_tool(tool_call("verify", &json!({"claim": "Hastings was 1067"})))
+        .await
+        .unwrap();
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].cost_basis,
+        Some(mcp_parallax::telemetry::CostBasis::CliEstimate)
+    );
+    assert!(
+        (records[0].cost_usd - 0.003).abs() < 1e-9,
+        "{}",
+        records[0].cost_usd
+    );
+    client.cancel().await.unwrap();
+}

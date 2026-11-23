@@ -320,6 +320,13 @@ impl DefaultVar {
     }
 }
 
+/// The bulk tier's default on the `claude_cli` backend.
+///
+/// 060 research.md D4: research extraction is the one site whose volume
+/// scales with sources, so on a subscription it defaults to the cheapest
+/// current model.
+pub const CLAUDE_CLI_BULK_MODEL: &str = "claude-haiku-5-5";
+
 /// Which setting supplied a call site's model — reported in the startup table
 /// so an operator can tell a deliberate route from a fall-through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +339,9 @@ pub enum RouteSource {
     /// `OPENAI_MODEL` on `openai_compat`. The variant records which, so the
     /// table never names a variable that did not supply the model.
     Default(DefaultVar),
+    /// The `claude_cli` backend's bulk-tier default (060 D4) — no variable
+    /// supplied it, so the table names the default itself.
+    ClaudeCliBulkDefault,
 }
 
 impl RouteSource {
@@ -342,6 +352,7 @@ impl RouteSource {
             Self::Site => format!("{PREFIX}{}", site.suffix()),
             Self::Tier => format!("{PREFIX}{}", site.tier().suffix()),
             Self::Default(var) => var.name().to_string(),
+            Self::ClaudeCliBulkDefault => "claude_cli bulk default".to_string(),
         }
     }
 }
@@ -498,7 +509,18 @@ impl RoutingTable {
                 let (model, source) = lookup(site.suffix()).map_or_else(
                     || {
                         lookup(site.tier().suffix()).map_or_else(
-                            || (default_model.to_string(), RouteSource::Default(default_var)),
+                            || {
+                                if default_var == DefaultVar::ClaudeCliModel
+                                    && site.tier() == Tier::Bulk
+                                {
+                                    (
+                                        CLAUDE_CLI_BULK_MODEL.to_string(),
+                                        RouteSource::ClaudeCliBulkDefault,
+                                    )
+                                } else {
+                                    (default_model.to_string(), RouteSource::Default(default_var))
+                                }
+                            },
                             |model| (model, RouteSource::Tier),
                         )
                     },
@@ -641,6 +663,56 @@ mod tests {
             RoutingTable::resolve(vars(&[]), "claude-sonnet-5-5", DefaultVar::ClaudeCliModel)
                 .unwrap();
         assert_eq!(table.report()[0].3, "CLAUDE_CLI_MODEL");
+    }
+
+    /// 060 T016 (US3, D4): on `claude_cli` with nothing set, judgment sites
+    /// take `CLAUDE_CLI_MODEL` and the bulk site the backend's Haiku default,
+    /// reported as that default and never as `PARALLAX_MODEL_BULK`.
+    #[test]
+    fn claude_cli_defaults_bulk_to_haiku_and_says_so() {
+        let table =
+            RoutingTable::resolve(vars(&[]), "claude-sonnet-5-5", DefaultVar::ClaudeCliModel)
+                .unwrap();
+        for row in table.report() {
+            if row.1 == Tier::Bulk.id() {
+                assert_eq!(row.2, CLAUDE_CLI_BULK_MODEL, "{row:?}");
+                assert_eq!(row.3, "claude_cli bulk default", "{row:?}");
+            } else {
+                assert_eq!(row.2, "claude-sonnet-5-5", "{row:?}");
+                assert_eq!(row.3, "CLAUDE_CLI_MODEL", "{row:?}");
+            }
+        }
+        assert_eq!(CLAUDE_CLI_BULK_MODEL, "claude-haiku-5-5");
+    }
+
+    /// 060 T016: a site or tier setting wins over the backend's bulk default,
+    /// and the other backends keep their single default for bulk.
+    #[test]
+    fn settings_win_over_the_claude_cli_bulk_default() {
+        let tier = RoutingTable::resolve(
+            vars(&[("PARALLAX_MODEL_BULK", "claude-sonnet-5-5")]),
+            "claude-sonnet-5-5",
+            DefaultVar::ClaudeCliModel,
+        )
+        .unwrap();
+        let site = RoutingTable::resolve(
+            vars(&[("PARALLAX_MODEL_RESEARCH_EXTRACT", "claude-opus-5-5")]),
+            "claude-sonnet-5-5",
+            DefaultVar::ClaudeCliModel,
+        )
+        .unwrap();
+        let anthropic =
+            RoutingTable::resolve(vars(&[]), "claude-opus-4-8", DefaultVar::AnthropicModel)
+                .unwrap();
+        assert_eq!(
+            tier.model_for(CallSite::ResearchExtract),
+            "claude-sonnet-5-5"
+        );
+        assert_eq!(site.model_for(CallSite::ResearchExtract), "claude-opus-5-5");
+        assert_eq!(
+            anthropic.model_for(CallSite::ResearchExtract),
+            "claude-opus-4-8"
+        );
     }
 
     /// 022: unset means unset. The whole feature is off by default, and the

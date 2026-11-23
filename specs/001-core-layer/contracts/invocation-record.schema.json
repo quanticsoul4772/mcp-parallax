@@ -9,6 +9,7 @@
     "input_tokens": { "type": "integer", "minimum": 0 },
     "output_tokens": { "type": "integer", "minimum": 0 },
     "cost_usd": { "type": "number", "minimum": 0, "description": "tokens x configured per-model pricing; invoice-exactness not required" },
+    "cost_basis": { "type": ["string", "null"], "enum": ["price_table", "cli_estimate", null], "description": "060: what cost_usd rests on - the price table, or the Claude Code CLI's own estimates (claude_cli backend). Both are API-price estimates, never a charge. Null only on records written before 060." },
     "latency_ms": { "type": "integer", "minimum": 0 },
     "outcome": {
       "type": "string",

@@ -58,11 +58,11 @@ US3 and US4 build on US1's client.
 
 **Independent test**: with no model settings the judgment and bulk sites request Sonnet and Haiku; a completed call's record has `cost_basis = cli_estimate`.
 
-- [ ] T016 [US3] Write failing tests in `src/routing.rs`: on `claude_cli` with no settings, judgment sites resolve to `CLAUDE_CLI_MODEL` and the bulk site to `claude-haiku-5-5`; `PARALLAX_MODEL_<SITE>` and `PARALLAX_MODEL_BULK` win; the bulk default's supplier is reported as `claude_cli bulk default`, never `PARALLAX_MODEL_BULK`; other backends unchanged
-- [ ] T017 [US3] Implement the backend tier default in `src/routing.rs` and its `--help` line in `src/main.rs`
-- [ ] T018 [US3] Add the `claude-haiku-5-5` price row in `src/telemetry.rs` at Anthropic's published rate (source cited in the comment); extend the every-default-has-a-price test to the `claude_cli` defaults, seen failing first
-- [ ] T019 [US3] Write failing tests: an invocation whose passes all reported a cost records their sum with `cost_basis = cli_estimate`; any pass without one records the price-table figure with `price_table`; `cost_basis` round-trips through `src/storage/sqlite.rs` (nullable column; older rows read as `NULL`); the span carries `parallax.cost_basis`
-- [ ] T020 [US3] Implement `cost_basis` in `src/telemetry.rs`, `src/storage/sqlite.rs` and `src/observability.rs`; update `specs/007-observability-layer/contracts/telemetry.md` and the record contract so their binding tests pass
+- [X] T016 [US3] Write failing tests in `src/routing.rs`: on `claude_cli` with no settings, judgment sites resolve to `CLAUDE_CLI_MODEL` and the bulk site to `claude-haiku-5-5`; `PARALLAX_MODEL_<SITE>` and `PARALLAX_MODEL_BULK` win; the bulk default's supplier is reported as `claude_cli bulk default`, never `PARALLAX_MODEL_BULK`; other backends unchanged
+- [X] T017 [US3] Implement the backend tier default in `src/routing.rs` and its `--help` line in `src/main.rs`
+- [X] T018 [US3] Add the `claude-haiku-5-5` price row in `src/telemetry.rs` at Anthropic's published rate (source cited in the comment); extend the every-default-has-a-price test to the `claude_cli` defaults, seen failing first
+- [X] T019 [US3] Write failing tests: an invocation whose passes all reported a cost records their sum with `cost_basis = cli_estimate`; any pass without one records the price-table figure with `price_table`; `cost_basis` round-trips through `src/storage/sqlite.rs` (nullable column; older rows read as `NULL`); the span carries `parallax.cost_basis`
+- [X] T020 [US3] Implement `cost_basis` in `src/telemetry.rs`, `src/storage/sqlite.rs` and `src/observability.rs`; update `specs/007-observability-layer/contracts/telemetry.md` and the record contract so their binding tests pass
 
 **Checkpoint**: US3 complete.
 

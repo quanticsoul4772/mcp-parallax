@@ -98,7 +98,13 @@ impl ModelClient for ClaudeCliClient {
             attempts += 1;
             let output = self.runner.run(&request).await?;
             if !classify::is_server_error(&output) {
-                return classify::classify(&output);
+                let result = classify::classify(&output);
+                // 060 D11: the invocation's meter gets this call's figure; a
+                // failed call reports none, which makes the total unknown.
+                let figure = result.as_ref().ok().and_then(|c| c.reported_cost_micros);
+                let _outside_an_invocation =
+                    crate::telemetry::CLI_COST.try_with(|m| m.record(figure));
+                return result;
             }
             if attempts > self.max_retries {
                 let last = classify::classify(&output)
@@ -592,6 +598,35 @@ mod tests {
             let err = check_cli(&version_config(), &runner).await.unwrap_err();
             assert!(err.to_string().contains("CLAUDE_CLI_PATH"), "{err}");
         }
+    }
+
+    /// 060 T019 (D11): inside an invocation's cost meter, each completed call
+    /// records the CLI's figure; outside one, nothing is recorded anywhere.
+    #[tokio::test]
+    async fn completed_calls_record_the_cli_figure_in_the_invocation_meter() {
+        let mut runner = crate::traits::runner::MockCliRunner::new();
+        runner.expect_run().times(3).returning(|_| {
+            Ok(crate::traits::runner::CliOutput {
+                exit_code: Some(0),
+                stdout: serde_json::json!({
+                    "subtype": "success", "structured_output": {}, "total_cost_usd": 0.002
+                })
+                .to_string(),
+                stderr: String::new(),
+            })
+        });
+        let client = cli_client(runner);
+        let meter = Arc::new(crate::telemetry::CliCost::default());
+        crate::telemetry::CLI_COST
+            .scope(meter.clone(), async {
+                client.complete("a", &serde_json::json!({})).await.unwrap();
+                client.complete("b", &serde_json::json!({})).await.unwrap();
+            })
+            .await;
+        let total = meter.total().unwrap();
+        assert!((total - 0.004).abs() < 1e-12, "{total}");
+        // Outside a meter the call still succeeds; there is just no meter.
+        client.complete("c", &serde_json::json!({})).await.unwrap();
     }
 
     /// 060 T010: a runner failure is the call's failure, unchanged.
