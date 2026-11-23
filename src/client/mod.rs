@@ -1,6 +1,7 @@
 //! Provider clients implementing the [`crate::traits::client::ModelClient`] seam.
 
 pub mod anthropic;
+pub mod claude_cli;
 pub mod exa;
 pub mod openai_compat;
 pub mod pool;
