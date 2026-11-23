@@ -16,7 +16,7 @@ Tests come first in each story and are seen failing before the code.
 
 ## Phase 3: User Story 2 — Warn, never block (P1)
 
-- [ ] T005 [US2] Pipeline test: a flagged page's text reaches the extraction prompt unchanged and its claims are cited as any other page's; commit (passes on T004's code; a failure is a defect and is asked about)
+- [X] T005 [US2] Pipeline test: a flagged page's text reaches the extraction prompt unchanged and its claims are cited as any other page's; commit (passes on T004's code; a failure is a defect and is asked about)
 
 ## Phase 4: Polish
 
