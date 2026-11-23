@@ -55,6 +55,9 @@ pub enum Outcome {
     /// 429 (billing, authentication, access, unknown model, rejected request;
     /// 057).
     ProviderRejected,
+    /// The operator's subscription usage limit was reached on the
+    /// `claude_cli` backend; it lasts hours, so it is not retried (060).
+    UsageLimit,
     /// The search provider failed (research capability).
     SearchProvider,
     /// The embedding provider failed (memory capability).
@@ -79,6 +82,7 @@ impl Outcome {
             "invalid_input" => Some(Self::InvalidInput),
             "validation_failure" => Some(Self::ValidationFailure),
             "provider_rejected" => Some(Self::ProviderRejected),
+            "usage_limit" => Some(Self::UsageLimit),
             "search_provider" => Some(Self::SearchProvider),
             "embedding_provider" => Some(Self::EmbeddingProvider),
             "config_error" => Some(Self::ConfigError),
@@ -99,6 +103,7 @@ impl Outcome {
             Self::InvalidInput => "invalid_input",
             Self::ValidationFailure => "validation_failure",
             Self::ProviderRejected => "provider_rejected",
+            Self::UsageLimit => "usage_limit",
             Self::SearchProvider => "search_provider",
             Self::EmbeddingProvider => "embedding_provider",
             Self::ConfigError => "config_error",
@@ -174,6 +179,11 @@ pub enum AppError {
         /// The provider's response body, plus any remedy hint.
         detail: String,
     },
+
+    /// The operator's subscription usage limit was reached (`claude_cli`,
+    /// 060); terminal, not retried.
+    #[error("subscription usage limit reached: {0}")]
+    UsageLimit(String),
 
     /// The client abandoned the invocation.
     #[error("invocation cancelled by the client")]
@@ -280,6 +290,7 @@ impl AppError {
             Self::Config(_) | Self::Storage(_) => Outcome::ConfigError,
             Self::Client(_) | Self::ValidationFailure(_) => Outcome::ValidationFailure,
             Self::ProviderRejected { .. } => Outcome::ProviderRejected,
+            Self::UsageLimit(_) => Outcome::UsageLimit,
             Self::Refusal(_) => Outcome::Refusal,
             Self::Truncation(_) => Outcome::Truncation,
             Self::Timeout { .. } => Outcome::Timeout,

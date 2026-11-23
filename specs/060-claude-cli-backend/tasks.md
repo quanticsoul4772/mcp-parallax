@@ -72,10 +72,10 @@ US3 and US4 build on US1's client.
 
 **Independent test**: runner doubles for each cause produce the contract's error and outcome.
 
-- [ ] T021 [US4] Write failing tests in `src/client/claude_cli/classify.rs` and `src/client/claude_cli.rs` for the error rows: `refusal`; 401/403 → `provider_rejected` with the sign-in remedy; 429 or a usage-limit `api_error` → `usage_limit`, not retried; other 4xx → `provider_rejected`; 5xx retried under `MAX_RETRIES`; a call past `REQUEST_TIMEOUT_MS` → `Timeout` naming the CLI
-- [ ] T022 [US4] Add `Outcome::UsageLimit` and `AppError::UsageLimit` in `src/error.rs`, bound by the existing outcome-contract test to the record and telemetry contracts (contract files updated); implement the error rows and the 5xx retry
-- [ ] T023 [US4] Write failing tests for the startup check: on `claude_cli`, a `CLAUDE_CLI_PATH` that fails `--version` through the runner is a startup error naming the variable; success logs the version
-- [ ] T024 [US4] Implement the startup check (10 s bound) where the server is built in `src/main.rs` / `src/server.rs`
+- [X] T021 [US4] Write failing tests in `src/client/claude_cli/classify.rs` and `src/client/claude_cli.rs` for the error rows: `refusal`; 401/403 → `provider_rejected` with the sign-in remedy; 429 or a usage-limit `api_error` → `usage_limit`, not retried; other 4xx → `provider_rejected`; 5xx retried under `MAX_RETRIES`; a call past `REQUEST_TIMEOUT_MS` → `Timeout` naming the CLI
+- [X] T022 [US4] Add `Outcome::UsageLimit` and `AppError::UsageLimit` in `src/error.rs`, bound by the existing outcome-contract test to the record and telemetry contracts (contract files updated); implement the error rows and the 5xx retry
+- [X] T023 [US4] Write failing tests for the startup check: on `claude_cli`, a `CLAUDE_CLI_PATH` that fails `--version` through the runner is a startup error naming the variable; success logs the version
+- [X] T024 [US4] Implement the startup check (10 s bound) where the server is built in `src/main.rs` / `src/server.rs`
 
 **Checkpoint**: US4 complete; all stories pass against doubles.
 

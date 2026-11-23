@@ -27,6 +27,8 @@ pub struct ClaudeCliClient {
     effort: Option<Effort>,
     cwd: PathBuf,
     timeout: Duration,
+    max_retries: u32,
+    backoff_base_ms: u64,
 }
 
 impl ClaudeCliClient {
@@ -47,7 +49,19 @@ impl ClaudeCliClient {
             effort,
             cwd: cwd.to_path_buf(),
             timeout: Duration::from_millis(config.request_timeout_ms),
+            max_retries: config.max_retries,
+            backoff_base_ms: 500,
         }
+    }
+}
+
+impl ClaudeCliClient {
+    /// Set the pause before the first retry (each later one grows by the
+    /// same step). Tests shorten it.
+    #[must_use]
+    pub const fn with_backoff_base_ms(mut self, ms: u64) -> Self {
+        self.backoff_base_ms = ms;
+        self
     }
 }
 
@@ -77,8 +91,26 @@ impl ModelClient for ClaudeCliClient {
             cwd: &self.cwd,
             timeout: self.timeout,
         });
-        let output = self.runner.run(&request).await?;
-        classify::classify(&output)
+        // A provider 5xx is retried under `MAX_RETRIES`, with a growing pause;
+        // every other result, a usage limit included, is final (D8, D10).
+        let mut attempts: u32 = 0;
+        loop {
+            attempts += 1;
+            let output = self.runner.run(&request).await?;
+            if !classify::is_server_error(&output) {
+                return classify::classify(&output);
+            }
+            if attempts > self.max_retries {
+                let last = classify::classify(&output)
+                    .err()
+                    .map_or_else(String::new, |e| e.to_string());
+                return Err(AppError::RetriesExhausted { attempts, last });
+            }
+            tokio::time::sleep(Duration::from_millis(
+                self.backoff_base_ms.saturating_mul(u64::from(attempts)),
+            ))
+            .await;
+        }
     }
 }
 
@@ -127,6 +159,46 @@ pub fn process_runner(config: &Config) -> Arc<dyn CliRunner> {
             usize::from(config.claude_cli_concurrency),
         ))
     }))
+}
+
+/// The startup check on `claude_cli` (research.md D9).
+///
+/// `CLAUDE_CLI_PATH` must run `--version` within 10 s. Sign-in is not checked
+/// here; it would spend a model call, and a signed-out CLI fails its first
+/// call by name.
+///
+/// # Errors
+///
+/// [`AppError::Client`] naming `CLAUDE_CLI_PATH` when the program cannot be
+/// started or exits non-zero.
+pub async fn check_cli(config: &Config, runner: &dyn CliRunner) -> Result<String, AppError> {
+    let request = CliRequest {
+        program: config.claude_cli_path.clone(),
+        args: vec!["--version".into()],
+        stdin: String::new(),
+        env_remove: Vec::new(),
+        env_set: Vec::new(),
+        cwd: std::env::temp_dir(),
+        timeout: Duration::from_secs(10),
+    };
+    let named = |why: String| {
+        AppError::Client(format!(
+            "CLAUDE_CLI_PATH `{}` could not run `--version`: {why}",
+            config.claude_cli_path
+        ))
+    };
+    let output = runner
+        .run(&request)
+        .await
+        .map_err(|e| named(e.to_string()))?;
+    if output.exit_code != Some(0) {
+        let stderr: String = output.stderr.chars().take(500).collect();
+        return Err(named(format!(
+            "exit {:?}; stderr: {stderr}",
+            output.exit_code
+        )));
+    }
+    Ok(output.stdout.trim().to_string())
 }
 
 /// What a runner timeout names (research.md D7).
@@ -373,6 +445,153 @@ mod tests {
             &process_runner(&config),
             &process_runner(&config)
         ));
+    }
+
+    fn status_reply(status: u16) -> crate::traits::runner::CliOutput {
+        crate::traits::runner::CliOutput {
+            exit_code: Some(1),
+            stdout: serde_json::json!({
+                "subtype": "success", "is_error": true,
+                "api_error_status": status, "result": "upstream trouble"
+            })
+            .to_string(),
+            stderr: String::new(),
+        }
+    }
+
+    fn ok_reply() -> crate::traits::runner::CliOutput {
+        crate::traits::runner::CliOutput {
+            exit_code: Some(0),
+            stdout: serde_json::json!({"subtype": "success", "structured_output": {"ok": true}})
+                .to_string(),
+            stderr: String::new(),
+        }
+    }
+
+    fn retrying_client(runner: crate::traits::runner::MockCliRunner) -> ClaudeCliClient {
+        ClaudeCliClient::with_runner(
+            &crate::config::Config {
+                max_retries: 1,
+                ..crate::config::test_config()
+            },
+            Arc::new(runner),
+            std::path::Path::new("empty-folder"),
+            "claude-sonnet-5-5",
+            None,
+        )
+        .with_backoff_base_ms(1)
+    }
+
+    /// 060 T021 (US4): a 5xx is retried, and a success on the retry is the
+    /// result.
+    #[tokio::test]
+    async fn a_server_error_is_retried() {
+        let mut runner = crate::traits::runner::MockCliRunner::new();
+        let mut seq = mockall::Sequence::new();
+        runner
+            .expect_run()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(status_reply(529)));
+        runner
+            .expect_run()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(ok_reply()));
+        let out = retrying_client(runner)
+            .complete("p", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(out.value, serde_json::json!({"ok": true}));
+    }
+
+    /// 060 T021 (US4): 5xx on every attempt ends as retries exhausted, after
+    /// `MAX_RETRIES` retries.
+    #[tokio::test]
+    async fn server_errors_on_every_attempt_exhaust_the_retries() {
+        let mut runner = crate::traits::runner::MockCliRunner::new();
+        runner
+            .expect_run()
+            .times(2)
+            .returning(|_| Ok(status_reply(500)));
+        let err = retrying_client(runner)
+            .complete("p", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::RetriesExhausted { attempts: 2, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// 060 T021 (US4, D10): a usage limit is not retried; it lasts hours.
+    #[tokio::test]
+    async fn a_usage_limit_is_not_retried() {
+        let mut runner = crate::traits::runner::MockCliRunner::new();
+        runner
+            .expect_run()
+            .times(1)
+            .returning(|_| Ok(status_reply(429)));
+        let err = retrying_client(runner)
+            .complete("p", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::UsageLimit(_)), "{err:?}");
+    }
+
+    fn version_config() -> crate::config::Config {
+        crate::config::Config {
+            claude_cli_path: "C:/tools/claude.exe".into(),
+            ..crate::config::test_config()
+        }
+    }
+
+    /// 060 T023 (US4 scenario 1, D9): a CLI that runs `--version` passes the
+    /// startup check, which reports its version; the check asks for nothing
+    /// else and is bounded at 10 s.
+    #[tokio::test]
+    async fn the_startup_check_reports_the_cli_version() {
+        let mut runner = crate::traits::runner::MockCliRunner::new();
+        runner
+            .expect_run()
+            .withf(|req| {
+                req.program == "C:/tools/claude.exe"
+                    && req.args == ["--version"]
+                    && req.timeout == Duration::from_secs(10)
+            })
+            .times(1)
+            .returning(|_| {
+                Ok(crate::traits::runner::CliOutput {
+                    exit_code: Some(0),
+                    stdout: "2.1.330 (Claude Code)\n".into(),
+                    stderr: String::new(),
+                })
+            });
+        let version = check_cli(&version_config(), &runner).await.unwrap();
+        assert_eq!(version, "2.1.330 (Claude Code)");
+    }
+
+    /// 060 T023 (US4 scenario 1, FR-007): a CLI that cannot start, or exits
+    /// non-zero on `--version`, fails startup with an error naming
+    /// `CLAUDE_CLI_PATH`.
+    #[tokio::test]
+    async fn a_cli_that_cannot_run_fails_startup_naming_the_setting() {
+        let mut missing = crate::traits::runner::MockCliRunner::new();
+        missing
+            .expect_run()
+            .returning(|_| Err(AppError::Client("could not start".into())));
+        let mut failing = crate::traits::runner::MockCliRunner::new();
+        failing.expect_run().returning(|_| {
+            Ok(crate::traits::runner::CliOutput {
+                exit_code: Some(1),
+                stdout: String::new(),
+                stderr: "boom".into(),
+            })
+        });
+        for runner in [missing, failing] {
+            let err = check_cli(&version_config(), &runner).await.unwrap_err();
+            assert!(err.to_string().contains("CLAUDE_CLI_PATH"), "{err}");
+        }
     }
 
     /// 060 T010: a runner failure is the call's failure, unchanged.

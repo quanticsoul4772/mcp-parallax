@@ -87,6 +87,8 @@ async fn main() {
         }
     };
 
+    require_claude_cli(&config).await;
+
     // BYOM (design §3.1): the backend is chosen by `PARALLAX_BACKEND`; the
     // factory hands back the right adapter and the server never knows which.
     let client = default_model_client(&config);
@@ -136,6 +138,26 @@ async fn main() {
     if let Err(e) = result {
         tracing::error!("server terminated with error: {e}");
         std::process::exit(1);
+    }
+}
+
+/// On `claude_cli`, the CLI must run before the server starts, so a wrong
+/// `CLAUDE_CLI_PATH` fails here by name, not on the first tool call (060 D9).
+async fn require_claude_cli(config: &mcp_parallax::config::Config) {
+    if config.backend != mcp_parallax::config::Backend::ClaudeCli {
+        return;
+    }
+    match mcp_parallax::client::claude_cli::check_cli(
+        config,
+        &mcp_parallax::client::claude_cli::TokioCliRunner,
+    )
+    .await
+    {
+        Ok(version) => tracing::info!(version = %version, "claude CLI found"),
+        Err(e) => {
+            tracing::error!("{e}");
+            std::process::exit(1);
+        }
     }
 }
 

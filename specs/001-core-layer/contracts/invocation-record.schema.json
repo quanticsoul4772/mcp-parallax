@@ -21,6 +21,7 @@
         "invalid_input",
         "validation_failure",
         "provider_rejected",
+        "usage_limit",
         "search_provider",
         "embedding_provider",
         "cancelled"

@@ -46,7 +46,7 @@ OK on success; ERROR with the outcome class otherwise.
 | `gen_ai.provider.name` | string | `anthropic` (registry well-known value) \| `voyageai` (verified 2026-06-12: the conventions' registry has **no** Voyage entry, so this is a deliberate custom value in the registry's naming style) |
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
-| `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `provider_rejected`, `search_provider`, `embedding_provider`, `cancelled`) |
+| `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `provider_rejected`, `usage_limit`, `search_provider`, `embedding_provider`, `cancelled`) |
 
 **A non-`success` outcome does not imply zero usage** (020). A `refusal` or
 `truncation` is an HTTP 200 the provider billed for, and an ensemble that
