@@ -46,9 +46,9 @@ US3 and US4 build on US1's client.
 
 **Independent test**: with blocking runner doubles, simultaneous CLI calls never exceed `CLAUDE_CLI_CONCURRENCY`, across tools and models.
 
-- [ ] T013 [US2] Write failing tests in `src/client/pool.rs`: with a runner double that holds each call, N parallel `complete()` calls across two routed models never exceed `CLAUDE_CLI_CONCURRENCY` live calls, and all N complete
-- [ ] T014 [US2] Implement one semaphore shared by every `ClaudeCliClient` the pool builds (research.md D5)
-- [ ] T015 [US2] Write failing integration tests: `research` on `claude_cli` (runner double + Exa double) completes with every model call through the runner; the `checkpoint_turn` review completes; make them pass
+- [X] T013 [US2] Write failing tests in `src/client/pool.rs`: with a runner double that holds each call, N parallel `complete()` calls across two routed models never exceed `CLAUDE_CLI_CONCURRENCY` live calls, and all N complete
+- [X] T014 [US2] Implement one semaphore shared by every `ClaudeCliClient` the pool builds (research.md D5)
+- [X] T015 [US2] Write failing integration tests: `research` on `claude_cli` (runner double + Exa double) completes with every model call through the runner; the `checkpoint_turn` review completes; make them pass
 
 **Checkpoint**: US2 complete.
 

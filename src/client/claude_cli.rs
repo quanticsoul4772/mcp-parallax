@@ -82,6 +82,53 @@ impl ModelClient for ClaudeCliClient {
     }
 }
 
+/// A [`CliRunner`] that lets at most `max` runs through at once; the rest
+/// wait their turn (research.md D5). Waiting does not count against a run's
+/// own timeout, which starts when the process does.
+pub struct LimitedRunner {
+    inner: Arc<dyn CliRunner>,
+    permits: Arc<tokio::sync::Semaphore>,
+}
+
+impl LimitedRunner {
+    /// Wrap `inner` with a cap of `max` concurrent runs.
+    #[must_use]
+    pub fn new(inner: Arc<dyn CliRunner>, max: usize) -> Self {
+        Self {
+            inner,
+            permits: Arc::new(tokio::sync::Semaphore::new(max)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CliRunner for LimitedRunner {
+    async fn run(&self, request: &CliRequest) -> Result<CliOutput, AppError> {
+        let _permit = self
+            .permits
+            .acquire()
+            .await
+            .map_err(|e| AppError::Client(format!("claude CLI process limit closed: {e}")))?;
+        self.inner.run(request).await
+    }
+}
+
+/// The one runner every `claude_cli` client in this process shares.
+///
+/// Capped at `CLAUDE_CLI_CONCURRENCY` live processes server-wide (060
+/// FR-009). Built on first use from that call's configuration; a process has
+/// one.
+#[must_use]
+pub fn process_runner(config: &Config) -> Arc<dyn CliRunner> {
+    static RUNNER: std::sync::OnceLock<Arc<dyn CliRunner>> = std::sync::OnceLock::new();
+    Arc::clone(RUNNER.get_or_init(|| {
+        Arc::new(LimitedRunner::new(
+            Arc::new(TokioCliRunner),
+            usize::from(config.claude_cli_concurrency),
+        ))
+    }))
+}
+
 /// What a runner timeout names (research.md D7).
 const TIMEOUT_WHAT: &str = "claude CLI";
 
@@ -251,6 +298,81 @@ mod tests {
             matches!(&err, AppError::Client(m) if m.contains("parallax-no-such-cli")),
             "{err:?}"
         );
+    }
+
+    /// A runner double that holds each call briefly and records the most
+    /// calls it ever had in flight at once.
+    struct HoldingRunner {
+        live: std::sync::atomic::AtomicUsize,
+        peak: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl CliRunner for HoldingRunner {
+        async fn run(&self, _: &CliRequest) -> Result<crate::traits::runner::CliOutput, AppError> {
+            use std::sync::atomic::Ordering;
+            let now = self.live.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            self.live.fetch_sub(1, Ordering::SeqCst);
+            Ok(crate::traits::runner::CliOutput {
+                exit_code: Some(0),
+                stdout: serde_json::json!({"subtype": "success", "structured_output": {}})
+                    .to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    /// 060 T013 (US2, research.md D5): calls through one limited runner never
+    /// exceed its cap, across two routed models, and all of them complete.
+    #[tokio::test]
+    async fn the_process_cap_holds_across_models_and_every_call_completes() {
+        let holding = Arc::new(HoldingRunner {
+            live: std::sync::atomic::AtomicUsize::new(0),
+            peak: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let limited: Arc<dyn CliRunner> = Arc::new(LimitedRunner::new(holding.clone(), 2));
+        let config = crate::config::test_config();
+        let folder = std::env::temp_dir();
+        let a = Arc::new(ClaudeCliClient::with_runner(
+            &config,
+            limited.clone(),
+            &folder,
+            "claude-sonnet-5-5",
+            None,
+        ));
+        let b = Arc::new(ClaudeCliClient::with_runner(
+            &config,
+            limited,
+            &folder,
+            "claude-haiku-5-5",
+            None,
+        ));
+        let schema = serde_json::json!({});
+        let calls = (0..8).map(|i| {
+            let client = if i % 2 == 0 { a.clone() } else { b.clone() };
+            let schema = schema.clone();
+            async move { client.complete("p", &schema).await }
+        });
+        let results = futures::future::join_all(calls).await;
+        assert!(results.iter().all(Result::is_ok), "every call completes");
+        assert_eq!(
+            holding.peak.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the cap is reached and never exceeded"
+        );
+    }
+
+    /// 060 T014: every client the backend builds shares one process-wide
+    /// runner, so the cap is server-wide, not per client.
+    #[test]
+    fn every_built_client_shares_the_process_runner() {
+        let config = crate::config::test_config();
+        assert!(Arc::ptr_eq(
+            &process_runner(&config),
+            &process_runner(&config)
+        ));
     }
 
     /// 060 T010: a runner failure is the call's failure, unchanged.

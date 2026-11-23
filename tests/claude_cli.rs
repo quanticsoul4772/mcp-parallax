@@ -20,10 +20,12 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-/// A stand-in CLI: replays `structured_output` values in order (the last one
-/// repeats), recording every request it receives.
+/// A stand-in CLI, recording every request it receives. It either replays
+/// `structured_output` values in order (the last one repeats), or, when
+/// routed, answers each prompt by the first marker its stdin contains.
 struct FakeCli {
     replies: Mutex<VecDeque<Value>>,
+    by_marker: Vec<(&'static str, Value)>,
     seen: Mutex<Vec<CliRequest>>,
 }
 
@@ -31,6 +33,15 @@ impl FakeCli {
     fn replying(values: Vec<Value>) -> Arc<Self> {
         Arc::new(Self {
             replies: Mutex::new(values.into()),
+            by_marker: Vec::new(),
+            seen: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn routed(by_marker: Vec<(&'static str, Value)>) -> Arc<Self> {
+        Arc::new(Self {
+            replies: Mutex::new(VecDeque::new()),
+            by_marker,
             seen: Mutex::new(Vec::new()),
         })
     }
@@ -40,13 +51,19 @@ impl FakeCli {
 impl CliRunner for FakeCli {
     async fn run(&self, request: &CliRequest) -> Result<CliOutput, AppError> {
         self.seen.lock().unwrap().push(request.clone());
-        let value = {
+        let value = if self.by_marker.is_empty() {
             let mut replies = self.replies.lock().unwrap();
             if replies.len() > 1 {
                 replies.pop_front().unwrap()
             } else {
                 replies.front().cloned().unwrap()
             }
+        } else {
+            self.by_marker
+                .iter()
+                .find(|(marker, _)| request.stdin.contains(marker))
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| AppError::Client("no canned reply for this prompt".into()))?
         };
         Ok(CliOutput {
             exit_code: Some(0),
@@ -310,4 +327,151 @@ async fn a_rejected_first_reply_recovers_through_the_single_retry() {
         seen[1].stdin.contains("REJECTED"),
         "the retry carried the violation"
     );
+}
+
+/// 060 T015 (US2 scenario 1): `research` completes on `claude_cli`, every
+/// model hop through the CLI, sources from an Exa double.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn research_runs_through_the_cli() {
+    let mock = wiremock::MockServer::start().await;
+    mount_search_and_page(&mock).await;
+    let mut config = cli_config();
+    config.request_timeout_ms = 5_000;
+    config.exa_api_key = Some("exa-test-key".into());
+    let cli = FakeCli::routed(vec![
+        (
+            "scoping a web research run",
+            json!({"angles": ["first angle"], "sub_questions": ["does it hold?"]}),
+        ),
+        (
+            "extract falsifiable claims",
+            json!({"claims": ["the documented claim holds"]}),
+        ),
+        (
+            "adversarial fact-checker",
+            json!({"verdict": "supported", "findings": []}),
+        ),
+        (
+            "executive synthesis",
+            json!({"answer": "The claim holds [s1].", "gaps": [], "gap_targets": []}),
+        ),
+    ]);
+    let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+    let model = Arc::new(ClaudeCliClient::with_runner(
+        &config,
+        cli.clone(),
+        &std::env::temp_dir().join("parallax-claude-cli-test"),
+        DEFAULT_CLAUDE_CLI_MODEL,
+        None,
+    ));
+    let exa = Arc::new(mcp_parallax::client::ExaClient::with_base_url(
+        &config,
+        "exa-test-key",
+        &mock.uri(),
+    ));
+    let server = Parallax::with_capabilities(
+        model,
+        storage.clone(),
+        Arc::new(SystemClock),
+        &config,
+        None,
+        Some(exa),
+    )
+    .unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move { server.serve(server_io).await });
+    let client = ().serve(client_io).await.expect("client init");
+    let _server = server_task.await.expect("join").expect("server init");
+
+    let result = client
+        .call_tool(tool_call(
+            "research",
+            &json!({"question": "does the documented claim hold?", "depth": "quick"}),
+        ))
+        .await
+        .unwrap();
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert_eq!(structured["answer"], "The claim holds [s1].");
+    let prompts: Vec<String> = seen(&cli).into_iter().map(|r| r.stdin).collect();
+    for marker in [
+        "scoping",
+        "extract falsifiable",
+        "adversarial",
+        "executive synthesis",
+    ] {
+        assert!(
+            prompts.iter().any(|p| p.contains(marker)),
+            "no research hop reached the CLI with `{marker}`"
+        );
+    }
+    let records = storage.list_invocations().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, Outcome::Success);
+    client.cancel().await.unwrap();
+}
+
+/// 060 T015 (US2): the `checkpoint_turn` review runs through the CLI.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_checkpoint_review_runs_through_the_cli() {
+    let cli = FakeCli::replying(vec![json!({
+        "contradicts": false,
+        "statement_a": "",
+        "statement_b": "",
+        "basis": "Nothing to compare.",
+        "violates": false,
+        "violated_preference": "",
+        "violation_basis": "",
+        "capture_worthy": false,
+        "capture_kind": "none",
+        "capture_content": "",
+        "capture_basis": ""
+    })]);
+    let (client, storage, _server) = serve_cli(&cli_config(), cli.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    // An earlier statement the final message may contradict: without one the
+    // review has no candidate and, by design, makes no model call.
+    let path = dir.path().join("transcript.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{}
+",
+            json!({
+                "type": "assistant",
+                "sessionId": "cs-cli",
+                "message": {"role": "assistant", "content": [
+                    {"type": "text", "text": "The database migration is fully reversible and safe to run."}
+                ]}
+            })
+        ),
+    )
+    .unwrap();
+    let path = path.to_string_lossy().to_string();
+    let result = client
+        .call_tool(tool_call(
+            "checkpoint_turn",
+            &json!({
+                "session_id": "cs-cli",
+                "transcript_path": path,
+                "final_message": "Correction: the database migration is not reversible.",
+                "continuation": false
+            }),
+        ))
+        .await
+        .unwrap();
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert_eq!(structured["verdict"], "silence");
+    assert_eq!(
+        seen(&cli).len(),
+        1,
+        "the review made its one model call through the CLI"
+    );
+    assert_eq!(storage.list_checkpoints().await.unwrap().len(), 1);
+    client.cancel().await.unwrap();
 }

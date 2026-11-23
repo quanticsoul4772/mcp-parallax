@@ -49,7 +49,7 @@ pub fn build_model_client(
         )),
         Backend::ClaudeCli => Arc::new(ClaudeCliClient::with_runner(
             config,
-            Arc::new(claude_cli::TokioCliRunner),
+            claude_cli::process_runner(config),
             &claude_cli::process_folder(),
             model,
             effort,
