@@ -13,6 +13,7 @@ pub mod grounding;
 pub(crate) mod outcome;
 pub mod pipeline;
 pub mod prompts;
+pub mod rerank;
 pub(crate) mod settings;
 pub(crate) mod synthesis;
 pub mod verdict;
@@ -53,6 +54,9 @@ pub struct DepthTier {
     pub angles: u8,
     /// Hard cap on fetched sources.
     pub max_sources: usize,
+    /// Pages kept for extraction after a rerank (061 D3); always below
+    /// `max_sources`.
+    pub keep_sources: usize,
     /// Verification votes per claim.
     pub verify_k: u8,
     /// Default wall-clock ceiling.
@@ -134,6 +138,7 @@ impl Depth {
             Self::Quick => DepthTier {
                 angles: 3,
                 max_sources: 8,
+                keep_sources: 5,
                 verify_k: 1,
                 default_deadline_ms: 120_000,
                 // Raised 150k -> 350k (2026-07-24), derived from this tier's
@@ -172,6 +177,7 @@ impl Depth {
             Self::Standard => DepthTier {
                 angles: 5,
                 max_sources: 25,
+                keep_sources: 15,
                 verify_k: 2,
                 default_deadline_ms: 240_000,
                 // 450_000 -> 1_600_000 (033). The tier's own structural
@@ -196,6 +202,7 @@ impl Depth {
             Self::Deep => DepthTier {
                 angles: 8,
                 max_sources: 60,
+                keep_sources: 35,
                 verify_k: 3,
                 default_deadline_ms: 480_000,
                 // 1_000_000 -> 5_500_000 (033): 60 x 12 x 3 x 2_508 =
@@ -368,6 +375,23 @@ pub fn domain_matches(host: &str, domain: &str) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// 061 T005 (research.md D3): each depth keeps 5 / 15 / 35 pages after a
+    /// rerank, always fewer than it fetches.
+    #[test]
+    fn keep_counts_are_the_planned_values_and_below_the_fetch_caps() {
+        let kept: Vec<usize> = [Depth::Quick, Depth::Standard, Depth::Deep]
+            .iter()
+            .map(|d| d.tier().keep_sources)
+            .collect();
+        assert_eq!(kept, vec![5, 15, 35]);
+        for depth in [Depth::Quick, Depth::Standard, Depth::Deep] {
+            assert!(
+                depth.tier().keep_sources < depth.tier().max_sources,
+                "{depth:?}"
+            );
+        }
+    }
 
     /// 059 research.md D2 (amended by A7): quick and standard search with
     /// Exa's `auto`, deep with `deep-lite`; no legacy `fast`.
