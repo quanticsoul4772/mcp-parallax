@@ -394,6 +394,10 @@ pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) 
     if let Some(search_cost) = record.search_cost_usd {
         attributes.push(KeyValue::new("parallax.search.cost_usd", search_cost));
     }
+    // 060: what the cost figure rests on; both bases are estimates.
+    if let Some(basis) = record.cost_basis {
+        attributes.push(KeyValue::new("parallax.cost_basis", basis.as_str()));
+    }
     if record.outcome != Outcome::Success {
         attributes.push(KeyValue::new("error.type", outcome));
     }
@@ -753,6 +757,7 @@ mod tests {
             effort: None,
             passes: None,
             search_cost_usd: None,
+            cost_basis: Some(crate::telemetry::CostBasis::PriceTable),
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")

@@ -46,7 +46,7 @@ OK on success; ERROR with the outcome class otherwise.
 | `gen_ai.provider.name` | string | `anthropic` (registry well-known value) \| `voyageai` (verified 2026-06-12: the conventions' registry has **no** Voyage entry, so this is a deliberate custom value in the registry's naming style) |
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
-| `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `provider_rejected`, `search_provider`, `embedding_provider`, `cancelled`) |
+| `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `provider_rejected`, `usage_limit`, `search_provider`, `embedding_provider`, `cancelled`) |
 
 **A non-`success` outcome does not imply zero usage** (020). A `refusal` or
 `truncation` is an HTTP 200 the provider billed for, and an ensemble that
@@ -63,6 +63,7 @@ Outcomes that genuinely cost nothing — `timeout`, `retries_exhausted`,
 | `parallax.effort` | string | **added 028** — the reasoning-effort level the *caller* supplied for this invocation (`low`..`xhigh`). Emitted **only** when a caller overrode it; absent means the configured layers applied, which is already knowable from the deployment's routing table. The configured level is deliberately not exported: it is constant, and not single-valued for an invocation spanning several call sites |
 | `parallax.passes` | int | **added 028** — the ensemble pass count the *caller* supplied. Emitted **only** when a caller overrode it; absent means the configured count ran. Recorded on the same criterion as `parallax.effort`: a caller asking for one pass against a configured three moves spend further than any effort level does |
 | `parallax.search.cost_usd` | double | **added 059** — the research run's Exa cost in USD: the sum of what every Exa search and contents call reported. Emitted **only** on `research` spans, and only when every Exa call reported a cost; absent otherwise. Separate from `parallax.cost_usd`, which stays the summed model cost |
+| `parallax.cost_basis` | string | **added 060** — what the cost figure rests on: `price_table` (Parallax's price table applied to the tokens) or `cli_estimate` (the sum of the Claude Code CLI's own per-call estimates on the `claude_cli` backend, where the calls ran on the operator's subscription). Both are API-price estimates, never a charge |
 
 > **Amendment (2026-07-24, feature 018 — per-call-site model routing).** Call
 > sites can now run on different models, so one invocation may span several.

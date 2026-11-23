@@ -360,6 +360,7 @@ fn interpret(payload: &MessagesResponse) -> Result<Completion, AppError> {
                 value,
                 input_tokens: payload.usage.input_tokens,
                 output_tokens: payload.usage.output_tokens,
+                reported_cost_micros: None,
             })
         }
         Some("refusal") => Err(billed(AppError::Refusal(

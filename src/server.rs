@@ -199,6 +199,9 @@ impl Parallax {
         match config.backend {
             crate::config::Backend::OpenAiCompat => &config.openai_api_base,
             crate::config::Backend::Anthropic => &config.anthropic_api_base,
+            // The CLI is this backend's destination; the model calls it makes
+            // go to Anthropic under the operator's own sign-in (060).
+            crate::config::Backend::ClaudeCli => &config.claude_cli_path,
         }
     }
 
@@ -1063,6 +1066,9 @@ impl Parallax {
             caller,
         );
 
+        // 060 D11: the invocation's work runs inside its cost meter, which the
+        // claude_cli client records into.
+        let work = crate::telemetry::CLI_COST.scope(guard.cli_cost(), work);
         tokio::select! {
             () = ct.cancelled() => {
                 guard.finish(&ModelUsage::default(), Outcome::Cancelled).await;
@@ -1775,6 +1781,7 @@ mod tests {
                     value: json!({ "verdict": "supported", "findings": [] }),
                     input_tokens: 100,
                     output_tokens: 10,
+                    reported_cost_micros: None,
                 })
             });
         let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
@@ -1941,6 +1948,7 @@ mod tests {
                 value: json!({ "verdict": "supported", "findings": [] }),
                 input_tokens: 100,
                 output_tokens: 10,
+                reported_cost_micros: None,
             })
         });
         let (server, storage) = server_with(mock).await;
@@ -2047,6 +2055,7 @@ mod tests {
                 value: json!({ "verdict": "supported", "findings": [] }),
                 input_tokens: 1,
                 output_tokens: 1,
+                reported_cost_micros: None,
             })
         }
     }

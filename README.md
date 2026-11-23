@@ -100,6 +100,9 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `OPENAI_MODEL` | when `PARALLAX_BACKEND=openai_compat` | — | Model id on the openai_compat endpoint — model names are provider-specific, so there is no default and startup fails without one |
 | `OPENAI_API_BASE` | no | `https://api.openai.com/v1` | OpenAI-compatible API endpoint, `/v1`-suffixed by convention |
 | `OPENAI_STRUCTURED_OUTPUT` | no | `auto` | Structured-output ladder for `openai_compat`: `auto` walks `json_schema` → `json_object` → `tool_shim` → `prompt_only`, degrading one rung per capability rejection; a rung name pins exactly that rung |
+| `CLAUDE_CLI_PATH` | no | `claude` | The Claude Code CLI the `claude_cli` backend runs: a command on the path, or a full path |
+| `CLAUDE_CLI_MODEL` | no | `claude-sonnet-5-5` | Default model on the `claude_cli` backend |
+| `CLAUDE_CLI_CONCURRENCY` | no | `4` | Live Claude Code processes allowed at once, server-wide, on the `claude_cli` backend (1–32) |
 | `VERIFY_ENSEMBLE_K` | no | `3` | Parallel passes per `verify` (≥ 1) |
 | `INPUT_MAX_CHARS` | no | `50000` | Max input length; `VERIFY_MAX_CLAIM_CHARS` honored as a fallback alias |
 | `VOYAGE_API_KEY` | no | unset | Presence enables the memory tools; absent, they are not in the catalog |

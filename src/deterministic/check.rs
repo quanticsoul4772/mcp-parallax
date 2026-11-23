@@ -378,6 +378,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         client
@@ -628,6 +629,7 @@ mod tests {
                         value: arithmetic_translation("abs(1840 * 0.63 - 1159) <= 0.5"),
                         input_tokens: 10,
                         output_tokens: 5,
+                        reported_cost_micros: None,
                     })
                 } else {
                     assert!(
@@ -638,6 +640,7 @@ mod tests {
                         value: arithmetic_translation("math::abs(1840 * 0.63 - 1159) <= 0.5"),
                         input_tokens: 10,
                         output_tokens: 5,
+                        reported_cost_micros: None,
                     })
                 }
             });
@@ -664,6 +667,7 @@ mod tests {
                 value: arithmetic_translation("this is not an expression ((("),
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         let err = {
@@ -899,6 +903,7 @@ mod tests {
                 ]),
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         let err = {
@@ -936,6 +941,7 @@ mod tests {
                     value,
                     input_tokens: 10,
                     output_tokens: 5,
+                    reported_cost_micros: None,
                 })
             });
         client

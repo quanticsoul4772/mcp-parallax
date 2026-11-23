@@ -17,6 +17,12 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
     // Claude 5 family (cached 2026-07-24). `claude-opus-5` happens to match
     // the fallback rate exactly — which is why `pricing_known` exists: without
     // it, "correct by lookup" and "correct by coincidence" look identical.
+    // 060: the claude_cli backend's defaults (Anthropic first-party rates,
+    // the claude-api model table cached 2026-11-03). Haiku 5.5 is $0.10/$0.50
+    // for prompts up to 100K tokens and $0.50/$2.50 beyond; this flat table
+    // carries the first band.
+    ("claude-sonnet-5-5", 2.00, 10.00),
+    ("claude-haiku-5-5", 0.10, 0.50),
     ("claude-fable-5", 10.00, 50.00),
     ("claude-opus-5", 5.00, 25.00),
     ("claude-sonnet-5", 3.00, 15.00),
@@ -225,6 +231,85 @@ impl SearchCost {
     }
 }
 
+/// One invocation's model cost as the `claude_cli` backend reported it.
+///
+/// 060 D11: the sum of the CLI's per-call API-price estimates, in millionths
+/// of a dollar. A call without a figure makes the total unknown, never a
+/// partial sum.
+#[derive(Debug, Default)]
+pub struct CliCost {
+    state: std::sync::Mutex<CliCostState>,
+}
+
+#[derive(Debug, Default)]
+struct CliCostState {
+    micros: u64,
+    calls: u32,
+    unreported: bool,
+}
+
+impl CliCost {
+    /// A model call completed, with the figure the CLI reported, if any.
+    pub fn record(&self, micros: Option<u64>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.calls += 1;
+            match micros {
+                Some(m) => state.micros = state.micros.saturating_add(m),
+                None => state.unreported = true,
+            }
+        }
+    }
+
+    /// The invocation's total in dollars: `None` when no call recorded one or
+    /// any call reported no figure.
+    #[must_use]
+    pub fn total(&self) -> Option<f64> {
+        let state = self.state.lock().ok()?;
+        #[allow(clippy::cast_precision_loss)] // micro-dollar sums are far below 2^52
+        (state.calls > 0 && !state.unreported).then(|| state.micros as f64 / 1_000_000.0)
+    }
+}
+
+tokio::task_local! {
+    /// The running invocation's [`CliCost`] meter (060 D11). The record guard
+    /// scopes each invocation's work in one; the `claude_cli` client records
+    /// into it. Model calls never run in spawned tasks, so every call of an
+    /// invocation sees its meter.
+    pub static CLI_COST: std::sync::Arc<CliCost>;
+}
+
+/// What a record's [`InvocationRecord::cost_usd`] rests on (060 D11). Both
+/// are API-price estimates, never a charge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CostBasis {
+    /// Parallax's price table applied to the reported tokens.
+    PriceTable,
+    /// The sum of the Claude Code CLI's own per-call estimates (`claude_cli`;
+    /// the calls ran on the operator's subscription).
+    CliEstimate,
+}
+
+impl CostBasis {
+    /// The stable string form, as stored and exported.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PriceTable => "price_table",
+            Self::CliEstimate => "cli_estimate",
+        }
+    }
+
+    /// Parse the stored form.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "price_table" => Some(Self::PriceTable),
+            "cli_estimate" => Some(Self::CliEstimate),
+            _ => None,
+        }
+    }
+}
+
 /// The observability record of one tool call (data-model.md §5; contract:
 /// `specs/001-core-layer/contracts/invocation-record.schema.json`).
 #[derive(Debug, Clone)]
@@ -283,6 +368,9 @@ pub struct InvocationRecord {
     /// every Exa call reported a cost. Separate from [`Self::cost_usd`],
     /// which stays the summed model cost.
     pub search_cost_usd: Option<f64>,
+    /// What [`Self::cost_usd`] rests on (060 D11); `None` only on records
+    /// written before the column existed.
+    pub cost_basis: Option<CostBasis>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -335,10 +423,23 @@ impl InvocationRecord {
             effort: None,
             passes: None,
             search_cost_usd: None,
+            cost_basis: Some(CostBasis::PriceTable),
             latency_ms,
             outcome,
             created_at,
         }
+    }
+
+    /// Stamp the CLI's own cost figure onto the record (060 D11): with one,
+    /// it becomes [`Self::cost_usd`], marked [`CostBasis::CliEstimate`];
+    /// without one the price-table figure stands.
+    #[must_use]
+    pub const fn with_cli_cost(mut self, cli_cost_usd: Option<f64>) -> Self {
+        if let Some(usd) = cli_cost_usd {
+            self.cost_usd = usd;
+            self.cost_basis = Some(CostBasis::CliEstimate);
+        }
+        self
     }
 
     /// Stamp the run's Exa cost onto the record (059 FR-010).
@@ -422,6 +523,64 @@ mod tests {
     use super::*;
     use crate::traits::clock::MockTimeProvider;
 
+    fn fixed_clock() -> MockTimeProvider {
+        let fixed = DateTime::parse_from_rfc3339("2026-11-22T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut clock = MockTimeProvider::new();
+        clock.expect_now().return_const(fixed);
+        clock
+    }
+
+    /// 060 T019 (D11): the CLI's figures sum; one call without a figure makes
+    /// the total unknown, never lower; no call means nothing to state.
+    #[test]
+    fn cli_cost_sums_reported_figures_and_an_unreported_one_makes_it_unknown() {
+        let cost = CliCost::default();
+        assert_eq!(cost.total(), None);
+        cost.record(Some(1_000));
+        cost.record(Some(2_500));
+        let total = cost.total().unwrap();
+        assert!((total - 0.0035).abs() < 1e-12, "{total}");
+        cost.record(None);
+        assert_eq!(cost.total(), None);
+        cost.record(Some(1_000));
+        assert_eq!(cost.total(), None, "unknown stays unknown");
+    }
+
+    /// 060 T019 (D11): with the CLI's figure the record's cost is that
+    /// figure, marked `cli_estimate`; without it, the price-table figure,
+    /// marked `price_table`.
+    #[test]
+    fn the_record_states_which_basis_its_cost_rests_on() {
+        let clock = fixed_clock();
+        let usage = ModelUsage::single("claude-sonnet-5-5", 1_000, 100);
+        let base = InvocationRecord::create(
+            &clock,
+            "s",
+            "verify",
+            "claude-sonnet-5-5",
+            &usage,
+            Outcome::Success,
+            clock.now(),
+        );
+        assert_eq!(base.cost_basis, Some(CostBasis::PriceTable));
+        assert!((base.cost_usd - usage.cost_usd()).abs() < 1e-12);
+
+        let cli = base.clone().with_cli_cost(Some(0.0123));
+        assert_eq!(cli.cost_basis, Some(CostBasis::CliEstimate));
+        assert!((cli.cost_usd - 0.0123).abs() < 1e-12);
+
+        let none = base.with_cli_cost(None);
+        assert_eq!(none.cost_basis, Some(CostBasis::PriceTable));
+        assert_eq!(
+            CostBasis::parse("cli_estimate"),
+            Some(CostBasis::CliEstimate)
+        );
+        assert_eq!(CostBasis::CliEstimate.as_str(), "cli_estimate");
+        assert_eq!(CostBasis::PriceTable.as_str(), "price_table");
+    }
+
     /// 059 T015 (FR-010): the run's Exa cost is the sum of what each call
     /// reported; one call without a cost makes the total unknown, not lower;
     /// a run that made no Exa call has no cost to state.
@@ -500,6 +659,15 @@ mod tests {
         for (constant, model) in [
             ("DEFAULT_MODEL", crate::config::DEFAULT_MODEL),
             ("DEFAULT_VOYAGE_MODEL", crate::config::DEFAULT_VOYAGE_MODEL),
+            // 060 T018: the claude_cli backend's two defaults.
+            (
+                "DEFAULT_CLAUDE_CLI_MODEL",
+                crate::config::DEFAULT_CLAUDE_CLI_MODEL,
+            ),
+            (
+                "CLAUDE_CLI_BULK_MODEL",
+                crate::routing::CLAUDE_CLI_BULK_MODEL,
+            ),
         ] {
             assert!(
                 pricing_known(model),

@@ -600,6 +600,7 @@ mod tests {
                 value: results[i % results.len()].clone(),
                 input_tokens: 100,
                 output_tokens: 10,
+                reported_cost_micros: None,
             })
         });
         mock

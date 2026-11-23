@@ -293,6 +293,13 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
+**In progress: `060-claude-cli-backend`**
+([plan](specs/060-claude-cli-backend/plan.md)) — a `claude_cli` backend runs
+every model call through the operator's own signed-in Claude Code
+(`claude -p`, isolated: no MCP servers, tools, settings or hooks; API-billing
+variables removed from its environment), so Parallax works without API
+credit. Spec and plan written; tasks not yet generated.
+
 **Active Spec Kit feature: `059-exa-research-provider`; all 26 tasks closed,
 part of the live check deferred**
 ([plan](specs/059-exa-research-provider/plan.md)) — `research` runs on Exa:

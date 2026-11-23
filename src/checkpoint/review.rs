@@ -727,6 +727,7 @@ mod tests {
                 }),
                 input_tokens: 50,
                 output_tokens: 20,
+                reported_cost_micros: None,
             })
         });
         let (flagged, _proposal, inp, out) = review_once(
@@ -769,6 +770,7 @@ mod tests {
                 }),
                 input_tokens: 40,
                 output_tokens: 15,
+                reported_cost_micros: None,
             })
         });
         let (flagged, _proposal, _, _) = review_once(
@@ -819,6 +821,7 @@ mod tests {
                 }),
                 input_tokens: 60,
                 output_tokens: 25,
+                reported_cost_micros: None,
             })
         });
         let preferences = [
@@ -873,6 +876,7 @@ mod tests {
                 }),
                 input_tokens: 70,
                 output_tokens: 30,
+                reported_cost_micros: None,
             })
         });
         let preferences = [preference_candidate(
@@ -917,6 +921,7 @@ mod tests {
                 }),
                 input_tokens: 40,
                 output_tokens: 20,
+                reported_cost_micros: None,
             })
         });
         let (flagged, proposal, _, _) = review_once(
@@ -958,6 +963,7 @@ mod tests {
                 }),
                 input_tokens: 30,
                 output_tokens: 10,
+                reported_cost_micros: None,
             })
         });
         let (_, proposal, _, _) = review_once(
@@ -994,6 +1000,7 @@ mod tests {
                 }),
                 input_tokens: 30,
                 output_tokens: 10,
+                reported_cost_micros: None,
             })
         });
         let (flagged, _proposal, _, _) = review_once(

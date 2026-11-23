@@ -18,6 +18,11 @@ pub struct Completion {
     pub input_tokens: u64,
     /// Output tokens billed for this pass.
     pub output_tokens: u64,
+    /// The pass's cost as the backend itself reported it, in millionths of a
+    /// dollar: the `claude_cli` backend's API-price estimate (060 D11).
+    /// `None` on backends that report no cost; whole micro-dollars keep the
+    /// type `Eq`.
+    pub reported_cost_micros: Option<u64>,
 }
 
 /// An LLM backend that returns schema-constrained JSON.
@@ -50,6 +55,7 @@ mod tests {
                 value: json!({ "ok": true }),
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
 

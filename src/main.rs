@@ -87,6 +87,8 @@ async fn main() {
         }
     };
 
+    require_claude_cli(&config).await;
+
     // BYOM (design §3.1): the backend is chosen by `PARALLAX_BACKEND`; the
     // factory hands back the right adapter and the server never knows which.
     let client = default_model_client(&config);
@@ -136,6 +138,26 @@ async fn main() {
     if let Err(e) = result {
         tracing::error!("server terminated with error: {e}");
         std::process::exit(1);
+    }
+}
+
+/// On `claude_cli`, the CLI must run before the server starts, so a wrong
+/// `CLAUDE_CLI_PATH` fails here by name, not on the first tool call (060 D9).
+async fn require_claude_cli(config: &mcp_parallax::config::Config) {
+    if config.backend != mcp_parallax::config::Backend::ClaudeCli {
+        return;
+    }
+    match mcp_parallax::client::claude_cli::check_cli(
+        config,
+        &mcp_parallax::client::claude_cli::TokioCliRunner,
+    )
+    .await
+    {
+        Ok(version) => tracing::info!(version = %version, "claude CLI found"),
+        Err(e) => {
+            tracing::error!("{e}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -196,6 +218,12 @@ MODEL BACKEND (one backend for every call site, chosen at startup):
     OPENAI_STRUCTURED_OUTPUT      Structured-output ladder for openai_compat:
                                   auto, json_schema, json_object, tool_shim,
                                   prompt_only (default: auto)
+    CLAUDE_CLI_PATH               Claude Code CLI for the claude_cli backend
+                                  (default: claude)
+    CLAUDE_CLI_MODEL              Default model on claude_cli
+                                  (default: claude-sonnet-5-5)
+    CLAUDE_CLI_CONCURRENCY        Live Claude Code processes at once, 1..=32
+                                  (default: 4)
 
 CORE (always read):
     INPUT_MAX_CHARS               Max input length (default: 50000)

@@ -72,6 +72,7 @@ impl crate::traits::client::ModelClient for ScriptedClient {
             value,
             input_tokens: self.usage.0,
             output_tokens: self.usage.1,
+            reported_cost_micros: None,
         })
     }
 }
@@ -1326,6 +1327,7 @@ impl ModelClient for BilledFailureAt {
                 value,
                 input_tokens: self.ok_usage.0,
                 output_tokens: self.ok_usage.1,
+                reported_cost_micros: None,
             })
         };
         if prompt.contains("scoping a web research run") {

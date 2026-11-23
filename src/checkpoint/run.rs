@@ -993,6 +993,7 @@ mod tests {
                 }),
                 input_tokens: 80,
                 output_tokens: 30,
+                reported_cost_micros: None,
             })
         });
         b.storage
@@ -1075,6 +1076,7 @@ mod tests {
                 }),
                 input_tokens: 60,
                 output_tokens: 20,
+                reported_cost_micros: None,
             })
         });
         b.storage
@@ -1146,6 +1148,7 @@ mod tests {
             }),
             input_tokens: 90,
             output_tokens: 35,
+            reported_cost_micros: None,
         }
     }
 
@@ -1263,6 +1266,7 @@ mod tests {
                 }),
                 input_tokens: 90,
                 output_tokens: 35,
+                reported_cost_micros: None,
             })
         });
         b.storage
@@ -1387,6 +1391,7 @@ mod tests {
                 }),
                 input_tokens: 30,
                 output_tokens: 10,
+                reported_cost_micros: None,
             })
         });
         b.storage
@@ -1429,6 +1434,7 @@ mod tests {
             }),
             input_tokens: 70,
             output_tokens: 30,
+            reported_cost_micros: None,
         }
     }
 

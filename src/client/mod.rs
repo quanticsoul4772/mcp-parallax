@@ -1,12 +1,14 @@
 //! Provider clients implementing the [`crate::traits::client::ModelClient`] seam.
 
 pub mod anthropic;
+pub mod claude_cli;
 pub mod exa;
 pub mod openai_compat;
 pub mod pool;
 pub mod voyage;
 
 pub use anthropic::AnthropicClient;
+pub use claude_cli::ClaudeCliClient;
 pub use exa::ExaClient;
 pub use openai_compat::OpenAiCompatClient;
 pub use voyage::VoyageClient;
@@ -42,6 +44,13 @@ pub fn build_model_client(
             config,
             http,
             &config.openai_api_base,
+            model,
+            effort,
+        )),
+        Backend::ClaudeCli => Arc::new(ClaudeCliClient::with_runner(
+            config,
+            claude_cli::process_runner(config),
+            &claude_cli::process_folder(),
             model,
             effort,
         )),

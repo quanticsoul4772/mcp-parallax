@@ -180,6 +180,7 @@ fn variant_name(error: &AppError) -> &'static str {
         AppError::InvalidInput(_) => "InvalidInput",
         AppError::ValidationFailure(_) => "ValidationFailure",
         AppError::ProviderRejected { .. } => "ProviderRejected",
+        AppError::UsageLimit(_) => "UsageLimit",
         AppError::Cancelled => "Cancelled",
         AppError::EmbeddingProvider(_) => "EmbeddingProvider",
         AppError::SearchProvider(_) => "SearchProvider",
