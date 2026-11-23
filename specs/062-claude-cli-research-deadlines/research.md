@@ -12,11 +12,14 @@
 
 ## D2: The values
 
-- **Decision**: `claude_cli` quick 120 000 ms, standard 360 000 ms, deep
-  720 000 ms; other backends keep 120 000 / 240 000 / 480 000 ms.
+- **Decision**: `claude_cli` quick 120 000 ms, standard 660 000 ms, deep
+  1 980 000 ms; other backends keep 120 000 / 240 000 / 480 000 ms.
 - **Rationale**: the user chose fixed per-depth values (2026-11-23). Measured
-  on `claude_cli` at concurrency 4: quick 93 s, standard 283–302 s, deep about
-  541 s. 360 s gives standard about 20% headroom; 720 s gives deep about 33%.
+  on `claude_cli` at concurrency 4, full runs with no cutoff: quick 93 s,
+  standard 538 s, deep 1632 s; the defaults are about 1.2x those. The first
+  values (360 / 720 s) failed live: they were estimated from runs that had
+  themselves been cut off at 240 / 480 s, and a standard run stopped at 360 s
+  with 46 of 177 claims unverified.
 - **Alternatives**: a multiplier (inflates quick, which already fits); an
   operator setting (no fix by default).
 

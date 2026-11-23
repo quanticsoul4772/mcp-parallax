@@ -133,14 +133,14 @@ impl Depth {
 
     /// The default deadline on the `claude_cli` backend (062 D2): every model
     /// call is a `claude -p` process, so standard and deep runs need longer
-    /// than the tier's default. Measured 2026-11-23 at concurrency 4: quick
-    /// 93 s, standard 283-302 s, deep about 541 s.
+    /// than the tier's default. Full runs measured 2026-11-23 at concurrency
+    /// 4: quick 93 s, standard 538 s, deep 1632 s; about 1.2x headroom.
     #[must_use]
     pub const fn claude_cli_deadline_ms(self) -> u64 {
         match self {
             Self::Quick => 120_000,
-            Self::Standard => 360_000,
-            Self::Deep => 720_000,
+            Self::Standard => 660_000,
+            Self::Deep => 1_980_000,
         }
     }
 

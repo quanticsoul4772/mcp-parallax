@@ -33,9 +33,9 @@ deep run at 600 s; with any other backend, the same runs stop at 240 s and
 **Acceptance Scenarios**:
 
 1. **Given** the `claude_cli` backend and no caller deadline, **When** research
-   runs at standard depth, **Then** its deadline is 360 s.
+   runs at standard depth, **Then** its deadline is 660 s.
 2. **Given** the `claude_cli` backend and no caller deadline, **When** research
-   runs at deep depth, **Then** its deadline is 720 s.
+   runs at deep depth, **Then** its deadline is 1980 s.
 3. **Given** the `claude_cli` backend, **When** research runs at quick depth,
    **Then** its deadline is 120 s, as today.
 
@@ -74,7 +74,7 @@ and a caller's `deadline_ms` is used as given on all three backends.
 ### Functional Requirements
 
 - **FR-001**: With the `claude_cli` backend, research's default deadline MUST
-  be 120 s at quick, 360 s at standard and 720 s at deep depth.
+  be 120 s at quick, 660 s at standard and 1980 s at deep depth.
 - **FR-002**: With any other backend, research's default deadlines MUST stay
   120 / 240 / 480 s.
 - **FR-003**: A caller's `constraints.deadline_ms` MUST override the default on
@@ -92,16 +92,17 @@ and a caller's `deadline_ms` is used as given on all three backends.
   completes with `stopped_early` false on the SQLite WAL question from
   2026-11-23 (which stopped at the deadline at 240 s).
 - **SC-002**: A live deep-depth run on `claude_cli` completes with
-  `stopped_early` false, or, if it still stops, does so after at least 680 s
-  (so the 720 s deadline applied).
+  `stopped_early` false, or, if it still stops, does so after at least 1900 s
+  (so the 1980 s deadline applied).
 - **SC-003**: On the other backends, every research tier setting is identical
   to before, shown by tests.
 
 ## Assumptions
 
 - The 2026-11-23 timings are representative of `claude_cli` at concurrency 4;
-  360 s gives standard about 20% headroom over 302 s, and 720 s gives deep
-  about 33% over 541 s.
+  the defaults give about 1.2x over measured full runs (538 s standard,
+  1632 s deep); the 302 s / 541 s figures were from runs cut off at their
+  deadline.
 - Quick depth needs no change: 93 s against 120 s.
 - A longer run uses more of the subscription's usage per run only by the work
   the old deadline cut off.

@@ -8,7 +8,7 @@ Research picks its default deadline from the depth tier
 (`DepthTier.default_deadline_ms`: 120 / 240 / 480 s) in
 `research/settings.rs`, unless the caller passes `constraints.deadline_ms`.
 `ResearchDeps` gains the selected backend; when it is `claude_cli`, the
-default comes from a second per-depth table (120 / 360 / 720 s). The caller
+default comes from a second per-depth table (120 / 660 / 1980 s). The caller
 override, its 5000 ms minimum, and every other tier value are untouched, so
 other backends stay byte-identical.
 
@@ -34,7 +34,7 @@ capability, so nothing to gate behind configuration.
 
 ```text
 src/
-├── research/mod.rs        # Depth::claude_cli_deadline_ms (120/360/720 s)
+├── research/mod.rs        # Depth::claude_cli_deadline_ms (120/660/1980 s)
 ├── research/settings.rs   # default deadline chosen by backend (FR-001/002)
 ├── research/pipeline.rs   # ResearchDeps.backend
 ├── server.rs              # passes config.backend into ResearchDeps
