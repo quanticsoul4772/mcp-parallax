@@ -69,6 +69,11 @@ fn deps(config: &Config) -> ResearchDeps {
         verify_client: Arc::new(AnthropicClient::new(config)),
         synth_client: Arc::new(AnthropicClient::new(config)),
         search: Arc::new(ExaClient::new(config).expect("exa key present")),
+        // 061: research reranks its pages exactly when VOYAGE_API_KEY is set.
+        reranker: config.voyage_api_key.as_ref().map(|_| {
+            Arc::new(mcp_parallax::client::VoyageClient::new(config).expect("voyage key present"))
+                as Arc<dyn mcp_parallax::traits::rerank::Reranker>
+        }),
         clock: Arc::new(SystemClock),
         scope_mode: registry.get(pipeline::SCOPE_MODE_ID).unwrap().clone(),
         extract_mode: registry.get(pipeline::EXTRACT_MODE_ID).unwrap().clone(),

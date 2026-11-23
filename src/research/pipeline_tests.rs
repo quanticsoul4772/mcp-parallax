@@ -144,6 +144,7 @@ fn deps_with_client(
             "claude-opus-4-8",
             crate::routing::DefaultVar::AnthropicModel,
         ),
+        reranker: None,
     }
 }
 
@@ -2187,4 +2188,196 @@ fn a_caller_may_lower_concurrency_and_a_raise_is_reduced_to_the_ceiling() {
     // The ceiling follows configuration, not a constant.
     assert_eq!(effective_concurrency(Some(16), 32).unwrap(), 16);
     assert_eq!(effective_concurrency(Some(16), 4).unwrap(), 4);
+}
+
+// ---- 061 US1: rerank keeps only the top pages ---------------------------------
+
+const EIGHT: &[&str] = &[
+    "https://example.com/u1",
+    "https://example.com/u2",
+    "https://example.com/u3",
+    "https://example.com/u4",
+    "https://example.com/u5",
+    "https://example.com/u6",
+    "https://example.com/u7",
+    "https://example.com/u8",
+];
+
+/// Extraction prompts that carry `text` (verification prompts also quote
+/// kept pages, so a plain count would see them twice).
+fn extractions_with(client: &ScriptedClient, text: &str) -> usize {
+    client
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.contains("extract falsifiable claims") && p.contains(text))
+        .count()
+}
+
+fn shared_claim_client() -> Arc<ScriptedClient> {
+    scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the shared claim holds"] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "Shared holds [s2].", "gaps": [], "gap_targets": [] }),
+    )
+}
+
+/// 061 T008 (US1 scenario 1, FR-001/FR-002/FR-006): with more scorable pages
+/// than the keep count, the reranker sees the question and every page in
+/// fetched order, extraction runs on exactly the top-K pages, kept sources
+/// carry their relevance, and the stats count what was kept.
+#[tokio::test]
+async fn rerank_keeps_only_the_top_pages_for_extraction() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .withf(|query, documents| {
+            query == "does it hold?"
+                && documents.len() == 8
+                && documents[0].contains("example.com/u1")
+                && documents[7].contains("example.com/u8")
+        })
+        .times(1)
+        .returning(|_, _| {
+            Ok(crate::traits::rerank::RerankResult {
+                scores: vec![0.1, 0.9, 0.2, 0.8, 0.3, 0.7, 0.6, 0.5],
+                total_tokens: 100,
+            })
+        });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    // Quick keeps 5: u2, u4, u6, u7, u8 (scores 0.9, 0.8, 0.7, 0.6, 0.5).
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    for kept in ["u2", "u4", "u6", "u7", "u8"] {
+        assert_eq!(
+            extractions_with(&client, &format!("Content of https://example.com/{kept}.")),
+            1,
+            "{kept}"
+        );
+    }
+    for dropped in ["u1", "u3", "u5"] {
+        assert_eq!(
+            extractions_with(
+                &client,
+                &format!("Content of https://example.com/{dropped}.")
+            ),
+            0,
+            "{dropped}"
+        );
+    }
+    assert_eq!(result.stats.sources_kept, 5);
+    assert_eq!(result.stats.rerank_skipped, None);
+    assert!(!result.sources.is_empty());
+    assert!(
+        result.sources.iter().all(|s| s.relevance.is_some()),
+        "{:?}",
+        result.sources
+    );
+}
+
+/// 061 T008 (US1 scenario 2, FR-003; D7): with no more scorable pages than
+/// the keep count there is nothing to cut, so the reranker is not called and
+/// every page is kept.
+#[tokio::test]
+async fn with_k_or_fewer_pages_the_reranker_is_not_called() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(&EIGHT[..5]),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().times(0);
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    assert_eq!(result.stats.sources_kept, 5);
+    assert!(result.sources.iter().all(|s| s.relevance.is_none()));
+}
+
+/// 061 T008 (US1 scenario 3, FR-004): without a reranker research is
+/// unchanged: every fetched page is extracted and nothing is scored.
+#[tokio::test]
+async fn without_a_reranker_research_is_unchanged() {
+    let client = shared_claim_client();
+    let deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 8);
+    assert_eq!(result.stats.sources_kept, 8);
+    assert_eq!(result.stats.rerank_skipped, None);
+    assert!(result.sources.iter().all(|s| s.relevance.is_none()));
+}
+
+/// 061 T008 (D7): a page with no text is not sent to the reranker and stays
+/// dropped as empty, as before.
+#[tokio::test]
+async fn an_empty_page_is_not_sent_to_the_reranker() {
+    let client = shared_claim_client();
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| {
+                    let text = if u.ends_with("/u3") {
+                        String::new()
+                    } else {
+                        format!("Content of {u}.")
+                    };
+                    page(u, &text, false)
+                })
+                .collect(),
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .withf(|_, documents| documents.len() == 7 && documents.iter().all(|d| !d.contains("/u3")))
+        .times(1)
+        .returning(|_, documents| {
+            Ok(crate::traits::rerank::RerankResult {
+                scores: (0..documents.len())
+                    .map(|i| f32::from(u16::try_from(i).unwrap()))
+                    .collect(),
+                total_tokens: 10,
+            })
+        });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    assert_eq!(result.stats.sources_kept, 5);
 }

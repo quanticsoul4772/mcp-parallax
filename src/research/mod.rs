@@ -318,6 +318,8 @@ pub(crate) struct SourceRecord {
     pub(crate) text: String,
     /// The text reached the character cap (059 FR-007).
     pub(crate) truncated: bool,
+    /// The page's rerank relevance score (061), or `None`.
+    pub(crate) relevance: Option<f32>,
 }
 
 /// A claim after verification.

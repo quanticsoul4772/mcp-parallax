@@ -159,6 +159,8 @@ pub struct SourceRef {
     /// The source's text reached the character cap, so the page continues
     /// past what was read (059 FR-007).
     pub truncated: bool,
+    /// The page's rerank relevance score (061); absent when no rerank ran.
+    pub relevance: Option<f32>,
 }
 
 /// Honest run accounting (FR-007: no silent truncation).
@@ -172,6 +174,11 @@ pub struct Stats {
     pub sources_found: u32,
     /// Sources whose text was received and extracted.
     pub sources_fetched: u32,
+    /// Pages that reached extraction (061): all fetched pages without a
+    /// rerank, the top keep count with one.
+    pub sources_kept: u32,
+    /// Why a configured rerank did not run (061 FR-005), or null.
+    pub rerank_skipped: Option<String>,
     /// Claims extracted across sources.
     pub claims_extracted: u32,
     /// Claims after semantic dedup.

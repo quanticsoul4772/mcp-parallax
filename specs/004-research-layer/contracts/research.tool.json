@@ -258,6 +258,12 @@
             },
             "truncated": {
               "type": "boolean"
+            },
+            "relevance": {
+              "type": [
+                "number",
+                "null"
+              ]
             }
           },
           "required": [
@@ -266,7 +272,8 @@
             "title",
             "fetched_at",
             "credibility",
-            "truncated"
+            "truncated",
+            "relevance"
           ],
           "additionalProperties": false
         },
@@ -290,6 +297,16 @@
           "sources_fetched": {
             "type": "integer",
             "minimum": 0
+          },
+          "sources_kept": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rerank_skipped": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "claims_extracted": {
             "type": "integer",
@@ -336,6 +353,8 @@
           "searches",
           "sources_found",
           "sources_fetched",
+          "sources_kept",
+          "rerank_skipped",
           "claims_extracted",
           "claims_after_dedup",
           "claims_verified",

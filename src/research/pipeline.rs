@@ -55,6 +55,9 @@ pub struct ResearchDeps {
     pub synth_client: Arc<dyn ModelClient>,
     /// The search backend.
     pub search: Arc<dyn SearchProvider>,
+    /// Scores fetched pages against the question (061), present with
+    /// `VOYAGE_API_KEY`; `None` leaves research as before.
+    pub reranker: Option<Arc<dyn crate::traits::rerank::Reranker>>,
     /// The shared clock (deadline checks + stats).
     pub clock: Arc<dyn TimeProvider>,
     /// Scope mode (registered by [`register`]).
@@ -329,13 +332,20 @@ async fn run_metered_at(
             }
         }
     }
+    // ---- (3b) RERANK (061) — only the top pages reach extraction ---------
+    let (kept, relevance) =
+        rerank_pages(deps, &params.question, &pages, settings.keep_sources).await?;
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
         let mut tasks = Vec::new();
+        let mut task_relevance: Vec<Option<f32>> = Vec::new();
         for (index, ((url, _title), page)) in candidates.iter().zip(pages).enumerate() {
             if ceiling.probe().is_some() {
                 break;
+            }
+            if !kept[index] {
+                continue;
             }
             // Finding 2: the page may come back under another address (a
             // redirect); the caller's domain lists apply to that one too, as
@@ -350,6 +360,7 @@ async fn run_metered_at(
                 continue;
             }
             let id = format!("s{}", index + 1);
+            task_relevance.push(relevance[index]);
             tasks.push(extract_source(
                 deps,
                 Arc::clone(&semaphore),
@@ -360,10 +371,18 @@ async fn run_metered_at(
                 page,
             ));
         }
+        stats.sources_kept = u32::try_from(tasks.len()).unwrap_or(u32::MAX);
         let mut failures: Vec<AppError> = Vec::new();
-        for outcome in futures::future::join_all(tasks).await {
+        for (outcome, score) in futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .zip(task_relevance)
+        {
             match outcome {
-                SourceOutcome::Extracted(record) => sources.push(*record),
+                SourceOutcome::Extracted(mut record) => {
+                    record.relevance = score;
+                    sources.push(*record);
+                }
                 SourceOutcome::Empty => {}
                 SourceOutcome::Failed(error) => failures.push(*error),
             }
@@ -670,6 +689,59 @@ fn unbilled(error: &AppError) -> Option<f64> {
 /// source, and a page with no text is an empty one (FR-013). The ceiling is
 /// re-probed after the permit — a budget blown mid-phase stops queued
 /// sources, not just the next phase.
+/// Which candidates reach extraction, and each page's relevance (061).
+///
+/// Without a reranker, or with no more scorable pages (non-empty text) than
+/// the keep count, every candidate is kept and nothing is scored. Otherwise
+/// the scorable pages are reranked in fetched order and the top `keep` go on;
+/// pages without text are not sent and stay out, as before (D7).
+async fn rerank_pages(
+    deps: &ResearchDeps,
+    question: &str,
+    pages: &[Option<Page>],
+    keep: usize,
+) -> Result<(Vec<bool>, Vec<Option<f32>>), AppError> {
+    let count = pages.len();
+    let Some(reranker) = &deps.reranker else {
+        return Ok((vec![true; count], vec![None; count]));
+    };
+    let scorable: Vec<usize> = pages
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.as_ref().is_some_and(|p| !p.text.trim().is_empty()))
+        .map(|(i, _)| i)
+        .collect();
+    if scorable.len() <= keep {
+        return Ok((vec![true; count], vec![None; count]));
+    }
+    let documents: Vec<String> = scorable
+        .iter()
+        .filter_map(|&i| {
+            pages
+                .get(i)
+                .and_then(Option::as_ref)
+                .map(|p| p.text.clone())
+        })
+        .collect();
+    let result = reranker.rerank(question, &documents).await?;
+    if result.scores.len() != documents.len() {
+        return Err(AppError::EmbeddingProvider(format!(
+            "rerank returned {} scores for {} pages",
+            result.scores.len(),
+            documents.len()
+        )));
+    }
+    let mut kept = vec![false; count];
+    let mut relevance = vec![None; count];
+    for (&page, &score) in scorable.iter().zip(&result.scores) {
+        relevance[page] = Some(score);
+    }
+    for top in crate::research::rerank::keep_top(&result.scores, keep) {
+        kept[scorable[top]] = true;
+    }
+    Ok((kept, relevance))
+}
+
 async fn extract_source(
     deps: &ResearchDeps,
     semaphore: Arc<Semaphore>,
@@ -753,6 +825,7 @@ async fn extract_source(
         claims,
         text: readable.text,
         truncated: page.truncated,
+        relevance: None,
     }))
 }
 

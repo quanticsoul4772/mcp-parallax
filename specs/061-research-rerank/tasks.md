@@ -30,11 +30,11 @@ None: no new dependency.
 
 **Independent test**: with a reranker double and more pages than K, extraction runs on exactly the K highest-scoring pages.
 
-- [ ] T006 [US1] Write failing wiremock tests for `VoyageClient` as a `Reranker` in `src/client/voyage.rs`: `POST /v1/rerank` with the bearer key and exactly `{query, documents, model: "rerank-3", truncation: true}`; reply indices mapped back to input order; `usage.total_tokens` returned; a missing, duplicate or out-of-range index, or a non-numeric score, is an error
-- [ ] T007 [US1] Implement the rerank call and `impl Reranker for VoyageClient`, reusing the client's retry and backoff
-- [ ] T008 [US1] Write failing pipeline tests in `src/research/pipeline_tests.rs`: with a mock reranker and more scorable pages than K, the extract client is called for exactly the K top pages, kept sources carry `relevance`, and `stats.sources_kept` is K; with K or fewer scorable pages the reranker is not called and every page is kept; with no reranker the result is unchanged (no `relevance`, `sources_kept` = pages extracted); empty pages are not sent and stay `Empty`
-- [ ] T009 [US1] Implement the rerank step between contents and extraction in `src/research/pipeline.rs` (`ResearchDeps.reranker: Option<Arc<dyn Reranker>>`); add `Stats.sources_kept`, `Stats.rerank_skipped` and `SourceRef.relevance` in `src/research/contract.rs`; update `specs/004-research-layer/contracts/research.tool.json` so its binding tests pass
-- [ ] T010 [US1] Wire the Voyage client as the reranker in `src/server.rs` when `VOYAGE_API_KEY` is set; an integration test in `tests/integration.rs` (Exa and Voyage doubles) shows `sources_kept` below `sources_found`
+- [X] T006 [US1] Write failing wiremock tests for `VoyageClient` as a `Reranker` in `src/client/voyage.rs`: `POST /v1/rerank` with the bearer key and exactly `{query, documents, model: "rerank-3", truncation: true}`; reply indices mapped back to input order; `usage.total_tokens` returned; a missing, duplicate or out-of-range index, or a non-numeric score, is an error
+- [X] T007 [US1] Implement the rerank call and `impl Reranker for VoyageClient`, reusing the client's retry and backoff
+- [X] T008 [US1] Write failing pipeline tests in `src/research/pipeline_tests.rs`: with a mock reranker and more scorable pages than K, the extract client is called for exactly the K top pages, kept sources carry `relevance`, and `stats.sources_kept` is K; with K or fewer scorable pages the reranker is not called and every page is kept; with no reranker the result is unchanged (no `relevance`, `sources_kept` = pages extracted); empty pages are not sent and stay `Empty`
+- [X] T009 [US1] Implement the rerank step between contents and extraction in `src/research/pipeline.rs` (`ResearchDeps.reranker: Option<Arc<dyn Reranker>>`); add `Stats.sources_kept`, `Stats.rerank_skipped` and `SourceRef.relevance` in `src/research/contract.rs`; update `specs/004-research-layer/contracts/research.tool.json` so its binding tests pass
+- [X] T010 [US1] Wire the Voyage client as the reranker in `src/server.rs` when `VOYAGE_API_KEY` is set; an integration test in `tests/integration.rs` (Exa and Voyage doubles) shows `sources_kept` below `sources_found`
 
 **Checkpoint**: US1 complete against doubles.
 

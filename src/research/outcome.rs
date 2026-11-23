@@ -89,6 +89,7 @@ pub fn assemble_result(outcome: Outcome<'_>, stats: Stats) -> ResearchResult {
             fetched_at: s.fetched_at.clone(),
             credibility: s.credibility,
             truncated: s.truncated,
+            relevance: s.relevance,
         })
         .collect();
 
