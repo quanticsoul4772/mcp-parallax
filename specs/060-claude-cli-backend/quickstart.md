@@ -37,3 +37,22 @@ Parallax itself configured as an MCP server in the operator's Claude Code to
 prove isolation (no recursive call appears in the records).
 
 Results are recorded below after the run.
+
+## Live acceptance results (2026-11-22)
+
+`cargo run --example acceptance_claude_cli` on the debug build, model
+`claude-sonnet-5-5`, Claude Code 2.1.330, with `ANTHROPIC_API_KEY` and
+`EXA_API_KEY` unset (subscription login only). OVERALL PASS.
+
+| Check | Result |
+|---|---|
+| SC-001: decide, verify, unstick, diverge, elicit, check, grounded_verify | all PASS, 3.4–5.8 s each, every record `cost_basis = cli_estimate` |
+| SC-003: CLI overhead | PASS, median 1,292 ms over 20 calls (target ≤ 3,000) |
+| SC-004: schema adherence | PASS, 20/20 valid on the first attempt (target ≥ 19) |
+| SC-005: isolation | PASS, 33 of 33 requests carried the isolation flags and variables |
+| SC-002: research | not measured (run without `EXA_API_KEY` to save usage) |
+
+The CLI's API-price estimates were about $0.01–0.04 per tool call; they
+count against the subscription, not as a charge. A separate check showed a
+`CLAUDE.md` planted in a parent folder steering answers before the
+isolation fix and not after.
