@@ -29,15 +29,19 @@
 
 ## D3: What is screened
 
-- **Decision**: the exact text `extract_source` sends to extraction (trimmed,
-  capped). Pages that never reach extraction are not screened.
-- **Rationale**: the screen describes what the model actually read (spec edge
-  cases).
+- **Decision**: what the extraction prompt carries for each page selected for
+  extraction: its title and its capped text, through `extract::capped_text`,
+  which extraction also uses. Screened at selection, before the extraction
+  call, so a page whose extraction fails is still screened and counted (review
+  findings 1-2). Pages never selected for extraction are not screened.
+- **Rationale**: the screen describes what the model was given, including the
+  author-controlled title.
 
 ## D4: Where the result shows it
 
 - **Decision**: `SourceRef.injection_patterns: Vec<String>` (always present,
-  empty when clean) and `Stats.pages_flagged: u32`; both required in the
-  published contract.
+  empty when clean), `Stats.pages_flagged: u32`, and `Stats.flagged_pages` (id,
+  url and patterns for every flagged page, cited or not; review finding 3); all
+  required in the published contract.
 - **Rationale**: the caller reads sources and stats; no record column (out of
   scope).

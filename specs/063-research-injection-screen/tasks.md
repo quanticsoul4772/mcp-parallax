@@ -21,7 +21,7 @@ Tests come first in each story and are seen failing before the code.
 ## Phase 4: Polish
 
 - [X] T006 `CHANGELOG.md` `[Unreleased]` entry (exact text approved first)
-- [ ] T007 Independent review: a fresh subagent given only the diff, told to trace every caller (brief approved first); findings asked one by one
+- [X] T007 Independent review: a fresh subagent given only the diff, told to trace every caller (brief approved first); findings asked one by one
 - [ ] T008 Live check (SC-002): after the rebuild, run the 7 acceptance questions through `examples/acceptance_research.rs` (it gains a printed flagged-page count, change shown first), check every flag by hand, record results in `specs/063-research-injection-screen/quickstart.md` (text approved first)
 - [ ] T009 CLAUDE.md active-feature block (exact text approved first)
 
