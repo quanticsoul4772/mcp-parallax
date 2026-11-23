@@ -287,6 +287,14 @@ impl RunMeter {
             usage.add(model, input, output);
         }
     }
+    /// Usage that is not a model call (061: the reranker): it reaches the
+    /// per-model usage, and so the record's cost, but not the token budget,
+    /// which counts model tokens only.
+    pub(crate) fn add_usage(&self, model: &str, input: u64) {
+        if let Ok(mut usage) = self.by_model.lock() {
+            usage.add(model, input, 0);
+        }
+    }
     pub(crate) fn total(&self) -> u64 {
         self.input_tokens() + self.output_tokens()
     }

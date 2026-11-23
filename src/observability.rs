@@ -398,6 +398,19 @@ pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) 
     if let Some(basis) = record.cost_basis {
         attributes.push(KeyValue::new("parallax.cost_basis", basis.as_str()));
     }
+    // 061: research's page counts, present on research records.
+    if let Some(fetched) = record.pages_fetched {
+        attributes.push(KeyValue::new(
+            "parallax.research.pages_fetched",
+            i64::from(fetched),
+        ));
+    }
+    if let Some(kept) = record.pages_kept {
+        attributes.push(KeyValue::new(
+            "parallax.research.pages_kept",
+            i64::from(kept),
+        ));
+    }
     if record.outcome != Outcome::Success {
         attributes.push(KeyValue::new("error.type", outcome));
     }
@@ -788,6 +801,8 @@ mod tests {
             passes: None,
             search_cost_usd: None,
             cost_basis: Some(crate::telemetry::CostBasis::PriceTable),
+            pages_fetched: None,
+            pages_kept: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")
@@ -1177,6 +1192,40 @@ mod tests {
         record.cost_usd = 0.0123;
         record.cost_basis = Some(crate::telemetry::CostBasis::CliEstimate);
         assert!((sum(&record) - 0.0123).abs() < 1e-12, "cli estimate");
+    }
+
+    /// 061 T013: a research record's page counts are span attributes; a
+    /// record without them exports none.
+    #[test]
+    fn page_counts_are_span_attributes() {
+        let (spans, _, guard) = test_handles();
+        let mut counted = sample_invocation(Outcome::Success);
+        counted.tool = "page_counts_probe".into();
+        counted.pages_fetched = Some(25);
+        counted.pages_kept = Some(15);
+        emit_invocation(&counted, None);
+        let mut without = sample_invocation(Outcome::Success);
+        without.tool = "no_page_counts_probe".into();
+        emit_invocation(&without, None);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = |name: &str| exported.iter().find(|s| s.name == name).unwrap();
+        let counted = &span("parallax.page_counts_probe").attributes;
+        assert_eq!(
+            attr(counted, "parallax.research.pages_fetched")
+                .unwrap()
+                .to_string(),
+            "25"
+        );
+        assert_eq!(
+            attr(counted, "parallax.research.pages_kept")
+                .unwrap()
+                .to_string(),
+            "15"
+        );
+        let without = &span("parallax.no_page_counts_probe").attributes;
+        assert!(attr(without, "parallax.research.pages_fetched").is_none());
     }
 
     #[test]

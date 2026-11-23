@@ -55,8 +55,8 @@ None: no new dependency.
 
 **Independent test**: a reranked run's record lists `rerank-3` in `usage_by_model` with its tokens, priced at $0.05 per million.
 
-- [ ] T013 [US3] Write failing tests: a reranked run adds the reply's tokens to the run's usage under `rerank-3` (input only); `cost_usd` includes them at the `rerank-3` row; a skipped rerank adds none; a research record carries `pages_fetched` and `pages_kept` (nullable, research only; analyze A2), round-trips through SQLite and is exported as span attributes
-- [ ] T014 [US3] Implement the accounting in `src/research/pipeline.rs`, the `rerank-3` price row and the `pages_fetched`/`pages_kept` record fields in `src/telemetry.rs`, their nullable columns in `src/storage/sqlite.rs`, span attributes in `src/observability.rs`, and the record and telemetry contracts
+- [X] T013 [US3] Write failing tests: a reranked run adds the reply's tokens to the run's usage under `rerank-3` (input only); `cost_usd` includes them at the `rerank-3` row; a skipped rerank adds none; a research record carries `pages_fetched` and `pages_kept` (nullable, research only; analyze A2), round-trips through SQLite and is exported as span attributes
+- [X] T014 [US3] Implement the accounting in `src/research/pipeline.rs`, the `rerank-3` price row and the `pages_fetched`/`pages_kept` record fields in `src/telemetry.rs`, their nullable columns in `src/storage/sqlite.rs`, span attributes in `src/observability.rs`, and the record and telemetry contracts
 
 **Checkpoint**: all stories pass against doubles.
 

@@ -71,6 +71,8 @@ pub(super) struct RecordDims {
     passes: Option<u32>,
     /// The research run's Exa cost accumulator (059); `None` for other tools.
     search_cost: Option<Arc<crate::telemetry::SearchCost>>,
+    /// The research run's page counts (061); `None` for other tools.
+    pages: Option<Arc<crate::telemetry::PageCounts>>,
 }
 
 impl RecordDims {
@@ -81,6 +83,7 @@ impl RecordDims {
             effort,
             passes: None,
             search_cost: None,
+            pages: None,
         }
     }
 
@@ -91,6 +94,7 @@ impl RecordDims {
             effort,
             passes,
             search_cost: None,
+            pages: None,
         }
     }
 }
@@ -942,6 +946,7 @@ impl Parallax {
         // 059 FR-010: one accumulator per run, read by the record guard on
         // every exit and added to by the pipeline on every Exa call.
         let search_cost = Arc::new(crate::telemetry::SearchCost::default());
+        let pages = Arc::new(crate::telemetry::PageCounts::default());
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a
@@ -976,11 +981,12 @@ impl Parallax {
             RecordDims {
                 depth: Some(depth),
                 search_cost: Some(Arc::clone(&search_cost)),
+                pages: Some(Arc::clone(&pages)),
                 ..RecordDims::default()
             },
             ct,
             caller,
-            async { pipeline::run_at(&deps, &params, concurrency, &search_cost).await },
+            async { pipeline::run_at(&deps, &params, concurrency, &search_cost, &pages).await },
         )
         .await
     }

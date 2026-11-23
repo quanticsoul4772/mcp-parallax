@@ -45,6 +45,8 @@ pub(super) struct RecordGuard {
     /// The research run's Exa cost accumulator (059), or `None`. Read on
     /// every exit, so a failed or cancelled run still records its cost.
     search_cost: Option<Arc<crate::telemetry::SearchCost>>,
+    /// The research run's page counts (061), or `None`.
+    pages: Option<Arc<crate::telemetry::PageCounts>>,
     /// The invocation's `claude_cli` cost meter (060 D11), scoped around its
     /// work by the server; read when the invocation finishes with usage.
     cli_cost: Arc<crate::telemetry::CliCost>,
@@ -77,6 +79,7 @@ impl RecordGuard {
             effort: dims.effort,
             passes: dims.passes,
             search_cost: dims.search_cost,
+            pages: dims.pages,
             cli_cost: Arc::new(crate::telemetry::CliCost::default()),
             caller,
             started_at,
@@ -106,6 +109,7 @@ impl RecordGuard {
         .with_effort(self.effort)
         .with_passes(self.passes)
         .with_search_cost(self.search_cost.as_ref().and_then(|c| c.total()))
+        .with_pages(self.pages.as_ref().and_then(|p| p.get()))
         // The CLI's figure only beside the tokens it priced: an exit that
         // records no usage records no cost either.
         .with_cli_cost(if usage.is_empty() {
@@ -143,7 +147,8 @@ impl Drop for RecordGuard {
         .with_depth(self.depth.as_deref())
         .with_effort(self.effort)
         .with_passes(self.passes)
-        .with_search_cost(self.search_cost.as_ref().and_then(|c| c.total()));
+        .with_search_cost(self.search_cost.as_ref().and_then(|c| c.total()))
+        .with_pages(self.pages.as_ref().and_then(|p| p.get()));
         record.publish(self.caller.as_ref());
         let storage = Arc::clone(&self.storage);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {

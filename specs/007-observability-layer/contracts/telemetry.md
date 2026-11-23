@@ -64,6 +64,7 @@ Outcomes that genuinely cost nothing — `timeout`, `retries_exhausted`,
 | `parallax.passes` | int | **added 028** — the ensemble pass count the *caller* supplied. Emitted **only** when a caller overrode it; absent means the configured count ran. Recorded on the same criterion as `parallax.effort`: a caller asking for one pass against a configured three moves spend further than any effort level does |
 | `parallax.search.cost_usd` | double | **added 059** — the research run's Exa cost in USD: the sum of what every Exa search and contents call reported. Emitted **only** on `research` spans, and only when every Exa call reported a cost; absent otherwise. Separate from `parallax.cost_usd`, which stays the summed model cost |
 | `parallax.cost_basis` | string | **added 060** — what the cost figure rests on: `price_table` (Parallax's price table applied to the tokens) or `cli_estimate` (the sum of the Claude Code CLI's own per-call estimates on the `claude_cli` backend, where the calls ran on the operator's subscription). Both are API-price estimates, never a charge |
+| `parallax.research.pages_fetched` / `parallax.research.pages_kept` | int | **added 061** — research only: pages whose text came back, and pages that reached extraction after the rerank; absent on other tools |
 
 > **Amendment (2026-07-24, feature 018 — per-call-site model routing).** Call
 > sites can now run on different models, so one invocation may span several.

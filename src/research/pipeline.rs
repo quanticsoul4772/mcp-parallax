@@ -178,6 +178,7 @@ pub async fn run(
         params,
         deps.concurrency,
         &crate::telemetry::SearchCost::default(),
+        &crate::telemetry::PageCounts::default(),
     )
     .await
 }
@@ -197,9 +198,10 @@ pub async fn run_at(
     params: &ResearchParams,
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
+    pages: &crate::telemetry::PageCounts,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered_at(deps, params, &meter, concurrency, search_cost).await;
+    let outcome = run_metered_at(deps, params, &meter, concurrency, search_cost, pages).await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -220,6 +222,7 @@ async fn run_metered_at(
     meter: &RunMeter,
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
+    pages_counted: &crate::telemetry::PageCounts,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
@@ -333,12 +336,15 @@ async fn run_metered_at(
         }
     }
     // ---- (3b) RERANK (061) — only the top pages reach extraction ---------
+    let pages_fetched =
+        u32::try_from(pages.iter().filter(|p| p.is_some()).count()).unwrap_or(u32::MAX);
     let (kept, relevance, skipped) = rerank_pages(
         deps,
         &params.question,
         &pages,
         settings.keep_sources,
         ceiling.time_left(),
+        meter,
     )
     .await;
     stats.rerank_skipped = skipped;
@@ -379,6 +385,7 @@ async fn run_metered_at(
             ));
         }
         stats.sources_kept = u32::try_from(tasks.len()).unwrap_or(u32::MAX);
+        pages_counted.set(pages_fetched, stats.sources_kept);
         let mut failures: Vec<AppError> = Vec::new();
         for (outcome, score) in futures::future::join_all(tasks)
             .await
@@ -713,6 +720,7 @@ async fn rerank_pages(
     pages: &[Option<Page>],
     keep: usize,
     time_left: std::time::Duration,
+    meter: &RunMeter,
 ) -> (Vec<bool>, Vec<Option<f32>>, Option<String>) {
     let count = pages.len();
     let unchanged = |reason: Option<String>| (vec![true; count], vec![None; count], reason);
@@ -755,6 +763,8 @@ async fn rerank_pages(
         }
         Ok(Ok(result)) => result,
     };
+    // 061 D8: the rerank's tokens reach the run's usage under its model.
+    meter.add_usage(reranker.model_id(), result.total_tokens);
     if result.scores.len() != documents.len() {
         let reason = format!(
             "malformed_reply: {} scores for {} pages",

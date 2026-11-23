@@ -36,6 +36,9 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
     ("voyage-4-large", 0.12, 0.0),
     ("voyage-4", 0.06, 0.0),
     ("voyage-4-lite", 0.02, 0.0),
+    // 061: research's reranker bills input only (Voyage pricing page,
+    // 2026-11-23).
+    ("rerank-3", 0.05, 0.0),
 ];
 
 /// Conservative fallback for unknown model ids (Opus-tier rates).
@@ -270,6 +273,27 @@ impl CliCost {
     }
 }
 
+/// One research run's page counts for its invocation record (061 FR-006):
+/// pages whose text came back, and pages that reached extraction. Set once
+/// by the pipeline; read by the record guard on every exit.
+#[derive(Debug, Default)]
+pub struct PageCounts {
+    counts: std::sync::OnceLock<(u32, u32)>,
+}
+
+impl PageCounts {
+    /// Record the run's counts (the first call wins).
+    pub fn set(&self, fetched: u32, kept: u32) {
+        let _already_set = self.counts.set((fetched, kept));
+    }
+
+    /// `(fetched, kept)`, or `None` when the run never reached extraction.
+    #[must_use]
+    pub fn get(&self) -> Option<(u32, u32)> {
+        self.counts.get().copied()
+    }
+}
+
 tokio::task_local! {
     /// The running invocation's [`CliCost`] meter (060 D11). The record guard
     /// scopes each invocation's work in one; the `claude_cli` client records
@@ -371,6 +395,11 @@ pub struct InvocationRecord {
     /// What [`Self::cost_usd`] rests on (060 D11); `None` only on records
     /// written before the column existed.
     pub cost_basis: Option<CostBasis>,
+    /// Research only (061): pages whose text came back; `None` for other
+    /// tools and runs that never reached extraction.
+    pub pages_fetched: Option<u32>,
+    /// Research only (061): pages that reached extraction.
+    pub pages_kept: Option<u32>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -424,6 +453,8 @@ impl InvocationRecord {
             passes: None,
             search_cost_usd: None,
             cost_basis: Some(CostBasis::PriceTable),
+            pages_fetched: None,
+            pages_kept: None,
             latency_ms,
             outcome,
             created_at,
@@ -454,6 +485,16 @@ impl InvocationRecord {
             .filter(|(model, _)| !model.starts_with("claude"))
             .map(|(model, u)| cost_usd(model, u.input_tokens, u.output_tokens))
             .sum()
+    }
+
+    /// Stamp a research run's page counts onto the record (061 FR-006).
+    #[must_use]
+    pub const fn with_pages(mut self, pages: Option<(u32, u32)>) -> Self {
+        if let Some((fetched, kept)) = pages {
+            self.pages_fetched = Some(fetched);
+            self.pages_kept = Some(kept);
+        }
+        self
     }
 
     /// Stamp the run's Exa cost onto the record (059 FR-010).
@@ -555,6 +596,39 @@ mod tests {
         )
         .with_cli_cost(Some(0.01));
         assert!((record.cost_usd - 0.07).abs() < 1e-9, "{}", record.cost_usd);
+    }
+
+    /// 061 T013 (D8): `rerank-3` is priced at $0.05 per million input tokens.
+    #[test]
+    fn rerank_3_is_priced() {
+        assert!(pricing_known("rerank-3"));
+        assert!((cost_usd("rerank-3", 1_000_000, 0) - 0.05).abs() < 1e-12);
+    }
+
+    /// 061 T013 (FR-006): the record carries the page counts when the run
+    /// reported them, and none otherwise.
+    #[test]
+    fn the_record_carries_the_page_counts() {
+        let clock = fixed_clock();
+        let base = InvocationRecord::create(
+            &clock,
+            "s",
+            "research",
+            "claude-sonnet-5-5",
+            &ModelUsage::default(),
+            Outcome::Success,
+            clock.now(),
+        );
+        assert_eq!((base.pages_fetched, base.pages_kept), (None, None));
+        let counted = base.with_pages(Some((8, 5)));
+        assert_eq!(
+            (counted.pages_fetched, counted.pages_kept),
+            (Some(8), Some(5))
+        );
+        let pages = PageCounts::default();
+        assert_eq!(pages.get(), None);
+        pages.set(25, 15);
+        assert_eq!(pages.get(), Some((25, 15)));
     }
 
     fn fixed_clock() -> MockTimeProvider {

@@ -122,6 +122,7 @@ async fn main() {
         let start = Instant::now();
         // 059 review finding 6: track the run's Exa cost to report it.
         let cost = mcp_parallax::telemetry::SearchCost::default();
+        let pages = mcp_parallax::telemetry::PageCounts::default();
         let outcome = pipeline::run_at(
             &deps,
             &ResearchParams {
@@ -132,6 +133,7 @@ async fn main() {
             },
             deps.concurrency,
             &cost,
+            &pages,
         )
         .await;
         let exa_cost = cost

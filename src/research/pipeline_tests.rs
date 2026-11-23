@@ -358,9 +358,15 @@ async fn the_runs_exa_cost_sums_every_search_and_the_contents_call() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let cost = crate::telemetry::SearchCost::default();
-    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
-        .await
-        .unwrap();
+    run_at(
+        &deps,
+        &params("q?", Some(Depth::Quick)),
+        4,
+        &cost,
+        &crate::telemetry::PageCounts::default(),
+    )
+    .await
+    .unwrap();
     let total = cost.total().unwrap();
     assert!((total - 0.019).abs() < 1e-9, "{total}");
 }
@@ -676,9 +682,15 @@ async fn a_call_that_sent_nothing_leaves_the_cost_known() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let cost = crate::telemetry::SearchCost::default();
-    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
-        .await
-        .unwrap();
+    run_at(
+        &deps,
+        &params("q?", Some(Depth::Quick)),
+        4,
+        &cost,
+        &crate::telemetry::PageCounts::default(),
+    )
+    .await
+    .unwrap();
     let total = cost.total().unwrap();
     assert!((total - 0.012).abs() < 1e-9, "{total}");
 }
@@ -716,9 +728,15 @@ async fn a_failed_exa_call_makes_the_runs_cost_unknown() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let cost = crate::telemetry::SearchCost::default();
-    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
-        .await
-        .unwrap();
+    run_at(
+        &deps,
+        &params("q?", Some(Depth::Quick)),
+        4,
+        &cost,
+        &crate::telemetry::PageCounts::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(cost.total(), None);
 }
 
@@ -2498,4 +2516,94 @@ async fn a_rerank_cut_off_by_the_deadline_is_recorded_not_fatal() {
     );
     assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
     assert!(result.stats.stopped_early);
+}
+
+// ---- 061 US3: the cut is visible ---------------------------------------------
+
+fn top_k_reranker() -> crate::traits::rerank::MockReranker {
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(|_, _| {
+        Ok(crate::traits::rerank::RerankResult {
+            scores: vec![0.1, 0.9, 0.2, 0.8, 0.3, 0.7, 0.6, 0.5],
+            total_tokens: 100,
+        })
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    reranker
+}
+
+/// 061 T013 (US3, D8): a reranked run's usage carries the rerank tokens
+/// under `rerank-3` (input only), so they reach the record's usage and cost;
+/// the model-token budget does not count them.
+#[tokio::test]
+async fn rerank_tokens_reach_the_runs_usage_under_the_rerank_model() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    deps.reranker = Some(Arc::new(top_k_reranker()));
+    let (result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    let rerank: Vec<_> = usage.iter().filter(|(m, _)| *m == "rerank-3").collect();
+    assert_eq!(rerank.len(), 1, "{:?}", usage.models());
+    assert_eq!(
+        (rerank[0].1.input_tokens, rerank[0].1.output_tokens),
+        (100, 0)
+    );
+    // stats.tokens is model tokens only: 1 scope + 5 extract + 1 verify (the
+    // five identical claims dedup to one) + 1 synthesis = 8 calls at (10 + 5);
+    // the 100 rerank tokens are not among them.
+    assert_eq!(result.stats.tokens, 8 * 15);
+}
+
+/// 061 T013 (US3): a skipped rerank adds no rerank usage.
+#[tokio::test]
+async fn a_skipped_rerank_adds_no_rerank_usage() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .returning(|_, _| Err(AppError::EmbeddingProvider("HTTP 503".into())));
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+    let (_result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert!(!usage.models().contains(&"rerank-3".to_string()));
+}
+
+/// 061 T013 (US3, FR-006; analyze A2): the run reports how many pages came
+/// back and how many reached extraction, for the invocation record.
+#[tokio::test]
+async fn the_run_reports_pages_fetched_and_kept() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    deps.reranker = Some(Arc::new(top_k_reranker()));
+    let pages = crate::telemetry::PageCounts::default();
+    run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        4,
+        &crate::telemetry::SearchCost::default(),
+        &pages,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pages.get(), Some((8, 5)));
 }

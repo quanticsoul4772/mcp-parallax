@@ -115,6 +115,8 @@ async fn main() {
         passes: None,
         search_cost_usd: None,
         cost_basis: Some(mcp_parallax::telemetry::CostBasis::PriceTable),
+        pages_fetched: None,
+        pages_kept: None,
         latency_ms: 1,
         outcome: mcp_parallax::error::Outcome::Success,
         created_at: chrono::Utc::now(),
