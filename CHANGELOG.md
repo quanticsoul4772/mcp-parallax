@@ -13,6 +13,13 @@ arc.
 
 ### Added
 
+* **Run on your Claude subscription (060)** — `PARALLAX_BACKEND=claude_cli`
+  runs every model call through the operator's own signed-in Claude Code
+  (`claude -p`), isolated per call (no MCP servers, tools, CLAUDE.md, hooks or
+  settings; API-billing variables removed), so no API key is needed. New
+  settings `CLAUDE_CLI_PATH`, `CLAUDE_CLI_MODEL`, `CLAUDE_CLI_CONCURRENCY`; a
+  new `usage_limit` outcome; records gain `cost_basis` (`price_table` or
+  `cli_estimate`); price rows for `claude-sonnet-5-5` and `claude-haiku-5-5`.
 * **Spans join the caller's trace (058)** — when a tool request carries W3C
   trace context in `_meta` (`traceparent`, optionally `tracestate`), as MCP
   2026-07-28 defines, the spans exported for that call (including its push

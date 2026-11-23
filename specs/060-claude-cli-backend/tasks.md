@@ -81,11 +81,11 @@ US3 and US4 build on US1's client.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T025 Dated amendments to `docs/design/NEW_SERVER_DESIGN.md` §3.1 and `docs/design/SDK_LANDSCAPE.md` §core; README backend section with the research.md D12 statement; `CHANGELOG.md` `[Unreleased]` (exact text of each approved first)
+- [X] T025 Dated amendments to `docs/design/NEW_SERVER_DESIGN.md` §3.1 and `docs/design/SDK_LANDSCAPE.md` §core; README backend section with the research.md D12 statement; `CHANGELOG.md` `[Unreleased]` (exact text of each approved first)
 - [X] T026 Write `examples/acceptance_claude_cli.rs` (quickstart §Live acceptance): every always-on tool once and one quick `research` question through the server; then 20 `decide`-schema calls made directly through `ClaudeCliClient` with the real runner wrapped by a recording runner, so each call's wall time can be compared with the reply's `duration_api_ms` (SC-003) and its first attempt checked by the local validator (SC-004) (analyze A2); prints time, overhead, first-attempt pass, tokens and estimate per call, and fails if any record shows a recursive Parallax call
 - [X] T027 Independent review: a fresh subagent given only the diff, told to trace every caller (brief approved first); findings asked one by one
 - [X] T028 Live acceptance (quickstart.md) with `ANTHROPIC_API_KEY` unset and Parallax configured as an MCP server in Claude Code; record results in quickstart.md (SC-001 to SC-005)
-- [ ] T029 Update the CLAUDE.md active-feature block for 060 (exact text approved first)
+- [X] T029 Update the CLAUDE.md active-feature block for 060 (exact text approved first)
 
 ## Dependencies & Execution Order
 

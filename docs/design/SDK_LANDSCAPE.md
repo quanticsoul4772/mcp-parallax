@@ -93,6 +93,12 @@ The decision is *how* to call the structured-outputs API, not *whether*.
   adopt only if actively maintained. Either way, the *contract* is native structured
   outputs.
 
+> **Amendment (2026-11-22, feature 060).** Beside the thin HTTP clients, a
+> process client runs the installed Claude Code CLI in print mode, one isolated
+> process per call behind a `CliRunner` seam, with a server-wide process cap.
+> No new crate (tokio's `process` feature). The Agent SDK was not used: it
+> would put a Node or Python runtime inside a Rust server.
+
 ### 3. Schema tooling — `schemars` + a validator
 
 `schemars` 1.x derives JSON Schema from Rust types (mode output types → schema, fed to
