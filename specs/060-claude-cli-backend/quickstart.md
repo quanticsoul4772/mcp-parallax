@@ -56,3 +56,14 @@ The CLI's API-price estimates were about $0.01–0.04 per tool call; they
 count against the subscription, not as a charge. A separate check showed a
 `CLAUDE.md` planted in a parent folder steering answers before the
 isolation fix and not after.
+
+### Second run, with research (2026-11-22)
+
+Same command with `EXA_API_KEY` set: OVERALL PASS. All seven tools passed
+again; SC-002 PASS (a quick `research` question completed in 142 s,
+`cost_basis = cli_estimate`); SC-003 median overhead 1,235 ms; SC-004 20/20;
+SC-005 121 of 121 requests isolated. The research run's CLI estimate was
+$1.23 on `claude-sonnet-5-5` for every step (about 70 calls), against
+$0.004–0.013 per call for the other tools: research is the tool that draws
+most on the subscription, and routing its bulk step to `claude-haiku-5-5`
+(the backend default) lightens it.
