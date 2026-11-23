@@ -36,6 +36,9 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
     ("voyage-4-large", 0.12, 0.0),
     ("voyage-4", 0.06, 0.0),
     ("voyage-4-lite", 0.02, 0.0),
+    // 061: research's reranker bills input only (Voyage pricing page,
+    // 2026-11-23).
+    ("rerank-3", 0.05, 0.0),
 ];
 
 /// Conservative fallback for unknown model ids (Opus-tier rates).
@@ -115,12 +118,13 @@ impl ModelUsage {
     /// existing token columns carry.
     #[must_use]
     pub fn totals(&self) -> (u64, u64) {
-        self.by_model.values().fold((0, 0), |(input, output), u| {
-            (
-                input.saturating_add(u.input_tokens),
-                output.saturating_add(u.output_tokens),
-            )
-        })
+        self.model_entries()
+            .fold((0, 0), |(input, output), (_, u)| {
+                (
+                    input.saturating_add(u.input_tokens),
+                    output.saturating_add(u.output_tokens),
+                )
+            })
     }
 
     /// The model that consumed the most tokens — the attributed model (018 D5).
@@ -133,8 +137,7 @@ impl ModelUsage {
     /// model, which is what keeps unrouted records byte-identical.
     #[must_use]
     pub fn dominant(&self) -> Option<&str> {
-        self.by_model
-            .iter()
+        self.model_entries()
             .max_by(|(a_model, a), (b_model, b)| {
                 let a_total = a.input_tokens.saturating_add(a.output_tokens);
                 let b_total = b.input_tokens.saturating_add(b.output_tokens);
@@ -143,6 +146,13 @@ impl ModelUsage {
                 a_total.cmp(&b_total).then(b_model.cmp(a_model))
             })
             .map(|(model, _)| model.as_str())
+    }
+
+    /// Entries that are model calls: everything but [`NON_MODEL_USAGE`].
+    fn model_entries(&self) -> impl Iterator<Item = (&String, &Usage)> {
+        self.by_model
+            .iter()
+            .filter(|(model, _)| !NON_MODEL_USAGE.contains(&model.as_str()))
     }
 
     /// Participating models, sorted. Only models that actually ran (FR-015b).
@@ -270,6 +280,54 @@ impl CliCost {
     }
 }
 
+/// Usage that is billed and priced but is not a model call (061 review
+/// finding 6): kept in a record's per-model usage and cost, left out of its
+/// token totals and its attributed model.
+pub const NON_MODEL_USAGE: &[&str] = &["rerank-3"];
+
+/// A run's non-model usage (061 review finding 3: the rerank), held apart
+/// so the record of a run that fails afterwards still carries it.
+#[derive(Debug, Default)]
+pub struct NonModelUsage {
+    usage: std::sync::Mutex<ModelUsage>,
+}
+
+impl NonModelUsage {
+    /// Add input tokens billed under `model`.
+    pub fn add(&self, model: &str, input_tokens: u64) {
+        if let Ok(mut usage) = self.usage.lock() {
+            usage.add(model, input_tokens, 0);
+        }
+    }
+
+    /// What has been added so far.
+    #[must_use]
+    pub fn snapshot(&self) -> ModelUsage {
+        self.usage.lock().map(|u| u.clone()).unwrap_or_default()
+    }
+}
+
+/// One research run's page counts for its invocation record (061 FR-006):
+/// pages whose text came back, and pages that reached extraction. Set once
+/// by the pipeline; read by the record guard on every exit.
+#[derive(Debug, Default)]
+pub struct PageCounts {
+    counts: std::sync::OnceLock<(u32, u32)>,
+}
+
+impl PageCounts {
+    /// Record the run's counts (the first call wins).
+    pub fn set(&self, fetched: u32, kept: u32) {
+        let _already_set = self.counts.set((fetched, kept));
+    }
+
+    /// `(fetched, kept)`, or `None` when the run never reached extraction.
+    #[must_use]
+    pub fn get(&self) -> Option<(u32, u32)> {
+        self.counts.get().copied()
+    }
+}
+
 tokio::task_local! {
     /// The running invocation's [`CliCost`] meter (060 D11). The record guard
     /// scopes each invocation's work in one; the `claude_cli` client records
@@ -371,6 +429,11 @@ pub struct InvocationRecord {
     /// What [`Self::cost_usd`] rests on (060 D11); `None` only on records
     /// written before the column existed.
     pub cost_basis: Option<CostBasis>,
+    /// Research only (061): pages whose text came back; `None` for other
+    /// tools and runs that never reached extraction.
+    pub pages_fetched: Option<u32>,
+    /// Research only (061): pages that reached extraction.
+    pub pages_kept: Option<u32>,
     /// Wall-clock latency via [`TimeProvider`].
     pub latency_ms: u64,
     /// Outcome classification.
@@ -424,6 +487,8 @@ impl InvocationRecord {
             passes: None,
             search_cost_usd: None,
             cost_basis: Some(CostBasis::PriceTable),
+            pages_fetched: None,
+            pages_kept: None,
             latency_ms,
             outcome,
             created_at,
@@ -454,6 +519,16 @@ impl InvocationRecord {
             .filter(|(model, _)| !model.starts_with("claude"))
             .map(|(model, u)| cost_usd(model, u.input_tokens, u.output_tokens))
             .sum()
+    }
+
+    /// Stamp a research run's page counts onto the record (061 FR-006).
+    #[must_use]
+    pub const fn with_pages(mut self, pages: Option<(u32, u32)>) -> Self {
+        if let Some((fetched, kept)) = pages {
+            self.pages_fetched = Some(fetched);
+            self.pages_kept = Some(kept);
+        }
+        self
     }
 
     /// Stamp the run's Exa cost onto the record (059 FR-010).
@@ -555,6 +630,57 @@ mod tests {
         )
         .with_cli_cost(Some(0.01));
         assert!((record.cost_usd - 0.07).abs() < 1e-9, "{}", record.cost_usd);
+    }
+
+    /// 061 T013 (D8): `rerank-3` is priced at $0.05 per million input tokens.
+    #[test]
+    fn rerank_3_is_priced() {
+        assert!(pricing_known("rerank-3"));
+        assert!((cost_usd("rerank-3", 1_000_000, 0) - 0.05).abs() < 1e-12);
+    }
+
+    /// 061 T013 (FR-006): the record carries the page counts when the run
+    /// reported them, and none otherwise.
+    #[test]
+    fn the_record_carries_the_page_counts() {
+        let clock = fixed_clock();
+        let base = InvocationRecord::create(
+            &clock,
+            "s",
+            "research",
+            "claude-sonnet-5-5",
+            &ModelUsage::default(),
+            Outcome::Success,
+            clock.now(),
+        );
+        assert_eq!((base.pages_fetched, base.pages_kept), (None, None));
+        let counted = base.with_pages(Some((8, 5)));
+        assert_eq!(
+            (counted.pages_fetched, counted.pages_kept),
+            (Some(8), Some(5))
+        );
+        let pages = PageCounts::default();
+        assert_eq!(pages.get(), None);
+        pages.set(25, 15);
+        assert_eq!(pages.get(), Some((25, 15)));
+    }
+
+    /// 061 review finding 6: rerank tokens are usage and cost, not model
+    /// tokens: they stay out of the token totals and can never be the
+    /// attributed model.
+    #[test]
+    fn rerank_usage_is_priced_but_not_model_tokens() {
+        let mut usage = ModelUsage::default();
+        usage.add("claude-haiku-5-5", 100, 10);
+        usage.add("rerank-3", 1_000_000, 0);
+        assert_eq!(usage.totals(), (100, 10));
+        assert_eq!(usage.dominant(), Some("claude-haiku-5-5"));
+        assert!((usage.cost_usd() - cost_usd("claude-haiku-5-5", 100, 10) - 0.05).abs() < 1e-9);
+        assert!(NON_MODEL_USAGE.contains(&crate::client::voyage::RERANK_MODEL));
+        let side = NonModelUsage::default();
+        assert!(side.snapshot().is_empty());
+        side.add("rerank-3", 7);
+        assert_eq!(side.snapshot().iter().count(), 1);
     }
 
     fn fixed_clock() -> MockTimeProvider {

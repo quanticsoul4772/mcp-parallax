@@ -140,7 +140,7 @@ impl SqliteStorage {
             "SELECT id, session_id, tool, model, input_tokens, output_tokens,
                     cost_usd, latency_ms, outcome, created_at,
                     models, usage_by_model, depth, effort, passes, search_cost_usd,
-                    cost_basis
+                    cost_basis, pages_fetched, pages_kept
              FROM invocation_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -211,6 +211,13 @@ impl SqliteStorage {
                         .get::<Option<String>, _>("cost_basis")
                         .as_deref()
                         .and_then(crate::telemetry::CostBasis::parse),
+                    // 061: research only; NULL elsewhere and on older rows.
+                    pages_fetched: row
+                        .get::<Option<i64>, _>("pages_fetched")
+                        .and_then(|n| u32::try_from(n).ok()),
+                    pages_kept: row
+                        .get::<Option<i64>, _>("pages_kept")
+                        .and_then(|n| u32::try_from(n).ok()),
                     latency_ms,
                     outcome,
                     created_at,
@@ -279,7 +286,7 @@ impl SqliteStorage {
             .await
             .map_err(|e| AppError::Storage(format!("pragma table_info failed: {e}")))?;
         let existing: Vec<String> = rows.iter().map(|r| r.get::<String, _>("name")).collect();
-        let additions: [(&str, &str); 7] = [
+        let additions: [(&str, &str); 9] = [
             (
                 "models",
                 "ALTER TABLE invocation_records ADD COLUMN models TEXT",
@@ -311,6 +318,15 @@ impl SqliteStorage {
             (
                 "cost_basis",
                 "ALTER TABLE invocation_records ADD COLUMN cost_basis TEXT",
+            ),
+            // 061: research's page counts.
+            (
+                "pages_fetched",
+                "ALTER TABLE invocation_records ADD COLUMN pages_fetched INTEGER",
+            ),
+            (
+                "pages_kept",
+                "ALTER TABLE invocation_records ADD COLUMN pages_kept INTEGER",
             ),
         ];
         for (column, ddl) in additions {
@@ -802,8 +818,8 @@ impl Storage for SqliteStorage {
                 (id, session_id, tool, model, input_tokens, output_tokens,
                  cost_usd, latency_ms, outcome, created_at,
                  models, usage_by_model, depth, effort, passes, search_cost_usd,
-                 cost_basis)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 cost_basis, pages_fetched, pages_kept)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -822,6 +838,8 @@ impl Storage for SqliteStorage {
         .bind(record.passes.map(i64::from))
         .bind(record.search_cost_usd)
         .bind(record.cost_basis.map(crate::telemetry::CostBasis::as_str))
+        .bind(record.pages_fetched.map(i64::from))
+        .bind(record.pages_kept.map(i64::from))
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
@@ -929,6 +947,8 @@ mod tests {
             passes: None,
             search_cost_usd: None,
             cost_basis: Some(crate::telemetry::CostBasis::PriceTable),
+            pages_fetched: None,
+            pages_kept: None,
             latency_ms: 1200,
             outcome,
             created_at: DateTime::parse_from_rfc3339("2026-06-11T12:00:00Z")
@@ -962,6 +982,8 @@ mod tests {
             tool: "research".to_string(),
             search_cost_usd: Some(0.019),
             cost_basis: Some(crate::telemetry::CostBasis::PriceTable),
+            pages_fetched: None,
+            pages_kept: None,
             ..sample(Outcome::Success)
         };
         storage.record_invocation(&research).await.unwrap();
@@ -991,6 +1013,35 @@ mod tests {
         assert_eq!(cost("r-research"), Some(0.019));
         assert_eq!(cost("r-verify"), None);
         assert_eq!(cost("old"), None);
+    }
+
+    // 061 T013: the page counts written are the counts read; other tools and
+    // rows written before the columns read back as None.
+    #[tokio::test]
+    async fn page_counts_round_trip_and_old_rows_read_none() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let research = InvocationRecord {
+            id: "r-research".to_string(),
+            tool: "research".to_string(),
+            pages_fetched: Some(25),
+            pages_kept: Some(15),
+            ..sample(Outcome::Success)
+        };
+        storage.record_invocation(&research).await.unwrap();
+        storage
+            .record_invocation(&InvocationRecord {
+                id: "r-verify".to_string(),
+                ..sample(Outcome::Success)
+            })
+            .await
+            .unwrap();
+        let records = storage.list_invocations().await.unwrap();
+        let pages = |id: &str| {
+            let r = records.iter().find(|r| r.id == id).unwrap();
+            (r.pages_fetched, r.pages_kept)
+        };
+        assert_eq!(pages("r-research"), (Some(25), Some(15)));
+        assert_eq!(pages("r-verify"), (None, None));
     }
 
     // 019: the tier written is the tier read. Paired with the NULL case above,

@@ -55,6 +55,9 @@ pub struct ResearchDeps {
     pub synth_client: Arc<dyn ModelClient>,
     /// The search backend.
     pub search: Arc<dyn SearchProvider>,
+    /// Scores fetched pages against the question (061), present with
+    /// `VOYAGE_API_KEY`; `None` leaves research as before.
+    pub reranker: Option<Arc<dyn crate::traits::rerank::Reranker>>,
     /// The shared clock (deadline checks + stats).
     pub clock: Arc<dyn TimeProvider>,
     /// Scope mode (registered by [`register`]).
@@ -175,6 +178,8 @@ pub async fn run(
         params,
         deps.concurrency,
         &crate::telemetry::SearchCost::default(),
+        &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
     )
     .await
 }
@@ -194,9 +199,20 @@ pub async fn run_at(
     params: &ResearchParams,
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
+    pages: &crate::telemetry::PageCounts,
+    non_model: &crate::telemetry::NonModelUsage,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
-    let outcome = run_metered_at(deps, params, &meter, concurrency, search_cost).await;
+    let outcome = run_metered_at(
+        deps,
+        params,
+        &meter,
+        concurrency,
+        search_cost,
+        pages,
+        non_model,
+    )
+    .await;
     // 020: the pipeline can fail after most of its spend — synthesis is the
     // last phase and propagates. Without this the record would show only the
     // failing call's own tokens: a plausible few thousand in place of the
@@ -217,6 +233,8 @@ async fn run_metered_at(
     meter: &RunMeter,
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
+    pages_counted: &crate::telemetry::PageCounts,
+    non_model: &crate::telemetry::NonModelUsage,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
@@ -329,27 +347,57 @@ async fn run_metered_at(
             }
         }
     }
+    // ---- (3b) RERANK (061) — only the top pages reach extraction ---------
+    // Finding 2 (059): the page may come back under another address (a
+    // redirect); the caller's domain lists apply to that one too, as they did
+    // to every redirect hop of the old fetcher. A denied page is dropped as
+    // filtered, never extracted or cited — and, since 061 review finding 1,
+    // before the rerank, so it takes no top-K slot and its text is not sent.
+    let mut denied = vec![false; pages.len()];
+    for (index, ((url, _title), page)) in candidates.iter().zip(pages.iter_mut()).enumerate() {
+        if let Some(moved) = page.as_ref().filter(|p| !domain_allowed(&p.url, &settings)) {
+            tracing::debug!(
+                source = url.as_str(),
+                returned = moved.url.as_str(),
+                "source dropped: its page came back under a denied domain"
+            );
+            denied[index] = true;
+            *page = None;
+        }
+    }
+    // Review finding 2: pages that came back with text (denied ones are
+    // already gone); `kept` below counts only those sent to extraction.
+    let pages_fetched =
+        u32::try_from(pages.iter().filter(|p| has_text(p.as_ref())).count()).unwrap_or(u32::MAX);
+    let mut pages_kept: u32 = 0;
+    let (kept, relevance, skipped) = rerank_pages(
+        deps,
+        &params.question,
+        &pages,
+        settings.keep_sources,
+        ceiling.time_left(),
+        meter,
+        non_model,
+    )
+    .await;
+    stats.rerank_skipped = skipped;
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut sources: Vec<SourceRecord> = Vec::new();
     {
         let mut tasks = Vec::new();
+        let mut task_relevance: Vec<Option<f32>> = Vec::new();
         for (index, ((url, _title), page)) in candidates.iter().zip(pages).enumerate() {
             if ceiling.probe().is_some() {
                 break;
             }
-            // Finding 2: the page may come back under another address (a
-            // redirect); the caller's domain lists apply to that one too, as
-            // they did to every redirect hop of the old fetcher. A denied
-            // page is dropped as filtered, never extracted or cited.
-            if let Some(denied) = page.as_ref().filter(|p| !domain_allowed(&p.url, &settings)) {
-                tracing::debug!(
-                    source = url.as_str(),
-                    returned = denied.url.as_str(),
-                    "source dropped: its page came back under a denied domain"
-                );
+            if denied[index] || !kept[index] {
                 continue;
             }
+            if has_text(page.as_ref()) {
+                pages_kept += 1;
+            }
             let id = format!("s{}", index + 1);
+            task_relevance.push(relevance[index]);
             tasks.push(extract_source(
                 deps,
                 Arc::clone(&semaphore),
@@ -360,10 +408,19 @@ async fn run_metered_at(
                 page,
             ));
         }
+        stats.sources_kept = pages_kept;
+        pages_counted.set(pages_fetched, pages_kept);
         let mut failures: Vec<AppError> = Vec::new();
-        for outcome in futures::future::join_all(tasks).await {
+        for (outcome, score) in futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .zip(task_relevance)
+        {
             match outcome {
-                SourceOutcome::Extracted(record) => sources.push(*record),
+                SourceOutcome::Extracted(mut record) => {
+                    record.relevance = score;
+                    sources.push(*record);
+                }
                 SourceOutcome::Empty => {}
                 SourceOutcome::Failed(error) => failures.push(*error),
             }
@@ -596,6 +653,12 @@ async fn scope(
 
 /// The caller's domain lists applied to one address: not denied, and allowed
 /// when an allow list is given.
+/// A page that came back with non-empty text: what the reranker scores and
+/// what the page counts count (061).
+fn has_text(page: Option<&Page>) -> bool {
+    page.is_some_and(|p| !p.text.trim().is_empty())
+}
+
 fn domain_allowed(url: &str, settings: &RunSettings) -> bool {
     reqwest::Url::parse(url)
         .ok()
@@ -670,6 +733,104 @@ fn unbilled(error: &AppError) -> Option<f64> {
 /// source, and a page with no text is an empty one (FR-013). The ceiling is
 /// re-probed after the permit — a budget blown mid-phase stops queued
 /// sources, not just the next phase.
+/// Which candidates reach extraction, each page's relevance, and why a
+/// configured rerank did not run (061).
+///
+/// Without a reranker, or with no more scorable pages (non-empty text) than
+/// the keep count, every candidate is kept and nothing is scored. Otherwise
+/// the scorable pages are reranked in fetched order and the top `keep` go on;
+/// pages without text are not sent and stay out, as before (D7).
+///
+/// A failed rerank never fails the run (FR-005, the operator-approved
+/// exception): an error, a malformed reply, or the call outlasting
+/// `time_left` keeps every candidate, scores nothing, and returns the reason.
+async fn rerank_pages(
+    deps: &ResearchDeps,
+    question: &str,
+    pages: &[Option<Page>],
+    keep: usize,
+    time_left: std::time::Duration,
+    meter: &RunMeter,
+    non_model: &crate::telemetry::NonModelUsage,
+) -> (Vec<bool>, Vec<Option<f32>>, Option<String>) {
+    // 061 D8: rerank tokens reach the run's usage under the reranker's model,
+    // and the side accumulator a failed run's record reads (review finding 3).
+    let bill = |tokens: u64, model: &str| {
+        if tokens > 0 {
+            meter.add_usage(model, tokens);
+            non_model.add(model, tokens);
+        }
+    };
+    let count = pages.len();
+    let unchanged = |reason: Option<String>| (vec![true; count], vec![None; count], reason);
+    let Some(reranker) = &deps.reranker else {
+        return unchanged(None);
+    };
+    let scorable: Vec<usize> = pages
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| has_text(p.as_ref()))
+        .map(|(i, _)| i)
+        .collect();
+    if scorable.len() <= keep {
+        return unchanged(None);
+    }
+    let documents: Vec<String> = scorable
+        .iter()
+        .filter_map(|&i| {
+            pages
+                .get(i)
+                .and_then(Option::as_ref)
+                .map(|p| p.text.clone())
+        })
+        .collect();
+    // Review finding 5: the deadline already passed during the searches —
+    // don't start a paid call that could only be cut off at once.
+    if time_left.is_zero() {
+        tracing::warn!("rerank skipped: the run's deadline passed first");
+        return unchanged(Some("timeout".to_string()));
+    }
+    let result = match tokio::time::timeout(time_left, reranker.rerank(question, &documents)).await
+    {
+        Err(_elapsed) => {
+            tracing::warn!("rerank skipped: the run's deadline passed first");
+            return unchanged(Some("timeout".to_string()));
+        }
+        Ok(Err(error)) => {
+            // Review finding 4: a malformed reply was still billed.
+            bill(error.billed().0, reranker.model_id());
+            let message = error.to_string();
+            let reason = if message.contains("out-of-contract") {
+                format!("malformed_reply: {message}")
+            } else {
+                format!("provider_error: {message}")
+            };
+            tracing::warn!(%reason, "rerank skipped");
+            return unchanged(Some(reason));
+        }
+        Ok(Ok(result)) => result,
+    };
+    bill(result.total_tokens, reranker.model_id());
+    if result.scores.len() != documents.len() {
+        let reason = format!(
+            "malformed_reply: {} scores for {} pages",
+            result.scores.len(),
+            documents.len()
+        );
+        tracing::warn!(%reason, "rerank skipped");
+        return unchanged(Some(reason));
+    }
+    let mut kept = vec![false; count];
+    let mut relevance = vec![None; count];
+    for (&page, &score) in scorable.iter().zip(&result.scores) {
+        relevance[page] = Some(score);
+    }
+    for top in crate::research::rerank::keep_top(&result.scores, keep) {
+        kept[scorable[top]] = true;
+    }
+    (kept, relevance, None)
+}
+
 async fn extract_source(
     deps: &ResearchDeps,
     semaphore: Arc<Semaphore>,
@@ -753,6 +914,7 @@ async fn extract_source(
         claims,
         text: readable.text,
         truncated: page.truncated,
+        relevance: None,
     }))
 }
 

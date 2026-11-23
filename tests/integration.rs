@@ -3928,3 +3928,97 @@ async fn grounded_verify_refuses_a_glob_starting_in_a_secret_folder() {
     );
     client.cancel().await.unwrap();
 }
+
+// ---- 061 research rerank ------------------------------------------------------
+
+/// 061 T010 (US1): with a Voyage key the server reranks research's fetched
+/// pages and extracts only the top keep count; the kept sources carry their
+/// relevance and the stats show the cut.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn research_with_voyage_reranks_and_keeps_the_top_pages() {
+    let mock = MockServer::start().await;
+    let urls: Vec<String> = (1..=8)
+        .map(|i| format!("https://docs.example/p{i}"))
+        .collect();
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": urls.iter().map(|u| json!({"id": u, "url": u, "title": format!("Title {u}")})).collect::<Vec<_>>()
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/contents"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": urls.iter().map(|u| json!({"id": u, "url": u, "title": format!("Title {u}"), "text": format!("The documented claim holds, says {u}.")})).collect::<Vec<_>>(),
+            "statuses": urls.iter().map(|u| json!({"id": u, "status": "success"})).collect::<Vec<_>>()
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/rerank"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": (0..8).map(|i| json!({"index": i, "relevance_score": f64::from(i) / 10.0})).collect::<Vec<_>>(),
+            "usage": {"total_tokens": 800}
+        })))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    mount_research_llm(&mock, "The claim holds [s8].").await;
+
+    let mut config = test_config(5_000);
+    config.exa_api_key = Some("exa-test-key".into());
+    config.voyage_api_key = Some("voyage-test-key".into());
+    config.anthropic_api_base = mock.uri();
+    let storage = std::sync::Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+    let anthropic = std::sync::Arc::new(
+        mcp_parallax::client::AnthropicClient::with_base_url(&config, &mock.uri())
+            .with_backoff_base_ms(1),
+    );
+    let voyage = std::sync::Arc::new(
+        mcp_parallax::client::VoyageClient::with_base_url(&config, &mock.uri())
+            .unwrap()
+            .with_backoff_base_ms(1),
+    );
+    let exa = std::sync::Arc::new(mcp_parallax::client::ExaClient::with_base_url(
+        &config,
+        "exa-test-key",
+        &mock.uri(),
+    ));
+    let server = mcp_parallax::server::Parallax::with_all_capabilities(
+        anthropic,
+        storage.clone(),
+        std::sync::Arc::new(mcp_parallax::traits::clock::SystemClock),
+        &config,
+        Some(voyage.clone()),
+        Some(exa),
+        Some(voyage),
+    )
+    .unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move { rmcp::ServiceExt::serve(server, server_io).await });
+    let client = rmcp::ServiceExt::serve((), client_io).await.unwrap();
+    let _server = server_task.await.unwrap().unwrap();
+
+    let result = client
+        .call_tool(tool_call(
+            "research",
+            &json!({"question": "does the documented claim hold?", "depth": "quick"}),
+        ))
+        .await
+        .unwrap();
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("structured_content");
+    assert_eq!(structured["stats"]["sources_found"], 8);
+    assert_eq!(structured["stats"]["sources_kept"], 5);
+    assert!(structured["stats"]["rerank_skipped"].is_null());
+    let sources = structured["sources"].as_array().unwrap();
+    assert!(!sources.is_empty());
+    assert!(
+        sources.iter().all(|s| s["relevance"].is_number()),
+        "{sources:?}"
+    );
+    client.cancel().await.unwrap();
+}

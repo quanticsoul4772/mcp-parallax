@@ -71,6 +71,11 @@ pub(super) struct RecordDims {
     passes: Option<u32>,
     /// The research run's Exa cost accumulator (059); `None` for other tools.
     search_cost: Option<Arc<crate::telemetry::SearchCost>>,
+    /// The research run's page counts (061); `None` for other tools.
+    pages: Option<Arc<crate::telemetry::PageCounts>>,
+    /// The research run's non-model usage (061 review finding 3); `None`
+    /// for other tools.
+    non_model: Option<Arc<crate::telemetry::NonModelUsage>>,
 }
 
 impl RecordDims {
@@ -81,6 +86,8 @@ impl RecordDims {
             effort,
             passes: None,
             search_cost: None,
+            pages: None,
+            non_model: None,
         }
     }
 
@@ -91,6 +98,8 @@ impl RecordDims {
             effort,
             passes,
             search_cost: None,
+            pages: None,
+            non_model: None,
         }
     }
 }
@@ -148,15 +157,19 @@ impl Parallax {
         clock: Arc<dyn TimeProvider>,
         config: &Config,
     ) -> Result<Self, AppError> {
-        let embedder: Option<Arc<dyn Embedder>> = match config.voyage_api_key {
+        // 061: one Voyage client serves both memory (embeddings) and
+        // research (rerank); present exactly when VOYAGE_API_KEY is set.
+        let voyage = match config.voyage_api_key {
             Some(_) => Some(Arc::new(VoyageClient::new(config)?)),
             None => None,
         };
+        let embedder = voyage.clone().map(|v| v as Arc<dyn Embedder>);
+        let reranker = voyage.map(|v| v as Arc<dyn crate::traits::rerank::Reranker>);
         let search: Option<Arc<dyn SearchProvider>> = match config.exa_api_key {
             Some(_) => Some(Arc::new(ExaClient::new(config)?)),
             None => None,
         };
-        Self::with_capabilities(client, storage, clock, config, embedder, search)
+        Self::with_all_capabilities(client, storage, clock, config, embedder, search, reranker)
     }
 
     /// Report the resolved routing table once, before serving (018 FR-005).
@@ -234,7 +247,6 @@ impl Parallax {
     /// # Errors
     ///
     /// Propagates the registry's flat+closed schema assertion.
-    #[allow(clippy::too_many_lines)] // linear capability-wiring composition root
     pub fn with_capabilities(
         client: Arc<dyn ModelClient>,
         storage: Arc<dyn Storage>,
@@ -242,6 +254,25 @@ impl Parallax {
         config: &Config,
         embedder: Option<Arc<dyn Embedder>>,
         search: Option<Arc<dyn SearchProvider>>,
+    ) -> Result<Self, AppError> {
+        Self::with_all_capabilities(client, storage, clock, config, embedder, search, None)
+    }
+
+    /// [`Parallax::with_capabilities`] plus research's page reranker (061):
+    /// research reranks its fetched pages iff `reranker` is `Some`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the registry's flat+closed schema assertion.
+    #[allow(clippy::too_many_lines)] // linear capability-wiring composition root
+    pub fn with_all_capabilities(
+        client: Arc<dyn ModelClient>,
+        storage: Arc<dyn Storage>,
+        clock: Arc<dyn TimeProvider>,
+        config: &Config,
+        embedder: Option<Arc<dyn Embedder>>,
+        search: Option<Arc<dyn SearchProvider>>,
+        reranker: Option<Arc<dyn crate::traits::rerank::Reranker>>,
     ) -> Result<Self, AppError> {
         let mut registry = ModeRegistry::new();
         verify::register(&mut registry, config.verify_ensemble_k)?;
@@ -360,6 +391,7 @@ impl Parallax {
 
         let research = match search {
             Some(search) => Some(Arc::new(ResearchDeps {
+                reranker,
                 scope_client: pool.for_site(CallSite::ResearchScope),
                 extract_client: pool.for_site(CallSite::ResearchExtract),
                 verify_client: pool.for_site(CallSite::ResearchVerify),
@@ -919,6 +951,8 @@ impl Parallax {
         // 059 FR-010: one accumulator per run, read by the record guard on
         // every exit and added to by the pipeline on every Exa call.
         let search_cost = Arc::new(crate::telemetry::SearchCost::default());
+        let pages = Arc::new(crate::telemetry::PageCounts::default());
+        let non_model = Arc::new(crate::telemetry::NonModelUsage::default());
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a
@@ -953,11 +987,23 @@ impl Parallax {
             RecordDims {
                 depth: Some(depth),
                 search_cost: Some(Arc::clone(&search_cost)),
+                pages: Some(Arc::clone(&pages)),
+                non_model: Some(Arc::clone(&non_model)),
                 ..RecordDims::default()
             },
             ct,
             caller,
-            async { pipeline::run_at(&deps, &params, concurrency, &search_cost).await },
+            async {
+                pipeline::run_at(
+                    &deps,
+                    &params,
+                    concurrency,
+                    &search_cost,
+                    &pages,
+                    &non_model,
+                )
+                .await
+            },
         )
         .await
     }

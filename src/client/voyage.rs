@@ -13,11 +13,17 @@
 use crate::config::Config;
 use crate::error::AppError;
 use crate::traits::embedder::{Embedder, Embedding};
+use crate::traits::rerank::{RerankResult, Reranker};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
 const VOYAGE_API_BASE: &str = "https://api.voyageai.com";
+
+/// The reranker research uses (061 research.md D2): the provider's current
+/// model; `rerank-2.5` is listed among its older models.
+pub const RERANK_MODEL: &str = "rerank-3";
 
 /// Thin `reqwest` client implementing [`Embedder`] against the Voyage API.
 pub struct VoyageClient {
@@ -73,9 +79,9 @@ impl VoyageClient {
         self
     }
 
-    async fn send_once(&self, body: &Value) -> Result<reqwest::Response, AppError> {
+    async fn send_once(&self, endpoint: &str, body: &Value) -> Result<reqwest::Response, AppError> {
         self.http
-            .post(format!("{}/v1/embeddings", self.base_url))
+            .post(format!("{}{endpoint}", self.base_url))
             .bearer_auth(&self.api_key)
             .timeout(Duration::from_millis(self.timeout_ms))
             .json(body)
@@ -100,7 +106,13 @@ impl VoyageClient {
             "model": self.model,
             "input_type": input_type,
         });
+        let payload: EmbeddingsResponse = self.post("/v1/embeddings", &body).await?;
+        interpret(payload)
+    }
 
+    /// POST `body` to `endpoint` under the shared retry policy and decode the
+    /// 2xx reply.
+    async fn post<T: DeserializeOwned>(&self, endpoint: &str, body: &Value) -> Result<T, AppError> {
         let attempts_max = self.max_retries.saturating_add(1);
         let mut last_error = String::new();
 
@@ -112,7 +124,7 @@ impl VoyageClient {
                 tokio::time::sleep(Duration::from_millis(backoff)).await;
             }
 
-            let response = match self.send_once(&body).await {
+            let response = match self.send_once(endpoint, body).await {
                 Ok(r) => r,
                 // A timeout consumed the full per-request budget — terminal.
                 Err(timeout @ AppError::Timeout { .. }) => return Err(timeout),
@@ -134,7 +146,7 @@ impl VoyageClient {
                 )));
             }
 
-            let payload: EmbeddingsResponse = response.json().await.map_err(|e| {
+            let payload: T = response.json().await.map_err(|e| {
                 if e.is_timeout() {
                     AppError::Timeout {
                         what: "request",
@@ -144,7 +156,7 @@ impl VoyageClient {
                     AppError::EmbeddingProvider(format!("response body unreadable: {e}"))
                 }
             })?;
-            return interpret(payload);
+            return Ok(payload);
         }
 
         Err(AppError::RetriesExhausted {
@@ -167,6 +179,81 @@ impl Embedder for VoyageClient {
     fn model_id(&self) -> &str {
         &self.model
     }
+}
+
+#[async_trait::async_trait]
+impl Reranker for VoyageClient {
+    async fn rerank(&self, query: &str, documents: &[String]) -> Result<RerankResult, AppError> {
+        let body = json!({
+            "query": query,
+            "documents": documents,
+            "model": RERANK_MODEL,
+            "truncation": true,
+        });
+        let payload: RerankResponse = self.post("/v1/rerank", &body).await?;
+        interpret_rerank(payload, documents.len())
+    }
+
+    fn model_id(&self) -> &str {
+        RERANK_MODEL
+    }
+}
+
+/// Map a 2xx rerank reply to a score per document in input order. Every
+/// input index exactly once, or the reply is out of contract (061 contract).
+///
+/// An out-of-contract reply was still billed, so its tokens ride on the
+/// error (061 review finding 4).
+fn interpret_rerank(payload: RerankResponse, count: usize) -> Result<RerankResult, AppError> {
+    let total_tokens = payload.usage.total_tokens;
+    let scores = scores_in_order(payload.data, count).map_err(|e| e.metered(total_tokens, 0))?;
+    Ok(RerankResult {
+        scores,
+        total_tokens,
+    })
+}
+
+fn scores_in_order(data: Vec<RerankDatum>, count: usize) -> Result<Vec<f32>, AppError> {
+    let mut scores: Vec<Option<f32>> = vec![None; count];
+    for datum in data {
+        let slot = scores.get_mut(datum.index).ok_or_else(|| {
+            AppError::EmbeddingProvider(format!(
+                "out-of-contract rerank reply: index {} out of range",
+                datum.index
+            ))
+        })?;
+        if slot.replace(datum.relevance_score).is_some() {
+            return Err(AppError::EmbeddingProvider(format!(
+                "out-of-contract rerank reply: index {} scored twice",
+                datum.index
+            )));
+        }
+    }
+    scores
+        .into_iter()
+        .enumerate()
+        .map(|(i, s)| {
+            s.ok_or_else(|| {
+                AppError::EmbeddingProvider(format!(
+                    "out-of-contract rerank reply: index {i} not scored"
+                ))
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+struct RerankResponse {
+    #[serde(default)]
+    data: Vec<RerankDatum>,
+    #[serde(default)]
+    usage: VoyageUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct RerankDatum {
+    index: usize,
+    relevance_score: f32,
 }
 
 /// Map a 2xx embeddings response to an [`Embedding`] or its outcome class.
@@ -240,6 +327,90 @@ mod tests {
         })
     }
 
+    /// 061 review finding 4: an out-of-contract reply was still billed; its
+    /// tokens ride on the error.
+    #[test]
+    fn a_malformed_rerank_reply_keeps_its_billed_tokens() {
+        let payload: RerankResponse = serde_json::from_value(serde_json::json!({
+            "data": [
+                { "index": 0, "relevance_score": 0.9 },
+                { "index": 1, "relevance_score": 0.8 }
+            ],
+            "usage": { "total_tokens": 50_000 }
+        }))
+        .unwrap();
+        let error = interpret_rerank(payload, 3).unwrap_err();
+        assert_eq!(error.billed(), (50_000, 0));
+        assert!(error.to_string().contains("out-of-contract"), "{error}");
+    }
+
+    fn docs() -> Vec<String> {
+        vec!["alpha".into(), "beta".into(), "gamma".into()]
+    }
+
+    /// 061 T006 (contract): the rerank request is exactly the contract's,
+    /// with the bearer key; reply indices map scores back to input order.
+    #[tokio::test]
+    async fn rerank_sends_the_contract_request_and_maps_scores_to_input_order() {
+        use crate::traits::rerank::Reranker;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/rerank"))
+            .and(header("authorization", "Bearer voyage-test-key"))
+            .and(wiremock::matchers::body_json(json!({
+                "query": "which is best?",
+                "documents": ["alpha", "beta", "gamma"],
+                "model": "rerank-3",
+                "truncation": true
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [
+                    {"index": 2, "relevance_score": 0.9},
+                    {"index": 0, "relevance_score": 0.4},
+                    {"index": 1, "relevance_score": 0.1}
+                ],
+                "model": "rerank-3",
+                "usage": {"total_tokens": 321}
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let out = client_for(&mock)
+            .rerank("which is best?", &docs())
+            .await
+            .unwrap();
+        assert_eq!(out.scores, vec![0.4, 0.1, 0.9]);
+        assert_eq!(out.total_tokens, 321);
+        assert_eq!(Reranker::model_id(&client_for(&mock)), "rerank-3");
+    }
+
+    /// 061 T006 (contract): a reply that does not score every input index
+    /// exactly once, or carries a non-numeric score, is an error.
+    #[tokio::test]
+    async fn a_malformed_rerank_reply_is_an_error() {
+        use crate::traits::rerank::Reranker;
+        let bad_replies = [
+            json!({"data": [{"index": 0, "relevance_score": 0.4}, {"index": 1, "relevance_score": 0.1}], "usage": {"total_tokens": 1}}),
+            json!({"data": [{"index": 0, "relevance_score": 0.4}, {"index": 0, "relevance_score": 0.3}, {"index": 1, "relevance_score": 0.1}], "usage": {"total_tokens": 1}}),
+            json!({"data": [{"index": 0, "relevance_score": 0.4}, {"index": 1, "relevance_score": 0.1}, {"index": 7, "relevance_score": 0.2}], "usage": {"total_tokens": 1}}),
+            json!({"data": [{"index": 0, "relevance_score": "high"}, {"index": 1, "relevance_score": 0.1}, {"index": 2, "relevance_score": 0.2}], "usage": {"total_tokens": 1}}),
+        ];
+        for reply in bad_replies {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/rerank"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(reply.clone()))
+                .mount(&mock)
+                .await;
+            let err = client_for(&mock).rerank("q", &docs()).await.unwrap_err();
+            assert!(
+                matches!(err.root(), AppError::EmbeddingProvider(_)),
+                "{reply}: {err:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn missing_key_is_a_loud_construction_error() {
         let mut config = test_config();
@@ -277,7 +448,7 @@ mod tests {
         assert_eq!(doc.input_tokens, 7);
         let query = client.embed_query("some text").await.unwrap();
         assert_eq!(query.vector, vec![2.0]);
-        assert_eq!(client.model_id(), "voyage-4");
+        assert_eq!(Embedder::model_id(&client), "voyage-4");
     }
 
     #[tokio::test]

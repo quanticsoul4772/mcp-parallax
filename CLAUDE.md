@@ -293,7 +293,18 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `060-claude-cli-backend`; all 29 tasks closed,
+**Active Spec Kit feature: `061-research-rerank`; all 18 tasks closed**
+([plan](specs/061-research-rerank/plan.md)) — with `VOYAGE_API_KEY` set,
+research reranks the fetched pages against the question with Voyage
+`rerank-3` and extracts claims only from the top 5 / 15 / 35 by depth; a
+failed or late rerank reads every page and records why in
+`stats.rerank_skipped`. Records gain `pages_fetched`/`pages_kept`; rerank
+tokens are priced but kept out of the model-token totals. A live run on
+claude_cli read 40% fewer pages (141 → 85), all answers grounded; the
+standard-depth time limit fails with or without the reranker (claude_cli
+research speed, a separate issue).
+
+**060 (`060-claude-cli-backend`); all 29 tasks closed,
 the research live check deferred**
 ([plan](specs/060-claude-cli-backend/plan.md)) — `PARALLAX_BACKEND=claude_cli`
 runs every model call through the operator's own signed-in Claude Code

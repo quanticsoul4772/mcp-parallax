@@ -13,6 +13,16 @@ arc.
 
 ### Added
 
+* **Research reads only the most relevant pages (061)** — with
+  `VOYAGE_API_KEY` set, research reranks the fetched pages against the
+  question with Voyage `rerank-3` and extracts claims only from the top
+  5 / 15 / 35 (quick / standard / deep). In a live run, 40% fewer pages were
+  read with every answer grounded. A failed or late rerank never fails the run:
+  every page is read and `stats.rerank_skipped` names the reason. Results gain
+  `stats.sources_kept`, `stats.rerank_skipped` and per-source `relevance`;
+  invocation records gain `pages_fetched` and `pages_kept` (also span
+  attributes); rerank tokens are priced at $0.05 per million and kept out of
+  the record's model-token totals.
 * **Run on your Claude subscription (060)** — `PARALLAX_BACKEND=claude_cli`
   runs every model call through the operator's own signed-in Claude Code
   (`claude -p`), isolated per call (no MCP servers, tools, CLAUDE.md, hooks or

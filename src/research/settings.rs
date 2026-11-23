@@ -14,6 +14,9 @@ pub const SEARCH_COUNT_MAX: u8 = 20;
 pub struct RunSettings {
     pub(crate) angles: u8,
     pub(crate) max_sources: usize,
+    /// Pages kept for extraction after a rerank (061 D3): the tier's keep
+    /// count, never above the run's fetch cap.
+    pub(crate) keep_sources: usize,
     pub(crate) verify_k: u8,
     pub(crate) deadline_ms: u64,
     pub(crate) budget_tokens: u64,
@@ -90,11 +93,13 @@ pub fn validate_params(
         }
     }
 
+    let max_sources = constraints
+        .max_sources
+        .map_or(tier.max_sources, |n| n as usize);
     Ok(RunSettings {
         angles: tier.angles,
-        max_sources: constraints
-            .max_sources
-            .map_or(tier.max_sources, |n| n as usize),
+        max_sources,
+        keep_sources: tier.keep_sources.min(max_sources),
         verify_k: tier.verify_k,
         deadline_ms: constraints.deadline_ms.unwrap_or(tier.default_deadline_ms),
         budget_tokens: constraints

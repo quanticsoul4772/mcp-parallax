@@ -144,6 +144,7 @@ fn deps_with_client(
             "claude-opus-4-8",
             crate::routing::DefaultVar::AnthropicModel,
         ),
+        reranker: None,
     }
 }
 
@@ -357,9 +358,16 @@ async fn the_runs_exa_cost_sums_every_search_and_the_contents_call() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let cost = crate::telemetry::SearchCost::default();
-    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
-        .await
-        .unwrap();
+    run_at(
+        &deps,
+        &params("q?", Some(Depth::Quick)),
+        4,
+        &cost,
+        &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
+    )
+    .await
+    .unwrap();
     let total = cost.total().unwrap();
     assert!((total - 0.019).abs() < 1e-9, "{total}");
 }
@@ -675,9 +683,16 @@ async fn a_call_that_sent_nothing_leaves_the_cost_known() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let cost = crate::telemetry::SearchCost::default();
-    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
-        .await
-        .unwrap();
+    run_at(
+        &deps,
+        &params("q?", Some(Depth::Quick)),
+        4,
+        &cost,
+        &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
+    )
+    .await
+    .unwrap();
     let total = cost.total().unwrap();
     assert!((total - 0.012).abs() < 1e-9, "{total}");
 }
@@ -715,9 +730,16 @@ async fn a_failed_exa_call_makes_the_runs_cost_unknown() {
     });
     let deps = deps_with(client, search, Arc::new(SystemClock));
     let cost = crate::telemetry::SearchCost::default();
-    run_at(&deps, &params("q?", Some(Depth::Quick)), 4, &cost)
-        .await
-        .unwrap();
+    run_at(
+        &deps,
+        &params("q?", Some(Depth::Quick)),
+        4,
+        &cost,
+        &crate::telemetry::PageCounts::default(),
+        &crate::telemetry::NonModelUsage::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(cost.total(), None);
 }
 
@@ -2187,4 +2209,626 @@ fn a_caller_may_lower_concurrency_and_a_raise_is_reduced_to_the_ceiling() {
     // The ceiling follows configuration, not a constant.
     assert_eq!(effective_concurrency(Some(16), 32).unwrap(), 16);
     assert_eq!(effective_concurrency(Some(16), 4).unwrap(), 4);
+}
+
+// ---- 061 US1: rerank keeps only the top pages ---------------------------------
+
+const EIGHT: &[&str] = &[
+    "https://example.com/u1",
+    "https://example.com/u2",
+    "https://example.com/u3",
+    "https://example.com/u4",
+    "https://example.com/u5",
+    "https://example.com/u6",
+    "https://example.com/u7",
+    "https://example.com/u8",
+];
+
+/// Extraction prompts that carry `text` (verification prompts also quote
+/// kept pages, so a plain count would see them twice).
+fn extractions_with(client: &ScriptedClient, text: &str) -> usize {
+    client
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|p| p.contains("extract falsifiable claims") && p.contains(text))
+        .count()
+}
+
+fn shared_claim_client() -> Arc<ScriptedClient> {
+    scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the shared claim holds"] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "Shared holds [s2].", "gaps": [], "gap_targets": [] }),
+    )
+}
+
+/// 061 T008 (US1 scenario 1, FR-001/FR-002/FR-006): with more scorable pages
+/// than the keep count, the reranker sees the question and every page in
+/// fetched order, extraction runs on exactly the top-K pages, kept sources
+/// carry their relevance, and the stats count what was kept.
+#[tokio::test]
+async fn rerank_keeps_only_the_top_pages_for_extraction() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .withf(|query, documents| {
+            query == "does it hold?"
+                && documents.len() == 8
+                && documents[0].contains("example.com/u1")
+                && documents[7].contains("example.com/u8")
+        })
+        .times(1)
+        .returning(|_, _| {
+            Ok(crate::traits::rerank::RerankResult {
+                scores: vec![0.1, 0.9, 0.2, 0.8, 0.3, 0.7, 0.6, 0.5],
+                total_tokens: 100,
+            })
+        });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+
+    // Quick keeps 5: u2, u4, u6, u7, u8 (scores 0.9, 0.8, 0.7, 0.6, 0.5).
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    for kept in ["u2", "u4", "u6", "u7", "u8"] {
+        assert_eq!(
+            extractions_with(&client, &format!("Content of https://example.com/{kept}.")),
+            1,
+            "{kept}"
+        );
+    }
+    for dropped in ["u1", "u3", "u5"] {
+        assert_eq!(
+            extractions_with(
+                &client,
+                &format!("Content of https://example.com/{dropped}.")
+            ),
+            0,
+            "{dropped}"
+        );
+    }
+    assert_eq!(result.stats.sources_kept, 5);
+    assert_eq!(result.stats.rerank_skipped, None);
+    assert!(!result.sources.is_empty());
+    assert!(
+        result.sources.iter().all(|s| s.relevance.is_some()),
+        "{:?}",
+        result.sources
+    );
+}
+
+/// 061 T008 (US1 scenario 2, FR-003; D7): with no more scorable pages than
+/// the keep count there is nothing to cut, so the reranker is not called and
+/// every page is kept.
+#[tokio::test]
+async fn with_k_or_fewer_pages_the_reranker_is_not_called() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(&EIGHT[..5]),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().times(0);
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    assert_eq!(result.stats.sources_kept, 5);
+    assert!(result.sources.iter().all(|s| s.relevance.is_none()));
+}
+
+/// 061 T008 (US1 scenario 3, FR-004): without a reranker research is
+/// unchanged: every fetched page is extracted and nothing is scored.
+#[tokio::test]
+async fn without_a_reranker_research_is_unchanged() {
+    let client = shared_claim_client();
+    let deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 8);
+    assert_eq!(result.stats.sources_kept, 8);
+    assert_eq!(result.stats.rerank_skipped, None);
+    assert!(result.sources.iter().all(|s| s.relevance.is_none()));
+}
+
+/// 061 T008 (D7): a page with no text is not sent to the reranker and stays
+/// dropped as empty, as before.
+#[tokio::test]
+async fn an_empty_page_is_not_sent_to_the_reranker() {
+    let client = shared_claim_client();
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(|req| {
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| {
+                    let text = if u.ends_with("/u3") {
+                        String::new()
+                    } else {
+                        format!("Content of {u}.")
+                    };
+                    page(u, &text, false)
+                })
+                .collect(),
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .withf(|_, documents| documents.len() == 7 && documents.iter().all(|d| !d.contains("/u3")))
+        .times(1)
+        .returning(|_, documents| {
+            Ok(crate::traits::rerank::RerankResult {
+                scores: (0..documents.len())
+                    .map(|i| f32::from(u16::try_from(i).unwrap()))
+                    .collect(),
+                total_tokens: 10,
+            })
+        });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    assert_eq!(result.stats.sources_kept, 5);
+}
+
+// ---- 061 US2: a failed rerank never fails the run ----------------------------
+
+/// 061 T011 (US2, FR-005): a reranker error leaves today's behavior: every
+/// page is extracted, nothing is scored, and the reason is recorded.
+#[tokio::test]
+async fn a_rerank_error_falls_back_and_records_why() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .returning(|_, _| Err(AppError::EmbeddingProvider("HTTP 503".into())));
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 8);
+    assert_eq!(result.stats.sources_kept, 8);
+    let reason = result.stats.rerank_skipped.clone().unwrap();
+    assert!(reason.starts_with("provider_error"), "{reason}");
+    assert!(result.sources.iter().all(|s| s.relevance.is_none()));
+}
+
+/// 061 T011 (US2, FR-005): a reply that does not score every page is a
+/// malformed reply: the same fallback, with that reason.
+#[tokio::test]
+async fn a_malformed_rerank_reply_falls_back_and_records_why() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(|_, _| {
+        Ok(crate::traits::rerank::RerankResult {
+            scores: vec![0.5, 0.4, 0.3],
+            total_tokens: 1,
+        })
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, _usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert_eq!(client.count_containing("extract falsifiable claims"), 8);
+    let reason = result.stats.rerank_skipped.unwrap();
+    assert!(reason.starts_with("malformed_reply"), "{reason}");
+}
+
+/// A reranker that never answers in time.
+struct SlowReranker;
+
+#[async_trait::async_trait]
+impl crate::traits::rerank::Reranker for SlowReranker {
+    async fn rerank(
+        &self,
+        _: &str,
+        _: &[String],
+    ) -> Result<crate::traits::rerank::RerankResult, AppError> {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        Err(AppError::EmbeddingProvider("too late".into()))
+    }
+
+    fn model_id(&self) -> &'static str {
+        "rerank-3"
+    }
+}
+
+/// 061 T011 (US2, FR-007): the rerank call is bounded by the run's deadline;
+/// cut off, the run still completes and records `timeout`, never an error.
+#[tokio::test]
+async fn a_rerank_cut_off_by_the_deadline_is_recorded_not_fatal() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(move |req| {
+        // The deadline passes once the pages are in.
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| page(u, &format!("Content of {u}."), false))
+                .collect(),
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    deps.reranker = Some(Arc::new(SlowReranker));
+
+    let started = std::time::Instant::now();
+    let (result, _usage) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "waited for the reranker"
+    );
+    assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
+    assert!(result.stats.stopped_early);
+}
+
+// ---- 061 US3: the cut is visible ---------------------------------------------
+
+fn top_k_reranker() -> crate::traits::rerank::MockReranker {
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(|_, _| {
+        Ok(crate::traits::rerank::RerankResult {
+            scores: vec![0.1, 0.9, 0.2, 0.8, 0.3, 0.7, 0.6, 0.5],
+            total_tokens: 100,
+        })
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    reranker
+}
+
+/// 061 T013 (US3, D8): a reranked run's usage carries the rerank tokens
+/// under `rerank-3` (input only), so they reach the record's usage and cost;
+/// the model-token budget does not count them.
+#[tokio::test]
+async fn rerank_tokens_reach_the_runs_usage_under_the_rerank_model() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    deps.reranker = Some(Arc::new(top_k_reranker()));
+    let (result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    let rerank: Vec<_> = usage.iter().filter(|(m, _)| *m == "rerank-3").collect();
+    assert_eq!(rerank.len(), 1, "{:?}", usage.models());
+    assert_eq!(
+        (rerank[0].1.input_tokens, rerank[0].1.output_tokens),
+        (100, 0)
+    );
+    // stats.tokens is model tokens only: 1 scope + 5 extract + 1 verify (the
+    // five identical claims dedup to one) + 1 synthesis = 8 calls at (10 + 5);
+    // the 100 rerank tokens are not among them.
+    assert_eq!(result.stats.tokens, 8 * 15);
+}
+
+/// 061 T013 (US3): a skipped rerank adds no rerank usage.
+#[tokio::test]
+async fn a_skipped_rerank_adds_no_rerank_usage() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker
+        .expect_rerank()
+        .returning(|_, _| Err(AppError::EmbeddingProvider("HTTP 503".into())));
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+    let (_result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    assert!(!usage.models().contains(&"rerank-3".to_string()));
+}
+
+/// 061 T013 (US3, FR-006; analyze A2): the run reports how many pages came
+/// back and how many reached extraction, for the invocation record.
+#[tokio::test]
+async fn the_run_reports_pages_fetched_and_kept() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    deps.reranker = Some(Arc::new(top_k_reranker()));
+    let pages = crate::telemetry::PageCounts::default();
+    run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        4,
+        &crate::telemetry::SearchCost::default(),
+        &pages,
+        &crate::telemetry::NonModelUsage::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pages.get(), Some((8, 5)));
+}
+
+// ---- 061 review findings -------------------------------------------------------
+
+/// Review finding 1: a page that came back under a denied domain is dropped
+/// before the rerank, so it takes no top-K slot and its text never reaches
+/// the reranker; the next-best allowed pages fill the cut.
+#[tokio::test]
+async fn a_denied_page_takes_no_top_k_slot_and_is_not_reranked() {
+    let client = shared_claim_client();
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(|req| {
+        let pages = req
+            .urls
+            .iter()
+            .enumerate()
+            .map(|(i, u)| {
+                if i < 2 {
+                    let mut moved =
+                        page(&format!("https://evil.example/{i}"), "Denied text.", false);
+                    moved.requested_url = u.clone();
+                    moved
+                } else {
+                    page(u, &format!("Content of {u}."), false)
+                }
+            })
+            .collect();
+        Ok(ContentsResults {
+            pages,
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen_in = Arc::clone(&seen);
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(move |_, documents| {
+        seen_in.lock().unwrap().extend(documents.iter().cloned());
+        // Denied pages, if sent, would win every slot.
+        let scores = documents
+            .iter()
+            .map(|d| if d.contains("Denied") { 1.0 } else { 0.5 })
+            .collect();
+        Ok(crate::traits::rerank::RerankResult {
+            scores,
+            total_tokens: 1,
+        })
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+    let p = ResearchParams {
+        constraints: Some(Constraints {
+            domains_deny: Some(vec!["evil.example".into()]),
+            ..Constraints::default()
+        }),
+        ..params("does it hold?", Some(Depth::Quick))
+    };
+
+    let (result, _usage) = run(&deps, &p).await.unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 6, "only the six allowed pages are reranked");
+    assert!(seen.iter().all(|d| !d.contains("Denied")));
+    assert_eq!(client.count_containing("extract falsifiable claims"), 5);
+    assert_eq!(result.stats.sources_kept, 5);
+}
+
+/// Review finding 2: fetched counts pages that came back with text; kept
+/// counts only those that went to extraction, so kept never exceeds fetched.
+/// Here 8 candidates, 6 pages back, one of them empty: 5 and 5.
+#[tokio::test]
+async fn kept_never_exceeds_fetched() {
+    let client = shared_claim_client();
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(|req| {
+        let pages = req
+            .urls
+            .iter()
+            .take(6)
+            .enumerate()
+            .map(|(i, u)| page(u, if i == 5 { "  " } else { "Some text." }, false))
+            .collect();
+        Ok(ContentsResults {
+            pages,
+            cost_usd: None,
+        })
+    });
+    let deps = deps_with(Arc::clone(&client), search, Arc::new(SystemClock));
+    let pages = crate::telemetry::PageCounts::default();
+    let (result, _usage) = run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        4,
+        &crate::telemetry::SearchCost::default(),
+        &pages,
+        &crate::telemetry::NonModelUsage::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pages.get(), Some((5, 5)));
+    assert_eq!(result.stats.sources_kept, 5);
+}
+
+/// Review finding 4: a malformed reply's billed tokens (carried on the
+/// error) reach the run's usage, and the skip is still `malformed_reply`.
+#[tokio::test]
+async fn a_malformed_replys_billed_tokens_reach_the_usage() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(
+        Arc::clone(&client),
+        search_returning(EIGHT),
+        Arc::new(SystemClock),
+    );
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().returning(|_, _| {
+        Err(
+            AppError::EmbeddingProvider("out-of-contract rerank reply: index 2 not scored".into())
+                .metered(50, 0),
+        )
+    });
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+    let (result, usage) = run(&deps, &params("does it hold?", Some(Depth::Quick)))
+        .await
+        .unwrap();
+    let rerank: Vec<_> = usage.iter().filter(|(m, _)| *m == "rerank-3").collect();
+    assert_eq!(rerank.len(), 1, "{:?}", usage.models());
+    assert_eq!(rerank[0].1.input_tokens, 50);
+    let reason = result.stats.rerank_skipped.unwrap();
+    assert!(reason.starts_with("malformed_reply"), "{reason}");
+}
+
+/// Review finding 3: when the run fails after the rerank, the rerank's
+/// usage is still reported for the failed run's record.
+#[tokio::test]
+async fn a_failed_run_still_reports_the_rerank_usage() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": ["the shared claim holds"] }),
+        |_, _| supported(),
+        |_| json!({ "not": "a synthesis" }),
+    );
+    let mut deps = deps_with(client, search_returning(EIGHT), Arc::new(SystemClock));
+    deps.reranker = Some(Arc::new(top_k_reranker()));
+    let side = crate::telemetry::NonModelUsage::default();
+    let outcome = run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        4,
+        &crate::telemetry::SearchCost::default(),
+        &crate::telemetry::PageCounts::default(),
+        &side,
+    )
+    .await;
+    assert!(outcome.is_err(), "synthesis must fail");
+    let usage = side.snapshot();
+    let rerank: Vec<_> = usage.iter().filter(|(m, _)| *m == "rerank-3").collect();
+    assert_eq!(rerank.len(), 1);
+    assert_eq!(rerank[0].1.input_tokens, 100);
+}
+
+/// Review finding 5: when the deadline has already passed by the time the
+/// pages are in, Voyage is not called at all; the skip is `timeout`.
+#[tokio::test]
+async fn a_rerank_after_the_deadline_is_not_called() {
+    let client = scripted(
+        scope_value(),
+        |_| json!({ "claims": [] }),
+        |_, _| supported(),
+        |_| json!({ "answer": "n/a", "gaps": [], "gap_targets": [] }),
+    );
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let passed = Arc::clone(&flag);
+    let mut search = search_hits(EIGHT);
+    search.expect_contents().returning(move |req| {
+        passed.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(ContentsResults {
+            pages: req
+                .urls
+                .iter()
+                .map(|u| page(u, &format!("Content of {u}."), false))
+                .collect(),
+            cost_usd: None,
+        })
+    });
+    let mut deps = deps_with(client, search, clock_passing_the_deadline_when(flag));
+    let mut reranker = crate::traits::rerank::MockReranker::new();
+    reranker.expect_rerank().times(0);
+    reranker
+        .expect_model_id()
+        .return_const("rerank-3".to_string());
+    deps.reranker = Some(Arc::new(reranker));
+
+    let (result, usage) = run(&deps, &with_deadline(30_000)).await.unwrap();
+    assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
+    assert!(result.stats.stopped_early);
+    assert!(!usage.models().contains(&"rerank-3".to_string()));
+}
+
+/// Review test gap: a rerank still running when the time left runs out is
+/// cut off then, on the real clock, and the run completes.
+#[tokio::test]
+async fn a_rerank_still_running_is_cut_off_when_time_runs_out() {
+    let client = shared_claim_client();
+    let mut deps = deps_with(client, search_returning(EIGHT), Arc::new(SystemClock));
+    deps.reranker = Some(Arc::new(SlowReranker));
+    let started = std::time::Instant::now();
+    let (result, _usage) = run(&deps, &with_deadline(5_000)).await.unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_secs(4),
+        "cut off early: {elapsed:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "waited for the reranker: {elapsed:?}"
+    );
+    assert_eq!(result.stats.rerank_skipped.as_deref(), Some("timeout"));
 }
