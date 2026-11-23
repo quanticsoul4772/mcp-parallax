@@ -122,6 +122,11 @@ voyage-3-large), `voyage-4`, `voyage-4-lite`, `voyage-4-nano` (open-weights on H
 tokens free. Keep mcp-reasoning's thin Voyage client pattern. **The reranker also
 doubles as a watchdog signal** (relevance scoring for retrieved memories) — see below.
 
+> **Amendment (2026-11-23, feature 061).** The reranker in use is
+> **`rerank-3`**: Voyage's pricing page now lists `rerank-2.5` under older
+> models. Research calls it once per run on the fetched pages and extracts only
+> the top 5 / 15 / 35 by depth; it is not used for memory recall.
+
 ### Vector store — sqlite-vec (single-store), LanceDB if it outgrows it
 
 - **sqlite-vec** — pure-C, zero-dep SQLite extension; keeps the memory store *inside
