@@ -102,6 +102,7 @@ mod tests {
                 value: json!({ "claims": claims }),
                 input_tokens: 50,
                 output_tokens: 20,
+                reported_cost_micros: None,
             })
         });
 

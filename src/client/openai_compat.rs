@@ -487,6 +487,7 @@ fn interpret(payload: &ChatResponse, rung: Rung, model: &str) -> Result<Completi
                     value,
                     input_tokens,
                     output_tokens,
+                    reported_cost_micros: None,
                 })
         }
         (_, Some("stop")) => {
@@ -506,6 +507,7 @@ fn interpret(payload: &ChatResponse, rung: Rung, model: &str) -> Result<Completi
                     value,
                     input_tokens,
                     output_tokens,
+                    reported_cost_micros: None,
                 })
         }
         // Anything else — including a `tool_calls` finish on a rung that never

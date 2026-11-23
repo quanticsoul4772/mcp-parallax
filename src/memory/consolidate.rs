@@ -479,7 +479,7 @@ mod tests {
             Ok(Completion {
                 value: json!({ "relation": "updates", "basis": "The new memory reflects the move." }),
                 input_tokens: 40,
-                output_tokens: 12,
+                output_tokens: 12, reported_cost_micros: None,
             })
         });
         let new = memory(
@@ -509,6 +509,7 @@ mod tests {
                 value: json!({ "relation": "sideways", "basis": "?" }),
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         let new = memory(

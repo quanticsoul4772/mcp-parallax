@@ -575,6 +575,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 90,
                 output_tokens: 30,
+                reported_cost_micros: None,
             })
         });
         mock
@@ -589,6 +590,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 90,
                 output_tokens: 30,
+                reported_cost_micros: None,
             })
         });
         mock
@@ -794,6 +796,7 @@ mod tests {
                 value: per_field_answer(&[70, 20, 40], &["cost"]),
                 input_tokens: 90,
                 output_tokens: 30,
+                reported_cost_micros: None,
             })
         });
         let options = labels(3);
@@ -1029,6 +1032,7 @@ mod tests {
                 value,
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         let out = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
@@ -1091,6 +1095,7 @@ mod tests {
                 value,
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         let out = run(&mock, &mode, &params("d", &["x", "y"]), 50_000)
@@ -1127,6 +1132,7 @@ mod tests {
                 value,
                 input_tokens: 1,
                 output_tokens: 1,
+                reported_cost_micros: None,
             })
         });
         run(&mock, &mode, &params("d", &["x", "y"]), 50_000)

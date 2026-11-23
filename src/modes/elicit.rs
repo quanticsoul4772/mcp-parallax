@@ -469,6 +469,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 120,
                 output_tokens: 40,
+                reported_cost_micros: None,
             })
         });
         mock
@@ -483,6 +484,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 120,
                 output_tokens: 40,
+                reported_cost_micros: None,
             })
         });
         mock
@@ -639,6 +641,7 @@ mod tests {
                 value,
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         let out = run(&mock, &mode, None, &params("t", None), 50_000)

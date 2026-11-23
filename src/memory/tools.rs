@@ -557,6 +557,7 @@ mod tests {
                 value: serde_json::json!({ "relation": "distinct", "basis": "test" }),
                 input_tokens: 0,
                 output_tokens: 0,
+                reported_cost_micros: None,
             })
         });
         client
@@ -695,6 +696,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 100,
                 output_tokens: 20,
+                reported_cost_micros: None,
             })
         });
         mock

@@ -506,6 +506,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 10,
                 output_tokens: 5,
+                reported_cost_micros: None,
             })
         });
         client
@@ -698,6 +699,7 @@ mod tests {
                 value: reply(&[DECLINED]),
                 input_tokens: 1,
                 output_tokens: 1,
+                reported_cost_micros: None,
             })
         });
         let (attempt, _, _) = translate_once(&client, &mode(), "the claim text", None, None)
@@ -731,6 +733,7 @@ mod tests {
                 value: reply(&[DECLINED]),
                 input_tokens: 1,
                 output_tokens: 1,
+                reported_cost_micros: None,
             })
         });
         translate_once(&client, &mode(), "c", None, None)
@@ -815,6 +818,7 @@ mod tests {
                 value: reply(&[SUM]),
                 input_tokens: 1,
                 output_tokens: 1,
+                reported_cost_micros: None,
             })
         });
         let violation = Violation("parse error at token 3".into());

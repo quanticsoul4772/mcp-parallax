@@ -417,6 +417,7 @@ mod tests {
                     value: value.clone(),
                     input_tokens: 100,
                     output_tokens: 10,
+                    reported_cost_micros: None,
                 }),
                 Err(AppError::Refusal(m)) => Err(AppError::Refusal(m.clone())),
                 Err(other) => Err(AppError::Client(other.to_string())),

@@ -1775,6 +1775,7 @@ mod tests {
                     value: json!({ "verdict": "supported", "findings": [] }),
                     input_tokens: 100,
                     output_tokens: 10,
+                    reported_cost_micros: None,
                 })
             });
         let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
@@ -1941,6 +1942,7 @@ mod tests {
                 value: json!({ "verdict": "supported", "findings": [] }),
                 input_tokens: 100,
                 output_tokens: 10,
+                reported_cost_micros: None,
             })
         });
         let (server, storage) = server_with(mock).await;
@@ -2047,6 +2049,7 @@ mod tests {
                 value: json!({ "verdict": "supported", "findings": [] }),
                 input_tokens: 1,
                 output_tokens: 1,
+                reported_cost_micros: None,
             })
         }
     }

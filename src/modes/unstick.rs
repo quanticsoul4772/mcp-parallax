@@ -284,6 +284,7 @@ mod tests {
                 value: value.clone(),
                 input_tokens: 80,
                 output_tokens: 25,
+                reported_cost_micros: None,
             })
         });
         mock
