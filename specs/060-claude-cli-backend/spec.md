@@ -121,7 +121,7 @@ each error's wording and recorded outcome.
    **Then** the error says to sign in to Claude Code.
 3. **Given** the CLI reports a usage limit, **When** a call runs, **Then** the
    error says the subscription usage limit was reached and is recorded as a
-   rate-limit outcome, not a validation failure.
+   usage-limit outcome, not a validation failure.
 4. **Given** the CLI runs past the request timeout, **When** the timeout
    passes, **Then** the process is stopped and the call fails as a timeout.
 
@@ -168,7 +168,8 @@ each error's wording and recorded outcome.
   than the API backend's, overridable within the existing ceiling.
 - **FR-010**: Not-installed, not-signed-in, usage-limit and timeout failures
   MUST each produce a distinct error naming the cause and remedy; the usage
-  limit MUST be recorded as a rate-limit outcome.
+  limit MUST be recorded as a usage-limit outcome (new; plan D10 — no
+  rate-limit outcome existed).
 - **FR-011**: A call past the request timeout MUST stop its CLI process.
 - **FR-012**: Each invocation record MUST hold the token usage the CLI
   reports and its API-price estimate, marked as an estimate wherever the
