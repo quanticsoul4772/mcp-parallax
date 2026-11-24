@@ -128,6 +128,9 @@ async fn main() {
     // runs by a deep one.
     let mut max_deep_ms = 0_u128;
     let mut false_premise_confirmed = false;
+    // 063: a run cut off at its deadline must not pass, since the claude_cli
+    // standard target equals the standard deadline.
+    let mut stopped_early_count = 0_u32;
 
     for (i, (question, depth)) in QUESTIONS.iter().enumerate() {
         let start = Instant::now();
@@ -164,6 +167,9 @@ async fn main() {
                 let ok = citations_resolve(&result);
                 if ok {
                     grounded += 1;
+                }
+                if result.stats.stopped_early {
+                    stopped_early_count += 1;
                 }
                 // SC-007: the last question's premise (Rust 1.0 in 2018, with
                 // a GC) must not be confirmed.
@@ -225,6 +231,10 @@ async fn main() {
         "SC-001/002 grounded responses: {grounded}/{total} (target: all; typed structs end to end)"
     );
     println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < {standard_target_ms})   max deep: {max_deep_ms} ms (measured, no target)");
+    println!(
+        "stopped early: {stopped_early_count} of {} (target: 0)",
+        QUESTIONS.len()
+    );
     println!("SC-004 tiny-budget honesty: {tiny_ok}");
     println!("SC-007 false premise confirmed: {false_premise_confirmed} (target: false)");
 
@@ -232,6 +242,7 @@ async fn main() {
         && usize::try_from(total).unwrap() == QUESTIONS.len()
         && max_quick_ms < 150_000
         && max_standard_ms < standard_target_ms
+        && stopped_early_count == 0
         && tiny_ok
         && !false_premise_confirmed;
     println!("\nACCEPTANCE: {}", if pass { "PASS" } else { "FAIL" });
