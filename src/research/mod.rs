@@ -14,6 +14,7 @@ pub(crate) mod outcome;
 pub mod pipeline;
 pub mod prompts;
 pub mod rerank;
+pub mod screen;
 pub(crate) mod settings;
 pub(crate) mod synthesis;
 pub mod verdict;
@@ -341,6 +342,8 @@ pub(crate) struct SourceRecord {
     pub(crate) truncated: bool,
     /// The page's rerank relevance score (061), or `None`.
     pub(crate) relevance: Option<f32>,
+    /// Injection patterns found in the extracted text (063); empty when none.
+    pub(crate) injection_patterns: Vec<&'static str>,
 }
 
 /// A claim after verification.

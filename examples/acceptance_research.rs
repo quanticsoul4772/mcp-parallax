@@ -2,7 +2,8 @@
 //!
 //! SC-001/SC-002: ≥6 live questions — every cited source id resolves, zero
 //! fabricated citations, every response conforms to the typed structs.
-//! SC-003: quick < 150 s, standard < 4 min (amended from live measurement). SC-004: a tiny-budget run returns
+//! SC-003: quick < 150 s, standard < 4 min (amended from live measurement; on `claude_cli`,
+//! 062's standard deadline, 660 s). SC-004: a tiny-budget run returns
 //! well-formed with `stopped_early`. SC-007: a false-premise question is not
 //! confirmed. Results recorded in `specs/004-research-layer/quickstart.md`.
 //!
@@ -111,6 +112,13 @@ async fn main() {
         "EXA_API_KEY required for the acceptance run"
     );
     let deps = deps(&config);
+    // 062: on claude_cli the standard target is the claude_cli standard
+    // deadline, so the two cannot drift apart; other backends keep 240 s.
+    let standard_target_ms = if matches!(config.backend, mcp_parallax::config::Backend::ClaudeCli) {
+        u128::from(Depth::Standard.claude_cli_deadline_ms())
+    } else {
+        240_000
+    };
 
     let (mut grounded, mut total) = (0_u32, 0_u32);
     let mut max_quick_ms = 0_u128;
@@ -120,6 +128,9 @@ async fn main() {
     // runs by a deep one.
     let mut max_deep_ms = 0_u128;
     let mut false_premise_confirmed = false;
+    // 063: a run cut off at its deadline must not pass, since the claude_cli
+    // standard target equals the standard deadline.
+    let mut stopped_early_count = 0_u32;
 
     for (i, (question, depth)) in QUESTIONS.iter().enumerate() {
         let start = Instant::now();
@@ -157,6 +168,9 @@ async fn main() {
                 if ok {
                     grounded += 1;
                 }
+                if result.stats.stopped_early {
+                    stopped_early_count += 1;
+                }
                 // SC-007: the last question's premise (Rust 1.0 in 2018, with
                 // a GC) must not be confirmed.
                 if i == QUESTIONS.len() - 1 {
@@ -180,6 +194,12 @@ async fn main() {
                     result.stats.rerank_skipped,
                     result.answer.chars().take(220).collect::<String>()
                 );
+                for flagged in &result.stats.flagged_pages {
+                    println!(
+                        "   FLAGGED {} {:?} {}",
+                        flagged.id, flagged.injection_patterns, flagged.url
+                    );
+                }
             }
             Err(e) => println!("[ERROR {elapsed}ms] {question}: {e}\n"),
         }
@@ -210,14 +230,19 @@ async fn main() {
     println!(
         "SC-001/002 grounded responses: {grounded}/{total} (target: all; typed structs end to end)"
     );
-    println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < 240000)   max deep: {max_deep_ms} ms (measured, no target)");
+    println!("SC-003 max quick: {max_quick_ms} ms (target < 150000)   max standard: {max_standard_ms} ms (target < {standard_target_ms})   max deep: {max_deep_ms} ms (measured, no target)");
+    println!(
+        "stopped early: {stopped_early_count} of {} (target: 0)",
+        QUESTIONS.len()
+    );
     println!("SC-004 tiny-budget honesty: {tiny_ok}");
     println!("SC-007 false premise confirmed: {false_premise_confirmed} (target: false)");
 
     let pass = grounded == total
         && usize::try_from(total).unwrap() == QUESTIONS.len()
         && max_quick_ms < 150_000
-        && max_standard_ms < 240_000
+        && max_standard_ms < standard_target_ms
+        && stopped_early_count == 0
         && tiny_ok
         && !false_premise_confirmed;
     println!("\nACCEPTANCE: {}", if pass { "PASS" } else { "FAIL" });

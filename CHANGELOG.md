@@ -13,6 +13,15 @@ arc.
 
 ### Added
 
+* **Research flags pages that try to instruct the model (063)** — before
+  claim extraction, each page's text is checked by an in-process pattern
+  screen for instruction overrides ("ignore previous instructions", "you are
+  now a …"), chat role markers and special tokens, and hidden zero-width or
+  bidirectional characters. Warn only: a flagged page is read exactly as
+  before. The title is screened with the text. Each result source gains
+  `injection_patterns`; the stats gain `pages_flagged` and `flagged_pages`,
+  which lists every flagged page, cited or not. No new dependency, network
+  call or model call.
 * **Research deadlines that fit claude_cli (062)** — on
   `PARALLAX_BACKEND=claude_cli`, research's default deadlines are 120 s
   (quick, unchanged), 660 s (standard, was 240 s) and 1980 s (deep, was
