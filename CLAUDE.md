@@ -293,7 +293,17 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `062-claude-cli-research-deadlines`; all 9 tasks
+**Active Spec Kit feature: `063-research-injection-screen`; all 9 tasks
+closed** ([plan](specs/063-research-injection-screen/plan.md)) — research
+screens each page chosen for extraction (title plus the capped text) for
+instruction-override phrases, chat role markers and zero-width or
+text-direction characters. Warn only: the page is still read; sources carry
+`injection_patterns` and `stats.flagged_pages` lists every flagged page.
+Live on claude_cli: 1 flag in 255 pages over three runs, a false positive
+(zero-width heading anchors). The live example now fails if any question
+stopped early; quick runs can pass their 120 s deadline without stopping.
+
+**062 (`062-claude-cli-research-deadlines`); all 9 tasks
 closed** ([plan](specs/062-claude-cli-research-deadlines/plan.md)) — on
 `PARALLAX_BACKEND=claude_cli`, research's default deadlines are 120 s (quick),
 660 s (standard) and 1980 s (deep), about 1.2x full runs measured at
