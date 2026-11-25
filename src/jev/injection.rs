@@ -27,6 +27,38 @@ pub fn injection_item(line: &str) -> Option<InjectionItem> {
     })
 }
 
+/// Every dataset line, parsed before any call is paid for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dataset {
+    /// The usable lines.
+    pub items: Vec<InjectionItem>,
+    /// Lines that were not JSON or lacked text, label or url.
+    pub skipped: u32,
+}
+
+/// Parse every line of a dataset.
+///
+/// # Errors
+///
+/// When no line is usable, naming how many were skipped, so a run with
+/// nothing to measure stops before it calls or saves anything.
+pub fn parse_dataset<'a>(lines: impl IntoIterator<Item = &'a str>) -> Result<Dataset, String> {
+    let mut items = Vec::new();
+    let mut skipped = 0_u32;
+    for line in lines {
+        match injection_item(line) {
+            Some(item) => items.push(item),
+            None => skipped += 1,
+        }
+    }
+    if items.is_empty() {
+        return Err(format!(
+            "no usable dataset line ({skipped} lines skipped: each needs text, label and url)"
+        ));
+    }
+    Ok(Dataset { items, skipped })
+}
+
 /// The `directs_ai` yes/no question from a question file,
 /// `{"instructions": ..., "criteria": {"true": ..., "false": ...}}`, with the
 /// criteria declared in that order.
@@ -94,6 +126,25 @@ mod tests {
         ] {
             assert!(injection_item(line).is_none(), "parsed: {line}");
         }
+    }
+
+    #[test]
+    fn a_dataset_keeps_usable_lines_and_counts_the_rest() {
+        let dataset = parse_dataset([
+            r#"{"text": "t", "label": false, "url": "https://a.example"}"#,
+            "not json",
+            r#"{"text": "t", "label": true}"#,
+        ])
+        .unwrap();
+        assert_eq!(dataset.items.len(), 1);
+        assert_eq!(dataset.skipped, 2);
+    }
+
+    #[test]
+    fn a_dataset_with_no_usable_line_is_an_error_naming_the_skips() {
+        let err = parse_dataset([r#"{"text": "t", "label": true}"#, "", "x"]).unwrap_err();
+        assert!(err.contains("3 lines skipped"), "{err}");
+        assert!(parse_dataset(std::iter::empty::<&str>()).is_err());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::jev::injection::{injection_item, injection_question};
+use mcp_parallax::jev::injection::{injection_question, parse_dataset};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -473,7 +473,6 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
     let redactor = Redactor::new(vec![]);
     let mut pairs: Vec<(Decision, bool)> = Vec::new();
     let mut failed = 0_u32;
-    let mut skipped = 0_u32;
     let mut paths: Vec<_> = std::fs::read_dir(folder)
         .expect("dataset folder")
         .filter_map(Result::ok)
@@ -481,34 +480,34 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
         .collect();
     paths.sort();
-    for path in paths {
-        for line in std::fs::read_to_string(&path)
-            .expect("dataset file")
-            .lines()
-        {
-            let Some(item) = injection_item(line) else {
-                skipped += 1;
-                continue;
-            };
-            let label = item.label;
-            let page = serde_json::json!({ "page_url": item.url, "page_text": item.text });
-            let Ok(state) = redactor.redact_json(&page) else {
-                failed += 1;
-                continue;
-            };
-            let req = request(config, state, vec![question.clone()]);
-            match client.classify(&req).await {
-                Ok(response) => {
-                    let p = values(&response).first().map(|(_, p, _)| *p);
-                    let decision = match p {
-                        Some(p) if p >= threshold => Decision::Yes,
-                        Some(_) => Decision::No,
-                        None => Decision::Undecided,
-                    };
-                    pairs.push((decision, label));
-                }
-                Err(_) => failed += 1,
+    let files: Vec<String> = paths
+        .iter()
+        .map(|path| std::fs::read_to_string(path).expect("dataset file"))
+        .collect();
+    // Every line is checked before any call: a dataset with nothing usable
+    // stops here, and the saved result is left as it was.
+    let dataset = parse_dataset(files.iter().flat_map(|f| f.lines())).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1)
+    });
+    for item in dataset.items {
+        let page = serde_json::json!({ "page_url": item.url, "page_text": item.text });
+        let Ok(state) = redactor.redact_json(&page) else {
+            failed += 1;
+            continue;
+        };
+        let req = request(config, state, vec![question.clone()]);
+        match client.classify(&req).await {
+            Ok(response) => {
+                let p = values(&response).first().map(|(_, p, _)| *p);
+                let decision = match p {
+                    Some(p) if p >= threshold => Decision::Yes,
+                    Some(_) => Decision::No,
+                    None => Decision::Undecided,
+                };
+                pairs.push((decision, item.label));
             }
+            Err(_) => failed += 1,
         }
     }
     let c = Confusion::from_pairs(&pairs);
@@ -522,7 +521,7 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         fn_: c.fn_,
         undecided_positive: c.undecided_positive,
         undecided_negative: c.undecided_negative,
-        skipped,
+        skipped: dataset.skipped,
     });
     rebuild::save(&results);
     print!("{}", measure::tables(&results));

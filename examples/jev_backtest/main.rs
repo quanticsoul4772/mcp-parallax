@@ -20,9 +20,12 @@
 //! that file without calls (SC-006). The injection folder holds `.jsonl`
 //! lines `{"text": ..., "label": true|false, "url": ...}` that you built
 //! yourself in a fresh folder; the harness never downloads anything. Each
-//! page is sent as `{"page_url", "page_text"}`, as exa-mcp-server's
-//! back-test sent it, and lines that are not JSON or lack a field are
-//! counted as skipped. The question file is JSON,
+//! page is sent in the shape exa-mcp-server's back-test used,
+//! `{"page_url", "page_text"}`, but redacted first, the URL included (a path
+//! with long digit or random-looking runs loses that part). Lines that are
+//! not JSON or lack a field are counted as skipped, and a dataset with no
+//! usable line stops the run before any call, leaving the saved result as it
+//! was. The question file is JSON,
 //! `{"instructions": ..., "criteria": {"true": ..., "false": ...}}`.
 
 // Manual tooling: stdout is fine here (no MCP transport involved).
