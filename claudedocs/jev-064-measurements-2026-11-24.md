@@ -135,8 +135,15 @@ Limits:
   options as an unordered map, zero flips would be expected whatever Jev's
   first-option bias.
 
+## T038: big-model self-agreement
+
+`self-agreement 10` (pilot), then `self-agreement 100`, on the same
+acceptance rows: the research verify ensemble (3 passes) ran twice on each
+claim with its stored excerpts. Same verdict twice on 10 of 10 and on 100 of
+100 claims (95% Wilson lower bound about 0.96). Research only: the harness
+has no turn-review self-agreement. One research run, so one topic.
+
 ## Still to measure in T038
 
-- Big-model self-agreement.
 - Hand-labeled correctness (at least 60 items).
 - The injection back-test on `jev-1.14.0`.
