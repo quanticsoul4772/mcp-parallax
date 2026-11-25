@@ -245,6 +245,38 @@ mod tests {
     }
 
     #[test]
+    fn per_set_rows_add_up_to_the_pooled_counts_and_failures() {
+        let outcomes: Vec<(String, Option<Decision>, bool)> = [
+            ("a", Some(Decision::Yes), true),
+            ("a", Some(Decision::No), false),
+            ("b", None, true),
+            ("b", Some(Decision::Undecided), false),
+            ("c", Some(Decision::No), true),
+            ("a", None, false),
+            ("c", Some(Decision::Yes), false),
+            ("b", Some(Decision::Undecided), true),
+        ]
+        .into_iter()
+        .map(|(s, d, l)| (s.to_string(), d, l))
+        .collect();
+        let pairs: Vec<(Decision, bool)> = outcomes
+            .iter()
+            .filter_map(|(_, d, l)| d.map(|d| (d, *l)))
+            .collect();
+        let pooled = Confusion::from_pairs(&pairs);
+        let failed = outcomes.iter().filter(|(_, d, _)| d.is_none()).count();
+        let rows = tally_sets(&outcomes);
+        let sum = |f: fn(&InjectionSetRow) -> u32| rows.iter().map(f).sum::<u32>();
+        assert_eq!(sum(|r| r.failed), u32::try_from(failed).unwrap());
+        assert_eq!(sum(|r| r.tp), pooled.tp);
+        assert_eq!(sum(|r| r.fp), pooled.fp);
+        assert_eq!(sum(|r| r.tn), pooled.tn);
+        assert_eq!(sum(|r| r.fn_), pooled.fn_);
+        assert_eq!(sum(|r| r.undecided_positive), pooled.undecided_positive);
+        assert_eq!(sum(|r| r.undecided_negative), pooled.undecided_negative);
+    }
+
+    #[test]
     fn a_line_missing_a_field_or_not_json_is_none() {
         for line in [
             r#"{"label": false, "url": "https://a.example"}"#,
