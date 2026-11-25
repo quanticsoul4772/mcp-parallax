@@ -52,6 +52,60 @@ Wait, and re-measure the turn-review rate under the user-level hook around
 2026-12-08, then decide what happens to the 066 turn-review skip. The plan is
 unchanged. User's pick: "Wait, re-measure (82)".
 
+## T039: harness report on the live acceptance records (SC-005)
+
+Run on main at `3c1308d` (PR #162) with
+`DATABASE_PATH=./data/jev-acceptance.db PARALLAX_BACKEND=claude_cli cargo run --release --example jev_backtest -- report`:
+
+```text
+== turn_review (6 rows)
+  success: 6
+  labeled: 6; cost: $0.000099
+  confirm set: 4 rows, sealed (not looked at)
+  tune items: 2 (2 scored, 0 unscored and never skipped, of which 0 abandoned because verify finished first; 0 without a cluster); left out: 0 unlabeled
+  evidence for recall, its bound and the dry run: 2 scored, clustered items (0 unscored harmful items are not counted)
+  harmful (plan 7.1): 2 of 2; needed for promotion: 59
+  skip threshold: none meets the target; nothing is skipped
+  at the threshold: skipped 0 (harmful 0), sent to the big model 2 (harmful 2)
+  skip recall: 1.0000; one-sided lower bound 0.2236; cluster bootstrap 1.0000..1.0000
+  skip share: 0.0000; one-sided lower bound 0.0000
+  harmful among skipped: undefined; one-sided upper bound undefined
+  baselines: always skip: recall 0.0000, skipped 2; never skip: recall 1.0000, skipped 0
+  clusters: 2
+  promotion dry run on the tune set (not a promotion): fails
+    - 2 harmful positives; at least 59 needed
+    - recall lower bound 0.2236 is below the target 0.95
+    - nothing skipped: does not beat the never-skip baseline
+  not checked by the dry run:
+    - skip-share minimum (plan 7.2): the plan sets no number yet
+    - wrong-settle cap (plan 7.2): the plan sets no number yet
+== research_claims (167 rows)
+  excluded: 34
+  success: 133
+  labeled: 167; cost: $0.007981
+  confirm set: 52 rows, sealed (not looked at)
+  tune items: 115 (94 scored, 21 unscored and never skipped, of which 0 abandoned because verify finished first; 0 without a cluster); left out: 0 unlabeled
+  evidence for recall, its bound and the dry run: 94 scored, clustered items (1 unscored harmful items are not counted)
+  harmful (plan 7.1): 3 of 115; needed for promotion: 59
+  skip threshold: none meets the target; nothing is skipped
+  at the threshold: skipped 0 (harmful 0), sent to the big model 115 (harmful 3)
+  skip recall: 1.0000; one-sided lower bound 0.2236; cluster bootstrap 1.0000..1.0000
+  skip share: 0.0000; one-sided lower bound 0.0000
+  harmful among skipped: undefined; one-sided upper bound undefined
+  baselines: always skip: recall 0.0000, skipped 115; never skip: recall 1.0000, skipped 0
+  clusters: 1
+  promotion dry run on the tune set (not a promotion): fails
+    - 2 harmful positives; at least 59 needed
+    - recall lower bound 0.2236 is below the target 0.95
+    - nothing skipped: does not beat the never-skip baseline
+  not checked by the dry run:
+    - skip-share minimum (plan 7.2): the plan sets no number yet
+    - wrong-settle cap (plan 7.2): the plan sets no number yet
+```
+
+The SC-006 run (reproducing T038's tables from saved inputs) waits for
+T038's live measurements.
+
 ## Still to measure in T038
 
 - Jev noise (5 calls each on 100 held-out items).
