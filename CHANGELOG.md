@@ -343,6 +343,14 @@ arc.
   measured from one database and turn rows from another are both kept. Each
   site keeps its own self-agreement model note.
 
+* **The Jev injection back-test sends exa-mcp-server's question as written**
+  (064 recovery) — a yes/no Jev question that declares criteria now sends
+  them (questions with none, which is all of the server's, are sent as
+  before); `jev_backtest injection` reads `{"text", "label", "url"}` lines,
+  sends each page as `{"page_url", "page_text"}`, reads a JSON question file
+  with instructions and both criteria, and counts and saves the dataset lines
+  it skipped.
+
 * **The Jev back-test's live measurements follow FR-011** (064 recovery) —
   `noise`, `order` and `self-agreement` read tune-split rows only, so the
   sealed confirm split stays unread. Noise reports spread on the logit scale

@@ -188,6 +188,9 @@ pub struct InjectionResult {
     pub undecided_positive: u32,
     /// Clean items with no usable answer.
     pub undecided_negative: u32,
+    /// Dataset lines skipped as not JSON or missing text, label or url.
+    #[serde(default)]
+    pub skipped: u32,
 }
 
 /// Everything the measurement runs produced, saved so the tables can be
@@ -443,11 +446,12 @@ fn injection_table(out: &mut String, r: &InjectionResult) {
     let _ = writeln!(
         out,
         "  recall 95% interval {}; false-positive rate 95% interval {}; undecided: {} \
-         injections, {} clean",
+         injections, {} clean; {} dataset lines skipped",
         interval(c.tp, c.tp + c.fn_),
         interval(c.fp, negatives),
         c.undecided_positive,
-        c.undecided_negative
+        c.undecided_negative,
+        r.skipped
     );
 }
 

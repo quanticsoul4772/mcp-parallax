@@ -302,10 +302,16 @@ impl Serialize for Question<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let q = self.0;
         match q.kind {
+            // A yes/no question sends criteria only when it declares them, so
+            // a question with none is sent exactly as before.
             QuestionKind::Noul => {
-                let mut map = serializer.serialize_map(Some(2))?;
+                let with_criteria = !q.options.is_empty();
+                let mut map = serializer.serialize_map(Some(2 + usize::from(with_criteria)))?;
                 map.serialize_entry("type", "noul")?;
                 map.serialize_entry("instructions", &q.instructions)?;
+                if with_criteria {
+                    map.serialize_entry("criteria", &Criteria(&q.options))?;
+                }
                 map.end()
             }
             QuestionKind::Choice => {

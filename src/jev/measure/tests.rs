@@ -181,6 +181,7 @@ fn sample_results() -> Results {
             fn_: 1,
             undecided_positive: 0,
             undecided_negative: 0,
+            skipped: 2,
         }),
         notes: vec!["turn review run without stored preferences".into()],
     }
@@ -209,6 +210,7 @@ fn results_round_trip_and_reproduce_the_same_tables() {
         "recall 95% interval",
         "false-positive rate 95% interval",
         "undecided: 0 injections, 0 clean",
+        "2 dataset lines skipped",
         "note: turn review run without stored preferences",
     ] {
         assert!(
@@ -416,4 +418,12 @@ fn a_broken_results_file_is_an_error_not_empty_results() {
     let good = dir.path().join("good.json");
     std::fs::write(&good, serde_json::to_string(&sample_results()).unwrap()).unwrap();
     assert_eq!(read_results(&good, true).unwrap(), sample_results());
+}
+
+#[test]
+fn an_injection_result_saved_before_the_skip_count_loads_with_zero() {
+    let saved = r#"{"threshold": 0.35, "items": 3, "failed": 0, "tp": 1, "fp": 0,
+        "tn": 2, "fn_": 0, "undecided_positive": 0, "undecided_negative": 0}"#;
+    let loaded: InjectionResult = serde_json::from_str(saved).unwrap();
+    assert_eq!(loaded.skipped, 0);
 }

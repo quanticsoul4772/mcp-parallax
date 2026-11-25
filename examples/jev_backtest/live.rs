@@ -9,6 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
+use mcp_parallax::jev::injection::{injection_item, injection_question};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -463,20 +464,16 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
     // Checked before any call is paid for: a broken file stops the run here.
     let mut results = rebuild::load();
     let client = jev(config);
-    let instructions = std::fs::read_to_string(question_file)
-        .expect("question file")
-        .trim()
-        .to_string();
-    let question = JevQuestion {
-        id: "directs_ai".into(),
-        version: 1,
-        kind: QuestionKind::Noul,
-        instructions,
-        options: vec![],
-    };
+    let question =
+        injection_question(&std::fs::read_to_string(question_file).expect("question file"))
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1)
+            });
     let redactor = Redactor::new(vec![]);
     let mut pairs: Vec<(Decision, bool)> = Vec::new();
     let mut failed = 0_u32;
+    let mut skipped = 0_u32;
     let mut paths: Vec<_> = std::fs::read_dir(folder)
         .expect("dataset folder")
         .filter_map(Result::ok)
@@ -489,13 +486,13 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
             .expect("dataset file")
             .lines()
         {
-            let Ok(item) = serde_json::from_str::<serde_json::Value>(line) else {
+            let Some(item) = injection_item(line) else {
+                skipped += 1;
                 continue;
             };
-            let (Some(text), Some(label)) = (item["text"].as_str(), item["label"].as_bool()) else {
-                continue;
-            };
-            let Ok(state) = redactor.redact(text) else {
+            let label = item.label;
+            let page = serde_json::json!({ "page_url": item.url, "page_text": item.text });
+            let Ok(state) = redactor.redact_json(&page) else {
                 failed += 1;
                 continue;
             };
@@ -525,6 +522,7 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         fn_: c.fn_,
         undecided_positive: c.undecided_positive,
         undecided_negative: c.undecided_negative,
+        skipped,
     });
     rebuild::save(&results);
     print!("{}", measure::tables(&results));

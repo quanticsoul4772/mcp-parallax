@@ -6,7 +6,7 @@ use super::{TypesafeClient, MAX_IN_FLIGHT};
 use crate::error::AppError;
 use crate::jev::questions::research_claim_questions;
 use crate::jev::redact::Redactor;
-use crate::traits::classifier::{Classifier, JevAnswer, JevRequest};
+use crate::traits::classifier::{Classifier, JevAnswer, JevQuestion, JevRequest, QuestionKind};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -85,6 +85,56 @@ async fn the_request_has_bearer_auth_the_state_as_an_object_and_options_in_order
     assert!(
         order[0] < order[1] && order[1] < order[2],
         "options out of order: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn a_yes_no_question_sends_criteria_only_when_it_declares_them() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ok())
+        .mount(&mock)
+        .await;
+    let noul = |id: &str, options: Vec<(String, Option<String>)>| JevQuestion {
+        id: id.into(),
+        version: 1,
+        kind: QuestionKind::Noul,
+        instructions: "Is it?".into(),
+        options,
+    };
+    let mut req = request(SECOND);
+    req.questions = vec![
+        noul(
+            "with",
+            vec![
+                ("true".into(), Some("Yes when so.".into())),
+                ("false".into(), Some("No otherwise.".into())),
+            ],
+        ),
+        noul("without", vec![]),
+    ];
+    // Only the request body matters here, not how the answers validate.
+    let _ = client(&mock).classify(&req).await;
+
+    let received = mock.received_requests().await.unwrap();
+    let raw = String::from_utf8(received[0].body.clone()).unwrap();
+    let body: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        body["questions"]["with"],
+        serde_json::json!({
+            "type": "noul",
+            "instructions": "Is it?",
+            "criteria": { "true": "Yes when so.", "false": "No otherwise." },
+        })
+    );
+    assert!(
+        raw.find("\"true\"").unwrap() < raw.find("\"false\"").unwrap(),
+        "criteria out of order: {raw}"
+    );
+    assert_eq!(
+        body["questions"]["without"],
+        serde_json::json!({ "type": "noul", "instructions": "Is it?" })
     );
 }
 
