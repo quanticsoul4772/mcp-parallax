@@ -352,7 +352,8 @@ arc.
   instructions and both criteria, and counts and saves the dataset lines it
   skipped. A dataset with no usable line stops before any call, and a run in
   which no call produced an answer stops before saving; both leave the saved
-  result as it was.
+  result as it was. Lines may carry a `set`; the run saves and prints one row
+  per set (recall and false-positive rate) beside the pooled result.
 
 * **The Jev back-test's live measurements follow FR-011** (064 recovery) —
   `noise`, `order` and `self-agreement` read tune-split rows only, so the

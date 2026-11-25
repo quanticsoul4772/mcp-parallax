@@ -191,6 +191,9 @@ pub struct InjectionResult {
     /// Dataset lines skipped as not JSON or missing text, label or url.
     #[serde(default)]
     pub skipped: u32,
+    /// The same outcomes by dataset set; empty in files saved before sets.
+    #[serde(default)]
+    pub per_set: Vec<crate::jev::injection::InjectionSetRow>,
 }
 
 /// Everything the measurement runs produced, saved so the tables can be
@@ -453,6 +456,18 @@ fn injection_table(out: &mut String, r: &InjectionResult) {
         c.undecided_negative,
         r.skipped
     );
+    for row in &r.per_set {
+        let items =
+            row.tp + row.fp + row.tn + row.fn_ + row.undecided_positive + row.undecided_negative;
+        let _ = writeln!(
+            out,
+            "  set {}: {items} items, {} failed; recall {}; false-positive rate {}",
+            row.set,
+            row.failed,
+            ratio(row.tp, row.tp + row.fn_),
+            ratio(row.fp, row.fp + row.tn + row.undecided_negative)
+        );
+    }
 }
 
 /// Normal quantile for a two-sided 95% Wilson interval.
