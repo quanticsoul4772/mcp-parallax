@@ -125,24 +125,25 @@ pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>
     row
 }
 
-/// What the review did with its answers: the flags it raised and whether it
-/// proposed a capture. Plan §7.1 counts these, not the raw answers.
+/// What the review did with its answers: the flags it raised and whether its
+/// capture was stored. Plan §7.1 counts these, not the raw answers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReviewOutcome {
     /// A self-contradiction flag was raised.
     pub contradiction_flagged: bool,
     /// A preference-violation flag was raised.
     pub violation_flagged: bool,
-    /// The review proposed a capture.
-    pub capture_proposed: bool,
+    /// The review's capture was stored (not dropped at the session cap or by
+    /// a storage failure).
+    pub captured: bool,
 }
 
 /// The big model's label for a turn, enumerated fields only: its raw answers
 /// and what the review did with them.
 ///
 /// `contradicts` and `contradiction_flagged` are empty when memory pairs were
-/// among the candidates (Jev never sees those); `capture_kind` and
-/// `capture_proposed` are empty when memory is off (capture isn't asked).
+/// among the candidates (Jev never sees those); `capture_kind` and `captured`
+/// are empty when memory is off (capture isn't asked).
 #[must_use]
 pub fn turn_label(
     raw: &ReviewRaw,
@@ -169,7 +170,7 @@ pub fn turn_label(
         "capture_kind": if_capture(Value::from(capture_kind)),
         "contradiction_flagged": unless_memory(did.contradiction_flagged),
         "violation_flagged": did.violation_flagged,
-        "capture_proposed": if_capture(Value::Bool(did.capture_proposed)),
+        "captured": if_capture(Value::Bool(did.captured)),
     })
 }
 

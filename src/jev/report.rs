@@ -69,16 +69,15 @@ fn noul(questions: &Value, id: &str) -> Option<f64> {
 /// A turn-review row as a skip-gate item.
 ///
 /// Harmful (plan §7.1) when the review raised a contradiction or violation
-/// flag, or proposed a capture, as the label's outcome fields record; P(safe)
+/// flag, or stored a capture, as the label's outcome fields record; P(safe)
 /// is one minus the larger of the contradiction and capture answers.
 ///
 /// # Errors
 ///
 /// [`Skip::Unlabeled`] without a label that settles harm: no label, a label
-/// written before the outcome fields existed, or an unknown contradiction
-/// outcome (memory pairs were present, spec D11) with no violation flag or
-/// capture. A labeled turn without the contradiction answer is kept,
-/// unscored.
+/// written before the outcome fields existed, or any turn with memory-derived
+/// candidates (no contradiction outcome, spec D11), flagged or not. A labeled
+/// turn without the contradiction answer is kept, unscored.
 pub fn turn_item(
     label: Option<&Value>,
     questions: &Value,
@@ -88,16 +87,17 @@ pub fn turn_item(
     let violation = label["violation_flagged"]
         .as_bool()
         .ok_or(Skip::Unlabeled)?;
-    let capture_proposed = match &label["capture_proposed"] {
+    let captured = match &label["captured"] {
         Value::Null => false,
-        Value::Bool(proposed) => *proposed,
+        Value::Bool(captured) => *captured,
         _ => return Err(Skip::Unlabeled),
     };
-    let harmful = match label["contradiction_flagged"].as_bool() {
-        Some(contradiction) => contradiction || violation || capture_proposed,
-        None if violation || capture_proposed => true,
-        None => return Err(Skip::Unlabeled),
-    };
+    // A memory-pair turn has no contradiction outcome (D11); leaving all of
+    // them out, flagged or not, keeps the sample from depending on outcome.
+    let contradiction = label["contradiction_flagged"]
+        .as_bool()
+        .ok_or(Skip::Unlabeled)?;
+    let harmful = contradiction || violation || captured;
     let capture = noul(questions, "capture_worthy").unwrap_or(0.0);
     Ok(Item {
         safe: noul(questions, "contradiction").map(|c| 1.0 - c.max(capture)),

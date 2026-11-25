@@ -339,10 +339,10 @@ arc.
   recovery) — the report counted the review model's raw answers, so a raw
   violation with no preferences listed, or a capture kind with capture off,
   counted as harmful. The turn label now also records whether the review
-  raised a contradiction or violation flag and whether it proposed a capture,
-  and the report counts those. A turn with memory-derived candidates counts
-  when a violation flag or capture is known (research D11). Turn rows written
-  before this change count as unlabeled.
+  raised a contradiction or violation flag and whether its capture was
+  stored, and the report counts those. Turns with memory-derived candidates
+  are left out, flagged or not (research D11). Turn rows written before this
+  change count as unlabeled.
 
 * **Sonnet 5 cost estimates** — the `claude-sonnet-5` price row now carries
   the current $2/$10 per million tokens; it had stayed at $3/$15, so records

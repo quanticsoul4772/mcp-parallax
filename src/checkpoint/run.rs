@@ -351,8 +351,18 @@ pub async fn run_turn(
         // 017: store an accepted capture proposal — entirely fail-open; the
         // turn's verdict is never affected by capture (FR-008).
         if let Some(proposal) = proposal {
-            if let Err(error) = store_capture(deps, &params.session_id, proposal, caller).await {
-                tracing::warn!(%error, "capture storage failed open");
+            let stored = match store_capture(deps, &params.session_id, proposal, caller).await {
+                Ok(stored) => stored,
+                Err(error) => {
+                    tracing::warn!(%error, "capture storage failed open");
+                    false
+                }
+            };
+            // The Jev label counts a capture only once it is stored (§7.1).
+            if let Some(label) = jev_row.as_mut().and_then(|j| j.row.label_json.as_mut()) {
+                if label["captured"].is_boolean() {
+                    label["captured"] = serde_json::Value::Bool(stored);
+                }
             }
         }
 
@@ -452,7 +462,7 @@ async fn review_beside_jev(
     let ((review, review_done), (mut row, jev_done)) = tokio::join!(review, shadow);
     let wait_ms = u64::try_from(jev_done.saturating_duration_since(review_done).as_millis())
         .unwrap_or(u64::MAX);
-    if let Ok((flags, proposal, _, _, raw)) = &review {
+    if let Ok((flags, _, _, _, raw)) = &review {
         let memory_pairs = candidates
             .iter()
             .any(|c| c.origin == review::CandidateOrigin::Memory);
@@ -464,7 +474,9 @@ async fn review_beside_jev(
             crate::jev::shadow::ReviewOutcome {
                 contradiction_flagged: flagged(SignalKind::SelfContradiction),
                 violation_flagged: flagged(SignalKind::PreferenceViolation),
-                capture_proposed: proposal.is_some(),
+                // Whether a capture was stored is known only after the store
+                // step in `run_turn`, which sets it there.
+                captured: false,
             },
         ));
         row.label_source = Some(format!("{}/{}", deps.model, review::REVIEW_MODE_ID));
@@ -524,19 +536,20 @@ async fn deliver_turn_flags(
 
 /// Store one capture proposal (017 research D6): cap check → quarantined
 /// memory (`external = true` ⇒ `Untrusted` via the existing derivation) →
-/// one consolidation audit row. Callers treat every error as fail-open.
+/// one consolidation audit row. Returns whether the memory was stored.
+/// Callers treat every error as fail-open.
 async fn store_capture(
     deps: &CheckpointDeps,
     session_id: &str,
     proposal: review::CaptureProposal,
     caller: Option<&CallerTrace>,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     use crate::memory::consolidate::{
         ConsolidationAction, ConsolidationRecord, CAPTURE_SESSION_CAP,
     };
 
     let Some(embedder) = deps.embedder.as_ref() else {
-        return Ok(()); // capture is memory-gated; the hop was told DISABLED
+        return Ok(false); // capture is memory-gated; the hop was told DISABLED
     };
     let proposal_id = uuid::Uuid::new_v4().to_string();
     let capped = deps.storage.captures_in_session(session_id).await? >= CAPTURE_SESSION_CAP;
@@ -551,7 +564,11 @@ async fn store_capture(
             created_at: deps.clock.now(),
         };
         crate::observability::emit_consolidation(&record, caller);
-        return deps.storage.record_consolidation(&record).await;
+        return deps
+            .storage
+            .record_consolidation(&record)
+            .await
+            .map(|()| false);
     }
 
     let embedding = embedder.embed_document(&proposal.content).await?;
@@ -585,7 +602,11 @@ async fn store_capture(
         created_at: now,
     };
     crate::observability::emit_consolidation(&record, caller);
-    deps.storage.record_consolidation(&record).await
+    // The memory is stored; a failed audit row does not undo that.
+    if let Err(error) = deps.storage.record_consolidation(&record).await {
+        tracing::warn!(%error, "capture audit row failed open");
+    }
+    Ok(true)
 }
 
 /// Recall for the turn review: final message embedded, memories ranked.
@@ -2066,11 +2087,99 @@ mod tests {
                     "capture_kind": null,
                     "contradiction_flagged": true,
                     "violation_flagged": false,
-                    "capture_proposed": null,
+                    "captured": null,
                 }))
             );
             assert_eq!(row.harness_session_id.as_deref(), Some("s1"));
             assert_eq!(row.model_answered.as_deref(), Some(PINNED));
+        }
+
+        /// Runs one turn with Jev on and returns the label its row carries.
+        async fn label_of(
+            mut b: DepsBuilder,
+            written: &Written,
+            final_message: &str,
+        ) -> serde_json::Value {
+            b.jev = Some(turn_jev(Arc::new(confident(Arc::default(), PINNED))));
+            run_turn(&b.build(), &turn_params(final_message, false), None)
+                .await
+                .unwrap();
+            written.rows()[0].label_json.clone().unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_violation_flag_is_labeled_as_a_violation_not_a_contradiction() {
+            let written = Written::new();
+            let mut b = capturing(&written);
+            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.embedder = Some(Arc::new(matching_embedder()));
+            b.storage.expect_load_memories().returning(|| {
+                Ok(vec![preference_memory(
+                    "mem-delve",
+                    "final messages must never contain the word delve",
+                    crate::memory::Trust::FirstHand,
+                )])
+            });
+            b.client
+                .expect_complete()
+                .times(1)
+                .returning(|_, _| Ok(violation_completion()));
+            let label = label_of(b, &written, "Let me delve into the details.").await;
+            assert_eq!(label["violation_flagged"], json!(true));
+            assert_ne!(label["contradiction_flagged"], json!(true));
+            assert_eq!(label["captured"], json!(false));
+        }
+
+        fn storing_embedder() -> MockEmbedder {
+            let mut embedder = matching_embedder();
+            embedder.expect_embed_document().returning(|_| {
+                Ok(Embedding {
+                    vector: vec![0.5, 0.5],
+                    input_tokens: 9,
+                })
+            });
+            embedder
+                .expect_model_id()
+                .return_const("voyage-4".to_string());
+            embedder
+        }
+
+        /// A capture turn whose session already holds `captures` captures.
+        fn capture_builder(written: &Written, captures: u32) -> DepsBuilder {
+            let mut b = capturing(written);
+            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.embedder = Some(Arc::new(storing_embedder()));
+            b.storage.expect_load_memories().returning(|| Ok(vec![]));
+            b.client
+                .expect_complete()
+                .times(1)
+                .returning(|_, _| Ok(capture_completion()));
+            b.storage
+                .expect_captures_in_session()
+                .returning(move |_| Ok(captures));
+            b.storage.expect_save_memory().returning(|_| Ok(()));
+            b.storage
+                .expect_record_consolidation()
+                .returning(|_| Ok(()));
+            b
+        }
+
+        #[tokio::test]
+        async fn a_stored_capture_is_labeled_captured() {
+            let written = Written::new();
+            let b = capture_builder(&written, 0);
+            let label = label_of(b, &written, "Fixed it: clear the cache first.").await;
+            assert_eq!(label["captured"], json!(true));
+            assert_eq!(label["violation_flagged"], json!(false));
+            assert_eq!(label["contradiction_flagged"], json!(false));
+        }
+
+        #[tokio::test]
+        async fn a_capture_dropped_at_the_session_cap_is_not_labeled_captured() {
+            let written = Written::new();
+            let b = capture_builder(&written, crate::memory::consolidate::CAPTURE_SESSION_CAP);
+            let label = label_of(b, &written, "Another fix, but the cap is reached.").await;
+            assert_eq!(label["captured"], json!(false));
         }
 
         async fn assert_no_jev_call(

@@ -79,10 +79,10 @@ pub trait Classifier: Send + Sync {
 Enumerated fields only, never text:
 
 - **Turn review:**
-  - `{ contradicts: bool | null, violates: bool, capture_kind: "skill"|"lesson"|"none" | null, contradiction_flagged: bool | null, violation_flagged: bool, capture_proposed: bool | null }`
-  - The first three are the review model's raw answers; the `*_flagged` and `capture_proposed` fields record what the review did with them (flags raised, capture proposed), which is what plan §7.1 counts. Added 2026-11-25 (recovery F5); rows written before then lack them and count as unlabeled.
-  - `contradicts` and `contradiction_flagged` are null when the turn had any memory-derived candidate.
-  - `capture_kind` and `capture_proposed` are null when memory isn't configured.
+  - `{ contradicts: bool | null, violates: bool, capture_kind: "skill"|"lesson"|"none" | null, contradiction_flagged: bool | null, violation_flagged: bool, captured: bool | null }`
+  - The first three are the review model's raw answers; `contradiction_flagged`, `violation_flagged` and `captured` record what the review did with them (flags raised, capture stored), which is what plan §7.1 counts. Added 2026-11-25 (recovery F5); rows written before then lack them and count as unlabeled.
+  - `contradicts` and `contradiction_flagged` are null when the turn had any memory-derived candidate; the back-test report leaves those turns out (D11).
+  - `capture_kind` and `captured` are null when memory isn't configured.
 - **Research claim:**
   - `{ support: "confirmed"|"unverified"|"contested"|"refuted", votes_supported: u32, votes_refuted: u32, votes_completed: u32, sources: u32 }`
 

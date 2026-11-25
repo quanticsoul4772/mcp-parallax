@@ -24,12 +24,12 @@ const fn raw(contradicts: bool, violates: bool, capture_kind: CaptureKind) -> Re
 const fn outcome(
     contradiction_flagged: bool,
     violation_flagged: bool,
-    capture_proposed: bool,
+    captured: bool,
 ) -> ReviewOutcome {
     ReviewOutcome {
         contradiction_flagged,
         violation_flagged,
-        capture_proposed,
+        captured,
     }
 }
 
@@ -76,7 +76,7 @@ fn a_turn_is_harmful_only_when_the_review_actually_flagged_or_captured() {
 }
 
 #[test]
-fn a_memory_pair_turn_counts_when_a_violation_or_capture_was_flagged() {
+fn every_memory_pair_turn_is_unlabeled_flagged_or_not() {
     let qs = turn_questions(0.2, None);
     let none = CaptureKind::None;
     let violation = turn_label(
@@ -85,14 +85,20 @@ fn a_memory_pair_turn_counts_when_a_violation_or_capture_was_flagged() {
         true,
         outcome(true, true, false),
     );
-    assert!(turn_item(Some(&violation), &qs, None).unwrap().harmful);
+    assert_eq!(
+        turn_item(Some(&violation), &qs, None).unwrap_err(),
+        Skip::Unlabeled
+    );
     let capture = turn_label(
         &raw(false, false, CaptureKind::Skill),
         true,
         true,
         outcome(false, false, true),
     );
-    assert!(turn_item(Some(&capture), &qs, None).unwrap().harmful);
+    assert_eq!(
+        turn_item(Some(&capture), &qs, None).unwrap_err(),
+        Skip::Unlabeled
+    );
     let clean = turn_label(
         &raw(true, false, none),
         true,
