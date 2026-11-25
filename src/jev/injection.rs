@@ -59,6 +59,22 @@ pub fn parse_dataset<'a>(lines: impl IntoIterator<Item = &'a str>) -> Result<Dat
     Ok(Dataset { items, skipped })
 }
 
+/// Check that at least one call produced an answer before the result is
+/// saved.
+///
+/// # Errors
+///
+/// When none did (a wrong key turns the client off after its first 401, so
+/// every call fails), naming how many failed, so the saved result is kept.
+pub fn check_answered(answered: usize, failed: u32) -> Result<(), String> {
+    if answered == 0 {
+        return Err(format!(
+            "no call produced an answer ({failed} failed); the saved result is kept"
+        ));
+    }
+    Ok(())
+}
+
 /// The `directs_ai` yes/no question from a question file,
 /// `{"instructions": ..., "criteria": {"true": ..., "false": ...}}`, with the
 /// criteria declared in that order.
@@ -145,6 +161,13 @@ mod tests {
         let err = parse_dataset([r#"{"text": "t", "label": true}"#, "", "x"]).unwrap_err();
         assert!(err.contains("3 lines skipped"), "{err}");
         assert!(parse_dataset(std::iter::empty::<&str>()).is_err());
+    }
+
+    #[test]
+    fn a_run_with_no_answered_call_is_an_error_naming_the_failures() {
+        let err = check_answered(0, 3).unwrap_err();
+        assert!(err.contains("3 failed"), "{err}");
+        assert!(check_answered(1, 3).is_ok());
     }
 
     #[test]

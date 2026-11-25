@@ -9,7 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::jev::injection::{injection_question, parse_dataset};
+use mcp_parallax::jev::injection::{check_answered, injection_question, parse_dataset};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -509,6 +509,10 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
             }
             Err(_) => failed += 1,
         }
+    }
+    if let Err(e) = check_answered(pairs.len(), failed) {
+        eprintln!("{e}");
+        std::process::exit(1)
     }
     let c = Confusion::from_pairs(&pairs);
     results.injection = Some(InjectionResult {
