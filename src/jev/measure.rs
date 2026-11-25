@@ -5,11 +5,13 @@
 //! state), and the saved results file with the tables printed from it, so a
 //! live run can be reproduced without calling anything.
 
+use crate::jev::metrics::Confusion;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::Path;
 
 /// Probabilities are clamped this far from 0 and 1 before the logit.
 const LOGIT_EPS: f64 = 1e-6;
@@ -42,6 +44,26 @@ pub fn flipped(samples: &[f64], cut: f64) -> bool {
     yes != 0 && yes != samples.len()
 }
 
+/// The question a per-source id belongs to: `relation_3` is `relation`.
+#[must_use]
+pub fn question_family(id: &str) -> &str {
+    match id.rsplit_once('_') {
+        Some((head, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => id,
+    }
+}
+
+/// Whether an item's decision changed across its calls: the chosen option
+/// for a choice question, the 0.5 cut for a yes/no question.
+#[must_use]
+pub fn item_flipped(item: &NoiseItem) -> bool {
+    if item.choices.is_empty() {
+        flipped(&item.samples, 0.5)
+    } else {
+        item.choices.iter().any(|c| *c != item.choices[0])
+    }
+}
+
 fn timestamp(line: &str) -> Option<DateTime<Utc>> {
     let value: Value = serde_json::from_str(line).ok()?;
     value["timestamp"]
@@ -50,15 +72,21 @@ fn timestamp(line: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-/// The transcript as it stood at `until`: lines are kept up to the first one
-/// whose timestamp is later.
+/// The transcript as it stood at `until`: every line up to the last
+/// timestamped line at or before `until`, stopping at the first later one,
+/// with the file's own line endings kept.
 #[must_use]
 pub fn transcript_until(text: &str, until: DateTime<Utc>) -> String {
-    let kept: Vec<&str> = text
-        .lines()
-        .take_while(|line| timestamp(line).is_none_or(|t| t <= until))
-        .collect();
-    kept.join("\n")
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut end = 0;
+    for (i, line) in lines.iter().enumerate() {
+        match timestamp(line) {
+            Some(t) if t > until => break,
+            Some(_) => end = i + 1,
+            None => {}
+        }
+    }
+    lines[..end].concat()
 }
 
 /// The text of the last assistant line that carries text.
@@ -79,7 +107,7 @@ pub fn last_assistant_text(text: &str) -> Option<String> {
     })
 }
 
-/// One item asked five times.
+/// One item asked several times.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoiseItem {
     /// The site, as recorded.
@@ -90,6 +118,10 @@ pub struct NoiseItem {
     pub question: String,
     /// The answers: P(yes), or P(supports) for a relation question.
     pub samples: Vec<f64>,
+    /// The option chosen on each call, for a choice question; empty for a
+    /// yes/no question.
+    #[serde(default)]
+    pub choices: Vec<String>,
 }
 
 /// One relation decision under a non-default option order.
@@ -120,9 +152,44 @@ pub struct AgreementItem {
     pub second: String,
 }
 
-/// Everything a live measurement run produced, saved so the tables can be
+/// The FR-011(d) base rate from the checkpoint records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaseRate {
+    /// Turn evaluations.
+    pub evaluations: u32,
+    /// Turn reviews that ran.
+    pub reviews: u32,
+    /// Signals fired, by kind.
+    pub fired: Vec<(String, u32)>,
+}
+
+/// The FR-011(e) injection back-test at one threshold.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InjectionResult {
+    /// The threshold used.
+    pub threshold: f64,
+    /// Items answered.
+    pub items: u32,
+    /// Items that failed or could not be redacted.
+    pub failed: u32,
+    /// Flagged injections.
+    pub tp: u32,
+    /// Flagged clean items.
+    pub fp: u32,
+    /// Unflagged clean items.
+    pub tn: u32,
+    /// Unflagged injections.
+    pub fn_: u32,
+    /// Injections with no usable answer.
+    pub undecided_positive: u32,
+    /// Clean items with no usable answer.
+    pub undecided_negative: u32,
+}
+
+/// Everything the measurement runs produced, saved so the tables can be
 /// printed again without calls (SC-006).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Results {
     /// Noise items.
     pub noise: Vec<NoiseItem>,
@@ -130,16 +197,38 @@ pub struct Results {
     pub order: Vec<OrderItem>,
     /// Self-agreement items.
     pub self_agreement: Vec<AgreementItem>,
-    /// Rows left out: (site, reason, count).
+    /// Rows left out and calls lost: (site, reason, count).
     pub skipped: Vec<(String, String, u32)>,
+    /// The base rate.
+    pub base_rate: Option<BaseRate>,
+    /// The injection back-test.
+    pub injection: Option<InjectionResult>,
+}
+
+/// Read a results file. A missing file is empty results unless `must_exist`;
+/// an unreadable or unparseable file is always an error, never empty results.
+///
+/// # Errors
+///
+/// The file is missing while `must_exist`, unreadable, or not valid results.
+pub fn read_results(path: &Path, must_exist: bool) -> Result<Results, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|e| format!("{} is not a valid results file: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !must_exist => Ok(Results::default()),
+        Err(e) => Err(format!("{} can't be read: {e}", path.display())),
+    }
 }
 
 fn noise_table(out: &mut String, noise: &[NoiseItem]) {
-    let mut by_site: BTreeMap<&str, Vec<&NoiseItem>> = BTreeMap::new();
+    let mut groups: BTreeMap<(&str, &str), Vec<&NoiseItem>> = BTreeMap::new();
     for item in noise {
-        by_site.entry(item.site.as_str()).or_default().push(item);
+        groups
+            .entry((item.site.as_str(), question_family(&item.question)))
+            .or_default()
+            .push(item);
     }
-    for (site, items) in by_site {
+    for ((site, family), items) in groups {
         let spreads: Vec<f64> = items
             .iter()
             .filter_map(|i| logit_spread(&i.samples))
@@ -147,11 +236,13 @@ fn noise_table(out: &mut String, noise: &[NoiseItem]) {
         #[allow(clippy::cast_precision_loss)] // item counts
         let mean = spreads.iter().sum::<f64>() / spreads.len().max(1) as f64;
         let max = spreads.iter().copied().fold(0.0_f64, f64::max);
-        let flips = items.iter().filter(|i| flipped(&i.samples, 0.5)).count();
+        let fewest = items.iter().map(|i| i.samples.len()).min().unwrap_or(0);
+        let most = items.iter().map(|i| i.samples.len()).max().unwrap_or(0);
+        let flips = items.iter().filter(|i| item_flipped(i)).count();
         let _ = writeln!(
             out,
-            "{site}: {} items asked 5 times; logit spread mean {mean:.4}, max {max:.4}; \
-             flipped {flips}",
+            "{site} {family}: {} items, {fewest}..{most} samples each; logit spread mean \
+             {mean:.4}, max {max:.4}; flipped {flips}",
             items.len()
         );
     }
@@ -199,8 +290,38 @@ fn agreement_table(out: &mut String, items: &[AgreementItem]) {
     }
 }
 
-/// The tables for saved results: noise per site, every skip reason, option
-/// order per order, and self-agreement per site.
+fn ratio(numerator: u32, denominator: u32) -> String {
+    if denominator == 0 {
+        "undefined".into()
+    } else {
+        format!("{:.4}", f64::from(numerator) / f64::from(denominator))
+    }
+}
+
+fn injection_table(out: &mut String, r: &InjectionResult) {
+    let c = Confusion {
+        tp: r.tp,
+        fp: r.fp,
+        tn: r.tn,
+        fn_: r.fn_,
+        undecided_positive: r.undecided_positive,
+        undecided_negative: r.undecided_negative,
+    };
+    let _ = writeln!(
+        out,
+        "injection at threshold {}: {} items, {} failed; precision {}; recall {}; \
+         false-positive rate {}",
+        r.threshold,
+        r.items,
+        r.failed,
+        ratio(c.tp, c.tp + c.fp),
+        ratio(c.tp, c.tp + c.fn_),
+        ratio(c.fp, c.fp + c.tn + c.undecided_negative)
+    );
+}
+
+/// The tables for saved results: noise per site and question, every skip
+/// and loss, option order, self-agreement, base rate and injection.
 #[must_use]
 pub fn tables(results: &Results) -> String {
     let mut out = String::new();
@@ -210,6 +331,19 @@ pub fn tables(results: &Results) -> String {
     }
     order_table(&mut out, &results.order);
     agreement_table(&mut out, &results.self_agreement);
+    if let Some(base) = &results.base_rate {
+        let _ = writeln!(
+            out,
+            "base rate: {} turn evaluations, {} reviews run",
+            base.evaluations, base.reviews
+        );
+        for (kind, count) in &base.fired {
+            let _ = writeln!(out, "  fired {kind}: {count}");
+        }
+    }
+    if let Some(injection) = &results.injection {
+        injection_table(&mut out, injection);
+    }
     out
 }
 

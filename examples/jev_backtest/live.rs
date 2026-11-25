@@ -1,21 +1,22 @@
 //! Live subcommands: these call Jev or the big model, and spend.
 //!
 //! Noise, option order and self-agreement read tune-split rows only and save
-//! what they measured to the results file, so `reproduce` prints the same
-//! tables without calls (064 FR-011, SC-006).
+//! what they measured, failures included, to the results file, so
+//! `reproduce` prints the same tables without calls (064 FR-011, SC-006).
 
 use crate::rebuild::{self, asked, tune_success, Rebuilt};
 use mcp_parallax::checkpoint::{review, SignalKind};
-use mcp_parallax::client::default_model_client;
+use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::jev::measure::{self, AgreementItem, NoiseItem, OrderItem};
-use mcp_parallax::jev::metrics::{wilson, Confusion, Decision};
+use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
+use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
     research_claim_questions, turn_review_questions, RELATION_OPTIONS,
 };
 use mcp_parallax::jev::redact::{RedactedState, Redactor};
 use mcp_parallax::modes::{verify, ModeRegistry};
+use mcp_parallax::routing::CallSite;
 use mcp_parallax::storage::jev::JevRecord;
 use mcp_parallax::storage::SqliteStorage;
 use mcp_parallax::traits::classifier::{
@@ -27,35 +28,49 @@ use std::time::Duration;
 const TIMEOUT: Duration = Duration::from_secs(5);
 const RESEARCH: &str = "research_claims";
 const TURN: &str = "turn_review";
+const ALL: &str = "all";
+
+type Counts = BTreeMap<String, u32>;
+
+fn bump(counts: &mut Counts, reason: &str) {
+    *counts.entry(reason.to_string()).or_default() += 1;
+}
 
 fn jev(config: &Config) -> TypesafeClient {
     TypesafeClient::new(&config.jev).expect("TYPESAFE_API_KEY is required for live subcommands")
 }
 
-/// Tune-split research rows that kept their state, oldest first.
-async fn research_rows(storage: &SqliteStorage, limit: usize) -> Vec<JevRecord> {
-    storage
-        .load_jev_records()
-        .await
-        .expect("jev records")
+/// Tune-split research rows that kept their state, oldest first, with the
+/// count of tune rows left out for lacking it.
+async fn research_rows(storage: &SqliteStorage, limit: usize) -> (Vec<JevRecord>, Counts) {
+    let mut skips = Counts::new();
+    let mut rows = Vec::new();
+    let all = storage.load_jev_records().await.expect("jev records");
+    for row in all
         .into_iter()
-        .filter(|r| {
-            tune_success(r, JevSite::ResearchClaims)
-                && r.state_json.is_some()
-                && r.source_ids.is_some()
-        })
-        .take(limit)
-        .collect()
+        .filter(|r| tune_success(r, JevSite::ResearchClaims))
+    {
+        if rows.len() >= limit {
+            break;
+        }
+        if row.state_json.is_some() && row.source_ids.is_some() {
+            rows.push(row);
+        } else {
+            bump(&mut skips, "no stored state");
+        }
+    }
+    (rows, skips)
 }
 
-/// Up to `limit` tune-split turns rebuilt from their transcripts, with the
-/// count of every reason a turn could not be.
+/// Up to `limit` tune-split turns rebuilt from their transcripts that pass
+/// `keep`, with the count of every reason a turn was left out.
 async fn turn_rows(
     storage: &SqliteStorage,
     limit: usize,
-) -> (Vec<(JevRecord, Rebuilt)>, BTreeMap<&'static str, u32>) {
+    keep: impl Fn(&JevRecord) -> Result<(), &'static str>,
+) -> (Vec<(JevRecord, Rebuilt)>, Counts) {
     let mut rebuilt = Vec::new();
-    let mut skips: BTreeMap<&'static str, u32> = BTreeMap::new();
+    let mut skips = Counts::new();
     let rows = storage.load_jev_records().await.expect("jev records");
     for row in rows
         .into_iter()
@@ -64,9 +79,13 @@ async fn turn_rows(
         if rebuilt.len() >= limit {
             break;
         }
+        if let Err(reason) = keep(&row) {
+            bump(&mut skips, reason);
+            continue;
+        }
         match rebuild::rebuild(&row).await {
             Ok(turn) => rebuilt.push((row, turn)),
-            Err(reason) => *skips.entry(reason).or_default() += 1,
+            Err(reason) => bump(&mut skips, reason),
         }
     }
     (rebuilt, skips)
@@ -101,17 +120,21 @@ fn turn_questions(row: &JevRecord) -> Vec<JevQuestion> {
         .collect()
 }
 
-/// A number per question: P(yes) for yes/no, P(supports) for relation.
-fn values(response: &JevResponse) -> Vec<(String, f64)> {
+/// Per question: P(yes) for yes/no, P(supports) for relation, and the chosen
+/// option for a choice question.
+fn values(response: &JevResponse) -> Vec<(String, f64, Option<String>)> {
     response
         .answers
         .iter()
         .filter_map(|(id, answer)| match answer {
-            JevAnswer::Noul { p } => Some((id.clone(), *p)),
-            JevAnswer::Choice { probabilities, .. } => probabilities
+            JevAnswer::Noul { p } => Some((id.clone(), *p, None)),
+            JevAnswer::Choice {
+                choice,
+                probabilities,
+            } => probabilities
                 .iter()
                 .find(|(o, _)| o == "supports")
-                .map(|(_, p)| (id.clone(), *p)),
+                .map(|(_, p)| (id.clone(), *p, Some(choice.clone()))),
         })
         .collect()
 }
@@ -122,13 +145,13 @@ async fn five(
     req: &JevRequest,
     site: &str,
     row_id: &str,
-    failures: &mut u32,
+    losses: &mut Counts,
 ) -> Vec<NoiseItem> {
-    let mut runs: Vec<Vec<(String, f64)>> = Vec::new();
+    let mut runs: Vec<Vec<(String, f64, Option<String>)>> = Vec::new();
     for _ in 0..5 {
         match client.classify(req).await {
             Ok(response) => runs.push(values(&response)),
-            Err(_) => *failures += 1,
+            Err(_) => bump(losses, "noise: failed calls"),
         }
     }
     let Some(first) = runs.first() else {
@@ -136,39 +159,49 @@ async fn five(
     };
     first
         .iter()
-        .map(|(id, _)| NoiseItem {
-            site: site.into(),
-            row_id: row_id.into(),
-            question: id.clone(),
-            samples: runs
+        .map(|(id, _, _)| {
+            let answers: Vec<&(String, f64, Option<String>)> = runs
                 .iter()
-                .filter_map(|run| run.iter().find(|(q, _)| q == id).map(|(_, p)| *p))
-                .collect(),
+                .filter_map(|run| run.iter().find(|(q, _, _)| q == id))
+                .collect();
+            NoiseItem {
+                site: site.into(),
+                row_id: row_id.into(),
+                question: id.clone(),
+                samples: answers.iter().map(|(_, p, _)| *p).collect(),
+                choices: answers.iter().filter_map(|(_, _, c)| c.clone()).collect(),
+            }
         })
         .collect()
 }
 
-/// Five calls per tune row on both sites: spread on the logit scale and
-/// decisions that flip at 0.5.
+/// Five calls per tune row on both sites: spread on the logit scale per
+/// question, and decisions that change across the calls.
 pub async fn noise(config: &Config, storage: &SqliteStorage, limit: usize) {
     let client = jev(config);
-    let mut results = rebuild::load(rebuild::RESULTS_FILE);
+    let mut results = rebuild::load();
     results.noise.clear();
-    let mut failures = 0_u32;
-    for row in research_rows(storage, limit).await {
+    let mut losses = Counts::new();
+    let (rows, research_skips) = research_rows(storage, limit).await;
+    for row in rows {
         let req = research_request(config, &row, research_questions(&row));
-        let items = five(&client, &req, RESEARCH, &row.id, &mut failures).await;
+        let items = five(&client, &req, RESEARCH, &row.id, &mut losses).await;
         results.noise.extend(items);
     }
-    let (turns, skips) = turn_rows(storage, limit).await;
+    let (turns, turn_skips) = turn_rows(storage, limit, |_| Ok(())).await;
     for (row, turn) in turns {
         let req = request(config, turn.state, turn_questions(&row));
-        let items = five(&client, &req, TURN, &row.id, &mut failures).await;
+        let items = five(&client, &req, TURN, &row.id, &mut losses).await;
         results.noise.extend(items);
     }
-    rebuild::record_skips(&mut results, "noise", TURN, &skips);
+    rebuild::record_skips(&mut results, "noise", RESEARCH, &research_skips);
+    rebuild::record_skips(&mut results, "noise", TURN, &turn_skips);
+    let losses: Counts = losses
+        .into_iter()
+        .map(|(k, v)| (k.trim_start_matches("noise: ").to_string(), v))
+        .collect();
+    rebuild::record_skips(&mut results, "noise", ALL, &losses);
     rebuild::save(&results);
-    println!("failed calls: {failures}");
     print!("{}", measure::tables(&results));
 }
 
@@ -216,24 +249,32 @@ fn supports_chosen(response: &JevResponse) -> Vec<(String, bool)> {
 /// no choice questions).
 pub async fn order(config: &Config, storage: &SqliteStorage, limit: usize) {
     let client = jev(config);
-    let rows = research_rows(storage, limit).await;
+    let (rows, skips) = research_rows(storage, limit).await;
     let all = orders();
-    let mut results = rebuild::load(rebuild::RESULTS_FILE);
+    let mut results = rebuild::load();
     results.order.clear();
-    let mut base: Vec<Vec<(String, bool)>> = Vec::new();
+    let mut losses = Counts::new();
+    let mut base: Vec<Option<Vec<(String, bool)>>> = Vec::new();
     for row in &rows {
         let response = client
             .classify(&research_request(config, row, research_questions(row)))
             .await;
-        base.push(response.map(|r| supports_chosen(&r)).unwrap_or_default());
+        if let Ok(response) = response {
+            base.push(Some(supports_chosen(&response)));
+        } else {
+            bump(&mut losses, "base call failed");
+            base.push(None);
+        }
     }
     for order in all.iter().skip(1) {
         for (row, fixed) in rows.iter().zip(&base) {
+            let Some(fixed) = fixed else { continue };
             let questions = reordered(&research_questions(row), order);
             let Ok(response) = client
                 .classify(&research_request(config, row, questions))
                 .await
             else {
+                bump(&mut losses, "reordered call failed");
                 continue;
             };
             for (id, now) in supports_chosen(&response) {
@@ -249,16 +290,44 @@ pub async fn order(config: &Config, storage: &SqliteStorage, limit: usize) {
             }
         }
     }
+    let mut counts = skips;
+    counts.extend(losses);
+    rebuild::record_skips(&mut results, "order", RESEARCH, &counts);
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
 }
 
-/// The big model's repeatability on tune rows: the research verify run twice
-/// on each stored claim, and the end-of-turn review run twice on each
-/// rebuilt turn.
+/// A turn whose review saw no memory-derived candidates: its label records a
+/// contradiction outcome (null with memory candidates, absent on rows
+/// written before the outcome fields existed).
+fn no_memory_candidates(row: &JevRecord) -> Result<(), &'static str> {
+    match row.label_json.as_ref().map(|l| &l["contradiction_flagged"]) {
+        Some(serde_json::Value::Bool(_)) => Ok(()),
+        Some(serde_json::Value::Null) => Err("memory candidates present"),
+        _ => Err("no review outcome in the label"),
+    }
+}
+
+/// The big model's repeatability on tune rows, through the server's own
+/// per-site routing: the research verify run twice on each stored claim,
+/// and the end-of-turn review run twice on each rebuilt turn whose review
+/// saw no memory candidates.
 pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usize) {
-    let client = default_model_client(config);
-    let mut results = rebuild::load(rebuild::RESULTS_FILE);
+    let http = reqwest::Client::new();
+    let pool = ClientPool::from_factory(&config.routing, |model, effort| {
+        mcp_parallax::client::build_model_client(config, &http, model, effort)
+    });
+    let verify_client = pool.for_site(CallSite::ResearchVerify);
+    let review_client = pool.for_site(CallSite::CheckpointReview);
+    println!(
+        "models: research verify {} (effort {:?}), turn review {} (effort {:?})",
+        config.routing.model_for(CallSite::ResearchVerify),
+        config.routing.effort_for(CallSite::ResearchVerify),
+        config.routing.model_for(CallSite::CheckpointReview),
+        config.routing.effort_for(CallSite::CheckpointReview),
+    );
+    println!("the turn review is re-run without stored preferences, which aren't recorded");
+    let mut results = rebuild::load();
     results.self_agreement.clear();
 
     let mut registry = ModeRegistry::new();
@@ -267,7 +336,8 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     let verify_mode = mcp_parallax::research::pipeline::research_verify_mode(
         registry.get(verify::VERIFY_ID).expect("verify mode"),
     );
-    for row in research_rows(storage, limit).await {
+    let (rows, mut research_counts) = research_rows(storage, limit).await;
+    for row in rows {
         let state = row.state_json.as_ref().expect("filtered on state_json");
         let excerpts: Vec<String> = state["sources"]
             .as_object()
@@ -284,20 +354,9 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
             effort: None,
             passes: None,
         };
-        let first = verify::run(
-            client.as_ref(),
-            &verify_mode,
-            &params,
-            config.input_max_chars,
-        )
-        .await;
-        let second = verify::run(
-            client.as_ref(),
-            &verify_mode,
-            &params,
-            config.input_max_chars,
-        )
-        .await;
+        let max = config.input_max_chars;
+        let first = verify::run(verify_client.as_ref(), &verify_mode, &params, max).await;
+        let second = verify::run(verify_client.as_ref(), &verify_mode, &params, max).await;
         if let (Ok(a), Ok(b)) = (first, second) {
             results.self_agreement.push(AgreementItem {
                 site: RESEARCH.into(),
@@ -305,18 +364,20 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
                 first: format!("{:?}", a.verdict.verdict),
                 second: format!("{:?}", b.verdict.verdict),
             });
+        } else {
+            bump(&mut research_counts, "pair dropped: a run failed");
         }
     }
 
     let review_mode = registry.get(review::REVIEW_MODE_ID).expect("review mode");
-    let (turns, skips) = turn_rows(storage, limit).await;
+    let (turns, mut turn_counts) = turn_rows(storage, limit, no_memory_candidates).await;
     for (row, turn) in turns {
         let capture_enabled = asked(&row).iter().any(|q| q == "capture_worthy");
         let candidates = review::mine_candidates(&turn.window, &turn.final_message, &[]);
         let mut verdicts = Vec::new();
         for _ in 0..2 {
             let outcome = review::review_once(
-                client.as_ref(),
+                review_client.as_ref(),
                 review_mode,
                 &candidates,
                 &[],
@@ -341,15 +402,18 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
                 first: first.clone(),
                 second: second.clone(),
             });
+        } else {
+            bump(&mut turn_counts, "pair dropped: a run failed");
         }
     }
-    rebuild::record_skips(&mut results, "self-agreement", TURN, &skips);
+    rebuild::record_skips(&mut results, "self-agreement", RESEARCH, &research_counts);
+    rebuild::record_skips(&mut results, "self-agreement", TURN, &turn_counts);
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
 }
 
 /// A labeled set from your folder, asked with the question in your file;
-/// precision, recall and false-positive rate at `threshold`.
+/// saved with the other results and printed as a table.
 pub async fn injection(config: &Config, folder: &str, question_file: &str, threshold: f64) {
     let client = jev(config);
     let instructions = std::fs::read_to_string(question_file)
@@ -365,7 +429,7 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
     };
     let redactor = Redactor::new(vec![]);
     let mut pairs: Vec<(Decision, bool)> = Vec::new();
-    let mut failures = 0_u32;
+    let mut failed = 0_u32;
     let mut paths: Vec<_> = std::fs::read_dir(folder)
         .expect("dataset folder")
         .filter_map(Result::ok)
@@ -385,13 +449,13 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
                 continue;
             };
             let Ok(state) = redactor.redact(text) else {
-                failures += 1;
+                failed += 1;
                 continue;
             };
             let req = request(config, state, vec![question.clone()]);
             match client.classify(&req).await {
                 Ok(response) => {
-                    let p = values(&response).first().map(|(_, p)| *p);
+                    let p = values(&response).first().map(|(_, p, _)| *p);
                     let decision = match p {
                         Some(p) if p >= threshold => Decision::Yes,
                         Some(_) => Decision::No,
@@ -399,20 +463,23 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
                     };
                     pairs.push((decision, label));
                 }
-                Err(_) => failures += 1,
+                Err(_) => failed += 1,
             }
         }
     }
     let c = Confusion::from_pairs(&pairs);
-    let negatives = c.fp + c.tn + c.undecided_negative;
-    println!(
-        "items: {}; failed: {failures}; threshold {threshold}",
-        pairs.len()
-    );
-    println!("precision {:?}; recall {:?}", c.precision(), c.recall());
-    println!(
-        "recall 95% interval {:?}; false-positive rate 95% interval {:?}",
-        wilson(c.tp, c.tp + c.fn_, 1.959_964),
-        wilson(c.fp, negatives, 1.959_964)
-    );
+    let mut results = rebuild::load();
+    results.injection = Some(InjectionResult {
+        threshold,
+        items: u32::try_from(pairs.len()).unwrap_or(u32::MAX),
+        failed,
+        tp: c.tp,
+        fp: c.fp,
+        tn: c.tn,
+        fn_: c.fn_,
+        undecided_positive: c.undecided_positive,
+        undecided_negative: c.undecided_negative,
+    });
+    rebuild::save(&results);
+    print!("{}", measure::tables(&results));
 }

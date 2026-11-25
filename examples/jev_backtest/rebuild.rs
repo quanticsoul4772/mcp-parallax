@@ -18,6 +18,7 @@ use mcp_parallax::storage::jev::{JevOutcome, JevRecord};
 use mcp_parallax::traits::classifier::JevSite;
 use mcp_parallax::traits::trajectory::{FsTrajectoryReader, TrajectoryReader};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Where live runs save their results, beside the databases (gitignored).
 pub const RESULTS_FILE: &str = "./data/jev-measurements.json";
@@ -31,14 +32,21 @@ pub fn tune_success(row: &JevRecord, site: JevSite) -> bool {
 }
 
 /// A stored turn, rebuilt.
+///
+/// The fingerprint covers the redacted state: the statement pairs, the
+/// activity line and the first excerpt of the final message. Every input the
+/// measurements use comes from those, so a match means the measured inputs
+/// are the server's. The window and final message themselves may still
+/// differ from the server's in ways the state does not show (an entry that
+/// mined no pair, text past the excerpt).
 pub struct Rebuilt {
     /// The state Jev saw, fingerprint-checked.
     pub state: RedactedState,
-    /// The window the server read.
+    /// The window as rebuilt.
     pub window: TrajectoryWindow,
     /// The turn activity summary.
     pub activity: String,
-    /// The final assistant message.
+    /// The final assistant message as rebuilt.
     pub final_message: String,
 }
 
@@ -46,11 +54,19 @@ pub struct Rebuilt {
 pub async fn rebuild(row: &JevRecord) -> Result<Rebuilt, &'static str> {
     let path = row.transcript_ref.as_deref().ok_or("no transcript path")?;
     let session = row.harness_session_id.as_deref().ok_or("no session id")?;
-    let text = std::fs::read_to_string(path).map_err(|_| "transcript missing")?;
+    let bytes = std::fs::read(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "transcript missing"
+        } else {
+            "transcript unreadable"
+        }
+    })?;
+    // Lossy, as the server's reader decodes it.
+    let text = String::from_utf8_lossy(&bytes);
     let cut = measure::transcript_until(&text, row.created_at);
     let final_message = measure::last_assistant_text(&cut).ok_or("no final message")?;
     let temp = std::env::temp_dir().join(format!("jev-rebuild-{}.jsonl", row.id));
-    std::fs::write(&temp, format!("{cut}\n")).map_err(|_| "temp file not written")?;
+    std::fs::write(&temp, cut.as_bytes()).map_err(|_| "temp file not written")?;
     let window = FsTrajectoryReader
         .read(&temp.to_string_lossy(), session)
         .await;
@@ -80,12 +96,13 @@ pub fn asked(row: &JevRecord) -> Vec<String> {
         .collect()
 }
 
-/// The saved results, or empty ones.
-pub fn load(path: &str) -> Results {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+/// The saved results; a run with no file yet starts empty. A broken file
+/// stops the run rather than being overwritten.
+pub fn load() -> Results {
+    measure::read_results(Path::new(RESULTS_FILE), false).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1)
+    })
 }
 
 /// Save the results, replacing the file.
@@ -98,20 +115,22 @@ pub fn save(results: &Results) {
     .expect("results file");
 }
 
-/// Replace the skip counts a measurement recorded under `prefix`.
+/// Replace the skip and loss counts a measurement recorded under `prefix`.
 pub fn record_skips(
     results: &mut Results,
     prefix: &str,
     site: &str,
-    skips: &BTreeMap<&'static str, u32>,
+    skips: &BTreeMap<String, u32>,
 ) {
     let tag = format!("{prefix}: ");
     results
         .skipped
         .retain(|(s, reason, _)| !(s == site && reason.starts_with(&tag)));
     for (reason, count) in skips {
-        results
-            .skipped
-            .push((site.to_string(), format!("{tag}{reason}"), *count));
+        if *count > 0 {
+            results
+                .skipped
+                .push((site.to_string(), format!("{tag}{reason}"), *count));
+        }
     }
 }

@@ -11,6 +11,7 @@ pub use claim::{
 };
 pub use turn::{
     shadow_turn, turn_label, turn_state, ReviewOutcome, TurnIds, TurnInputs, TurnJev, TurnState,
+    TurnStateError,
 };
 
 use crate::error::{AppError, Outcome};

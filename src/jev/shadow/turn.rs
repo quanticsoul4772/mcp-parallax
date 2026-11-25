@@ -81,21 +81,34 @@ pub struct TurnState {
     pub hash: String,
 }
 
+/// A turn state that could not be redacted; nothing is sent.
+#[derive(Debug)]
+pub struct TurnStateError {
+    /// The redaction failure.
+    pub error: RedactError,
+    /// The final message had already been cut to the excerpt length.
+    pub truncated: bool,
+}
+
 /// Build the turn state exactly as the shadow sends it. The back-test
 /// harness rebuilds stored turns with this function and compares `hash`.
 ///
 /// # Errors
 ///
-/// A redaction failure; nothing is sent then.
+/// A redaction failure, with whether the final message had been cut.
 pub fn turn_state(
     redactor: &Redactor,
     window: &TrajectoryWindow,
     activity: &str,
     final_message: &str,
-) -> Result<TurnState, RedactError> {
+) -> Result<TurnState, TurnStateError> {
     // Redact the whole texts first: a secret on the cut, or one split across
     // sentences (a JWT, a PEM block), must be removed before either happens.
-    let (window, final_message, text_redactions) = redact_turn(redactor, window, final_message)?;
+    let (window, final_message, text_redactions) = redact_turn(redactor, window, final_message)
+        .map_err(|error| TurnStateError {
+            error,
+            truncated: false,
+        })?;
     let candidates = mine_candidates(&window, &final_message, &[]);
     let (final_text, truncated) = truncate(&final_message, FINAL_MESSAGE_EXCERPT_CHARS);
     let pairs: Vec<Value> = candidates
@@ -114,7 +127,9 @@ pub fn turn_state(
         "activity": activity,
         "final_message": final_text,
     });
-    let redacted = redactor.redact_json(&state)?;
+    let redacted = redactor
+        .redact_json(&state)
+        .map_err(|error| TurnStateError { error, truncated })?;
     let redactions = u32::try_from(text_redactions + redacted.redactions()).unwrap_or(u32::MAX);
     let hash = format!(
         "{:016x}",
@@ -142,7 +157,10 @@ pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>
         inputs.final_message,
     ) {
         Ok(built) => built,
-        Err(error) => return redaction_failed(row, &error),
+        Err(failed) => {
+            row.truncated = failed.truncated;
+            return redaction_failed(row, &failed.error);
+        }
     };
     row.truncated = built.truncated;
     row.redaction_count = built.redactions;
@@ -267,4 +285,24 @@ fn redact_turn(
         entries,
     };
     Ok((window, final_redacted.as_str().to_string(), count))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_state_too_large_to_redact_still_reports_the_cut_final_message() {
+        let window = TrajectoryWindow {
+            session_id: "s".into(),
+            entries: vec![],
+        };
+        let activity = "a".repeat(199_000);
+        let final_message = "b".repeat(FINAL_MESSAGE_EXCERPT_CHARS + 500);
+        let failed = turn_state(&Redactor::new(vec![]), &window, &activity, &final_message)
+            .err()
+            .expect("a state over the redactor's cap fails");
+        assert!(failed.truncated);
+    }
 }

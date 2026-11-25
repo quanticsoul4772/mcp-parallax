@@ -64,10 +64,13 @@ async fn main() {
         }
         "reproduce" => {
             let path = args.get(1).map_or(rebuild::RESULTS_FILE, String::as_str);
-            print!(
-                "{}",
-                mcp_parallax::jev::measure::tables(&rebuild::load(path))
-            );
+            match mcp_parallax::jev::measure::read_results(std::path::Path::new(path), true) {
+                Ok(results) => print!("{}", mcp_parallax::jev::measure::tables(&results)),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
         }
         "injection" => {
             let folder = args.get(1).expect("the dataset folder");
