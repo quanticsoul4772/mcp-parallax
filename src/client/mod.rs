@@ -5,6 +5,8 @@ pub mod claude_cli;
 pub mod exa;
 pub mod openai_compat;
 pub mod pool;
+pub(crate) mod retry;
+pub mod typesafe;
 pub mod voyage;
 
 pub use anthropic::AnthropicClient;

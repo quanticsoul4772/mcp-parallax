@@ -136,6 +136,28 @@ pub enum CaptureKind {
     None,
 }
 
+/// The review's raw answers as the model gave them (064): the label the Jev
+/// shadow is compared against, kept even when no flag results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReviewRaw {
+    /// The model's `contradicts` answer.
+    pub contradicts: bool,
+    /// The model's `violates` answer.
+    pub violates: bool,
+    /// The model's `capture_kind` answer.
+    pub capture_kind: CaptureKind,
+}
+
+/// Where a candidate pair came from (064): memory pairs are never sent to
+/// Jev.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandidateOrigin {
+    /// Both statements come from the transcript.
+    Transcript,
+    /// The earlier statement is a stored memory.
+    Memory,
+}
+
 /// A capture proposal mapped from the hop (017): server-side storage rules
 /// live in `run_turn` (quarantine, cap, audit).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +180,8 @@ pub struct Candidate {
     /// Compact summary of tool outcomes observed between the statements
     /// (FR-004(d) input).
     pub between: String,
+    /// Transcript or stored memory (064).
+    pub origin: CandidateOrigin,
 }
 
 /// Register the review mode (boot-time; enforces flat+closed).
@@ -194,11 +218,12 @@ pub fn mine_candidates(
             let final_statement = final_sentences
                 .iter()
                 .max_by_key(|s| overlap(&memory.content, s))
-                .map_or_else(|| truncate(final_message, 240), |s| (*s).to_string());
+                .map_or_else(|| truncate(final_message, 240).0, |s| (*s).to_string());
             candidates.push(Candidate {
                 earlier: memory.content.clone(),
                 final_statement,
                 between: window_summary(&window.entries),
+                origin: CandidateOrigin::Memory,
             });
         }
     }
@@ -221,6 +246,7 @@ pub fn mine_candidates(
                         earlier: earlier_sentence.to_string(),
                         final_statement: (*final_sentence).to_string(),
                         between: between_summary(&window.entries[index + 1..]),
+                        origin: CandidateOrigin::Transcript,
                     });
                 }
             }
@@ -251,7 +277,7 @@ pub fn rank_recall(query: &[f32], memories: &[Memory]) -> Vec<(f32, Memory)> {
 
 /// Max final-message chars included as violation evidence (015 research
 /// D3) — keeps the hop prompt bounded.
-const FINAL_MESSAGE_EXCERPT_CHARS: usize = 2000;
+pub(crate) const FINAL_MESSAGE_EXCERPT_CHARS: usize = 2000;
 
 /// Deterministic activity summary of the turn's bounded window — the
 /// violation judgment's process evidence (015 research D3).
@@ -301,7 +327,7 @@ fn assemble_prompt(
     let _ = writeln!(
         turn_block,
         "Turn final message (excerpt): \"{}\"",
-        truncate(final_message, FINAL_MESSAGE_EXCERPT_CHARS)
+        truncate(final_message, FINAL_MESSAGE_EXCERPT_CHARS).0
     );
     let _ = writeln!(turn_block, "Turn activity: {activity}");
     let _ = writeln!(
@@ -353,7 +379,16 @@ pub async fn review_once(
     final_message: &str,
     activity: &str,
     capture_enabled: bool,
-) -> Result<(Vec<(Signal, String)>, Option<CaptureProposal>, u64, u64), AppError> {
+) -> Result<
+    (
+        Vec<(Signal, String)>,
+        Option<CaptureProposal>,
+        u64,
+        u64,
+        ReviewRaw,
+    ),
+    AppError,
+> {
     let prompt = assemble_prompt(
         mode,
         candidates,
@@ -367,6 +402,11 @@ pub async fn review_once(
     validate(&mode.output_schema, &completion.value)?;
     let out: ReviewOut = serde_json::from_value(completion.value)
         .map_err(|e| AppError::ValidationFailure(format!("review shape: {e}")))?;
+    let raw = ReviewRaw {
+        contradicts: out.contradicts,
+        violates: out.violates,
+        capture_kind: out.capture_kind,
+    };
 
     let mut flagged: Vec<(Signal, String)> = Vec::new();
     if out.contradicts && !candidates.is_empty() {
@@ -432,6 +472,7 @@ pub async fn review_once(
         proposal,
         completion.input_tokens,
         completion.output_tokens,
+        raw,
     ))
 }
 
@@ -445,9 +486,12 @@ fn assemble_flag(out: &ReviewOut) -> String {
     )
 }
 
-fn truncate(text: &str, max: usize) -> String {
-    let collected: String = text.chars().take(max).collect();
-    collected.trim().to_string()
+/// The first `max` characters, trimmed, and whether anything was cut.
+pub(crate) fn truncate(text: &str, max: usize) -> (String, bool) {
+    let mut chars = text.chars();
+    let collected: String = chars.by_ref().take(max).collect();
+    let cut = chars.next().is_some();
+    (collected.trim().to_string(), cut)
 }
 
 /// Split into trimmed sentences of committed-statement length.
@@ -691,6 +735,7 @@ mod tests {
             earlier: "The migration is reversible.".into(),
             final_statement: "The migration is not reversible.".into(),
             between: "no tool activity since the earlier statement".into(),
+            origin: CandidateOrigin::Transcript,
         }
     }
 
@@ -730,7 +775,7 @@ mod tests {
                 reported_cost_micros: None,
             })
         });
-        let (flagged, _proposal, inp, out) = review_once(
+        let (flagged, _proposal, inp, out, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
@@ -773,7 +818,7 @@ mod tests {
                 reported_cost_micros: None,
             })
         });
-        let (flagged, _proposal, _, _) = review_once(
+        let (flagged, _proposal, _, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
@@ -828,7 +873,7 @@ mod tests {
             preference_candidate("mem-friday", "never deploy on fridays"),
             preference_candidate("mem-gate", "always run the test gate before claiming done"),
         ];
-        let (flagged, _proposal, _, _) = review_once(
+        let (flagged, _proposal, _, _, _) = review_once(
             &client,
             &test_mode(),
             &[],
@@ -883,7 +928,7 @@ mod tests {
             "mem-friday",
             "never deploy on fridays",
         )];
-        let (flagged, _proposal, _, _) = review_once(
+        let (flagged, _proposal, _, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
@@ -924,7 +969,7 @@ mod tests {
                 reported_cost_micros: None,
             })
         });
-        let (flagged, proposal, _, _) = review_once(
+        let (flagged, proposal, _, _, _) = review_once(
             &client,
             &test_mode(),
             &[],
@@ -966,7 +1011,7 @@ mod tests {
                 reported_cost_micros: None,
             })
         });
-        let (_, proposal, _, _) = review_once(
+        let (_, proposal, _, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
@@ -1003,7 +1048,7 @@ mod tests {
                 reported_cost_micros: None,
             })
         });
-        let (flagged, _proposal, _, _) = review_once(
+        let (flagged, _proposal, _, _, _) = review_once(
             &client,
             &test_mode(),
             &[candidate()],
@@ -1015,5 +1060,84 @@ mod tests {
         .await
         .unwrap();
         assert!(flagged.is_empty());
+    }
+
+    /// 064 T017: the review's raw answers come back as the model gave them,
+    /// even when no flag results (here: a contradiction with no candidates).
+    #[tokio::test]
+    async fn review_once_returns_the_raw_answers() {
+        let mut client = MockModelClient::new();
+        client.expect_complete().times(1).returning(|_, _| {
+            Ok(Completion {
+                value: json!({
+                    "contradicts": true,
+                    "statement_a": "a",
+                    "statement_b": "b",
+                    "basis": "x",
+                    "violates": false,
+                    "violated_preference": "",
+                    "capture_worthy": true,
+                    "capture_kind": "lesson",
+                    "capture_content": "A lesson.",
+                    "capture_basis": "y",
+                    "violation_basis": ""
+                }),
+                input_tokens: 10,
+                output_tokens: 5,
+                reported_cost_micros: None,
+            })
+        });
+        let (flagged, _proposal, _, _, raw) = review_once(
+            &client,
+            &test_mode(),
+            &[],
+            &[],
+            "final",
+            "no tool activity in this turn's window",
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(flagged.is_empty());
+        assert_eq!(
+            raw,
+            ReviewRaw {
+                contradicts: true,
+                violates: false,
+                capture_kind: CaptureKind::Lesson,
+            }
+        );
+    }
+
+    /// 064 T017: memory pairs are marked Memory, transcript pairs Transcript,
+    /// so the shadow can keep stored memories out of Jev's state.
+    #[test]
+    fn candidates_carry_their_origin() {
+        let memory = constraint_memory("Decision: deployments always go through staging first.");
+        let from_memory = mine_candidates(
+            &window(vec![call(false)]),
+            "I will deploy this straight to production now since it is a small change.",
+            &[(0.9, memory)],
+        );
+        assert_eq!(from_memory.len(), 1);
+        assert_eq!(from_memory[0].origin, CandidateOrigin::Memory);
+
+        let from_transcript = mine_candidates(
+            &window(vec![assistant(
+                "The database migration is fully reversible and safe to run.",
+            )]),
+            "After review, the database migration is not reversible and cannot be safely run.",
+            &[],
+        );
+        assert_eq!(from_transcript.len(), 1);
+        assert_eq!(from_transcript[0].origin, CandidateOrigin::Transcript);
+    }
+
+    /// 064 T017: truncate reports whether it cut the text.
+    #[test]
+    fn truncate_reports_whether_it_cut() {
+        assert_eq!(truncate("abc", 5), ("abc".to_string(), false));
+        assert_eq!(truncate("abc", 3), ("abc".to_string(), false));
+        assert_eq!(truncate("abcdef", 3), ("abc".to_string(), true));
     }
 }

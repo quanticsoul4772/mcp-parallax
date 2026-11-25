@@ -87,6 +87,7 @@ fn deps(config: &Config) -> ResearchDeps {
         max_age_hours: config.exa_max_age_hours,
         routing: config.routing.clone(),
         backend: config.backend,
+        jev: None,
     }
 }
 
@@ -149,6 +150,7 @@ async fn main() {
             &cost,
             &pages,
             &mcp_parallax::telemetry::NonModelUsage::default(),
+            &mcp_parallax::telemetry::JevShadow::default(),
         )
         .await;
         let exa_cost = cost

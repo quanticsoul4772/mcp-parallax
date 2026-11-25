@@ -184,6 +184,7 @@ fn variant_name(error: &AppError) -> &'static str {
         AppError::Cancelled => "Cancelled",
         AppError::EmbeddingProvider(_) => "EmbeddingProvider",
         AppError::SearchProvider(_) => "SearchProvider",
+        AppError::ClassifierProvider(_) => "ClassifierProvider",
         AppError::Metered { source, .. } => variant_name(source),
     }
 }

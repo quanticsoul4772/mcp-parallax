@@ -46,7 +46,7 @@ OK on success; ERROR with the outcome class otherwise.
 | `gen_ai.provider.name` | string | `anthropic` (registry well-known value) \| `voyageai` (verified 2026-06-12: the conventions' registry has **no** Voyage entry, so this is a deliberate custom value in the registry's naming style) |
 | `error.type` | string | outcome class (absent on success) |
 | `parallax.tool` | string | `verify`, `unstick`, `check`, `save`, `recall`, `forget`, `research`, `checkpoint_action`, `checkpoint_batch`, `checkpoint_turn` |
-| `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `provider_rejected`, `usage_limit`, `search_provider`, `embedding_provider`, `cancelled`) |
+| `parallax.outcome` | string | the outcome taxonomy (`success`, `refusal`, `truncation`, `timeout`, `retries_exhausted`, `invalid_input`, `validation_failure`, `provider_rejected`, `usage_limit`, `search_provider`, `embedding_provider`, `classifier_provider`, `cancelled`) |
 
 **A non-`success` outcome does not imply zero usage** (020). A `refusal` or
 `truncation` is an HTTP 200 the provider billed for, and an ensemble that
@@ -65,6 +65,7 @@ Outcomes that genuinely cost nothing — `timeout`, `retries_exhausted`,
 | `parallax.search.cost_usd` | double | **added 059** — the research run's Exa cost in USD: the sum of what every Exa search and contents call reported. Emitted **only** on `research` spans, and only when every Exa call reported a cost; absent otherwise. Separate from `parallax.cost_usd`, which stays the summed model cost |
 | `parallax.cost_basis` | string | **added 060** — what the cost figure rests on: `price_table` (Parallax's price table applied to the tokens) or `cli_estimate` (the sum of the Claude Code CLI's own per-call estimates on the `claude_cli` backend, where the calls ran on the operator's subscription). Both are API-price estimates, never a charge |
 | `parallax.research.pages_fetched` / `parallax.research.pages_kept` | int | **added 061** — research only: pages whose text came back, and pages that reached extraction after the rerank; absent on other tools |
+| `parallax.jev.mode` / `.requests` / `.excluded` / `.failures` / `.cost_usd` / `.critical_path_ms` | string / int / int / int / double / int | **added 064**: research only, when its Jev site is in shadow: mode, requests sent, claims excluded in code, requests not ending in success, summed Jev cost (equal to the record's `jev_cost_usd`), time waited on Jev beyond the call's own work (0 by design). From the invocation's `jev_records` rows; absent otherwise |
 
 > **Amendment (2026-07-24, feature 018 — per-call-site model routing).** Call
 > sites can now run on different models, so one invocation may span several.
@@ -86,12 +87,15 @@ data).
 |---|---|---|
 | `parallax.checkpoint.boundary` | string | `action` \| `batch` \| `turn` |
 | `parallax.checkpoint.verdict` | string | `silence` \| `flag` \| `hold` |
-| `parallax.checkpoint.signals` | string[] | fired signal kinds (`repetition`, `repeated_failure`, `memory_conflict`, `self_contradiction`) — kinds only, never evidence text |
+| `parallax.checkpoint.signals` | string[] | fired signal kinds (`repetition`, `repeated_failure`, `memory_conflict`, `self_contradiction`, `preference_violation`) — kinds only, never evidence text |
 | `parallax.checkpoint.suppressed` | bool | cooldown-suppressed delivery |
 | `parallax.checkpoint.fail_open` | bool | evaluation degraded |
 | `parallax.checkpoint.review_ran` | bool | the review hop ran (turn boundary) |
 | `parallax.checkpoint.cost_usd` | double | review-hop cost (0 for pure paths) |
 | `parallax.session_id` | string | the **harness session id** from the hook params (note: invocation spans carry the server's per-process session UUID; checkpoint spans carry the harness's — the useful correlation key at each level) |
+| `parallax.jev.mode` / `.requests` / `.failures` / `.cost_usd` / `.latency_ms` / `.critical_path_ms` | string / int / int / double / int / int | **added 064**: turn boundary only, when its Jev site is in shadow and the review ran: mode, requests (0 or 1), requests not ending in success, Jev cost (equal to the record's `jev_cost_usd`), the request's wall time, time waited on Jev beyond the review. From the evaluation's `jev_records` row; absent otherwise |
+
+> **Amendment (2026-11-24, feature 064).** The `parallax.jev.*` attributes come from the call's `jev_records` rows, not the invocation or checkpoint record. They are computed at the same exit point from the rows being written, so they agree with `jev_records`; `parallax.jev.cost_usd` equals the record's `jev_cost_usd`.
 
 ## Metrics
 

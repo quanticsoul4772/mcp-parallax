@@ -122,6 +122,7 @@ async fn main() {
         model: config.anthropic_model.clone(),
         embedder: Some(Arc::clone(&embedder)),
         gate_extra_patterns: vec![],
+        jev: None,
     };
     let dir = tempfile::tempdir().unwrap();
 

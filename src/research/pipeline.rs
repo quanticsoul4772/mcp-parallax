@@ -82,6 +82,8 @@ pub struct ResearchDeps {
     /// The selected model backend (062): research's default deadlines are
     /// longer on `claude_cli`.
     pub backend: crate::config::Backend,
+    /// The Jev claim shadow (064); `None` when the site is off.
+    pub jev: Option<crate::jev::shadow::ClaimJev>,
 }
 
 /// The run's enforced ceilings: the budget meter and the wall clock, with a
@@ -183,6 +185,7 @@ pub async fn run(
         &crate::telemetry::SearchCost::default(),
         &crate::telemetry::PageCounts::default(),
         &crate::telemetry::NonModelUsage::default(),
+        &crate::telemetry::JevShadow::default(),
     )
     .await
 }
@@ -204,12 +207,16 @@ pub async fn run_at(
     search_cost: &crate::telemetry::SearchCost,
     pages: &crate::telemetry::PageCounts,
     non_model: &crate::telemetry::NonModelUsage,
+    jev_rows: &crate::telemetry::JevShadow,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
     let meter = RunMeter::default();
     let outcome = run_metered_at(
         deps,
         params,
-        &meter,
+        ClaimSinks {
+            meter: &meter,
+            jev_rows,
+        },
         concurrency,
         search_cost,
         pages,
@@ -229,16 +236,25 @@ pub async fn run_at(
     outcome.map_err(|error| error.metered(meter.input_tokens(), meter.output_tokens()))
 }
 
+/// Where a run's spend goes: the token meter and, with Jev on, the claim
+/// rows (064). Bundled so the claim path keeps a short argument list.
+#[derive(Clone, Copy)]
+struct ClaimSinks<'a> {
+    meter: &'a RunMeter,
+    jev_rows: &'a crate::telemetry::JevShadow,
+}
+
 #[allow(clippy::too_many_lines)] // the five-phase spine reads best unbroken; helpers carry the logic
 async fn run_metered_at(
     deps: &ResearchDeps,
     params: &ResearchParams,
-    meter: &RunMeter,
+    sinks: ClaimSinks<'_>,
     concurrency: usize,
     search_cost: &crate::telemetry::SearchCost,
     pages_counted: &crate::telemetry::PageCounts,
     non_model: &crate::telemetry::NonModelUsage,
 ) -> Result<(ResearchResult, crate::telemetry::ModelUsage), AppError> {
+    let meter = sinks.meter;
     let settings = validate_params(deps, params)?;
     let ceiling = Ceiling {
         meter,
@@ -512,7 +528,7 @@ async fn run_metered_at(
                 deps,
                 &verify_mode,
                 Arc::clone(&semaphore),
-                meter,
+                sinks,
                 &ceiling,
                 &source_meta,
                 claim,
@@ -948,11 +964,12 @@ async fn verify_claim(
     deps: &ResearchDeps,
     mode: &CorrectiveMode,
     semaphore: Arc<Semaphore>,
-    meter: &RunMeter,
+    sinks: ClaimSinks<'_>,
     ceiling: &Ceiling<'_>,
     source_meta: &BTreeMap<String, &SourceRecord>,
     claim: Claim,
 ) -> ClaimOutcome {
+    let meter = sinks.meter;
     let Ok(_permit) = semaphore.acquire().await else {
         return ClaimOutcome::Empty;
     };
@@ -997,16 +1014,20 @@ async fn verify_claim(
         )),
     };
 
-    let run = match verify::run(
+    let verify = verify::run(
         deps.verify_client.as_ref(),
         mode,
         &verify_params,
         deps.input_max_chars,
-    )
-    .await
-    {
+    );
+    let (verified, jev_row) =
+        verify_beside_jev(deps, ceiling, source_meta, &claim, sinks.jev_rows, verify).await;
+    let run = match verified {
         Ok(run) => run,
         Err(e) => {
+            if let Some(row) = jev_row {
+                sinks.jev_rows.push(row);
+            }
             // Same as extraction: the claim is dropped, the tokens were not
             // free (020). Verification is the tool's dominant cost, so
             // silently unmetering its failures is the largest under-report of
@@ -1029,22 +1050,7 @@ async fn verify_claim(
         run.output_tokens,
     );
 
-    let mean_credibility = {
-        let credibilities: Vec<f32> = claim
-            .source_ids
-            .iter()
-            .filter_map(|id| source_meta.get(id))
-            .map(|s| s.credibility)
-            .collect();
-        if credibilities.is_empty() {
-            0.0
-        } else {
-            #[allow(clippy::cast_precision_loss)]
-            {
-                credibilities.iter().sum::<f32>() / (credibilities.len() as f32)
-            }
-        }
-    };
+    let mean_credibility = mean_credibility(&claim, source_meta);
     let support = verdict::support(
         run.verdict.passes,
         run.verdict.confidence,
@@ -1056,12 +1062,135 @@ async fn verify_claim(
         claim.source_ids.len(),
         mean_credibility,
     );
+    if let Some(row) = jev_row {
+        record_claim_row(
+            deps,
+            sinks,
+            row,
+            &run.verdict,
+            support,
+            claim.source_ids.len(),
+        );
+    }
     ClaimOutcome::Verified(Box::new(VerifiedClaim {
         claim,
         support,
         confidence,
         findings: run.verdict.findings,
     }))
+}
+
+/// The mean credibility of a claim's sources (0 when none resolve).
+fn mean_credibility(claim: &Claim, source_meta: &BTreeMap<String, &SourceRecord>) -> f32 {
+    let credibilities: Vec<f32> = claim
+        .source_ids
+        .iter()
+        .filter_map(|id| source_meta.get(id))
+        .map(|s| s.credibility)
+        .collect();
+    if credibilities.is_empty() {
+        0.0
+    } else {
+        #[allow(clippy::cast_precision_loss)]
+        {
+            credibilities.iter().sum::<f32>() / (credibilities.len() as f32)
+        }
+    }
+}
+
+/// 064: label a claim's Jev row with the ensemble's verdict and keep it.
+fn record_claim_row(
+    deps: &ResearchDeps,
+    sinks: ClaimSinks<'_>,
+    mut row: crate::storage::jev::JevRecord,
+    verdict: &crate::modes::verify::Verdict,
+    support: Support,
+    sources: usize,
+) {
+    row.label_json = Some(crate::jev::shadow::claim_label(
+        &serde_json::Value::from(match support {
+            Support::Confirmed => "confirmed",
+            Support::Unverified => "unverified",
+            Support::Contested => "contested",
+            Support::Refuted => "refuted",
+        }),
+        verdict.verdict == crate::modes::verify::VerdictKind::Supported,
+        verdict.confidence,
+        verdict.passes,
+        sources,
+    ));
+    row.label_source = Some(format!(
+        "{}/research-verify",
+        deps.routing
+            .model_for(crate::routing::CallSite::ResearchVerify)
+    ));
+    sinks.jev_rows.push(row);
+}
+
+/// 064: run `verify` and, when the claim site is in shadow, Jev beside it.
+/// Jev never makes a claim take longer: once verify finishes, an unfinished
+/// Jev call is abandoned and recorded as `timeout`.
+async fn verify_beside_jev<F>(
+    deps: &ResearchDeps,
+    ceiling: &Ceiling<'_>,
+    source_meta: &BTreeMap<String, &SourceRecord>,
+    claim: &Claim,
+    jev_rows: &crate::telemetry::JevShadow,
+    verify: F,
+) -> (F::Output, Option<crate::storage::jev::JevRecord>)
+where
+    F: std::future::Future,
+{
+    use crate::jev::shadow::{ask_claim, prepare_claim, ClaimSource, PreparedClaim};
+    use futures::FutureExt as _;
+    let Some(jev) = &deps.jev else {
+        return (verify.await, None);
+    };
+    let sources: Vec<ClaimSource> = claim
+        .source_ids
+        .iter()
+        .filter_map(|id| source_meta.get(id))
+        .take(evidence::EVIDENCE_SOURCES_MAX)
+        .map(|s| ClaimSource {
+            id: s.id.clone(),
+            excerpt: evidence::evidence_excerpt(
+                &s.text,
+                &claim.text,
+                evidence::EVIDENCE_EXCERPT_MAX_CHARS,
+            ),
+            flagged: !s.injection_patterns.is_empty(),
+        })
+        .collect();
+    // 064 review E: preparation runs before verify starts, so it is timed.
+    let started = std::time::Instant::now();
+    let prepared = prepare_claim(
+        jev,
+        &claim.text,
+        &claim_key(&claim.text),
+        &sources,
+        deps.clock.now(),
+    );
+    jev_rows.add_prep(started.elapsed());
+    match prepared {
+        PreparedClaim::Done(row) => (verify.await, Some(*row)),
+        PreparedClaim::Ask(row, request) => {
+            let fallback = (*row).clone();
+            let ask = ask_claim(jev, *row, *request, ceiling.time_left());
+            tokio::pin!(ask);
+            tokio::pin!(verify);
+            tokio::select! {
+                biased;
+                verified = &mut verify => {
+                    let row = ask
+                        .as_mut()
+                        .now_or_never()
+                        .unwrap_or_else(|| crate::jev::shadow::abandoned(fallback));
+                    (verified, Some(row))
+                }
+                row = &mut ask => (verify.await, Some(row)),
+            }
+        }
+    }
 }
 
 #[cfg(test)]

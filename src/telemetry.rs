@@ -39,6 +39,8 @@ const PRICING_PER_MTOK: &[(&str, f64, f64)] = &[
     // 061: research's reranker bills input only (Voyage pricing page,
     // 2026-11-23).
     ("rerank-3", 0.05, 0.0),
+    // 064: Jev bills input only (TypeSafe pricing, 2026-11-24).
+    ("jev-1.14.0", 0.042, 0.0),
 ];
 
 /// Conservative fallback for unknown model ids (Opus-tier rates).
@@ -241,6 +243,60 @@ impl SearchCost {
     }
 }
 
+/// Research's Jev rows for one invocation (064): pushed by the claim shadow,
+/// taken once by the record guard on every exit, cancellation included.
+#[derive(Debug, Default)]
+pub struct JevShadow {
+    rows: std::sync::Mutex<Vec<crate::storage::jev::JevRecord>>,
+    /// Summed claim preparation time, in microseconds (064 review E).
+    prep_micros: std::sync::atomic::AtomicU64,
+    /// Claims whose preparation was timed.
+    prep_count: std::sync::atomic::AtomicU64,
+}
+
+impl JevShadow {
+    /// Keep one row.
+    pub fn push(&self, row: crate::storage::jev::JevRecord) {
+        // A panic elsewhere must not lose the measurement (064 review N).
+        self.rows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(row);
+    }
+
+    /// Add one claim's preparation time (redaction and request building),
+    /// which runs before verify starts and so sits on the critical path.
+    pub fn add_prep(&self, elapsed: std::time::Duration) {
+        use std::sync::atomic::Ordering;
+        let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+        self.prep_micros.fetch_add(micros, Ordering::Relaxed);
+        self.prep_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The summed preparation time, in whole milliseconds.
+    #[must_use]
+    pub fn prep_ms(&self) -> u64 {
+        self.prep_micros.load(std::sync::atomic::Ordering::Relaxed) / 1000
+    }
+
+    /// How many claims were timed.
+    #[must_use]
+    pub fn prep_count(&self) -> u64 {
+        self.prep_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Every row kept so far; the accumulator is left empty.
+    #[must_use]
+    pub fn take(&self) -> Vec<crate::storage::jev::JevRecord> {
+        std::mem::take(
+            &mut *self
+                .rows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
 /// One invocation's model cost as the `claude_cli` backend reported it.
 ///
 /// 060 D11: the sum of the CLI's per-call API-price estimates, in millionths
@@ -426,6 +482,11 @@ pub struct InvocationRecord {
     /// every Exa call reported a cost. Separate from [`Self::cost_usd`],
     /// which stays the summed model cost.
     pub search_cost_usd: Option<f64>,
+    /// The Jev requests' cost in USD (064), summed over this invocation's
+    /// Jev rows; `None` when none was made. Separate from [`Self::cost_usd`].
+    /// Calls abandoned or cut off at their deadline may still be billed but
+    /// carry no cost here; their rows say `cost unknown`.
+    pub jev_cost_usd: Option<f64>,
     /// What [`Self::cost_usd`] rests on (060 D11); `None` only on records
     /// written before the column existed.
     pub cost_basis: Option<CostBasis>,
@@ -486,6 +547,7 @@ impl InvocationRecord {
             effort: None,
             passes: None,
             search_cost_usd: None,
+            jev_cost_usd: None,
             cost_basis: Some(CostBasis::PriceTable),
             pages_fetched: None,
             pages_kept: None,
@@ -528,6 +590,21 @@ impl InvocationRecord {
             self.pages_fetched = Some(fetched);
             self.pages_kept = Some(kept);
         }
+        self
+    }
+
+    /// Use `id` as the record's id (064): the record guard makes it up front
+    /// so the invocation's Jev rows can name it.
+    #[must_use]
+    pub fn with_id(mut self, id: String) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// Stamp the invocation's Jev cost onto the record (064).
+    #[must_use]
+    pub const fn with_jev_cost(mut self, jev_cost_usd: Option<f64>) -> Self {
+        self.jev_cost_usd = jev_cost_usd;
         self
     }
 
@@ -577,8 +654,17 @@ impl InvocationRecord {
     /// context the request carried, if any (058); the exported span starts
     /// under it.
     pub fn publish(&self, caller: Option<&crate::observability::CallerTrace>) {
+        self.publish_with_jev(caller, None);
+    }
+
+    /// [`Self::publish`] with what Jev did during the invocation (064).
+    pub fn publish_with_jev(
+        &self,
+        caller: Option<&crate::observability::CallerTrace>,
+        jev: Option<&crate::observability::JevSpanSummary>,
+    ) {
         self.emit();
-        crate::observability::emit_invocation(self, caller);
+        crate::observability::emit_invocation(self, caller, jev);
     }
 
     /// Emit the record as a structured tracing event with GenAI
@@ -775,6 +861,61 @@ mod tests {
         assert_eq!(cost.total(), None);
     }
 
+    /// 064 review N: rows survive a panic that poisoned the lock.
+    #[test]
+    fn jev_rows_survive_a_poisoned_lock() {
+        let shadow = std::sync::Arc::new(JevShadow::default());
+        shadow.push(crate::jev::shadow::tests_support::claim_row());
+        let poisoner = std::sync::Arc::clone(&shadow);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.rows.lock().unwrap();
+            std::panic::resume_unwind(Box::new(()));
+        })
+        .join();
+        assert!(shadow.rows.is_poisoned());
+        shadow.push(crate::jev::shadow::tests_support::claim_row());
+        assert_eq!(shadow.take().len(), 2);
+    }
+
+    /// 064 review E: research's claim preparation time is summed, so the
+    /// span's critical-path figure is measured, not a constant.
+    #[test]
+    fn jev_shadow_sums_preparation_time() {
+        let shadow = JevShadow::default();
+        shadow.add_prep(std::time::Duration::from_micros(2500));
+        shadow.add_prep(std::time::Duration::from_micros(4600));
+        assert_eq!(shadow.prep_count(), 2);
+        assert_eq!(shadow.prep_ms(), 7);
+    }
+
+    /// 064 T015: Jev input is $0.042 per million tokens; output is free.
+    #[test]
+    fn jev_is_priced_per_input_token_only() {
+        let model = crate::config::DEFAULT_JEV_MODEL;
+        assert!((cost_usd(model, 1_000_000, 0) - 0.042).abs() < 1e-12);
+        assert!((cost_usd(model, 1_000_000, 999) - 0.042).abs() < 1e-12);
+    }
+
+    /// 064 T015: the Jev cost is its own field and never enters `cost_usd`.
+    #[test]
+    fn a_record_carries_the_jev_cost_only_when_stamped_and_apart_from_cost_usd() {
+        let clock = crate::traits::clock::SystemClock;
+        let record = InvocationRecord::create(
+            &clock,
+            "s",
+            "research",
+            "claude-opus-4-8",
+            &ModelUsage::default(),
+            Outcome::Success,
+            clock.now(),
+        );
+        assert_eq!(record.jev_cost_usd, None);
+        let cost = record.cost_usd;
+        let stamped = record.with_jev_cost(Some(0.000_04));
+        assert_eq!(stamped.jev_cost_usd, Some(0.000_04));
+        assert!((stamped.cost_usd - cost).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn a_record_carries_the_search_cost_only_when_stamped() {
         let clock = crate::traits::clock::SystemClock;
@@ -828,6 +969,8 @@ mod tests {
                 "CLAUDE_CLI_BULK_MODEL",
                 crate::routing::CLAUDE_CLI_BULK_MODEL,
             ),
+            // 064 T015: the pinned Jev model.
+            ("DEFAULT_JEV_MODEL", crate::config::DEFAULT_JEV_MODEL),
         ] {
             assert!(
                 pricing_known(model),

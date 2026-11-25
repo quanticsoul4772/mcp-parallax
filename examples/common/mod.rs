@@ -85,6 +85,10 @@ pub fn config() -> Config {
         log_level: DEFAULT_LOG_LEVEL.into(),
         request_timeout_ms: 5_000,
         max_retries: 1,
+        jev: mcp_parallax::config::JevSettings {
+            model: mcp_parallax::config::DEFAULT_JEV_MODEL.into(),
+            ..mcp_parallax::config::JevSettings::default()
+        },
     }
 }
 

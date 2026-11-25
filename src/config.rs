@@ -58,6 +58,119 @@ pub const DEFAULT_GROUNDED_VERIFY_MAX_BYTES: usize = 262_144;
 /// `GROUNDED_VERIFY_MAX_LOCATORS`.
 pub const DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS: usize = 64;
 
+/// The pinned Jev model (064): a versioned id, never a moving alias, so
+/// recorded answers and later thresholds stay comparable.
+/// `PARALLAX_JEV_MODEL`.
+pub const DEFAULT_JEV_MODEL: &str = "jev-1.14.0";
+
+/// The reserved Jev mode namespace (064): `PARALLAX_JEV_MODE_<SITE>`.
+const JEV_MODE_PREFIX: &str = "PARALLAX_JEV_MODE_";
+
+/// Jev settings (064). Every site is off unless the operator sets its mode,
+/// and a mode needs `TYPESAFE_API_KEY`; the key alone enables nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JevSettings {
+    /// `TYPESAFE_API_KEY`; a blank value counts as unset. Never logged.
+    pub api_key: Option<String>,
+    /// `PARALLAX_JEV_MODEL`, default [`DEFAULT_JEV_MODEL`]. exa-mcp-server's
+    /// `JEV_MODEL` is never read.
+    pub model: String,
+    /// `PARALLAX_JEV_MODE_TURN_REVIEW`, default off.
+    pub turn_review: crate::traits::classifier::JevMode,
+    /// `PARALLAX_JEV_MODE_RESEARCH_CLAIMS`, default off.
+    pub research_claims: crate::traits::classifier::JevMode,
+}
+
+impl JevSettings {
+    /// Read the Jev settings from the process environment.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve`].
+    pub fn from_env() -> Result<Self, ConfigError> {
+        Self::resolve(std::env::vars())
+    }
+
+    /// Resolve from an arbitrary variable set — the testable form. Pure: no
+    /// process environment, no I/O.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Jev`] naming the variable when a `PARALLAX_JEV_MODE_*`
+    /// suffix is unknown, its value isn't `off` or `shadow`, or a site is set
+    /// to `shadow` without a non-blank `TYPESAFE_API_KEY`.
+    pub fn resolve<I>(vars: I) -> Result<Self, ConfigError>
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        use crate::traits::classifier::{JevMode, JevSite};
+
+        let mut vars: Vec<(String, String)> = vars.into_iter().collect();
+        // Deterministic error ordering, independent of environment order.
+        vars.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let lookup = |name: &str| {
+            vars.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+
+        let api_key = present_key(lookup("TYPESAFE_API_KEY"));
+        // A blank value counts as unset, like the key (064 review F).
+        let model = present_key(lookup("PARALLAX_JEV_MODEL"))
+            .map_or_else(|| DEFAULT_JEV_MODEL.to_string(), |m| m.trim().to_string());
+
+        let mut settings = Self {
+            api_key,
+            model,
+            turn_review: JevMode::Off,
+            research_claims: JevMode::Off,
+        };
+        for (name, value) in vars
+            .iter()
+            .filter(|(name, _)| name.starts_with(JEV_MODE_PREFIX))
+        {
+            let suffix = &name[JEV_MODE_PREFIX.len()..];
+            let site = JevSite::ALL
+                .into_iter()
+                .find(|site| site.suffix() == suffix)
+                .ok_or_else(|| {
+                    ConfigError::Jev(format!(
+                        "unknown variable `{name}` in the reserved `{JEV_MODE_PREFIX}*` \
+                         namespace — the sites are TURN_REVIEW and RESEARCH_CLAIMS"
+                    ))
+                })?;
+            let mode = JevMode::parse(value).ok_or_else(|| {
+                ConfigError::Jev(format!(
+                    "`{name}` must be `off` or `shadow` (got `{}`)",
+                    value.trim()
+                ))
+            })?;
+            if mode != JevMode::Off && settings.api_key.is_none() {
+                return Err(ConfigError::Jev(format!(
+                    "`{name}` is `{}` but TYPESAFE_API_KEY is not set",
+                    mode.as_str()
+                )));
+            }
+            match site {
+                JevSite::TurnReview => settings.turn_review = mode,
+                JevSite::ResearchClaims => settings.research_claims = mode,
+            }
+        }
+        // 064 review D: a site in shadow is costed per request, so its model
+        // must have a price row; the fallback rate would overstate it ~120x.
+        let shadowed =
+            settings.turn_review != JevMode::Off || settings.research_claims != JevMode::Off;
+        if shadowed && !crate::telemetry::pricing_known(&settings.model) {
+            return Err(ConfigError::Jev(format!(
+                "`PARALLAX_JEV_MODEL` is `{}`, which has no price row; Jev costs would be \
+                 recorded at the fallback rate. Use {DEFAULT_JEV_MODEL} or add the row.",
+                settings.model
+            )));
+        }
+        Ok(settings)
+    }
+}
+
 /// The model-backend family a [`Config`] selects (`PARALLAX_BACKEND`).
 ///
 /// BYOM (design §3.4): the backend is chosen once at startup; per-call-site
@@ -248,6 +361,8 @@ pub struct Config {
     pub request_timeout_ms: u64,
     /// Maximum API retry attempts. `MAX_RETRIES`, default `3`.
     pub max_retries: u32,
+    /// Jev settings (064); every site off by default.
+    pub jev: JevSettings,
 }
 
 impl Config {
@@ -388,6 +503,7 @@ impl Config {
         // it. Provisional until the T050 family sweep confirms zero timeouts.
         let request_timeout_ms = parse_env("REQUEST_TIMEOUT_MS", 120_000)?;
         let max_retries = parse_env("MAX_RETRIES", 3)?;
+        let jev = JevSettings::from_env()?;
 
         Ok(Self {
             backend,
@@ -418,6 +534,7 @@ impl Config {
             log_level,
             request_timeout_ms,
             max_retries,
+            jev,
         })
     }
 
@@ -679,6 +796,10 @@ pub(crate) fn test_config() -> Config {
         openai_api_base: "http://127.0.0.1:1".into(),
         openai_model: String::new(),
         openai_structured_output: StructuredOutput::Auto,
+        jev: JevSettings {
+            model: DEFAULT_JEV_MODEL.into(),
+            ..JevSettings::default()
+        },
     }
 }
 
@@ -997,5 +1118,141 @@ mod tests {
         // in lockstep with the named constants `from_env` uses.
         assert_eq!(DEFAULT_GROUNDED_VERIFY_MAX_BYTES, 262_144);
         assert_eq!(DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS, 64);
+    }
+
+    // 064 T003: Jev settings, resolved from a variable set like routing so
+    // tests never touch the process environment.
+    mod jev {
+        use super::super::JevSettings;
+        use crate::traits::classifier::JevMode;
+
+        fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect()
+        }
+
+        const KEY: (&str, &str) = ("TYPESAFE_API_KEY", "test-key");
+
+        #[test]
+        fn with_no_jev_variables_both_sites_are_off() {
+            for set in [vars(&[]), vars(&[KEY])] {
+                let s = JevSettings::resolve(set).unwrap();
+                assert_eq!(s.turn_review, JevMode::Off);
+                assert_eq!(s.research_claims, JevMode::Off);
+            }
+        }
+
+        #[test]
+        fn turn_review_shadow_with_a_key_is_shadow() {
+            let s = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "shadow")]))
+                .unwrap();
+            assert_eq!(s.turn_review, JevMode::Shadow);
+            assert_eq!(s.research_claims, JevMode::Off);
+        }
+
+        #[test]
+        fn research_claims_shadow_with_a_key_is_shadow() {
+            let s = JevSettings::resolve(vars(&[
+                KEY,
+                ("PARALLAX_JEV_MODE_RESEARCH_CLAIMS", "shadow"),
+            ]))
+            .unwrap();
+            assert_eq!(s.research_claims, JevMode::Shadow);
+            assert_eq!(s.turn_review, JevMode::Off);
+        }
+
+        #[test]
+        fn an_unknown_mode_suffix_is_an_error_naming_it() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_FOO", "shadow")]))
+                .unwrap_err();
+            assert!(err.to_string().contains("PARALLAX_JEV_MODE_FOO"), "{err}");
+        }
+
+        #[test]
+        fn a_bad_mode_value_is_an_error_naming_the_variable() {
+            let err =
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "maybe")]))
+                    .unwrap_err();
+            assert!(
+                err.to_string().contains("PARALLAX_JEV_MODE_TURN_REVIEW"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn on_is_not_accepted_in_064() {
+            let err =
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_RESEARCH_CLAIMS", "on")]))
+                    .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("PARALLAX_JEV_MODE_RESEARCH_CLAIMS"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn a_mode_without_a_key_is_an_error_naming_the_mode_variable() {
+            let err = JevSettings::resolve(vars(&[("PARALLAX_JEV_MODE_TURN_REVIEW", "shadow")]))
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("PARALLAX_JEV_MODE_TURN_REVIEW"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn a_blank_key_counts_as_no_key() {
+            let s = JevSettings::resolve(vars(&[("TYPESAFE_API_KEY", "  ")])).unwrap();
+            assert!(s.api_key.is_none());
+            let err = JevSettings::resolve(vars(&[
+                ("TYPESAFE_API_KEY", "  "),
+                ("PARALLAX_JEV_MODE_TURN_REVIEW", "shadow"),
+            ]))
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("PARALLAX_JEV_MODE_TURN_REVIEW"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn the_model_defaults_to_the_pinned_version_and_is_not_a_mode_suffix() {
+            let default = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(default.model, "jev-1.14.0");
+            let set =
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "jev-1.13.0")])).unwrap();
+            assert_eq!(set.model, "jev-1.13.0");
+        }
+
+        /// Review finding D: with a site in shadow, a model without a price
+        /// row stops startup instead of being costed at the fallback rate.
+        #[test]
+        fn an_unpriced_model_with_a_site_on_stops_startup() {
+            let err = JevSettings::resolve(vars(&[
+                KEY,
+                ("PARALLAX_JEV_MODEL", "jev-1.13.0"),
+                ("PARALLAX_JEV_MODE_TURN_REVIEW", "shadow"),
+            ]))
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("PARALLAX_JEV_MODEL"), "{err}");
+            assert!(err.contains("jev-1.13.0"), "{err}");
+        }
+
+        /// Review finding F: a blank model counts as unset.
+        #[test]
+        fn a_blank_model_counts_as_unset() {
+            let s = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "  ")])).unwrap();
+            assert_eq!(s.model, "jev-1.14.0");
+        }
+
+        #[test]
+        fn exa_mcp_servers_jev_model_is_ignored() {
+            let s = JevSettings::resolve(vars(&[KEY, ("JEV_MODEL", "jev-latest")])).unwrap();
+            assert_eq!(s.model, "jev-1.14.0");
+        }
     }
 }

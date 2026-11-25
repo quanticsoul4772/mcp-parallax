@@ -12,6 +12,7 @@
     "cost_basis": { "type": ["string", "null"], "enum": ["price_table", "cli_estimate", null], "description": "060: what cost_usd rests on - the price table, or the Claude Code CLI's own estimates (claude_cli backend). Both are API-price estimates, never a charge. Null only on records written before 060." },
     "pages_fetched": { "type": ["integer", "null"], "minimum": 0, "description": "061: research only - pages whose text came back; null for other tools." },
     "pages_kept": { "type": ["integer", "null"], "minimum": 0, "description": "061: research only - pages that reached extraction after the rerank; null for other tools." },
+    "jev_cost_usd": { "type": ["number", "null"], "minimum": 0, "description": "064: cost of the Jev requests this invocation made; null when none. Kept apart from cost_usd. Calls abandoned or cut off at their deadline may still be billed but carry no cost here; their rows say cost unknown." },
     "latency_ms": { "type": "integer", "minimum": 0 },
     "outcome": {
       "type": "string",
@@ -27,6 +28,7 @@
         "usage_limit",
         "search_provider",
         "embedding_provider",
+        "classifier_provider",
         "cancelled"
       ],
       "description": "config_error exists in the error taxonomy but never on a record - it occurs at startup, before any invocation exists"

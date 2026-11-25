@@ -5,6 +5,7 @@ use crate::error::AppError;
 use crate::memory::consolidate::ConsolidationRecord;
 use crate::memory::push::PushRecord;
 use crate::memory::{Memory, Status};
+use crate::storage::jev::JevRecord;
 use crate::telemetry::InvocationRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -64,6 +65,13 @@ pub trait Storage: Send + Sync {
     ///
     /// Returns [`AppError`] if the write fails.
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError>;
+
+    /// Persist Jev records (064) in one transaction: all or none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if any write fails; nothing is kept.
+    async fn record_jev(&self, records: &[JevRecord]) -> Result<(), AppError>;
 
     /// Signal keys delivered (verdict ≠ silence, not suppressed) in this
     /// session since `since` — the FR-010 cooldown lookup.
