@@ -123,7 +123,13 @@ async fn main() {
     );
     assert!(config.exa_api_key.is_some(), "EXA_API_KEY is required");
     let pinned = config.jev.model.clone();
-    let storage = Arc::new(SqliteStorage::connect(":memory:").await.unwrap());
+    // A file, not memory: the harness report (T039) reads these rows later.
+    std::fs::create_dir_all("data").unwrap();
+    let storage = Arc::new(
+        SqliteStorage::connect("./data/jev-acceptance.db")
+            .await
+            .unwrap(),
+    );
     let recorder = Arc::new(Recorder {
         inner: TypesafeClient::new(&config.jev).expect("TYPESAFE_API_KEY"),
         sent: Mutex::new(Vec::new()),

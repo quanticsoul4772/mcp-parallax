@@ -81,3 +81,10 @@ After merge and rebuild, and with your approval of these exact changes:
 ## 6. Results
 
 To be recorded after the live runs: the acceptance output, the measurement tables, and the base-rate figure that sizes the shadow period for 065 and 066.
+
+### Live shadow check (T037, 2026-11-24, claude_cli)
+
+- SC-004 passed: 6 turn-review rows (all success) and 167 research-claim rows (133 success, 34 excluded, 20%); every row joins its record; no secret in the 139 states sent.
+- Jev latency: at most 228 ms (turns) and 252 ms over 133 claim calls; research waits on Jev 0 ms by design.
+- Big model: all six reversal turns flagged; one standard question gave 162 findings from 167 verified claims.
+- Rows kept in ./data/jev-acceptance.db (not committed) for the T039 report.
