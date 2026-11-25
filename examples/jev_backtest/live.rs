@@ -303,15 +303,10 @@ pub async fn order(config: &Config, storage: &SqliteStorage, limit: usize) {
     print!("{}", measure::tables(&results));
 }
 
-/// A turn whose review saw no memory-derived candidates: its label records a
-/// contradiction outcome (null with memory candidates, absent on rows
-/// written before the outcome fields existed).
+/// A turn whose review saw no memory-derived candidates, by either the
+/// newer or the older contradiction field of its label.
 fn no_memory_candidates(row: &JevRecord) -> Result<(), &'static str> {
-    match row.label_json.as_ref().map(|l| &l["contradiction_flagged"]) {
-        Some(serde_json::Value::Bool(_)) => Ok(()),
-        Some(serde_json::Value::Null) => Err("memory candidates present"),
-        _ => Err("no review outcome in the label"),
-    }
+    mcp_parallax::jev::shadow::no_memory_candidates(row.label_json.as_ref())
 }
 
 /// The research verify run twice on one stored claim with its stored
