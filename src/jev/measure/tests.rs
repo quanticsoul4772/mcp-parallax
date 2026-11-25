@@ -281,6 +281,23 @@ fn a_site_whose_rows_were_all_skipped_keeps_its_items_but_updates_its_counts() {
 }
 
 #[test]
+fn an_all_skipped_run_keeps_the_loss_counts_behind_the_kept_items() {
+    let mut results = sample_results();
+    results
+        .skipped
+        .push(("turn_review".into(), "noise: failed calls".into(), 3));
+    results.record_noise_run("turn_review", None, &counts(&[("transcript missing", 9)]));
+    let turn = skips_for(&results, "turn_review");
+    assert!(turn
+        .iter()
+        .any(|(_, r, n)| r == "noise: failed calls" && *n == 3));
+    assert!(turn
+        .iter()
+        .any(|(_, r, n)| r == "noise: transcript missing" && *n == 9));
+    assert_eq!(turn.len(), 2);
+}
+
+#[test]
 fn a_site_with_usable_rows_replaces_its_items_and_counts() {
     let mut results = sample_results();
     let fresh = vec![noise("turn_review", "contradiction", &[0.1; 5], &[])];

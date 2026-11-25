@@ -13,6 +13,10 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
+/// Counts the harness records for calls lost from items it did save, as
+/// opposed to rows it skipped.
+pub const LOSS_REASONS: [&str; 2] = ["failed calls", "pair dropped: a run failed"];
+
 /// Probabilities are clamped this far from 0 and 1 before the logit.
 const LOGIT_EPS: f64 = 1e-6;
 
@@ -236,21 +240,41 @@ impl Results {
         }
     }
 
+    /// Replace only the skip reasons of `site` under `prefix`, keeping its
+    /// loss counts (calls that failed, pairs dropped), which describe the
+    /// items an earlier run saved.
+    fn replace_skip_reasons(&mut self, prefix: &str, site: &str, counts: &BTreeMap<String, u32>) {
+        let tag = format!("{prefix}: ");
+        let is_loss = |reason: &str| LOSS_REASONS.iter().any(|l| reason == format!("{tag}{l}"));
+        self.skipped
+            .retain(|(s, reason, _)| !(s == site && reason.starts_with(&tag)) || is_loss(reason));
+        for (reason, count) in counts {
+            if *count > 0 && !LOSS_REASONS.contains(&reason.as_str()) {
+                self.skipped
+                    .push((site.to_string(), format!("{tag}{reason}"), *count));
+            }
+        }
+    }
+
     /// Save one site's noise run. `items` is `None` when the run had no
-    /// usable row for the site, and then the saved items stay. The counts are
-    /// replaced whenever the run found rows for the site, usable or skipped.
+    /// usable row for the site: the saved items stay, and so do the loss
+    /// counts behind them; only the skip reasons are replaced. With items,
+    /// everything for the site is replaced.
     pub fn record_noise_run(
         &mut self,
         site: &str,
         items: Option<Vec<NoiseItem>>,
         counts: &BTreeMap<String, u32>,
     ) {
-        let found = items.is_some() || counts.values().any(|c| *c > 0);
-        if let Some(items) = items {
-            self.replace_noise(site, items);
-        }
-        if found {
-            self.replace_skips("noise", site, counts);
+        match items {
+            Some(items) => {
+                self.replace_noise(site, items);
+                self.replace_skips("noise", site, counts);
+            }
+            None if counts.values().any(|c| *c > 0) => {
+                self.replace_skip_reasons("noise", site, counts);
+            }
+            None => {}
         }
     }
 
@@ -262,12 +286,15 @@ impl Results {
         items: Option<Vec<AgreementItem>>,
         counts: &BTreeMap<String, u32>,
     ) {
-        let found = items.is_some() || counts.values().any(|c| *c > 0);
-        if let Some(items) = items {
-            self.replace_agreement(site, items);
-        }
-        if found {
-            self.replace_skips("self-agreement", site, counts);
+        match items {
+            Some(items) => {
+                self.replace_agreement(site, items);
+                self.replace_skips("self-agreement", site, counts);
+            }
+            None if counts.values().any(|c| *c > 0) => {
+                self.replace_skip_reasons("self-agreement", site, counts);
+            }
+            None => {}
         }
     }
 
