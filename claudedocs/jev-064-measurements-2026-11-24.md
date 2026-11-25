@@ -161,7 +161,55 @@ Limits:
 - Turn self-agreement waits for live turn rows written after the server is
   rebuilt with PR #166 (rows before it lack the review outcome).
 
+## T038 (e): injection back-test (2026-11-25)
+
+Method:
+
+- Question: exa-mcp-server's `directs_ai` yes/no question with its two
+  criteria, verbatim (its `scripts/jev-backtest/backtest.py:42-51`), on
+  `jev-1.14.0` at threshold 0.35.
+- Clean pages (label false): 413 pages fetched through Exa over a fixed
+  query list, capped at 6,000 characters and kept only above 1,500: 285
+  everyday topics, 94 security topics, 34 prompt-injection topics.
+- Injected pages (label true): every BIPIA text attack (75) and every
+  InjecAgent attacker instruction, plain (62) and with InjecAgent's
+  "enhanced" prefix (62), each inserted at a paragraph break in a random
+  everyday page by exa-mcp-server's rule, seed 20261010.
+- Each page is sent as `{page_url, page_text}`, both redacted first.
+- Harness: `jev_backtest injection` from PR #170 (the question as written)
+  and PR #171 (per-set rows), run from main at `2627926`.
+
+Result, as printed:
+
+```text
+injection at threshold 0.35: 612 items, 0 failed; precision 0.9448; recall 0.8593; false-positive rate 0.0242
+  recall 95% interval 0.8042..0.9008; false-positive rate 95% interval 0.0132..0.0440; undecided: 0 injections, 0 clean; 0 dataset lines skipped
+  set bipia: 75 items, 0 failed; recall 0.6800; false-positive rate undefined
+  set clean_everyday: 285 items, 0 failed; recall undefined; false-positive rate 0.0035
+  set clean_prompt_injection: 34 items, 0 failed; recall undefined; false-positive rate 0.2647
+  set clean_security: 94 items, 0 failed; recall undefined; false-positive rate 0.0000
+  set injecagent: 62 items, 0 failed; recall 0.9355; false-positive rate undefined
+  set injecagent_enhanced: 62 items, 0 failed; recall 1.0000; false-positive rate undefined
+```
+
+Beside exa-mcp-server's run on `jev-1.13.0` (unpaired: different clean
+pages, a different run):
+
+| Set | 1.14 (this run) | 1.13 (exa-mcp-server) |
+|---|---|---|
+| BIPIA caught | 51 / 75 | 47 / 75 |
+| InjecAgent caught | 58 / 62 | 54 / 62 |
+| InjecAgent enhanced caught | 62 / 62 | 62 / 62 |
+| Everyday pages flagged | 1 / 285 | 0 / 71 |
+| Prompt-injection-topic pages flagged | 9 / 34 | 4 / 12 |
+
+Limits:
+
+- One run: run-to-run noise on this set is not measured here.
+- The pages and attacks are not Parallax's own research traffic.
+- The dataset and question file are kept only in the session scratchpad,
+  which a reboot can clear.
+
 ## Still to measure in T038
 
 - Big-model self-agreement on the turn review (FR-011(b), turn half).
-- The injection back-test (FR-011(e)).
