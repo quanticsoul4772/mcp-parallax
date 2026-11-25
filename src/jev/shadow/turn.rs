@@ -125,22 +125,51 @@ pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>
     row
 }
 
-/// The big model's label for a turn, enumerated fields only.
+/// What the review did with its answers: the flags it raised and whether it
+/// proposed a capture. Plan §7.1 counts these, not the raw answers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReviewOutcome {
+    /// A self-contradiction flag was raised.
+    pub contradiction_flagged: bool,
+    /// A preference-violation flag was raised.
+    pub violation_flagged: bool,
+    /// The review proposed a capture.
+    pub capture_proposed: bool,
+}
+
+/// The big model's label for a turn, enumerated fields only: its raw answers
+/// and what the review did with them.
 ///
-/// `contradicts` is empty when memory pairs were among the candidates (Jev
-/// never sees those); `capture_kind` is empty when memory is off (capture
-/// isn't asked).
+/// `contradicts` and `contradiction_flagged` are empty when memory pairs were
+/// among the candidates (Jev never sees those); `capture_kind` and
+/// `capture_proposed` are empty when memory is off (capture isn't asked).
 #[must_use]
-pub fn turn_label(raw: &ReviewRaw, memory_pairs: bool, capture_enabled: bool) -> Value {
+pub fn turn_label(
+    raw: &ReviewRaw,
+    memory_pairs: bool,
+    capture_enabled: bool,
+    did: ReviewOutcome,
+) -> Value {
     let capture_kind = match raw.capture_kind {
         CaptureKind::Skill => "skill",
         CaptureKind::Lesson => "lesson",
         CaptureKind::None => "none",
     };
+    let unless_memory = |v: bool| {
+        if memory_pairs {
+            Value::Null
+        } else {
+            Value::Bool(v)
+        }
+    };
+    let if_capture = |v: Value| if capture_enabled { v } else { Value::Null };
     json!({
-        "contradicts": if memory_pairs { Value::Null } else { Value::Bool(raw.contradicts) },
+        "contradicts": unless_memory(raw.contradicts),
         "violates": raw.violates,
-        "capture_kind": if capture_enabled { Value::from(capture_kind) } else { Value::Null },
+        "capture_kind": if_capture(Value::from(capture_kind)),
+        "contradiction_flagged": unless_memory(did.contradiction_flagged),
+        "violation_flagged": did.violation_flagged,
+        "capture_proposed": if_capture(Value::Bool(did.capture_proposed)),
     })
 }
 

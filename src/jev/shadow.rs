@@ -9,7 +9,7 @@ pub use claim::{
     abandoned, ask_claim, claim_label, prepare_claim, shadow_claim, ClaimJev, ClaimSource,
     PreparedClaim, ABANDONED_ERROR,
 };
-pub use turn::{shadow_turn, turn_label, TurnIds, TurnInputs, TurnJev};
+pub use turn::{shadow_turn, turn_label, ReviewOutcome, TurnIds, TurnInputs, TurnJev};
 
 use crate::error::{AppError, Outcome};
 pub use crate::jev::exclusion::{claim_exclusion, Exclusion};

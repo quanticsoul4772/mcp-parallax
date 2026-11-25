@@ -124,6 +124,8 @@ async fn main() {
     assert!(config.exa_api_key.is_some(), "EXA_API_KEY is required");
     let pinned = config.jev.model.clone();
     // A file, not memory: the harness report (T039) reads these rows later.
+    // The file keeps earlier runs' rows, so SC-004 checks only this run's.
+    let run_started = SystemClock.now();
     std::fs::create_dir_all("data").unwrap();
     let storage = Arc::new(
         SqliteStorage::connect("./data/jev-acceptance.db")
@@ -250,7 +252,11 @@ async fn main() {
     storage.record_jev(&research_rows).await.unwrap();
 
     // ---- SC-004 -------------------------------------------------------------
-    let all = storage.load_jev_records().await.unwrap();
+    let all = this_run(
+        storage.load_jev_records().await.unwrap(),
+        run_started,
+        |r| r.created_at,
+    );
     let checkpoint_ids: Vec<String> = storage
         .list_checkpoints()
         .await
@@ -367,4 +373,40 @@ async fn main() {
         "SC-004: passed ({} states sent, none with the planted secret)",
         sent.len()
     );
+}
+
+/// The rows this run wrote: the database file keeps earlier runs' rows, and
+/// SC-004 must not pass on them.
+fn this_run<T>(
+    rows: Vec<T>,
+    since: chrono::DateTime<chrono::Utc>,
+    created_at: impl Fn(&T) -> chrono::DateTime<chrono::Utc>,
+) -> Vec<T> {
+    rows.into_iter()
+        .filter(|r| created_at(r) >= since)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::this_run;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn rows_from_earlier_runs_are_left_out() {
+        let since = Utc::now();
+        let rows = vec![
+            ("old", since - Duration::hours(1)),
+            ("new", since + Duration::seconds(1)),
+        ];
+        let kept = this_run(rows, since, |r| r.1);
+        assert_eq!(kept.iter().map(|r| r.0).collect::<Vec<_>>(), ["new"]);
+    }
+
+    #[test]
+    fn a_run_that_wrote_nothing_keeps_nothing() {
+        let since = Utc::now();
+        let rows = vec![("old", since - Duration::hours(1))];
+        assert!(this_run(rows, since, |r| r.1).is_empty());
+    }
 }

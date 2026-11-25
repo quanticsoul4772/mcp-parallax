@@ -70,7 +70,10 @@
           "properties": {
             "contradicts": { "type": ["boolean", "null"] },
             "violates": { "type": "boolean" },
-            "capture_kind": { "enum": ["skill", "lesson", "none", null] }
+            "capture_kind": { "enum": ["skill", "lesson", "none", null] },
+            "contradiction_flagged": { "type": ["boolean", "null"] },
+            "violation_flagged": { "type": "boolean" },
+            "capture_proposed": { "type": ["boolean", "null"] }
           }
         },
         {

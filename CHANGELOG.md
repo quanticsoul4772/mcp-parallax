@@ -327,13 +327,22 @@ arc.
 * **The Jev back-test `report` prints the plan §7 tables** (064 FR-008,
   SC-005) — it printed only tune-set agreement at a fixed 0.5 cut, with turn
   positives from contradictions alone and research positives pointing the
-  wrong way. It now counts §7.1 positives (turn: flagged or captured; claim:
-  refuted or contested), chooses the skip threshold by the stated rule, and
+  wrong way. It now counts §7.1 positives (claim: refuted or contested; turn:
+  see the next entry), chooses the skip threshold by the stated rule, and
   prints recall and skip-share bounds, the harmful share among skipped items,
   both baselines, cluster counts with a bootstrap, and a promotion dry run with
   every failed criterion it checks. It names the two §7.2 criteria it does not
   check yet (the skip-share minimum and the wrong-settle cap), because the plan
   sets no number for them. The confirm split stays sealed.
+
+* **Turn positives in the Jev back-test count what the review did** (064
+  recovery) — the report counted the review model's raw answers, so a raw
+  violation with no preferences listed, or a capture kind with capture off,
+  counted as harmful. The turn label now also records whether the review
+  raised a contradiction or violation flag and whether it proposed a capture,
+  and the report counts those. A turn with memory-derived candidates counts
+  when a violation flag or capture is known (research D11). Turn rows written
+  before this change count as unlabeled.
 
 * **Sonnet 5 cost estimates** — the `claude-sonnet-5` price row now carries
   the current $2/$10 per million tokens; it had stayed at $3/$15, so records

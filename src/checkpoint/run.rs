@@ -452,14 +452,20 @@ async fn review_beside_jev(
     let ((review, review_done), (mut row, jev_done)) = tokio::join!(review, shadow);
     let wait_ms = u64::try_from(jev_done.saturating_duration_since(review_done).as_millis())
         .unwrap_or(u64::MAX);
-    if let Ok((_, _, _, _, raw)) = &review {
+    if let Ok((flags, proposal, _, _, raw)) = &review {
         let memory_pairs = candidates
             .iter()
             .any(|c| c.origin == review::CandidateOrigin::Memory);
+        let flagged = |kind: SignalKind| flags.iter().any(|(signal, _)| signal.kind == kind);
         row.label_json = Some(crate::jev::shadow::turn_label(
             raw,
             memory_pairs,
             capture_enabled,
+            crate::jev::shadow::ReviewOutcome {
+                contradiction_flagged: flagged(SignalKind::SelfContradiction),
+                violation_flagged: flagged(SignalKind::PreferenceViolation),
+                capture_proposed: proposal.is_some(),
+            },
         ));
         row.label_source = Some(format!("{}/{}", deps.model, review::REVIEW_MODE_ID));
     }
@@ -2054,7 +2060,14 @@ mod tests {
             assert!(row.cost_usd.is_some());
             assert_eq!(
                 row.label_json,
-                Some(json!({ "contradicts": true, "violates": false, "capture_kind": null }))
+                Some(json!({
+                    "contradicts": true,
+                    "violates": false,
+                    "capture_kind": null,
+                    "contradiction_flagged": true,
+                    "violation_flagged": false,
+                    "capture_proposed": null,
+                }))
             );
             assert_eq!(row.harness_session_id.as_deref(), Some("s1"));
             assert_eq!(row.model_answered.as_deref(), Some(PINNED));
