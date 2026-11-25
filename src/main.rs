@@ -183,6 +183,7 @@ fn print_help() {
 /// variables plus both routing namespaces were missing entirely. 027 corrected
 /// that same timeout in `README.md` and `CLAUDE.md` and did not touch this
 /// block, because nothing connected them.
+#[allow(clippy::too_many_lines)] // one help string reads best unbroken
 fn help_text() -> String {
     format!(
         "\
@@ -266,6 +267,15 @@ CHECKPOINTS:
     CHECKPOINT_GATE_PATTERNS      Comma-separated substrings extending the pre-action
                                   gate's built-in risk patterns (default: empty).
                                   An empty entry (\"a,,b\") is an error, not a skip
+
+JEV (TypeSafe; every site off by default; shadow records answers only):
+    TYPESAFE_API_KEY              TypeSafe key; enables nothing by itself;
+                                  never logged
+    PARALLAX_JEV_MODE_<SITE>      off | shadow; unset is off. shadow asks Jev beside
+                                  the big model and records its answer; nothing
+                                  changes. Needs TYPESAFE_API_KEY
+    SITES:  TURN_REVIEW RESEARCH_CLAIMS
+    PARALLAX_JEV_MODEL            Pinned Jev model; jev-1.14.0 unless set
 
 PER-CALL-SITE ROUTING (both off by default; unset changes nothing):
     PARALLAX_MODEL_<SITE>         Route one call site to a model
@@ -472,6 +482,79 @@ mod tests {
                 tokens.contains(level.as_str()),
                 "`--help` omits the `{}` effort level",
                 level.as_str()
+            );
+        }
+    }
+
+    /// 064 T032: the Jev namespace is a prefix the config scan can't see, so
+    /// its names, vocabulary and defining phrases are bound here, in `--help`
+    /// and in the README, as whole words.
+    #[test]
+    fn help_and_readme_document_the_jev_namespace_and_its_defaults() {
+        use mcp_parallax::traits::classifier::{JevMode, JevSite};
+
+        let help = help_text();
+        let readme = include_str!("../README.md").replace("\r\n", "\n");
+        let tokens = |text: &str| -> std::collections::HashSet<String> {
+            text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let (help_tokens, readme_tokens) = (tokens(&help), tokens(&readme));
+        for (doc, text, words) in [
+            ("--help", &help, &help_tokens),
+            ("README.md", &readme, &readme_tokens),
+        ] {
+            for name in ["TYPESAFE_API_KEY", "PARALLAX_JEV_MODEL"] {
+                assert!(words.contains(name), "{doc} omits {name}");
+            }
+            assert!(
+                text.contains("PARALLAX_JEV_MODE_"),
+                "{doc} omits PARALLAX_JEV_MODE_*"
+            );
+            // --help lists the suffixes; the README names the full variables.
+            for site in JevSite::ALL {
+                let full = format!("PARALLAX_JEV_MODE_{}", site.suffix());
+                assert!(
+                    words.contains(site.suffix()) || words.contains(&full),
+                    "{doc} omits the {} site",
+                    site.suffix()
+                );
+            }
+            for mode in JevMode::ALL {
+                assert!(
+                    words.contains(mode.as_str()),
+                    "{doc} omits the `{}` value",
+                    mode.as_str()
+                );
+            }
+            let lower = text.to_lowercase();
+            for phrase in ["enables nothing by itself", "never logged"] {
+                assert!(lower.contains(phrase), "{doc} omits \"{phrase}\"");
+            }
+            assert!(
+                text.contains(mcp_parallax::config::DEFAULT_JEV_MODEL),
+                "{doc} omits the pinned model"
+            );
+        }
+        assert!(
+            help.contains("unset is off"),
+            "--help omits the off default"
+        );
+        for site in JevSite::ALL {
+            let row = readme
+                .lines()
+                .find(|l| l.contains(&format!("`PARALLAX_JEV_MODE_{}`", site.suffix())))
+                .unwrap_or("");
+            assert!(
+                !row.is_empty(),
+                "README has no row for the {} site",
+                site.suffix()
+            );
+            assert!(
+                row.contains("unset is `off`"),
+                "README row does not default to off: {row}"
             );
         }
     }

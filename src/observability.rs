@@ -330,10 +330,102 @@ fn record_window(
     (start, end)
 }
 
+/// What Jev did during one call (064), taken from the rows written for it.
+/// Exported as `parallax.jev.*` span attributes beside the record's own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JevSpanSummary {
+    /// The site mode (always `shadow` when there are rows in 064).
+    pub mode: crate::traits::classifier::JevMode,
+    /// Requests sent (rows that neither were excluded nor had no time left
+    /// nor failed redaction).
+    pub requests: u32,
+    /// Claims excluded in code.
+    pub excluded: u32,
+    /// Requests that did not end in success.
+    pub failures: u32,
+    /// The summed Jev cost; `None` without rows.
+    pub cost_usd: Option<f64>,
+    /// The first row's request wall time (the turn site has one row).
+    pub latency_ms: Option<u64>,
+    /// Time the call waited on Jev beyond its own work.
+    pub critical_path_ms: u64,
+}
+
+impl JevSpanSummary {
+    /// Summarize a call's rows.
+    #[must_use]
+    pub fn from_rows(rows: &[crate::storage::jev::JevRecord], critical_path_ms: u64) -> Self {
+        use crate::storage::jev::JevOutcome;
+        let sent = |row: &&crate::storage::jev::JevRecord| {
+            row.outcome != JevOutcome::Excluded
+                && !row.error_class.as_deref().is_some_and(|class| {
+                    matches!(class, "no_time_left" | "disabled_after_401" | "no_slot")
+                        || class.starts_with("redaction:")
+                })
+        };
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Self {
+            mode: crate::traits::classifier::JevMode::Shadow,
+            requests: count(rows.iter().filter(sent).count()),
+            excluded: count(
+                rows.iter()
+                    .filter(|r| r.outcome == JevOutcome::Excluded)
+                    .count(),
+            ),
+            failures: count(
+                rows.iter()
+                    .filter(sent)
+                    .filter(|r| r.outcome != JevOutcome::Call(Outcome::Success))
+                    .count(),
+            ),
+            cost_usd: if rows.is_empty() {
+                None
+            } else {
+                Some(rows.iter().filter_map(|r| r.cost_usd).sum())
+            },
+            latency_ms: rows.first().and_then(|r| r.latency_ms),
+            critical_path_ms,
+        }
+    }
+
+    fn attributes(&self, checkpoint: bool) -> Vec<KeyValue> {
+        let mut attributes = vec![
+            KeyValue::new("parallax.jev.mode", self.mode.as_str()),
+            KeyValue::new("parallax.jev.requests", i64::from(self.requests)),
+            KeyValue::new("parallax.jev.failures", i64::from(self.failures)),
+            KeyValue::new(
+                "parallax.jev.critical_path_ms",
+                i64::try_from(self.critical_path_ms).unwrap_or(i64::MAX),
+            ),
+        ];
+        if let Some(cost) = self.cost_usd {
+            attributes.push(KeyValue::new("parallax.jev.cost_usd", cost));
+        }
+        if checkpoint {
+            if let Some(latency) = self.latency_ms {
+                attributes.push(KeyValue::new(
+                    "parallax.jev.latency_ms",
+                    i64::try_from(latency).unwrap_or(i64::MAX),
+                ));
+            }
+        } else {
+            attributes.push(KeyValue::new(
+                "parallax.jev.excluded",
+                i64::from(self.excluded),
+            ));
+        }
+        attributes
+    }
+}
+
 /// Export one invocation record (data-model §3). Fire-and-forget; a single
 /// atomic load when telemetry is disabled. The span starts under `caller`'s
 /// trace when given (058).
-pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) {
+pub fn emit_invocation(
+    record: &InvocationRecord,
+    caller: Option<&CallerTrace>,
+    jev: Option<&JevSpanSummary>,
+) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -397,6 +489,10 @@ pub fn emit_invocation(record: &InvocationRecord, caller: Option<&CallerTrace>) 
     // 060: what the cost figure rests on; both bases are estimates.
     if let Some(basis) = record.cost_basis {
         attributes.push(KeyValue::new("parallax.cost_basis", basis.as_str()));
+    }
+    // 064: what Jev did, from the rows written for this invocation.
+    if let Some(jev) = jev {
+        attributes.extend(jev.attributes(false));
     }
     // 061: research's page counts, present on research records.
     if let Some(fetched) = record.pages_fetched {
@@ -545,7 +641,11 @@ fn emit_invocation_metrics(
 /// Export one checkpoint record (data-model §4). Signal KINDS only — never
 /// evidence strings (FR-008). The span starts under `caller`'s trace when
 /// given (058).
-pub fn emit_checkpoint(record: &CheckpointRecord, caller: Option<&CallerTrace>) {
+pub fn emit_checkpoint(
+    record: &CheckpointRecord,
+    caller: Option<&CallerTrace>,
+    jev: Option<&JevSpanSummary>,
+) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -562,7 +662,7 @@ pub fn emit_checkpoint(record: &CheckpointRecord, caller: Option<&CallerTrace>) 
         .map(|s| StringValue::from(s.kind.as_str().to_string()))
         .collect();
 
-    let attributes = vec![
+    let mut attributes = vec![
         KeyValue::new("parallax.checkpoint.boundary", boundary),
         KeyValue::new("parallax.checkpoint.verdict", verdict),
         KeyValue::new(
@@ -575,6 +675,10 @@ pub fn emit_checkpoint(record: &CheckpointRecord, caller: Option<&CallerTrace>) 
         KeyValue::new("parallax.checkpoint.cost_usd", record.cost_usd),
         KeyValue::new("parallax.session_id", record.session_id.clone()),
     ];
+    // 064: what Jev did, from the row written for this evaluation.
+    if let Some(jev) = jev {
+        attributes.extend(jev.attributes(true));
+    }
 
     let mut span = handles
         .tracer
@@ -800,6 +904,7 @@ mod tests {
             effort: None,
             passes: None,
             search_cost_usd: None,
+            jev_cost_usd: None,
             cost_basis: Some(crate::telemetry::CostBasis::PriceTable),
             pages_fetched: None,
             pages_kept: None,
@@ -829,6 +934,7 @@ mod tests {
             fail_open: false,
             latency_ms: 12,
             cost_usd: 0.0,
+            jev_cost_usd: None,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
@@ -853,7 +959,7 @@ mod tests {
         // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
         let record = sample_invocation(Outcome::Success);
-        emit_invocation(&record, None);
+        emit_invocation(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -916,10 +1022,10 @@ mod tests {
         let mut with_cost = sample_invocation(Outcome::Success);
         with_cost.tool = "search_cost_probe".into();
         with_cost.search_cost_usd = Some(0.019);
-        emit_invocation(&with_cost, None);
+        emit_invocation(&with_cost, None, None);
         let mut without = sample_invocation(Outcome::Success);
         without.tool = "no_search_cost_probe".into();
-        emit_invocation(&without, None);
+        emit_invocation(&without, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -957,7 +1063,7 @@ mod tests {
         record.model = "claude-haiku-4-5".into();
         record.usage_by_model = usage;
 
-        emit_invocation(&record, None);
+        emit_invocation(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -996,7 +1102,7 @@ mod tests {
         record.cost_estimated = usage.cost_estimated();
         record.usage_by_model = usage;
 
-        emit_invocation(&record, None);
+        emit_invocation(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1020,7 +1126,7 @@ mod tests {
         let (spans, _, guard) = test_handles();
         let mut record = sample_invocation(Outcome::Timeout);
         record.tool = "research".into();
-        emit_invocation(&record, None);
+        emit_invocation(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1041,7 +1147,7 @@ mod tests {
         let (spans, _, guard) = test_handles();
         let mut record = sample_invocation(Outcome::ProviderRejected);
         record.tool = "provider_rejected_probe".into();
-        emit_invocation(&record, None);
+        emit_invocation(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1068,7 +1174,7 @@ mod tests {
         let mut record = sample_invocation(Outcome::Success);
         record.tool = "recall".into();
         record.model = "voyage-4".into();
-        emit_invocation(&record, None);
+        emit_invocation(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1092,7 +1198,7 @@ mod tests {
         // (observed flake). Each test finds its span by a unique name.
         let (spans, _, guard) = test_handles();
         let record = sample_checkpoint();
-        emit_checkpoint(&record, None);
+        emit_checkpoint(&record, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1203,10 +1309,10 @@ mod tests {
         counted.tool = "page_counts_probe".into();
         counted.pages_fetched = Some(25);
         counted.pages_kept = Some(15);
-        emit_invocation(&counted, None);
+        emit_invocation(&counted, None, None);
         let mut without = sample_invocation(Outcome::Success);
         without.tool = "no_page_counts_probe".into();
-        emit_invocation(&without, None);
+        emit_invocation(&without, None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1231,8 +1337,8 @@ mod tests {
     #[test]
     fn metrics_reflect_emissions() {
         let (_, metrics, guard) = test_handles();
-        emit_invocation(&sample_invocation(Outcome::Success), None);
-        emit_checkpoint(&sample_checkpoint(), None);
+        emit_invocation(&sample_invocation(Outcome::Success), None, None);
+        emit_checkpoint(&sample_checkpoint(), None, None);
         guard.meter_provider.force_flush().unwrap();
 
         let exported = metrics.get_finished_metrics().unwrap();
@@ -1276,7 +1382,7 @@ mod tests {
     fn an_invocation_span_starts_under_the_caller_trace() {
         let (spans, _, guard) = test_handles();
         let trace_id = "11111111111111111111111111111111";
-        emit_invocation(&probe("trace_parent_probe"), Some(&caller(trace_id)));
+        emit_invocation(&probe("trace_parent_probe"), Some(&caller(trace_id)), None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1293,7 +1399,7 @@ mod tests {
     fn a_checkpoint_span_starts_under_the_caller_trace() {
         let (spans, _, guard) = test_handles();
         let trace_id = "22222222222222222222222222222222";
-        emit_checkpoint(&sample_checkpoint(), Some(&caller(trace_id)));
+        emit_checkpoint(&sample_checkpoint(), Some(&caller(trace_id)), None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1310,8 +1416,8 @@ mod tests {
     fn without_a_caller_trace_the_span_is_an_unchanged_root() {
         let (spans, _, guard) = test_handles();
         let trace_id = "33333333333333333333333333333333";
-        emit_invocation(&probe("trace_parity_probe"), Some(&caller(trace_id)));
-        emit_invocation(&probe("trace_parity_probe"), None);
+        emit_invocation(&probe("trace_parity_probe"), Some(&caller(trace_id)), None);
+        emit_invocation(&probe("trace_parity_probe"), None, None);
         guard.tracer_provider.force_flush().unwrap();
 
         let exported = spans.get_finished_spans().unwrap();
@@ -1346,7 +1452,7 @@ mod tests {
             text(&format!("00-{trace_id}-00f067aa0ba902b7-00")),
         )]))
         .unwrap();
-        emit_invocation(&probe("sampled_off_probe"), Some(&off));
+        emit_invocation(&probe("sampled_off_probe"), Some(&off), None);
         guard.tracer_provider.force_flush().unwrap();
         guard.meter_provider.force_flush().unwrap();
 
@@ -1444,5 +1550,174 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    // ---- 064 T027: Jev attributes -------------------------------------------
+
+    fn jev_row(
+        outcome: crate::storage::jev::JevOutcome,
+        error_class: Option<&str>,
+        cost: Option<f64>,
+        latency: Option<u64>,
+    ) -> crate::storage::jev::JevRecord {
+        crate::storage::jev::JevRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at: Utc::now(),
+            server_session_id: "s".into(),
+            harness_session_id: None,
+            site: crate::traits::classifier::JevSite::ResearchClaims,
+            mode: crate::traits::classifier::JevMode::Shadow,
+            questions_json: serde_json::json!([]),
+            model_requested: "jev-1.14.0".into(),
+            model_answered: None,
+            outcome,
+            error_class: error_class.map(String::from),
+            request_id: None,
+            latency_ms: latency,
+            input_tokens: None,
+            cost_usd: cost,
+            eval_id: None,
+            invocation_id: None,
+            claim_key: None,
+            source_ids: None,
+            label_json: None,
+            label_source: None,
+            state_json: None,
+            state_hash: None,
+            transcript_ref: None,
+            redaction_count: 0,
+            truncated: false,
+        }
+    }
+
+    /// 064 review K: calls that sent nothing are not requests.
+    #[test]
+    fn the_jev_summary_leaves_unsent_calls_out() {
+        use crate::storage::jev::JevOutcome::Call;
+        let rows = [
+            jev_row(
+                Call(Outcome::ProviderRejected),
+                Some("disabled_after_401"),
+                None,
+                None,
+            ),
+            jev_row(Call(Outcome::Timeout), Some("no_slot"), None, None),
+            jev_row(Call(Outcome::Success), None, Some(0.001), Some(90)),
+        ];
+        let summary = JevSpanSummary::from_rows(&rows, 0);
+        assert_eq!(summary.requests, 1);
+        assert_eq!(summary.failures, 0);
+    }
+
+    #[test]
+    fn the_jev_summary_counts_requests_exclusions_and_failures() {
+        use crate::storage::jev::JevOutcome::{Call, Excluded};
+        let rows = [
+            jev_row(Call(Outcome::Success), None, Some(0.001), Some(90)),
+            jev_row(Call(Outcome::Timeout), Some("verify_finished"), None, None),
+            jev_row(Call(Outcome::Timeout), Some("no_time_left"), None, None),
+            jev_row(Excluded, Some("number"), None, None),
+            jev_row(
+                Call(Outcome::ClassifierProvider),
+                Some("classifier_provider"),
+                None,
+                Some(5),
+            ),
+        ];
+        let summary = JevSpanSummary::from_rows(&rows, 7);
+        assert_eq!(summary.mode, crate::traits::classifier::JevMode::Shadow);
+        assert_eq!(summary.excluded, 1);
+        // no_time_left sent nothing, so it is not a request.
+        assert_eq!(summary.requests, 3);
+        assert_eq!(summary.failures, 2);
+        assert_eq!(summary.cost_usd, Some(0.001));
+        assert_eq!(summary.critical_path_ms, 7);
+        assert_eq!(JevSpanSummary::from_rows(&[], 0).cost_usd, None);
+    }
+
+    fn summary() -> JevSpanSummary {
+        JevSpanSummary {
+            mode: crate::traits::classifier::JevMode::Shadow,
+            requests: 2,
+            excluded: 1,
+            failures: 1,
+            cost_usd: Some(0.000_04),
+            latency_ms: Some(95),
+            critical_path_ms: 3,
+        }
+    }
+
+    fn int(attrs: &[KeyValue], key: &str) -> Option<String> {
+        attr(attrs, key).map(opentelemetry::Value::to_string)
+    }
+
+    #[test]
+    fn the_checkpoint_span_carries_jev_attributes_only_when_jev_ran() {
+        let (spans, _, guard) = test_handles();
+        let mut with = sample_checkpoint();
+        with.session_id = "jev-checkpoint-probe".into();
+        emit_checkpoint(&with, None, Some(&summary()));
+        let mut without = sample_checkpoint();
+        without.session_id = "no-jev-checkpoint-probe".into();
+        emit_checkpoint(&without, None, None);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let by_session = |sid: &str| {
+            exported
+                .iter()
+                .find(|s| int(&s.attributes, "parallax.session_id").as_deref() == Some(sid))
+                .unwrap()
+                .attributes
+                .clone()
+        };
+        let attrs = by_session("jev-checkpoint-probe");
+        assert_eq!(int(&attrs, "parallax.jev.mode").as_deref(), Some("shadow"));
+        assert_eq!(int(&attrs, "parallax.jev.requests").as_deref(), Some("2"));
+        assert_eq!(int(&attrs, "parallax.jev.failures").as_deref(), Some("1"));
+        assert_eq!(
+            int(&attrs, "parallax.jev.cost_usd").as_deref(),
+            Some("0.00004")
+        );
+        assert_eq!(
+            int(&attrs, "parallax.jev.latency_ms").as_deref(),
+            Some("95")
+        );
+        assert_eq!(
+            int(&attrs, "parallax.jev.critical_path_ms").as_deref(),
+            Some("3")
+        );
+        let plain = by_session("no-jev-checkpoint-probe");
+        assert!(plain
+            .iter()
+            .all(|kv| !kv.key.as_str().starts_with("parallax.jev.")));
+    }
+
+    #[test]
+    fn the_invocation_span_carries_jev_attributes_only_when_jev_ran() {
+        let (spans, _, guard) = test_handles();
+        emit_invocation(&probe("jev_invocation_probe"), None, Some(&summary()));
+        emit_invocation(&probe("no_jev_invocation_probe"), None, None);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = |name: &str| exported.iter().find(|s| s.name == name).unwrap();
+        let attrs = &span("parallax.jev_invocation_probe").attributes;
+        assert_eq!(int(attrs, "parallax.jev.mode").as_deref(), Some("shadow"));
+        assert_eq!(int(attrs, "parallax.jev.requests").as_deref(), Some("2"));
+        assert_eq!(int(attrs, "parallax.jev.excluded").as_deref(), Some("1"));
+        assert_eq!(int(attrs, "parallax.jev.failures").as_deref(), Some("1"));
+        assert_eq!(
+            int(attrs, "parallax.jev.cost_usd").as_deref(),
+            Some("0.00004")
+        );
+        assert_eq!(
+            int(attrs, "parallax.jev.critical_path_ms").as_deref(),
+            Some("3")
+        );
+        assert!(span("parallax.no_jev_invocation_probe")
+            .attributes
+            .iter()
+            .all(|kv| !kv.key.as_str().starts_with("parallax.jev.")));
     }
 }

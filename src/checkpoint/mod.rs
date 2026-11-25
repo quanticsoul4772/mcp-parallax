@@ -228,6 +228,10 @@ pub struct CheckpointRecord {
     pub latency_ms: u64,
     /// Metered cost of this evaluation (the review hop; 0 for pure paths).
     pub cost_usd: f64,
+    /// Cost of the turn-review Jev request written with this record (064);
+    /// `None` when none was made. Separate from [`Self::cost_usd`]. A call cut
+    /// off at its deadline may still be billed but carries no cost here.
+    pub jev_cost_usd: Option<f64>,
     /// Via `TimeProvider`.
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -235,7 +239,7 @@ pub struct CheckpointRecord {
 /// FNV-1a 64-bit — implemented locally so `signal_key` is stable across
 /// builds and platforms (std's `DefaultHasher` makes no such promise).
 #[must_use]
-fn fnv1a64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
         hash ^= u64::from(*byte);

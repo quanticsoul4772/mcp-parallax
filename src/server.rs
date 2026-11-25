@@ -76,6 +76,9 @@ pub(super) struct RecordDims {
     /// The research run's non-model usage (061 review finding 3); `None`
     /// for other tools.
     non_model: Option<Arc<crate::telemetry::NonModelUsage>>,
+    /// The research run's Jev rows (064); `None` for other tools and when
+    /// the research site is off.
+    jev: Option<Arc<crate::telemetry::JevShadow>>,
 }
 
 impl RecordDims {
@@ -88,6 +91,7 @@ impl RecordDims {
             search_cost: None,
             pages: None,
             non_model: None,
+            jev: None,
         }
     }
 
@@ -100,6 +104,7 @@ impl RecordDims {
             search_cost: None,
             pages: None,
             non_model: None,
+            jev: None,
         }
     }
 }
@@ -359,6 +364,43 @@ impl Parallax {
             );
         }
 
+        let session_id = uuid::Uuid::new_v4().to_string();
+        // 064: one TypeSafe client for every Jev site, so its 4-request cap
+        // holds per process; built only when some site is in shadow.
+        let shadow = crate::traits::classifier::JevMode::Shadow;
+        for line in crate::jev::startup::startup_lines(&config.jev) {
+            tracing::info!("{line}");
+        }
+        let typesafe: Option<Arc<dyn crate::traits::classifier::Classifier>> =
+            if crate::jev::startup::wants_client(&config.jev) {
+                Some(Arc::new(crate::client::typesafe::TypesafeClient::new(
+                    &config.jev,
+                )?))
+            } else {
+                None
+            };
+        let turn_jev = if config.jev.turn_review == shadow {
+            typesafe.clone().map(|client| {
+                crate::jev::shadow::TurnJev::new(
+                    client,
+                    config.jev.model.clone(),
+                    session_id.clone(),
+                )
+            })
+        } else {
+            None
+        };
+        let claim_jev = if config.jev.research_claims == shadow {
+            typesafe.clone().map(|client| {
+                crate::jev::shadow::ClaimJev::new(
+                    client,
+                    config.jev.model.clone(),
+                    session_id.clone(),
+                )
+            })
+        } else {
+            None
+        };
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
             storage: Arc::clone(&storage),
@@ -374,6 +416,7 @@ impl Parallax {
                 .to_string(),
             embedder: embedder.clone(),
             gate_extra_patterns: config.checkpoint_gate_patterns.clone(),
+            jev: turn_jev,
         });
 
         let memory = embedder.map(|embedder| {
@@ -407,6 +450,7 @@ impl Parallax {
                 input_max_chars: config.input_max_chars,
                 concurrency: usize::from(config.research_concurrency),
                 max_age_hours: config.exa_max_age_hours,
+                jev: claim_jev,
             })),
             None => None,
         };
@@ -477,7 +521,7 @@ impl Parallax {
             grounded,
             deterministic,
             checkpoint,
-            session_id: uuid::Uuid::new_v4().to_string(),
+            session_id,
             routing: config.routing.clone(),
             max_claim_chars: config.input_max_chars,
         })
@@ -954,6 +998,9 @@ impl Parallax {
         let search_cost = Arc::new(crate::telemetry::SearchCost::default());
         let pages = Arc::new(crate::telemetry::PageCounts::default());
         let non_model = Arc::new(crate::telemetry::NonModelUsage::default());
+        // 064: the run's Jev rows, written by the record guard on every exit.
+        let jev_rows = Arc::new(crate::telemetry::JevShadow::default());
+        let jev_dims = deps.jev.as_ref().map(|_| Arc::clone(&jev_rows));
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a
@@ -990,6 +1037,7 @@ impl Parallax {
                 search_cost: Some(Arc::clone(&search_cost)),
                 pages: Some(Arc::clone(&pages)),
                 non_model: Some(Arc::clone(&non_model)),
+                jev: jev_dims,
                 ..RecordDims::default()
             },
             ct,
@@ -1002,6 +1050,7 @@ impl Parallax {
                     &search_cost,
                     &pages,
                     &non_model,
+                    &jev_rows,
                 )
                 .await
             },

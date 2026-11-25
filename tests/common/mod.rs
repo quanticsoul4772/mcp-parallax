@@ -50,6 +50,10 @@ pub fn test_config(timeout_ms: u64) -> Config {
         request_timeout_ms: timeout_ms,
         max_retries: 1,
         anthropic_api_base: "http://127.0.0.1:1".into(),
+        jev: mcp_parallax::config::JevSettings {
+            model: mcp_parallax::config::DEFAULT_JEV_MODEL.into(),
+            ..mcp_parallax::config::JevSettings::default()
+        },
     }
 }
 

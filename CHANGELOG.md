@@ -13,6 +13,15 @@ arc.
 
 ### Added
 
+* **Jev shadow answers (064)**: with `TYPESAFE_API_KEY` set and a
+  `PARALLAX_JEV_MODE_TURN_REVIEW` / `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` site set
+  to `shadow`, TypeSafe's Jev (`jev-1.14.0`) answers typed questions beside the
+  end-of-turn review and each research claim; answers go to a new `jev_records`
+  table with the big model's label and change nothing. State is redacted, stored
+  memories are never sent, claims with numbers, dates or flagged sources are
+  excluded, and a claim never waits on Jev. Records gain `jev_cost_usd`, spans
+  `parallax.jev.*`, outcomes `classifier_provider`. Off by default;
+  `examples/jev_backtest` measures noise, order bias and agreement.
 * **Research flags pages that try to instruct the model (063)** — before
   claim extraction, each page's text is checked by an in-process pattern
   screen for instruction overrides ("ignore previous instructions", "you are

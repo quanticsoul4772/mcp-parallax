@@ -45,6 +45,8 @@ pub struct CheckpointDeps {
     pub embedder: Option<Arc<dyn Embedder>>,
     /// `CHECKPOINT_GATE_PATTERNS` extras (FR-013).
     pub gate_extra_patterns: Vec<String>,
+    /// The Jev turn shadow (064); `None` when the site is off.
+    pub jev: Option<crate::jev::shadow::TurnJev>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -253,12 +255,16 @@ pub async fn run_action(
 /// # Errors
 ///
 /// Only the audit write propagates (see [`run_batch`]).
+#[allow(clippy::too_many_lines)] // the turn's steps read in order; review_beside_jev already split out
 pub async fn run_turn(
     deps: &CheckpointDeps,
     params: &CheckpointTurnParams,
     caller: Option<&CallerTrace>,
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
+    // 064: the evaluation id exists from the start, so the Jev row can name it.
+    let eval_id = uuid::Uuid::new_v4().to_string();
+    let mut jev_row: Option<TurnJevOutcome> = None;
 
     // FR-014: a turn end that follows a forced continuation never reviews
     // again — continuation cannot loop.
@@ -268,12 +274,14 @@ pub async fn run_turn(
             vec![],
             CheckpointResult::silence(elapsed_ms(started)),
         );
-        record(
+        record_with_jev(
             deps,
             Boundary::Turn,
             &params.session_id,
             &evaluation,
             caller,
+            eval_id,
+            None,
         )
         .await?;
         return Ok((evaluation.result, 0, 0));
@@ -322,19 +330,21 @@ pub async fn run_turn(
         }
 
         // One hop, three judgments (015 FR-010 · 017 research D6).
-        let (flagged, proposal, inp, out) = review::review_once(
-            deps.model_client.as_ref(),
-            &deps.review_mode,
+        let (review, row) = review_beside_jev(
+            deps,
+            params,
+            &eval_id,
             &candidates,
             &preferences,
-            &params.final_message,
-            &review::turn_activity(&window),
+            &window,
             capture_enabled,
         )
-        .await
-        // The recall hop above already ran and was billed; fold it in so the
-        // whole boundary's spend survives a review failure (020).
-        .map_err(|error| error.metered(input_tokens, 0))?;
+        .await;
+        jev_row = row;
+        let (flagged, proposal, inp, out, _raw) = review
+            // The recall hop above already ran and was billed; fold it in so
+            // the whole boundary's spend survives a review failure (020).
+            .map_err(|error| error.metered(input_tokens, 0))?;
         input_tokens += inp;
         let cost_usd = telemetry::cost_usd(&deps.model, inp, out);
 
@@ -362,12 +372,14 @@ pub async fn run_turn(
     .await;
 
     let evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_turn");
-    record(
+    record_with_jev(
         deps,
         Boundary::Turn,
         &params.session_id,
         &evaluation,
         caller,
+        eval_id,
+        jev_row,
     )
     .await?;
     Ok((
@@ -375,6 +387,98 @@ pub async fn run_turn(
         evaluation.input_tokens,
         evaluation.output_tokens,
     ))
+}
+
+/// What one review hop returns: flags, capture proposal, tokens in and out,
+/// and the raw answers.
+type ReviewOutput = (
+    Vec<(Signal, String)>,
+    Option<review::CaptureProposal>,
+    u64,
+    u64,
+    review::ReviewRaw,
+);
+
+/// 064: run the review hop and, when the turn site is in shadow, Jev beside
+/// it (joined, never instead of it). The Jev row is built whatever either
+/// does; its label comes from the review's raw answers when the review
+/// succeeded.
+async fn review_beside_jev(
+    deps: &CheckpointDeps,
+    params: &CheckpointTurnParams,
+    eval_id: &str,
+    candidates: &[review::Candidate],
+    preferences: &[preference::PreferenceCandidate],
+    window: &crate::checkpoint::trajectory::TrajectoryWindow,
+    capture_enabled: bool,
+) -> (Result<ReviewOutput, AppError>, Option<TurnJevOutcome>) {
+    let activity = review::turn_activity(window);
+    let review = review::review_once(
+        deps.model_client.as_ref(),
+        &deps.review_mode,
+        candidates,
+        preferences,
+        &params.final_message,
+        &activity,
+        capture_enabled,
+    );
+    let Some(jev) = &deps.jev else {
+        return (review.await, None);
+    };
+    let shadow = Box::pin(crate::jev::shadow::shadow_turn(
+        jev,
+        crate::jev::shadow::TurnInputs {
+            window,
+            activity: &activity,
+            final_message: &params.final_message,
+            capture_enabled,
+        },
+        crate::jev::shadow::TurnIds {
+            eval_id,
+            harness_session_id: &params.session_id,
+            transcript_path: &params.transcript_path,
+            now: deps.clock.now(),
+        },
+    ));
+    // Each side notes when it finished, so the wait beyond the review is known.
+    let review = async {
+        let result = review.await;
+        (result, Instant::now())
+    };
+    let shadow = async {
+        let row = shadow.await;
+        (row, Instant::now())
+    };
+    let ((review, review_done), (mut row, jev_done)) = tokio::join!(review, shadow);
+    let wait_ms = u64::try_from(jev_done.saturating_duration_since(review_done).as_millis())
+        .unwrap_or(u64::MAX);
+    if let Ok((_, _, _, _, raw)) = &review {
+        let memory_pairs = candidates
+            .iter()
+            .any(|c| c.origin == review::CandidateOrigin::Memory);
+        row.label_json = Some(crate::jev::shadow::turn_label(
+            raw,
+            memory_pairs,
+            capture_enabled,
+        ));
+        row.label_source = Some(format!("{}/{}", deps.model, review::REVIEW_MODE_ID));
+    }
+    (
+        review,
+        Some(TurnJevOutcome {
+            row: Box::new(row),
+            wait_ms,
+        }),
+    )
+}
+
+/// The turn's Jev row and how long the turn waited on Jev after the review
+/// finished (064).
+struct TurnJevOutcome {
+    // Boxed: the row is large, and carrying it by value through the record
+    // step pushed the turn future past the large-future lint (064).
+    row: Box<crate::storage::jev::JevRecord>,
+    wait_ms: u64,
 }
 
 /// Turn-flag delivery (015 research D6): one message in delivery order
@@ -546,8 +650,36 @@ async fn record(
     evaluation: &Evaluated,
     caller: Option<&CallerTrace>,
 ) -> Result<(), AppError> {
+    record_with_jev(
+        deps,
+        boundary,
+        session_id,
+        evaluation,
+        caller,
+        uuid::Uuid::new_v4().to_string(),
+        None,
+    )
+    .await
+}
+
+/// The one record step (064): the checkpoint record under `eval_id`, then
+/// the Jev row, if any. A failed Jev write is logged and never affects the
+/// turn; the checkpoint write still propagates as before.
+async fn record_with_jev(
+    deps: &CheckpointDeps,
+    boundary: Boundary,
+    session_id: &str,
+    evaluation: &Evaluated,
+    caller: Option<&CallerTrace>,
+    eval_id: String,
+    jev: Option<TurnJevOutcome>,
+) -> Result<(), AppError> {
+    let jev_summary = jev.as_ref().map(|j| {
+        crate::observability::JevSpanSummary::from_rows(std::slice::from_ref(&j.row), j.wait_ms)
+    });
+    let jev_row = jev.map(|j| *j.row);
     let row = CheckpointRecord {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: eval_id,
         session_id: session_id.to_string(),
         boundary,
         signals_evaluated: evaluation.signal_kinds.clone(),
@@ -559,11 +691,22 @@ async fn record(
         fail_open: evaluation.result.fail_open,
         latency_ms: evaluation.result.latency_ms,
         cost_usd: evaluation.cost_usd,
+        jev_cost_usd: jev_row.as_ref().and_then(|r| r.cost_usd),
         created_at: deps.clock.now(),
     };
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
-    crate::observability::emit_checkpoint(&row, caller);
-    deps.storage.record_checkpoint(&row).await
+    crate::observability::emit_checkpoint(&row, caller, jev_summary.as_ref());
+    deps.storage.record_checkpoint(&row).await?;
+    if let Some(jev_row) = jev_row {
+        if let Err(error) = deps
+            .storage
+            .record_jev(std::slice::from_ref(&jev_row))
+            .await
+        {
+            tracing::warn!(%error, "jev row write failed; the turn is unaffected");
+        }
+    }
+    Ok(())
 }
 
 /// Fixed message templates (FR-005/SC-007): parameterized only by evidence.
@@ -638,6 +781,7 @@ mod tests {
         client: MockModelClient,
         embedder: Option<Arc<dyn Embedder>>,
         patterns: Vec<String>,
+        jev: Option<crate::jev::shadow::TurnJev>,
     }
 
     impl DepsBuilder {
@@ -651,6 +795,7 @@ mod tests {
                 client: MockModelClient::new(),
                 embedder: None,
                 patterns: vec![],
+                jev: None,
             }
         }
 
@@ -664,6 +809,7 @@ mod tests {
                 model: "claude-opus-4-8".into(),
                 embedder: self.embedder,
                 gate_extra_patterns: self.patterns,
+                jev: self.jev,
             }
         }
     }
@@ -1679,5 +1825,390 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
+    }
+
+    // ---- 064 T019: the turn shadow ------------------------------------------
+
+    mod jev_shadow {
+        use super::*;
+        use crate::error::Outcome;
+        use crate::jev::redact::Redactor;
+        use crate::jev::shadow::TurnJev;
+        use crate::storage::jev::{JevOutcome, JevRecord};
+        use crate::traits::classifier::{
+            Classifier, JevAnswer, JevRequest, JevResponse, MockClassifier,
+        };
+        use std::sync::Mutex;
+        use std::time::Duration as StdDuration;
+
+        const PINNED: &str = "jev-1.14.0";
+        const REVERSAL_FINAL: &str =
+            "After checking, the database migration is not reversible after all.";
+
+        type Shared<T> = Arc<Mutex<Vec<T>>>;
+
+        /// What one turn wrote and what Jev was asked.
+        struct Written {
+            checkpoints: Shared<CheckpointRecord>,
+            jev_rows: Shared<JevRecord>,
+        }
+
+        impl Written {
+            fn new() -> Self {
+                Self {
+                    checkpoints: Arc::default(),
+                    jev_rows: Arc::default(),
+                }
+            }
+            fn checkpoint(&self) -> CheckpointRecord {
+                let all = self.checkpoints.lock().unwrap();
+                assert_eq!(all.len(), 1, "one checkpoint record per turn");
+                all[0].clone()
+            }
+            fn rows(&self) -> Vec<JevRecord> {
+                self.jev_rows.lock().unwrap().clone()
+            }
+        }
+
+        fn turn_jev(classifier: Arc<dyn Classifier>) -> TurnJev {
+            TurnJev {
+                classifier,
+                redactor: Redactor::new(vec![]),
+                model: PINNED.into(),
+                server_session_id: "server-1".into(),
+                deadline: StdDuration::from_millis(50),
+            }
+        }
+
+        /// Answers every question asked at 0.9, and keeps the request.
+        fn confident(requests: Shared<JevRequest>, model: &'static str) -> MockClassifier {
+            let mut mock = MockClassifier::new();
+            mock.expect_model_id().return_const(PINNED.to_string());
+            mock.expect_classify().returning(move |request| {
+                requests.lock().unwrap().push(request.clone());
+                Ok(JevResponse {
+                    model_answered: model.into(),
+                    answers: request
+                        .questions
+                        .iter()
+                        .map(|q| (q.id.clone(), JevAnswer::Noul { p: 0.9 }))
+                        .collect(),
+                    input_tokens: Some(200),
+                    request_id: Some("req-1".into()),
+                    latency_ms: 90,
+                })
+            });
+            mock
+        }
+
+        fn failing() -> MockClassifier {
+            let mut mock = MockClassifier::new();
+            mock.expect_model_id().return_const(PINNED.to_string());
+            mock.expect_classify()
+                .returning(|_| Err(AppError::ClassifierProvider("typesafe 529".into())));
+            mock
+        }
+
+        /// A Jev that never answers.
+        struct Hanging;
+
+        #[async_trait::async_trait]
+        impl Classifier for Hanging {
+            async fn classify(&self, _: &JevRequest) -> Result<JevResponse, AppError> {
+                tokio::time::sleep(StdDuration::from_secs(3600)).await;
+                Err(AppError::ClassifierProvider("unreachable".into()))
+            }
+            fn model_id(&self) -> &str {
+                PINNED
+            }
+        }
+
+        fn contradiction_completion() -> Completion {
+            Completion {
+                value: json!({
+                    "contradicts": true,
+                    "statement_a": "The database migration is fully reversible and safe to run",
+                    "statement_b": "the database migration is not reversible",
+                    "basis": "Both cannot hold.",
+                    "violates": false,
+                    "violated_preference": "",
+                    "capture_worthy": false,
+                    "capture_kind": "none",
+                    "capture_content": "",
+                    "capture_basis": "",
+                    "violation_basis": ""
+                }),
+                input_tokens: 80,
+                output_tokens: 30,
+                reported_cost_micros: None,
+            }
+        }
+
+        /// A builder whose storage captures everything written, in order.
+        fn capturing(written: &Written) -> DepsBuilder {
+            let mut b = DepsBuilder::new();
+            let checkpoints = Arc::clone(&written.checkpoints);
+            let rows = Arc::clone(&written.jev_rows);
+            let mut sequence = mockall::Sequence::new();
+            b.storage
+                .expect_delivered_signal_keys_since()
+                .returning(|_, _| Ok(vec![]));
+            b.storage
+                .expect_record_checkpoint()
+                .times(1)
+                .in_sequence(&mut sequence)
+                .returning(move |r| {
+                    checkpoints.lock().unwrap().push(r.clone());
+                    Ok(())
+                });
+            b.storage
+                .expect_record_jev()
+                .times(0..=1)
+                .in_sequence(&mut sequence)
+                .returning(move |r| {
+                    rows.lock().unwrap().extend_from_slice(r);
+                    Ok(())
+                });
+            b
+        }
+
+        /// The reversal turn with this Jev; returns the result as JSON.
+        async fn reversal_turn(written: &Written, jev: Option<TurnJev>) -> serde_json::Value {
+            let mut b = capturing(written);
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok(reversal_window()));
+            b.client
+                .expect_complete()
+                .times(1)
+                .returning(|_, _| Ok(contradiction_completion()));
+            b.jev = jev;
+            let (result, _, _) = run_turn(&b.build(), &turn_params(REVERSAL_FINAL, false), None)
+                .await
+                .unwrap();
+            let mut value = serde_json::to_value(&result).unwrap();
+            value.as_object_mut().unwrap().remove("latency_ms");
+            value
+        }
+
+        fn comparable(mut record: CheckpointRecord) -> CheckpointRecord {
+            record.id = String::new();
+            record.latency_ms = 0;
+            record.jev_cost_usd = None;
+            record
+        }
+
+        #[tokio::test]
+        async fn the_turn_and_its_record_are_identical_whatever_jev_does() {
+            let off = Written::new();
+            let result_off = reversal_turn(&off, None).await;
+            assert!(off.rows().is_empty());
+
+            let cases: Vec<(&str, Arc<dyn Classifier>, Outcome)> = vec![
+                (
+                    "confident",
+                    Arc::new(confident(Arc::default(), PINNED)),
+                    Outcome::Success,
+                ),
+                ("errors", Arc::new(failing()), Outcome::ClassifierProvider),
+                (
+                    "rejected",
+                    Arc::new(confident(Arc::default(), "jev-9.9.9")),
+                    Outcome::ValidationFailure,
+                ),
+                ("never returns", Arc::new(Hanging), Outcome::Timeout),
+            ];
+            for (name, classifier, outcome) in cases {
+                let on = Written::new();
+                let started = std::time::Instant::now();
+                let result_on = reversal_turn(&on, Some(turn_jev(classifier))).await;
+                assert!(
+                    started.elapsed() < StdDuration::from_secs(5),
+                    "{name}: waited"
+                );
+                assert_eq!(result_on, result_off, "{name}: result changed");
+                assert_eq!(
+                    comparable(on.checkpoint()),
+                    comparable(off.checkpoint()),
+                    "{name}: record changed"
+                );
+                let rows = on.rows();
+                assert_eq!(rows.len(), 1, "{name}");
+                assert_eq!(rows[0].outcome, JevOutcome::Call(outcome), "{name}");
+            }
+        }
+
+        #[tokio::test]
+        async fn the_row_links_to_its_checkpoint_record_and_carries_the_label() {
+            let written = Written::new();
+            let requests: Shared<JevRequest> = Arc::default();
+            reversal_turn(
+                &written,
+                Some(turn_jev(Arc::new(confident(Arc::clone(&requests), PINNED)))),
+            )
+            .await;
+            let record = written.checkpoint();
+            let row = &written.rows()[0];
+            assert_eq!(row.eval_id.as_deref(), Some(record.id.as_str()));
+            assert_eq!(record.jev_cost_usd, row.cost_usd);
+            assert!(row.cost_usd.is_some());
+            assert_eq!(
+                row.label_json,
+                Some(json!({ "contradicts": true, "violates": false, "capture_kind": null }))
+            );
+            assert_eq!(row.harness_session_id.as_deref(), Some("s1"));
+            assert_eq!(row.model_answered.as_deref(), Some(PINNED));
+        }
+
+        async fn assert_no_jev_call(
+            final_message: &str,
+            continuation: bool,
+            window: TrajectoryWindow,
+        ) {
+            let written = Written::new();
+            let mut b = capturing(&written);
+            b.reader
+                .expect_read()
+                .returning(move |_, _| Ok(window.clone()));
+            b.client.expect_complete().times(0);
+            let mut mock = MockClassifier::new();
+            mock.expect_classify().times(0);
+            mock.expect_model_id().return_const(PINNED.to_string());
+            b.jev = Some(turn_jev(Arc::new(mock)));
+            run_turn(&b.build(), &turn_params(final_message, continuation), None)
+                .await
+                .unwrap();
+            assert!(written.rows().is_empty());
+        }
+
+        #[tokio::test]
+        async fn no_jev_call_when_the_review_does_not_run() {
+            assert_no_jev_call(REVERSAL_FINAL, true, reversal_window()).await;
+            assert_no_jev_call("   ", false, reversal_window()).await;
+            assert_no_jev_call(
+                "Everything completed without surprises today.",
+                false,
+                empty_window(),
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn a_review_that_fails_open_still_writes_a_row_with_no_label() {
+            let written = Written::new();
+            let mut b = capturing(&written);
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok(reversal_window()));
+            b.client
+                .expect_complete()
+                .returning(|_, _| Err(AppError::ValidationFailure("bad shape".into())));
+            b.jev = Some(turn_jev(Arc::new(confident(Arc::default(), PINNED))));
+            run_turn(&b.build(), &turn_params(REVERSAL_FINAL, false), None)
+                .await
+                .unwrap();
+            assert!(written.checkpoint().fail_open);
+            let rows = written.rows();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].label_json, None);
+        }
+
+        #[tokio::test]
+        async fn a_cut_final_message_is_recorded_as_truncated() {
+            let written = Written::new();
+            let mut b = capturing(&written);
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok(reversal_window()));
+            b.client
+                .expect_complete()
+                .returning(|_, _| Ok(contradiction_completion()));
+            b.jev = Some(turn_jev(Arc::new(confident(Arc::default(), PINNED))));
+            let long = format!("{REVERSAL_FINAL} {}", "filler words here ".repeat(150));
+            run_turn(&b.build(), &turn_params(&long, false), None)
+                .await
+                .unwrap();
+            assert!(written.rows()[0].truncated);
+        }
+
+        #[tokio::test]
+        async fn memory_text_never_reaches_jev_and_capture_is_asked_only_with_memory() {
+            // Memory on: a stored preference is recalled.
+            let written = Written::new();
+            let requests: Shared<JevRequest> = Arc::default();
+            let mut b = capturing(&written);
+            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.embedder = Some(Arc::new(matching_embedder()));
+            b.storage.expect_load_memories().returning(|| {
+                Ok(vec![preference_memory(
+                    "mem-delve",
+                    "final messages must never contain the word delve",
+                    crate::memory::Trust::FirstHand,
+                )])
+            });
+            b.client
+                .expect_complete()
+                .returning(|_, _| Ok(violation_completion()));
+            b.jev = Some(turn_jev(Arc::new(confident(Arc::clone(&requests), PINNED))));
+            run_turn(
+                &b.build(),
+                &turn_params("Let me delve into the details of this fix.", false),
+                None,
+            )
+            .await
+            .unwrap();
+            let sent = requests.lock().unwrap()[0].clone();
+            assert!(
+                !sent.state.as_str().contains("never contain the word delve"),
+                "memory text sent: {}",
+                sent.state.as_str()
+            );
+            let ids: Vec<&str> = sent.questions.iter().map(|q| q.id.as_str()).collect();
+            assert_eq!(ids, ["contradiction", "capture_worthy"]);
+
+            // Memory off: contradiction only.
+            let written = Written::new();
+            let requests: Shared<JevRequest> = Arc::default();
+            reversal_turn(
+                &written,
+                Some(turn_jev(Arc::new(confident(Arc::clone(&requests), PINNED)))),
+            )
+            .await;
+            let sent = requests.lock().unwrap()[0].clone();
+            let ids: Vec<&str> = sent.questions.iter().map(|q| q.id.as_str()).collect();
+            assert_eq!(ids, ["contradiction"]);
+        }
+
+        #[tokio::test]
+        async fn a_failed_jev_row_write_never_affects_the_turn() {
+            let off = Written::new();
+            let result_off = reversal_turn(&off, None).await;
+
+            let mut b = DepsBuilder::new();
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok(reversal_window()));
+            b.client
+                .expect_complete()
+                .returning(|_, _| Ok(contradiction_completion()));
+            b.storage
+                .expect_delivered_signal_keys_since()
+                .returning(|_, _| Ok(vec![]));
+            b.storage
+                .expect_record_checkpoint()
+                .times(1)
+                .returning(|_| Ok(()));
+            b.storage
+                .expect_record_jev()
+                .times(1)
+                .returning(|_| Err(AppError::Storage("disk full".into())));
+            b.jev = Some(turn_jev(Arc::new(confident(Arc::default(), PINNED))));
+            let (result, _, _) = run_turn(&b.build(), &turn_params(REVERSAL_FINAL, false), None)
+                .await
+                .unwrap();
+            let mut value = serde_json::to_value(&result).unwrap();
+            value.as_object_mut().unwrap().remove("latency_ms");
+            assert_eq!(value, result_off);
+        }
     }
 }

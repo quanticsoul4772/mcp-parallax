@@ -62,6 +62,9 @@ pub enum Outcome {
     SearchProvider,
     /// The embedding provider failed (memory capability).
     EmbeddingProvider,
+    /// The Jev classifier provider (TypeSafe) failed: transport, rate limit,
+    /// overload or server error (064).
+    ClassifierProvider,
     /// Startup configuration was missing or invalid (never recorded).
     ConfigError,
     /// The client abandoned the invocation before it completed.
@@ -85,6 +88,7 @@ impl Outcome {
             "usage_limit" => Some(Self::UsageLimit),
             "search_provider" => Some(Self::SearchProvider),
             "embedding_provider" => Some(Self::EmbeddingProvider),
+            "classifier_provider" => Some(Self::ClassifierProvider),
             "config_error" => Some(Self::ConfigError),
             "cancelled" => Some(Self::Cancelled),
             _ => None,
@@ -106,6 +110,7 @@ impl Outcome {
             Self::UsageLimit => "usage_limit",
             Self::SearchProvider => "search_provider",
             Self::EmbeddingProvider => "embedding_provider",
+            Self::ClassifierProvider => "classifier_provider",
             Self::ConfigError => "config_error",
             Self::Cancelled => "cancelled",
         }
@@ -196,6 +201,10 @@ pub enum AppError {
     /// The search provider failed (research capability).
     #[error("search provider error: {0}")]
     SearchProvider(String),
+
+    /// The Jev classifier provider (TypeSafe) failed (064).
+    #[error("classifier provider error: {0}")]
+    ClassifierProvider(String),
 
     /// A failure that nonetheless consumed billable tokens (020).
     ///
@@ -299,6 +308,7 @@ impl AppError {
             Self::Cancelled => Outcome::Cancelled,
             Self::EmbeddingProvider(_) => Outcome::EmbeddingProvider,
             Self::SearchProvider(_) => Outcome::SearchProvider,
+            Self::ClassifierProvider(_) => Outcome::ClassifierProvider,
         }
     }
 }
@@ -319,6 +329,12 @@ pub enum ConfigError {
     /// is discovered at runtime — a misspelled suffix is not a `&'static str`.
     #[error("invalid routing configuration: {0}")]
     Routing(String),
+
+    /// A Jev setting (064) was unrecognised or unusable: an unknown
+    /// `PARALLAX_JEV_MODE_*` suffix, a bad value, or a mode set without
+    /// `TYPESAFE_API_KEY`. Carries an owned message naming the variable.
+    #[error("invalid Jev configuration: {0}")]
+    Jev(String),
 
     /// A variable Parallax no longer reads is set where it would change
     /// nothing or hide a lost capability (059 FR-002, FR-003). Names the
@@ -580,6 +596,22 @@ mod tests {
             strings.len(),
             Outcome::ALL.len(),
             "two outcomes share a string"
+        );
+    }
+
+    /// 064 T005: a Jev transport or provider failure is its own outcome, like
+    /// the search and embedding providers, never mislabeled as another's.
+    #[test]
+    fn a_jev_provider_failure_is_the_classifier_provider_outcome() {
+        assert!(Outcome::ALL.contains(&Outcome::ClassifierProvider));
+        assert_eq!(Outcome::ClassifierProvider.as_str(), "classifier_provider");
+        assert_eq!(
+            Outcome::parse("classifier_provider"),
+            Some(Outcome::ClassifierProvider)
+        );
+        assert_eq!(
+            AppError::ClassifierProvider("typesafe 529".into()).outcome(),
+            Outcome::ClassifierProvider
         );
     }
 }

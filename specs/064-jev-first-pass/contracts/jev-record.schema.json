@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parallax/064/jev-record",
+  "title": "Jev record (064)",
+  "description": "One Jev request, or one excluded research claim, recorded beside the big model's label for the same item. Bound to the jev_records table columns by a two-way test.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "created_at",
+    "server_session_id",
+    "site",
+    "mode",
+    "questions_json",
+    "model_requested",
+    "outcome",
+    "applied",
+    "redaction_count",
+    "truncated"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "server_session_id": { "type": "string" },
+    "harness_session_id": { "type": ["string", "null"] },
+    "site": { "enum": ["turn_review", "research_claims"] },
+    "mode": { "enum": ["shadow"] },
+    "questions_json": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "option_order"],
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 },
+          "option_order": { "type": "array", "items": { "type": "string" } },
+          "answer": { "type": ["string", "number", "null"] },
+          "probabilities": {
+            "type": ["object", "null"],
+            "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "band": { "enum": ["yes", "middle", "no", null] }
+        }
+      }
+    },
+    "model_requested": { "type": "string" },
+    "model_answered": { "type": ["string", "null"] },
+    "outcome": {
+      "description": "One of the published outcome list (invocation-record.schema.json), or excluded.",
+      "type": "string"
+    },
+    "error_class": { "type": ["string", "null"] },
+    "request_id": { "type": ["string", "null"] },
+    "latency_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+    "cost_usd": { "type": ["number", "null"], "minimum": 0 },
+    "applied": { "const": false },
+    "eval_id": { "type": ["string", "null"] },
+    "invocation_id": { "type": ["string", "null"] },
+    "claim_key": { "type": ["string", "null"] },
+    "source_ids": { "type": ["array", "null"], "items": { "type": "string" } },
+    "label_json": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["violates"],
+          "properties": {
+            "contradicts": { "type": ["boolean", "null"] },
+            "violates": { "type": "boolean" },
+            "capture_kind": { "enum": ["skill", "lesson", "none", null] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["support", "votes_supported", "votes_refuted", "votes_completed", "sources"],
+          "properties": {
+            "support": { "enum": ["confirmed", "unverified", "contested", "refuted"] },
+            "votes_supported": { "type": "integer", "minimum": 0 },
+            "votes_refuted": { "type": "integer", "minimum": 0 },
+            "votes_completed": { "type": "integer", "minimum": 0 },
+            "sources": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "label_source": { "type": ["string", "null"] },
+    "state_json": { "description": "Research only: the redacted state sent, for replay.", "type": ["object", "null"] },
+    "state_hash": { "type": ["string", "null"] },
+    "transcript_ref": { "type": ["string", "null"] },
+    "redaction_count": { "type": "integer", "minimum": 0 },
+    "truncated": { "type": "boolean" }
+  }
+}

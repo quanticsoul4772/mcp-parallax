@@ -14,13 +14,15 @@ pub const SYSTEM_PROMPT: &str =
 /// Variables removed from the child's environment, by name only (D3): the
 /// ones that would bill an API key or a cloud account, and any inherited
 /// effort level, which Parallax then sets itself (D6).
-const ENV_REMOVE: [&str; 6] = [
+const ENV_REMOVE: [&str; 7] = [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "CLAUDE_CODE_EFFORT_LEVEL",
+    // 064: the TypeSafe key never reaches a `claude -p` child.
+    "TYPESAFE_API_KEY",
 ];
 
 /// The effort variable the CLI reads ahead of `--effort` and its settings.
@@ -186,6 +188,7 @@ mod tests {
                 "CLAUDE_CODE_USE_VERTEX",
                 "CLAUDE_CODE_USE_FOUNDRY",
                 "CLAUDE_CODE_EFFORT_LEVEL",
+                "TYPESAFE_API_KEY",
             ]
         );
     }

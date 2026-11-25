@@ -6,6 +6,7 @@
 //! sources (research.md D1). Request and response shapes follow Exa's
 //! OpenAPI spec and the user's exa-mcp-server.
 
+use super::retry::{cap_detail, retry_after, time_until};
 use crate::config::Config;
 use crate::error::AppError;
 use crate::traits::search::{
@@ -97,7 +98,7 @@ impl ExaClient {
     /// are retried up to `MAX_RETRIES`, waiting `Retry-After` when the
     /// provider gives one, else an exponential backoff; any other 4xx is the
     /// provider refusing the request (057's `provider_rejected`), terminal,
-    /// with at most [`DETAIL_MAX_CHARS`] of its body. A timeout used the whole
+    /// with at most [`super::retry::DETAIL_MAX_CHARS`] of its body. A timeout used the whole
     /// per-request budget and is terminal too.
     ///
     /// 059 review finding 1: `time_left` (the run's remaining deadline)
@@ -329,19 +330,6 @@ impl SearchProvider for ExaClient {
     }
 }
 
-/// The wait a `Retry-After` header asks for: whole seconds or an HTTP date
-/// (RFC 9110); a date already past is no wait. `None` when absent or
-/// unreadable, so the caller falls back to its own backoff.
-fn retry_after(value: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<Duration> {
-    let value = value?.trim();
-    if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
-    }
-    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
-    let wait = at.with_timezone(&chrono::Utc) - now;
-    Some(wait.to_std().unwrap_or(Duration::ZERO))
-}
-
 /// The cost a reply can be credited with (059 review finding 4): what it
 /// reported, unless a network error was retried on the way — the provider may
 /// have billed the lost attempt, so the call's true cost is unknown.
@@ -361,24 +349,6 @@ struct Sent {
     /// The run's deadline bounded this reply's time: the time the call was
     /// given, in ms (second review L2).
     deadline_ms: Option<u64>,
-}
-
-/// Time left until `deadline`.
-fn time_until(deadline: std::time::Instant) -> Duration {
-    deadline.saturating_duration_since(std::time::Instant::now())
-}
-
-/// Most of a rejection body kept in the error (059 review finding 7).
-const DETAIL_MAX_CHARS: usize = 2_000;
-
-/// A rejection body cut to [`DETAIL_MAX_CHARS`], marking the cut.
-fn cap_detail(body: &str) -> String {
-    if body.chars().count() <= DETAIL_MAX_CHARS {
-        return body.to_string();
-    }
-    let mut kept: String = body.chars().take(DETAIL_MAX_CHARS).collect();
-    kept.push_str("… (truncated)");
-    kept
 }
 
 /// The provider's title, or the URL when it gives none.

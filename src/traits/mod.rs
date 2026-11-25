@@ -5,6 +5,7 @@
 //! The seams: time, the model client, storage, embeddings, search, fetch, the
 //! trajectory reader, and the source reader.
 
+pub mod classifier;
 pub mod client;
 pub mod clock;
 pub mod embedder;

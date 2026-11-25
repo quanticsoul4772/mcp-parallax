@@ -123,8 +123,23 @@ impl SqliteStorage {
             .map_err(|e| AppError::Storage(format!("migration failed: {e}")))?;
         Self::migrate_memory_columns(&pool).await?;
         Self::migrate_invocation_columns(&pool).await?;
+        Self::migrate_jev_cost_columns(&pool).await?;
+        sqlx::raw_sql(super::jev::JEV_MIGRATION)
+            .execute(&pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("jev_records migration failed: {e}")))?;
 
         Ok(Self { pool })
+    }
+
+    /// Read back every Jev record, oldest first (064; the back-test harness
+    /// reads these). Not part of the [`Storage`] seam.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] when the read fails.
+    pub async fn load_jev_records(&self) -> Result<Vec<super::jev::JevRecord>, AppError> {
+        super::jev::load(&self.pool).await
     }
 
     /// Read back all invocation records, newest first. Not part of the
@@ -140,7 +155,7 @@ impl SqliteStorage {
             "SELECT id, session_id, tool, model, input_tokens, output_tokens,
                     cost_usd, latency_ms, outcome, created_at,
                     models, usage_by_model, depth, effort, passes, search_cost_usd,
-                    cost_basis, pages_fetched, pages_kept
+                    cost_basis, pages_fetched, pages_kept, jev_cost_usd
              FROM invocation_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -206,6 +221,8 @@ impl SqliteStorage {
                     // 059: NULL for other tools, for a run where an Exa call
                     // reported no cost, and for rows written before the column.
                     search_cost_usd: row.get::<Option<f64>, _>("search_cost_usd"),
+                    // 064: NULL when no Jev call, and on older rows.
+                    jev_cost_usd: row.get::<Option<f64>, _>("jev_cost_usd"),
                     // 060: NULL only on rows written before the column.
                     cost_basis: row
                         .get::<Option<String>, _>("cost_basis")
@@ -269,6 +286,33 @@ impl SqliteStorage {
             .execute(pool)
             .await
             .map_err(|e| AppError::Storage(format!("migration backfill failed: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// 064: `jev_cost_usd` on both record tables, added when missing.
+    async fn migrate_jev_cost_columns(pool: &SqlitePool) -> Result<(), AppError> {
+        for (pragma, alter) in [
+            (
+                "PRAGMA table_info(invocation_records)",
+                "ALTER TABLE invocation_records ADD COLUMN jev_cost_usd REAL",
+            ),
+            (
+                "PRAGMA table_info(checkpoint_records)",
+                "ALTER TABLE checkpoint_records ADD COLUMN jev_cost_usd REAL",
+            ),
+        ] {
+            let has = sqlx::query(pragma)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| AppError::Storage(format!("cannot inspect columns: {e}")))?
+                .iter()
+                .any(|row| row.get::<String, _>("name") == "jev_cost_usd");
+            if !has {
+                sqlx::query(alter).execute(pool).await.map_err(|e| {
+                    AppError::Storage(format!("jev_cost_usd migration failed: {e}"))
+                })?;
+            }
         }
         Ok(())
     }
@@ -435,7 +479,7 @@ impl SqliteStorage {
         let rows = sqlx::query(
             "SELECT id, session_id, boundary, signals_evaluated, signals_fired,
                     delivered_keys, review_ran, verdict, suppressed, fail_open,
-                    latency_ms, cost_usd, created_at
+                    latency_ms, cost_usd, created_at, jev_cost_usd
              FROM checkpoint_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -503,6 +547,7 @@ impl SqliteStorage {
                     fail_open: fail_open != 0,
                     latency_ms,
                     cost_usd: row.get("cost_usd"),
+                    jev_cost_usd: row.get::<Option<f64>, _>("jev_cost_usd"),
                     created_at,
                 })
             })
@@ -640,6 +685,10 @@ impl Storage for SqliteStorage {
         Ok(result.rows_affected() > 0)
     }
 
+    async fn record_jev(&self, records: &[super::jev::JevRecord]) -> Result<(), AppError> {
+        super::jev::insert(&self.pool, records).await
+    }
+
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
         let signals_evaluated: Vec<&str> = record
             .signals_evaluated
@@ -655,8 +704,8 @@ impl Storage for SqliteStorage {
             "INSERT INTO checkpoint_records
                 (id, session_id, boundary, signals_evaluated, signals_fired,
                  delivered_keys, review_ran, verdict, suppressed, fail_open,
-                 latency_ms, cost_usd, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 latency_ms, cost_usd, created_at, jev_cost_usd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -674,6 +723,7 @@ impl Storage for SqliteStorage {
         .bind(record.latency_ms as i64)
         .bind(record.cost_usd)
         .bind(record.created_at.to_rfc3339())
+        .bind(record.jev_cost_usd)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("checkpoint record write failed: {e}")))?;
@@ -818,8 +868,8 @@ impl Storage for SqliteStorage {
                 (id, session_id, tool, model, input_tokens, output_tokens,
                  cost_usd, latency_ms, outcome, created_at,
                  models, usage_by_model, depth, effort, passes, search_cost_usd,
-                 cost_basis, pages_fetched, pages_kept)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 cost_basis, pages_fetched, pages_kept, jev_cost_usd)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -840,6 +890,7 @@ impl Storage for SqliteStorage {
         .bind(record.cost_basis.map(crate::telemetry::CostBasis::as_str))
         .bind(record.pages_fetched.map(i64::from))
         .bind(record.pages_kept.map(i64::from))
+        .bind(record.jev_cost_usd)
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("record write failed: {e}")))?;
@@ -946,6 +997,7 @@ mod tests {
             effort: None,
             passes: None,
             search_cost_usd: None,
+            jev_cost_usd: None,
             cost_basis: Some(crate::telemetry::CostBasis::PriceTable),
             pages_fetched: None,
             pages_kept: None,
@@ -970,6 +1022,92 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    // 064 T015: the Jev cost round-trips on both record types; absent reads None.
+    #[tokio::test]
+    async fn jev_cost_round_trips_on_invocation_and_checkpoint_records() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        for (id, cost) in [("with", Some(0.000_04)), ("without", None)] {
+            storage
+                .record_invocation(&InvocationRecord {
+                    id: id.to_string(),
+                    jev_cost_usd: cost,
+                    ..sample(Outcome::Success)
+                })
+                .await
+                .unwrap();
+        }
+        let records = storage.list_invocations().await.unwrap();
+        let cost = |id: &str| records.iter().find(|r| r.id == id).unwrap().jev_cost_usd;
+        assert_eq!(cost("with"), Some(0.000_04));
+        assert_eq!(cost("without"), None);
+
+        let checkpoint = CheckpointRecord {
+            jev_cost_usd: Some(0.000_02),
+            ..sample_checkpoint("c-jev", "2026-11-24T12:00:00Z", Verdict::Silence, false)
+        };
+        storage.record_checkpoint(&checkpoint).await.unwrap();
+        assert_eq!(storage.list_checkpoints().await.unwrap(), vec![checkpoint]);
+    }
+
+    // 064 T015/T016: a database from before 064 gains jev_cost_usd on open
+    // and accepts both record types.
+    #[tokio::test]
+    async fn a_pre_064_database_gains_jev_cost_columns_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre064.db").to_string_lossy().to_string();
+        {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{path}"))
+                        .unwrap()
+                        .create_if_missing(true),
+                )
+                .await
+                .unwrap();
+            sqlx::raw_sql(
+                "CREATE TABLE invocation_records (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, tool TEXT NOT NULL,
+                    model TEXT NOT NULL, input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL, cost_usd REAL NOT NULL,
+                    latency_ms INTEGER NOT NULL, outcome TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE checkpoint_records (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, boundary TEXT NOT NULL,
+                    signals_evaluated TEXT NOT NULL, signals_fired TEXT NOT NULL,
+                    delivered_keys TEXT NOT NULL, review_ran INTEGER NOT NULL,
+                    verdict TEXT NOT NULL, suppressed INTEGER NOT NULL,
+                    fail_open INTEGER NOT NULL, latency_ms INTEGER NOT NULL,
+                    cost_usd REAL NOT NULL, created_at TEXT NOT NULL
+                );",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+        }
+        let storage = SqliteStorage::connect(&path).await.unwrap();
+        storage
+            .record_invocation(&InvocationRecord {
+                id: "inv".to_string(),
+                jev_cost_usd: Some(0.000_04),
+                ..sample(Outcome::Success)
+            })
+            .await
+            .unwrap();
+        let checkpoint = CheckpointRecord {
+            jev_cost_usd: Some(0.000_02),
+            ..sample_checkpoint("cp", "2026-11-24T12:00:00Z", Verdict::Silence, false)
+        };
+        storage.record_checkpoint(&checkpoint).await.unwrap();
+        assert_eq!(
+            storage.list_invocations().await.unwrap()[0].jev_cost_usd,
+            Some(0.000_04)
+        );
+        assert_eq!(storage.list_checkpoints().await.unwrap(), vec![checkpoint]);
     }
 
     // 059 T015: the Exa cost written is the cost read; a row without one —
@@ -1385,6 +1523,7 @@ mod tests {
             fail_open: false,
             latency_ms: 12,
             cost_usd: 0.0,
+            jev_cost_usd: None,
             created_at: DateTime::parse_from_rfc3339(at)
                 .unwrap()
                 .with_timezone(&Utc),
