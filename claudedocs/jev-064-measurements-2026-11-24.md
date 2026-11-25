@@ -210,6 +210,29 @@ Limits:
 - The dataset and question file are kept only in the session scratchpad,
   which a reboot can clear.
 
-## Still to measure in T038
+## T038 (b): turn self-agreement (2026-11-25)
 
-- Big-model self-agreement on the turn review (FR-011(b), turn half).
+Method:
+
+- The operator's live database, tune-split turn rows only, each rebuilt
+  from its transcript and used only when the rebuilt state matches the
+  stored fingerprint.
+- Rows written before the outcome fields are accepted when their
+  `contradicts` label is true or false, which proves the review saw no
+  memory candidates (PR #174).
+- Each turn's end-of-turn review replayed twice with `claude-sonnet-5-5`,
+  without stored preferences.
+
+Result, as printed:
+
+```text
+skipped turn_review, self-agreement: fingerprint mismatch: 4
+self-agreement turn_review: same verdict twice: 53 of 53
+note: self-agreement turn_review: turn review model claude-sonnet-5-5 (effort None); run without stored preferences, which aren't recorded
+```
+
+Limits:
+
+- Stored preferences are not recorded, so the replay runs without them.
+- 53 turns, short of the plan's about 100.
+- One model.
