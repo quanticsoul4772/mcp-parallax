@@ -172,11 +172,12 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [ ] T039 Run the harness `report` twice, saving both outputs with the measurement results:
   - on the T038 saved inputs, to reproduce the measurement tables (SC-006);
   - on the stored records from the T037 live run, to print the §7 tables for both sites (SC-005).
-- [ ] T040 Turn it on in the user's setup (FR-010), after merge and rebuild:
+- [x] T040 Turn it on in the user's setup (FR-010), after merge and rebuild:
   - back up `~/.claude.json`;
   - add the two `PARALLAX_JEV_MODE_*=shadow` keys to the Parallax `env` block, changing only those keys;
   - install the project's Stop hook in `.claude/settings.json`, with the exact entry shown first;
   - the user restarts.
+  - Done 2026-11-25. The Stop hook went into the user-level `~/.claude/settings.json` instead, by the user's choice when asked, so turn reviews run in every project. The first live shadow row was written 2026-11-25 04:21 UTC.
 - [ ] T041 Update the CLAUDE.md active-feature block to the shipped state (exact text first).
 
 ## Dependencies
