@@ -178,7 +178,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
   - install the project's Stop hook in `.claude/settings.json`, with the exact entry shown first;
   - the user restarts.
   - Done 2026-11-25. The Stop hook went into the user-level `~/.claude/settings.json` instead, by the user's choice when asked, so turn reviews run in every project. The first live shadow row was written 2026-11-25 04:21 UTC.
-- [ ] T041 Update the CLAUDE.md active-feature block to the shipped state (exact text first).
+- [x] T041 Update the CLAUDE.md active-feature block to the shipped state (exact text first).
 
 ## Dependencies
 

@@ -293,7 +293,7 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `064-jev-first-pass`; planned, tasks not yet generated** ([plan](specs/064-jev-first-pass/plan.md)) - TypeSafe's Jev (a fast typed-answer model) as a cheap judgment tier, run in shadow beside the end-of-turn review and research claim verification: answers recorded next to the big model's, nothing changes. Off in code; turned on in the operator's setup. Mandatory redaction before every request; no stored memories sent. Measurements in 064: noise, self-agreement, option order, base rate, injection back-test. Full roadmap 064-067 in the approved plan.
+**Active Spec Kit feature: `064-jev-first-pass`; shipped, T038's turn self-agreement still open** ([plan](specs/064-jev-first-pass/plan.md)) - TypeSafe's Jev (a fast typed-answer model) as a cheap judgment tier, run in shadow beside the end-of-turn review and research claim verification: answers recorded next to the big model's, nothing changes. Off in code; on in the operator's setup since 2026-11-25. Mandatory redaction before every request; no stored memories sent. The back-test harness (`examples/jev_backtest`) measures noise, self-agreement, option order, base rate and the injection back-test, saves them to `./data/jev-measurements.json` and reprints them with `reproduce`; results are in `claudedocs/jev-064-measurements-2026-11-24.md`. Full roadmap 064-067 in the approved plan.
 
 **063 (`063-research-injection-screen`); all 9 tasks
 closed** ([plan](specs/063-research-injection-screen/plan.md)) — research
