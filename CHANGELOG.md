@@ -335,6 +335,17 @@ arc.
   check yet (the skip-share minimum and the wrong-settle cap), because the plan
   sets no number for them. The confirm split stays sealed.
 
+* **The Jev back-test's live measurements follow FR-011** (064 recovery) —
+  `noise`, `order` and `self-agreement` read tune-split rows only, so the
+  sealed confirm split stays unread. Noise reports spread on the logit scale
+  and covers the end-of-turn review: a stored turn is rebuilt from its
+  transcript, cut at the row's time, and used only when its fingerprint
+  matches the stored one; turns that can't be rebuilt are counted by reason.
+  Self-agreement re-runs the end-of-turn review as well as the research
+  verify. Every live run saves what it measured to
+  `./data/jev-measurements.json`, and the new `reproduce` subcommand prints
+  the same tables from it without calls (SC-006).
+
 * **Turn positives in the Jev back-test count what the review did** (064
   recovery) — the report counted the review model's raw answers, so a raw
   violation with no preferences listed, or a capture kind with capture off,

@@ -69,23 +69,35 @@ pub struct TurnIds<'a> {
     pub now: DateTime<Utc>,
 }
 
-/// Ask Jev about one turn and build its row (label still empty).
-pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>) -> JevRecord {
-    let questions: Vec<JevQuestion> = turn_review_questions()
-        .into_iter()
-        .filter(|q| inputs.capture_enabled || q.id != "capture_worthy")
-        .collect();
-    let mut row = turn_row(jev, &questions, &ids);
+/// The state the turn shadow sends, and what its row records about it.
+pub struct TurnState {
+    /// The redacted state.
+    pub state: crate::jev::redact::RedactedState,
+    /// Redactions across the texts and the state.
+    pub redactions: u32,
+    /// The final message was cut to the excerpt length.
+    pub truncated: bool,
+    /// The fingerprint stored as the row's `state_hash`.
+    pub hash: String,
+}
+
+/// Build the turn state exactly as the shadow sends it. The back-test
+/// harness rebuilds stored turns with this function and compares `hash`.
+///
+/// # Errors
+///
+/// A redaction failure; nothing is sent then.
+pub fn turn_state(
+    redactor: &Redactor,
+    window: &TrajectoryWindow,
+    activity: &str,
+    final_message: &str,
+) -> Result<TurnState, RedactError> {
     // Redact the whole texts first: a secret on the cut, or one split across
     // sentences (a JWT, a PEM block), must be removed before either happens.
-    let (window, final_message, text_redactions) =
-        match redact_turn(&jev.redactor, inputs.window, inputs.final_message) {
-            Ok(redacted) => redacted,
-            Err(error) => return redaction_failed(row, &error),
-        };
+    let (window, final_message, text_redactions) = redact_turn(redactor, window, final_message)?;
     let candidates = mine_candidates(&window, &final_message, &[]);
     let (final_text, truncated) = truncate(&final_message, FINAL_MESSAGE_EXCERPT_CHARS);
-    row.truncated = truncated;
     let pairs: Vec<Value> = candidates
         .iter()
         .filter(|c| c.origin == CandidateOrigin::Transcript)
@@ -99,22 +111,45 @@ pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>
         .collect();
     let state = json!({
         "statement_pairs": pairs,
-        "activity": inputs.activity,
+        "activity": activity,
         "final_message": final_text,
     });
-    let redacted = match jev.redactor.redact_json(&state) {
-        Ok(redacted) => redacted,
-        Err(error) => return redaction_failed(row, &error),
-    };
-    row.redaction_count =
-        u32::try_from(text_redactions + redacted.redactions()).unwrap_or(u32::MAX);
-    row.state_hash = Some(format!(
+    let redacted = redactor.redact_json(&state)?;
+    let redactions = u32::try_from(text_redactions + redacted.redactions()).unwrap_or(u32::MAX);
+    let hash = format!(
         "{:016x}",
         crate::checkpoint::fnv1a64(redacted.as_str().as_bytes())
-    ));
+    );
+    Ok(TurnState {
+        state: redacted,
+        redactions,
+        truncated,
+        hash,
+    })
+}
+
+/// Ask Jev about one turn and build its row (label still empty).
+pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>) -> JevRecord {
+    let questions: Vec<JevQuestion> = turn_review_questions()
+        .into_iter()
+        .filter(|q| inputs.capture_enabled || q.id != "capture_worthy")
+        .collect();
+    let mut row = turn_row(jev, &questions, &ids);
+    let built = match turn_state(
+        &jev.redactor,
+        inputs.window,
+        inputs.activity,
+        inputs.final_message,
+    ) {
+        Ok(built) => built,
+        Err(error) => return redaction_failed(row, &error),
+    };
+    row.truncated = built.truncated;
+    row.redaction_count = built.redactions;
+    row.state_hash = Some(built.hash);
     let request = JevRequest {
         model: jev.model.clone(),
-        state: redacted,
+        state: built.state,
         questions,
         timeout: jev.deadline,
     };
