@@ -123,9 +123,45 @@ count; the measurements are redone with a harness that follows FR-011.
 |---|---|---|---|
 | 2026-11-25 | `./data/jev-acceptance.db` | the research-claim questions at their shipped versions | the noise, option-order and self-agreement runs above read the first 100 stored research rows without filtering by split, so confirm-split rows were among them |
 
+## T038: measurements with the FR-011 harness (2026-11-25)
+
+Code: the back-test harness from PR #167 with per-site results from PR #168,
+reading tune-split rows only. Data: the operator's live database for the base
+rate and turn noise; the acceptance database (`./data/jev-acceptance.db`, one
+research run) for research noise, option order and research self-agreement.
+The saved results, as printed at the end of the last run (the same tables
+`jev_backtest reproduce` prints from `./data/jev-measurements.json`):
+
+```text
+research_claims relation: 94 items, 5..5 samples each; logit spread mean 0.0972, max 3.6882; flipped 0
+research_claims same_subject: 94 items, 5..5 samples each; logit spread mean 0.0563, max 0.2037; flipped 0
+turn_review capture_worthy: 44 items, 5..5 samples each; logit spread mean 0.0566, max 0.1090; flipped 3
+turn_review contradiction: 44 items, 5..5 samples each; logit spread mean 0.0770, max 0.2037; flipped 0
+skipped turn_review, noise: fingerprint mismatch: 3
+skipped turn_review, self-agreement: memory candidates present: 2
+order [contradicts,says_nothing,supports]: 94 decisions, 0 flips, McNemar 0.000
+order [contradicts,supports,says_nothing]: 94 decisions, 0 flips, McNemar 0.000
+order [says_nothing,supports,contradicts]: 94 decisions, 0 flips, McNemar 0.000
+order [supports,contradicts,says_nothing]: 94 decisions, 0 flips, McNemar 0.000
+order [supports,says_nothing,contradicts]: 94 decisions, 0 flips, McNemar 0.000
+self-agreement research_claims: same verdict twice: 94 of 94
+base rate: 822 turn evaluations, 709 reviews run
+  fired preference_violation: 1
+  fired self_contradiction: 4
+note: self-agreement research_claims: research verify model claude-sonnet-5-5 (effort None)
+```
+
+Limits:
+
+- The research rows all come from one research run on one topic.
+- Whether TypeSafe's server reads the option order at all is unverified, so
+  zero order flips may not measure first-option bias.
+- Turn noise covers the 44 live turns whose rebuilt state matched the stored
+  fingerprint; 3 did not and were skipped.
+- Turn self-agreement waits for live turn rows written after the server is
+  rebuilt with PR #166 (rows before it lack the review outcome).
+
 ## Still to measure in T038
 
-- Jev noise (FR-011(a)).
-- Big-model self-agreement (FR-011(b)).
-- Option-order bias (FR-011(c)).
+- Big-model self-agreement on the turn review (FR-011(b), turn half).
 - The injection back-test (FR-011(e)).
