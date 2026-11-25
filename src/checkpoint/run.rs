@@ -2146,6 +2146,16 @@ mod tests {
 
         /// A capture turn whose session already holds `captures` captures.
         fn capture_builder(written: &Written, captures: u32) -> DepsBuilder {
+            capture_builder_with_audit(written, captures, true)
+        }
+
+        /// As [`capture_builder`], with the audit-row write failing when
+        /// `audit_ok` is false.
+        fn capture_builder_with_audit(
+            written: &Written,
+            captures: u32,
+            audit_ok: bool,
+        ) -> DepsBuilder {
             let mut b = capturing(written);
             b.reader.expect_read().returning(|_, _| Ok(empty_window()));
             b.embedder = Some(Arc::new(storing_embedder()));
@@ -2158,10 +2168,22 @@ mod tests {
                 .expect_captures_in_session()
                 .returning(move |_| Ok(captures));
             b.storage.expect_save_memory().returning(|_| Ok(()));
-            b.storage
-                .expect_record_consolidation()
-                .returning(|_| Ok(()));
+            b.storage.expect_record_consolidation().returning(move |_| {
+                if audit_ok {
+                    Ok(())
+                } else {
+                    Err(AppError::ValidationFailure("audit write failed".into()))
+                }
+            });
             b
+        }
+
+        #[tokio::test]
+        async fn a_saved_capture_whose_audit_row_fails_is_still_labeled_captured() {
+            let written = Written::new();
+            let b = capture_builder_with_audit(&written, 0, false);
+            let label = label_of(b, &written, "Fixed it: clear the cache first.").await;
+            assert_eq!(label["captured"], json!(true));
         }
 
         #[tokio::test]
