@@ -219,6 +219,44 @@ fn results_round_trip_and_reproduce_the_same_tables() {
 }
 
 #[test]
+fn replacing_one_sites_noise_keeps_the_other_sites() {
+    let mut results = sample_results();
+    let fresh = vec![noise("turn_review", "capture_worthy", &[0.2; 5], &[])];
+    results.replace_noise("turn_review", fresh.clone());
+    let turn: Vec<&NoiseItem> = results
+        .noise
+        .iter()
+        .filter(|i| i.site == "turn_review")
+        .collect();
+    assert_eq!(turn, fresh.iter().collect::<Vec<_>>());
+    assert_eq!(
+        results
+            .noise
+            .iter()
+            .filter(|i| i.site == "research_claims")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn replacing_one_sites_agreement_keeps_the_other_sites() {
+    let mut results = sample_results();
+    let fresh = vec![AgreementItem {
+        site: "turn_review".into(),
+        row_id: "t1".into(),
+        first: "contradiction=false capture=false".into(),
+        second: "contradiction=false capture=false".into(),
+    }];
+    results.replace_agreement("turn_review", fresh.clone());
+    assert!(results.self_agreement.contains(&fresh[0]));
+    assert!(results
+        .self_agreement
+        .iter()
+        .any(|i| i.site == "research_claims"));
+}
+
+#[test]
 fn a_broken_results_file_is_an_error_not_empty_results() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("none.json");

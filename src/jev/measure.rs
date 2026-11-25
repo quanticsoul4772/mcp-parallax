@@ -208,6 +208,21 @@ pub struct Results {
     pub notes: Vec<String>,
 }
 
+impl Results {
+    /// Replace the noise items of `site` only; other sites' items stay.
+    pub fn replace_noise(&mut self, site: &str, items: Vec<NoiseItem>) {
+        self.noise.retain(|i| i.site != site);
+        self.noise.extend(items);
+    }
+
+    /// Replace the self-agreement items of `site` only; other sites' items
+    /// stay.
+    pub fn replace_agreement(&mut self, site: &str, items: Vec<AgreementItem>) {
+        self.self_agreement.retain(|i| i.site != site);
+        self.self_agreement.extend(items);
+    }
+}
+
 /// Read a results file. A missing file is empty results unless `must_exist`;
 /// an unreadable or unparseable file is always an error, never empty results.
 ///

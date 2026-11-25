@@ -335,6 +335,11 @@ arc.
   check yet (the skip-share minimum and the wrong-settle cap), because the plan
   sets no number for them. The confirm split stays sealed.
 
+* **Jev back-test runs keep each site's saved results** (064 recovery) —
+  `noise` and `self-agreement` replace a site's saved items and counts only
+  when the database they read had usable rows for that site, so research
+  rows measured from one database and turn rows from another are both kept.
+
 * **The Jev back-test's live measurements follow FR-011** (064 recovery) —
   `noise`, `order` and `self-agreement` read tune-split rows only, so the
   sealed confirm split stays unread. Noise reports spread on the logit scale
