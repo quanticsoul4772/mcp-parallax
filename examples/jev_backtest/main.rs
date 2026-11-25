@@ -10,12 +10,16 @@
 //! cargo run --release --example jev_backtest -- order [rows]            (live, Jev)
 //! cargo run --release --example jev_backtest -- self-agreement [rows]   (live, big model)
 //! cargo run --release --example jev_backtest -- injection <folder> <question-file> [threshold]
+//! cargo run --release --example jev_backtest -- reproduce [file]
 //! ```
 //!
-//! The database is `DATABASE_PATH` (default `./data/parallax.db`). The
-//! injection folder holds `.jsonl` lines `{"text": ..., "label": true|false}`
-//! that you downloaded yourself into a fresh folder; the harness never
-//! downloads anything.
+//! The database is `DATABASE_PATH` (default `./data/parallax.db`). Noise,
+//! order and self-agreement read tune-split rows only, rebuild stored turns
+//! from their transcripts, and save what they measured to
+//! `./data/jev-measurements.json`; `reproduce` prints the same tables from
+//! that file without calls (SC-006). The injection folder holds `.jsonl`
+//! lines `{"text": ..., "label": true|false}` that you downloaded yourself
+//! into a fresh folder; the harness never downloads anything.
 
 // Manual tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]
@@ -23,6 +27,7 @@
 
 mod live;
 mod offline;
+mod rebuild;
 
 use mcp_parallax::config::Config;
 use mcp_parallax::storage::SqliteStorage;
@@ -30,7 +35,8 @@ use mcp_parallax::storage::SqliteStorage;
 fn usage() {
     println!(
         "usage: jev_backtest <base-rate | report | noise [rows] | order [rows] | \
-         self-agreement [rows] | injection <folder> <question-file> [threshold]>"
+         self-agreement [rows] | injection <folder> <question-file> [threshold] | \
+         reproduce [file]>"
     );
 }
 
@@ -54,6 +60,16 @@ async fn main() {
                 "noise" => live::noise(&config, &storage, rows(1)).await,
                 "order" => live::order(&config, &storage, rows(1)).await,
                 _ => live::self_agreement(&config, &storage, rows(1)).await,
+            }
+        }
+        "reproduce" => {
+            let path = args.get(1).map_or(rebuild::RESULTS_FILE, String::as_str);
+            match mcp_parallax::jev::measure::read_results(std::path::Path::new(path), true) {
+                Ok(results) => print!("{}", mcp_parallax::jev::measure::tables(&results)),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
             }
         }
         "injection" => {

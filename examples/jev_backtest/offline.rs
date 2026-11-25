@@ -25,11 +25,18 @@ pub async fn base_rate(storage: &SqliteStorage) {
             *fired.entry(signal.kind.as_str()).or_default() += 1;
         }
     }
-    println!("turn evaluations: {}", turns.len());
-    println!("reviews run:      {reviewed}");
-    for (kind, count) in &fired {
-        println!("fired {kind}: {count}");
-    }
+    let to_u32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let mut results = crate::rebuild::load();
+    results.base_rate = Some(mcp_parallax::jev::measure::BaseRate {
+        evaluations: to_u32(turns.len()),
+        reviews: to_u32(reviewed),
+        fired: fired
+            .iter()
+            .map(|(kind, count)| ((*kind).to_string(), to_u32(*count)))
+            .collect(),
+    });
+    crate::rebuild::save(&results);
+    print!("{}", mcp_parallax::jev::measure::tables(&results));
 }
 
 /// Row counts and outcomes, then the plan §7 tables on the tune split (064
