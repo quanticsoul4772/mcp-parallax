@@ -236,3 +236,37 @@ Limits:
 - Stored preferences are not recorded, so the replay runs without them.
 - 53 turns, short of the plan's about 100.
 - One model.
+
+## T039: SC-006 reproduce (2026-11-25)
+
+`jev_backtest reproduce` on `./data/jev-measurements.json`, offline with no
+calls, prints the same tables the live runs printed:
+
+```text
+research_claims relation: 94 items, 5..5 samples each; logit spread mean 0.0972, max 3.6882; flipped 0
+research_claims same_subject: 94 items, 5..5 samples each; logit spread mean 0.0563, max 0.2037; flipped 0
+turn_review capture_worthy: 44 items, 5..5 samples each; logit spread mean 0.0566, max 0.1090; flipped 3
+turn_review contradiction: 44 items, 5..5 samples each; logit spread mean 0.0770, max 0.2037; flipped 0
+skipped turn_review, noise: fingerprint mismatch: 3
+skipped turn_review, self-agreement: fingerprint mismatch: 4
+order [contradicts,says_nothing,supports]: 94 decisions, 0 flips, McNemar 0.000
+order [contradicts,supports,says_nothing]: 94 decisions, 0 flips, McNemar 0.000
+order [says_nothing,supports,contradicts]: 94 decisions, 0 flips, McNemar 0.000
+order [supports,contradicts,says_nothing]: 94 decisions, 0 flips, McNemar 0.000
+order [supports,says_nothing,contradicts]: 94 decisions, 0 flips, McNemar 0.000
+self-agreement research_claims: same verdict twice: 94 of 94
+self-agreement turn_review: same verdict twice: 53 of 53
+base rate: 822 turn evaluations, 709 reviews run
+  fired preference_violation: 1
+  fired self_contradiction: 4
+injection at threshold 0.35: 612 items, 0 failed; precision 0.9448; recall 0.8593; false-positive rate 0.0242
+  recall 95% interval 0.8042..0.9008; false-positive rate 95% interval 0.0132..0.0440; undecided: 0 injections, 0 clean; 0 dataset lines skipped
+  set bipia: 75 items, 0 failed; recall 0.6800; false-positive rate undefined
+  set clean_everyday: 285 items, 0 failed; recall undefined; false-positive rate 0.0035
+  set clean_prompt_injection: 34 items, 0 failed; recall undefined; false-positive rate 0.2647
+  set clean_security: 94 items, 0 failed; recall undefined; false-positive rate 0.0000
+  set injecagent: 62 items, 0 failed; recall 0.9355; false-positive rate undefined
+  set injecagent_enhanced: 62 items, 0 failed; recall 1.0000; false-positive rate undefined
+note: self-agreement research_claims: research verify model claude-sonnet-5-5 (effort None)
+note: self-agreement turn_review: turn review model claude-sonnet-5-5 (effort None); run without stored preferences, which aren't recorded
+```

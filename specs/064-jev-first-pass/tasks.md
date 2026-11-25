@@ -170,9 +170,10 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
   - live calls are made only after the user approves;
   - results are saved to `claudedocs/jev-064-measurements-<date>.md` (exact text first).
   - Done 2026-11-25: noise, self-agreement (research and turn), option order, base rate and the injection back-test, recorded in `claudedocs/jev-064-measurements-2026-11-24.md`.
-- [ ] T039 Run the harness `report` twice, saving both outputs with the measurement results:
+- [x] T039 Run the harness `report` twice, saving both outputs with the measurement results:
   - on the T038 saved inputs, to reproduce the measurement tables (SC-006);
   - on the stored records from the T037 live run, to print the §7 tables for both sites (SC-005).
+  - Done 2026-11-25: SC-005 in the T039 section of the measurements doc; SC-006 with `jev_backtest reproduce`, which replaced `report` for saved inputs, in its own section.
 - [x] T040 Turn it on in the user's setup (FR-010), after merge and rebuild:
   - back up `~/.claude.json`;
   - add the two `PARALLAX_JEV_MODE_*=shadow` keys to the Parallax `env` block, changing only those keys;
