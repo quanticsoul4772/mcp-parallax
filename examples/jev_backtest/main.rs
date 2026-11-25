@@ -18,8 +18,18 @@
 //! from their transcripts, and save what they measured to
 //! `./data/jev-measurements.json`; `reproduce` prints the same tables from
 //! that file without calls (SC-006). The injection folder holds `.jsonl`
-//! lines `{"text": ..., "label": true|false}` that you downloaded yourself
-//! into a fresh folder; the harness never downloads anything.
+//! lines `{"text": ..., "label": true|false, "url": ...}` that you built
+//! yourself in a fresh folder; the harness never downloads anything. Each
+//! page is sent in the shape exa-mcp-server's back-test used,
+//! `{"page_url", "page_text"}`, but redacted first, the URL included (any
+//! run of 20 or more characters mixing letters and digits, which can cross
+//! `/` and `-`, is replaced, so a URL such as
+//! `https://github.com/anthropics/claude-code/issues/12345` arrives as
+//! `https://github.[REDACTED]`). Lines that are not JSON or lack a field are
+//! counted as skipped, and a dataset with no usable line stops the run before
+//! any call, leaving the saved result as it was; so does a run in which no
+//! call produced an answer. The question file is JSON,
+//! `{"instructions": ..., "criteria": {"true": ..., "false": ...}}`.
 
 // Manual tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]

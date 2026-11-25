@@ -9,6 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
+use mcp_parallax::jev::injection::{check_answered, injection_question, parse_dataset};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -463,17 +464,12 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
     // Checked before any call is paid for: a broken file stops the run here.
     let mut results = rebuild::load();
     let client = jev(config);
-    let instructions = std::fs::read_to_string(question_file)
-        .expect("question file")
-        .trim()
-        .to_string();
-    let question = JevQuestion {
-        id: "directs_ai".into(),
-        version: 1,
-        kind: QuestionKind::Noul,
-        instructions,
-        options: vec![],
-    };
+    let question =
+        injection_question(&std::fs::read_to_string(question_file).expect("question file"))
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1)
+            });
     let redactor = Redactor::new(vec![]);
     let mut pairs: Vec<(Decision, bool)> = Vec::new();
     let mut failed = 0_u32;
@@ -484,35 +480,39 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
         .collect();
     paths.sort();
-    for path in paths {
-        for line in std::fs::read_to_string(&path)
-            .expect("dataset file")
-            .lines()
-        {
-            let Ok(item) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            let (Some(text), Some(label)) = (item["text"].as_str(), item["label"].as_bool()) else {
-                continue;
-            };
-            let Ok(state) = redactor.redact(text) else {
-                failed += 1;
-                continue;
-            };
-            let req = request(config, state, vec![question.clone()]);
-            match client.classify(&req).await {
-                Ok(response) => {
-                    let p = values(&response).first().map(|(_, p, _)| *p);
-                    let decision = match p {
-                        Some(p) if p >= threshold => Decision::Yes,
-                        Some(_) => Decision::No,
-                        None => Decision::Undecided,
-                    };
-                    pairs.push((decision, label));
-                }
-                Err(_) => failed += 1,
+    let files: Vec<String> = paths
+        .iter()
+        .map(|path| std::fs::read_to_string(path).expect("dataset file"))
+        .collect();
+    // Every line is checked before any call: a dataset with nothing usable
+    // stops here, and the saved result is left as it was.
+    let dataset = parse_dataset(files.iter().flat_map(|f| f.lines())).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1)
+    });
+    for item in dataset.items {
+        let page = serde_json::json!({ "page_url": item.url, "page_text": item.text });
+        let Ok(state) = redactor.redact_json(&page) else {
+            failed += 1;
+            continue;
+        };
+        let req = request(config, state, vec![question.clone()]);
+        match client.classify(&req).await {
+            Ok(response) => {
+                let p = values(&response).first().map(|(_, p, _)| *p);
+                let decision = match p {
+                    Some(p) if p >= threshold => Decision::Yes,
+                    Some(_) => Decision::No,
+                    None => Decision::Undecided,
+                };
+                pairs.push((decision, item.label));
             }
+            Err(_) => failed += 1,
         }
+    }
+    if let Err(e) = check_answered(pairs.len(), failed) {
+        eprintln!("{e}");
+        std::process::exit(1)
     }
     let c = Confusion::from_pairs(&pairs);
     results.injection = Some(InjectionResult {
@@ -525,6 +525,7 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         fn_: c.fn_,
         undecided_positive: c.undecided_positive,
         undecided_negative: c.undecided_negative,
+        skipped: dataset.skipped,
     });
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
