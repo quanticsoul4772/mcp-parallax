@@ -106,10 +106,44 @@ Run on main at `3c1308d` (PR #162) with
 The SC-006 run (reproducing T038's tables from saved inputs) waits for
 T038's live measurements.
 
+## T038: Jev noise and option order
+
+Source: the acceptance database (`./data/jev-acceptance.db`), research-claim
+rows only, all from one research run on one question. Turn-review states are
+not stored, so turn noise cannot be measured from stored rows. Commands, run
+on main at `6e2ecac`:
+`DATABASE_PATH=./data/jev-acceptance.db PARALLAX_BACKEND=claude_cli cargo run --release --example jev_backtest -- noise 20`
+(pilot), then `noise 100`, then `order 100`.
+
+| Measurement | Rows | Calls | Failed | Result |
+|---|---|---|---|---|
+| Noise, pilot | 20 (40 question-row pairs) | 100 | 0 | mean SD 0.0014; 0 decisions flipped across 5 calls |
+| Noise | 100 (204 question-row pairs) | 500 | 0 | mean SD 0.0016; 0 decisions flipped across 5 calls |
+| Option order | 100; 102 `supports` decisions per order | 600 | 0 | 0 flips under each of the 5 other orders; McNemar 0 |
+
+Limits:
+
+- One topic: every row comes from a single research run.
+- The spread is on the probability scale, not the logit scale the plan uses
+  to set the middle band, and the rows are not limited to the held-out tune
+  split.
+- The client writes each choice question's options in the order of its list
+  (`src/client/typesafe.rs:322-332`), and the harness reorders that list, so
+  each order does reach the request body. The only client test covers the
+  default order, so it would also pass if the order were fixed.
+- Whether TypeSafe's server keeps JSON key order is unknown. If it reads the
+  options as an unordered map, zero flips would be expected whatever Jev's
+  first-option bias.
+
+## T038: big-model self-agreement
+
+`self-agreement 10` (pilot), then `self-agreement 100`, on the same
+acceptance rows: the research verify ensemble (3 passes) ran twice on each
+claim with its stored excerpts. Same verdict twice on 10 of 10 and on 100 of
+100 claims (95% Wilson lower bound about 0.96). Research only: the harness
+has no turn-review self-agreement. One research run, so one topic.
+
 ## Still to measure in T038
 
-- Jev noise (5 calls each on 100 held-out items).
-- Big-model self-agreement.
-- Option-order bias (all 6 orders, McNemar).
 - Hand-labeled correctness (at least 60 items).
 - The injection back-test on `jev-1.14.0`.
