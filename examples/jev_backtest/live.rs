@@ -9,7 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::jev::injection::{check_answered, injection_question, parse_dataset};
+use mcp_parallax::jev::injection::{check_answered, injection_question, parse_dataset, tally_sets};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -490,24 +490,27 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         eprintln!("{e}");
         std::process::exit(1)
     });
+    let mut by_set: Vec<(String, Option<Decision>, bool)> = Vec::new();
     for item in dataset.items {
         let page = serde_json::json!({ "page_url": item.url, "page_text": item.text });
         let Ok(state) = redactor.redact_json(&page) else {
             failed += 1;
+            by_set.push((item.set, None, item.label));
             continue;
         };
         let req = request(config, state, vec![question.clone()]);
-        match client.classify(&req).await {
-            Ok(response) => {
-                let p = values(&response).first().map(|(_, p, _)| *p);
-                let decision = match p {
-                    Some(p) if p >= threshold => Decision::Yes,
-                    Some(_) => Decision::No,
-                    None => Decision::Undecided,
-                };
-                pairs.push((decision, item.label));
-            }
-            Err(_) => failed += 1,
+        if let Ok(response) = client.classify(&req).await {
+            let p = values(&response).first().map(|(_, p, _)| *p);
+            let decision = match p {
+                Some(p) if p >= threshold => Decision::Yes,
+                Some(_) => Decision::No,
+                None => Decision::Undecided,
+            };
+            pairs.push((decision, item.label));
+            by_set.push((item.set, Some(decision), item.label));
+        } else {
+            failed += 1;
+            by_set.push((item.set, None, item.label));
         }
     }
     if let Err(e) = check_answered(pairs.len(), failed) {
@@ -526,6 +529,7 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         undecided_positive: c.undecided_positive,
         undecided_negative: c.undecided_negative,
         skipped: dataset.skipped,
+        per_set: tally_sets(&by_set),
     });
     rebuild::save(&results);
     print!("{}", measure::tables(&results));

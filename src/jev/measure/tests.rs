@@ -182,6 +182,16 @@ fn sample_results() -> Results {
             undecided_positive: 0,
             undecided_negative: 0,
             skipped: 2,
+            per_set: vec![crate::jev::injection::InjectionSetRow {
+                set: "bipia".into(),
+                failed: 1,
+                tp: 1,
+                fp: 0,
+                tn: 0,
+                fn_: 1,
+                undecided_positive: 0,
+                undecided_negative: 0,
+            }],
         }),
         notes: vec!["turn review run without stored preferences".into()],
     }
@@ -211,6 +221,7 @@ fn results_round_trip_and_reproduce_the_same_tables() {
         "false-positive rate 95% interval",
         "undecided: 0 injections, 0 clean",
         "2 dataset lines skipped",
+        "set bipia: 2 items, 1 failed; recall 0.5000; false-positive rate undefined",
         "note: turn review run without stored preferences",
     ] {
         assert!(
@@ -426,4 +437,5 @@ fn an_injection_result_saved_before_the_skip_count_loads_with_zero() {
         "tn": 2, "fn_": 0, "undecided_positive": 0, "undecided_negative": 0}"#;
     let loaded: InjectionResult = serde_json::from_str(saved).unwrap();
     assert_eq!(loaded.skipped, 0);
+    assert!(loaded.per_set.is_empty());
 }

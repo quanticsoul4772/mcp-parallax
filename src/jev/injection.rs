@@ -1,8 +1,14 @@
 //! Inputs of the FR-011(e) injection back-test, ported from exa-mcp-server's
 //! back-test: dataset lines and the question file.
 
+use crate::jev::metrics::{Confusion, Decision};
 use crate::traits::classifier::{JevQuestion, QuestionKind};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
+
+/// The set name of a dataset line that carries none.
+pub const NO_SET: &str = "(no set)";
 
 /// One dataset item: a page, and whether it carries an injection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +19,66 @@ pub struct InjectionItem {
     pub text: String,
     /// True for an injection.
     pub label: bool,
+    /// The line's `set`, or [`NO_SET`].
+    pub set: String,
+}
+
+/// One set's outcomes in an injection run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InjectionSetRow {
+    /// The set name.
+    pub set: String,
+    /// Calls that failed or could not be redacted.
+    pub failed: u32,
+    /// Flagged injections.
+    pub tp: u32,
+    /// Flagged clean items.
+    pub fp: u32,
+    /// Unflagged clean items.
+    pub tn: u32,
+    /// Unflagged injections.
+    pub fn_: u32,
+    /// Injections with no usable answer.
+    pub undecided_positive: u32,
+    /// Clean items with no usable answer.
+    pub undecided_negative: u32,
+}
+
+/// One set's tally while counting: failed calls and answered pairs.
+#[derive(Default)]
+struct SetTally {
+    failed: u32,
+    pairs: Vec<(Decision, bool)>,
+}
+
+/// Tally each item's outcome by its set, in set-name order. `None` is a
+/// failed call.
+#[must_use]
+pub fn tally_sets(outcomes: &[(String, Option<Decision>, bool)]) -> Vec<InjectionSetRow> {
+    let mut by_set: BTreeMap<&str, SetTally> = BTreeMap::new();
+    for (set, decision, label) in outcomes {
+        let entry = by_set.entry(set.as_str()).or_default();
+        match decision {
+            Some(d) => entry.pairs.push((*d, *label)),
+            None => entry.failed += 1,
+        }
+    }
+    by_set
+        .into_iter()
+        .map(|(set, tally)| {
+            let c = Confusion::from_pairs(&tally.pairs);
+            InjectionSetRow {
+                set: set.to_string(),
+                failed: tally.failed,
+                tp: c.tp,
+                fp: c.fp,
+                tn: c.tn,
+                fn_: c.fn_,
+                undecided_positive: c.undecided_positive,
+                undecided_negative: c.undecided_negative,
+            }
+        })
+        .collect()
 }
 
 /// Parse one dataset line, `{"text": ..., "label": true|false, "url": ...}`;
@@ -24,6 +90,7 @@ pub fn injection_item(line: &str) -> Option<InjectionItem> {
         url: item["url"].as_str()?.to_string(),
         text: item["text"].as_str()?.to_string(),
         label: item["label"].as_bool()?,
+        set: item["set"].as_str().unwrap_or(NO_SET).to_string(),
     })
 }
 
@@ -113,6 +180,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use crate::jev::metrics::Decision;
     use crate::traits::classifier::QuestionKind;
 
     #[test]
@@ -126,7 +194,53 @@ mod tests {
                 url: "https://a.example/x".into(),
                 text: "page body".into(),
                 label: true,
+                set: NO_SET.into(),
             }
+        );
+    }
+
+    #[test]
+    fn a_line_keeps_its_set() {
+        let item = injection_item(
+            r#"{"text": "t", "label": false, "url": "https://a.example", "set": "bipia"}"#,
+        )
+        .unwrap();
+        assert_eq!(item.set, "bipia");
+    }
+
+    #[test]
+    fn outcomes_are_tallied_per_set_in_name_order() {
+        let rows = tally_sets(&[
+            ("clean".into(), Some(Decision::Yes), false),
+            ("bipia".into(), Some(Decision::Yes), true),
+            ("bipia".into(), Some(Decision::No), true),
+            ("bipia".into(), None, true),
+            ("bipia".into(), Some(Decision::Undecided), true),
+        ]);
+        assert_eq!(
+            rows,
+            vec![
+                InjectionSetRow {
+                    set: "bipia".into(),
+                    failed: 1,
+                    tp: 1,
+                    fp: 0,
+                    tn: 0,
+                    fn_: 1,
+                    undecided_positive: 1,
+                    undecided_negative: 0,
+                },
+                InjectionSetRow {
+                    set: "clean".into(),
+                    failed: 0,
+                    tp: 0,
+                    fp: 1,
+                    tn: 0,
+                    fn_: 0,
+                    undecided_positive: 0,
+                    undecided_negative: 0,
+                },
+            ]
         );
     }
 
