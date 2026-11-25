@@ -159,12 +159,12 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 ## Phase 8: Acceptance and ship
 
 - [x] T034 Write the live example `examples/acceptance_jev.rs`. It asserts the SC-004 checks, including at least 5 turn-review rows and at least 10 research-claim rows. It exits non-zero on failure, and prints rows, outcomes, the excluded share and critical-path time.
-- [ ] T035 Reviews before merge, as the constitution requires (each brief shown to the user first; findings listed, then one question per finding):
+- [x] T035 Reviews before merge, as the constitution requires (each brief shown to the user first; findings listed, then one question per finding):
   - an independent reviewer given only the diff;
   - the `design-reviewer` agent, because 064 touches schemas, trait seams and the dependency stack;
   - the `code-reviewer` agent, for all Rust changes.
-- [ ] T036 Push (account-name check first), PR text shown first, CI.
-- [ ] T037 The user runs the live acceptance example (command per quickstart §3). Results go to `quickstart.md` §6 (exact text first).
+- [x] T036 Push (account-name check first), PR text shown first, CI.
+- [x] T037 The user runs the live acceptance example (command per quickstart §3). Results go to `quickstart.md` §6 (exact text first).
 - [ ] T038 FR-011 measurements per quickstart §4:
   - the base-rate query is approved first;
   - live calls are made only after the user approves;
