@@ -9,5 +9,6 @@ pub mod metrics;
 pub mod policy;
 pub mod questions;
 pub mod redact;
+pub mod report;
 pub mod shadow;
 pub mod startup;

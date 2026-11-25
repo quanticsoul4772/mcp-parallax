@@ -324,6 +324,17 @@ arc.
 
 ### Fixed
 
+* **The Jev back-test `report` prints the plan §7 tables** (064 FR-008,
+  SC-005) — it printed only tune-set agreement at a fixed 0.5 cut, with turn
+  positives from contradictions alone and research positives pointing the
+  wrong way. It now counts §7.1 positives (turn: flagged or captured; claim:
+  refuted or contested), chooses the skip threshold by the stated rule, and
+  prints recall and skip-share bounds, the harmful share among skipped items,
+  both baselines, cluster counts with a bootstrap, and a promotion dry run with
+  every failed criterion it checks. It names the two §7.2 criteria it does not
+  check yet (the skip-share minimum and the wrong-settle cap), because the plan
+  sets no number for them. The confirm split stays sealed.
+
 * **Sonnet 5 cost estimates** — the `claude-sonnet-5` price row now carries
   the current $2/$10 per million tokens; it had stayed at $3/$15, so records
   for calls routed to it over-stated cost by half.
