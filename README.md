@@ -110,6 +110,10 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `MEMORY_RECALL_LIMIT` | no | `5` | Default recall top-k (1–20) |
 | `BRAVE_API_KEY` | no | unset | No longer used: research runs on Exa. Set while `EXA_API_KEY` is unset, it stops startup with an error naming both; with `EXA_API_KEY` set it is ignored, so other tools can share it |
 | `EXA_API_KEY` | no | unset | Presence enables `research` (Exa search and page text); absent, it is not in the catalog |
+| `TYPESAFE_API_KEY` | no | unset | Presence enables nothing by itself. A blank value counts as unset. Never logged. Removed from the claude_cli child environment. |
+| `PARALLAX_JEV_MODE_TURN_REVIEW` | no | unset | `off` or `shadow`; unset is `off`. `shadow`: Jev answers beside every end-of-turn review, recorded only. Sends a redacted turn summary, transcript-only statement pairs and the final assistant text. Requires the key. |
+| `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` | no | unset | `off` or `shadow`; unset is `off`. `shadow`: Jev answers beside every verified research claim, recorded only. Sends the redacted claim and its source excerpts. Requires the key. |
+| `PARALLAX_JEV_MODEL` | no | unset | Pinned model; `jev-1.14.0` unless set. exa-mcp-server's `JEV_MODEL` is never read. |
 | `EXA_MAX_AGE_HOURS` | no | `168` | Freshness limit for research page text, in hours: `0` always fetches live, `-1` uses Exa's cache only (-1 to 720) |
 | `FETCH_TIMEOUT_MS` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
 | `RESEARCH_CONCURRENCY` | no | `8` | Concurrent extract/verify cap (1–32) |

@@ -56,6 +56,8 @@ instead of an in-process bus. The concept map:
 | Cheap signals gate the expensive judge | Unchanged and now load-bearing: hooks fire on every tool call, so the cheap path must be pure and fast (loop/repeat detection over the call sequence, entity diff, contradiction-vs-memory via the existing recall path); one constrained model hop only on a cheap-signal fire |
 | Trace event per trigger | Unchanged — one invocation record per checkpoint; catch-rate vs noise measurable from day one |
 
+> **2026-11-24 amendment (064).** With `PARALLAX_JEV_MODE_TURN_REVIEW=shadow`, a second, cheap hop runs beside the review: TypeSafe's Jev answers two typed questions on redacted turn text. It runs only when the review runs (the same cheap-signal gate), never decides or flags, and is recorded in `jev_records`. The review stays the layer's only hop that can change a verdict.
+
 Deliverable shape: hook configuration shipped alongside the server
 (`integrations/claude-code/`; plugin packaging is a named deferral until the
 hook plumbing is live-verified), **off by default** — installing the hooks is

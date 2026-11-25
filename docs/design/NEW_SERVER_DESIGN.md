@@ -301,6 +301,8 @@ is the LLM-critic's burden. For checkable claims you don't calibrate — you exe
 
 ---
 
+> **2026-11-24 amendment (064, Jev shadow).** Jev's choice questions keep one fixed option order instead of permuting: `relation` lists `says_nothing`, `contradicts`, `supports`, so the classifier's first-option bias falls on the side that escalates to the big model. In 064 Jev only records answers and decides nothing. Before any Jev answer can act (065/066), the FR-011 order-bias measurement (all six orders, McNemar) must show a flip rate at the threshold of at most 5%; otherwise the order is permuted and aggregated as this section prescribes.
+
 ## 6. Architecture decisions
 
 ### 1. Constrained output is the core contract (biggest lever)
@@ -319,6 +321,8 @@ my own parsers" rationale for the self-improvement/self-heal subsystems.
 > decoding, so on this backend the local validator and its single retry carry
 > the guarantee, as they already do on the openai_compat lower rungs. Live:
 > 20/20 first-attempt schema-valid replies.
+>
+> **Amendment (2026-11-24, feature 064).** Jev, the shadow classifier, is a further route to typed output: TypeSafe's API returns typed answers (yes/no probabilities, choices with per-option probabilities) to typed questions, so there is no prompt or schema to constrain. The local validator (`src/jev/policy.rs`) checks every answer; a rejected answer is recorded as `validation_failure` and never used.
 
 ### 2. Improvement is offline
 
@@ -614,7 +618,8 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
 
   | Setting | Owner | Why |
   | --- | --- | --- |
-  | `ANTHROPIC_API_KEY` `VOYAGE_API_KEY` `EXA_API_KEY` | operator | credentials |
+  | `ANTHROPIC_API_KEY` `VOYAGE_API_KEY` `EXA_API_KEY` `TYPESAFE_API_KEY` | operator | credentials |
+  | `PARALLAX_JEV_MODE_*` `PARALLAX_JEV_MODEL` | operator | decide what leaves the machine for a third party, and the model billed (064) |
   | `ANTHROPIC_MODEL` `ANTHROPIC_API_BASE` `VOYAGE_MODEL` | operator | set the rate billed and the endpoint reached; `VOYAGE_MODEL` additionally fixes the embedding space, so changing it per call would make stored vectors incomparable |
   | `DATABASE_PATH` `LOG_LEVEL` | operator | deployment identity |
   | `GROUNDED_VERIFY_ROOT` | operator | **security boundary.** A caller-settable confinement root is the hole it exists to close |

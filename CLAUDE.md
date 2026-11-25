@@ -44,7 +44,7 @@ sources, and stats are server-assembled), and the **checkpoint
 layer** — the watchdog re-grounded for MCP (`WATCHDOG_LAYER.md` 2026-06-12
 amendment): three harness-triggered tools (`checkpoint_action` gate /
 `checkpoint_batch` loop screening / `checkpoint_turn` review with the
-layer's only model hop), always in the catalog but **off by default** — the
+layer's only verdict-changing model hop; 064's Jev shadow may run beside it, recording only), always in the catalog but **off by default** — the
 sensor plane is an installable hooks config in `integrations/claude-code/`
 (live-verified by the S1 spike, `examples/spike_hooks.md`); verdicts are
 silence/flag/hold, server-assembled, fail-open, one `checkpoint_records`
@@ -164,7 +164,7 @@ secret folder (055) or is a drive root or the home folder; absent, the tool is n
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
 `REQUEST_TIMEOUT_MS` (default `120000` — raised from 30 s by 018 D7 in step with
-the output budget), `MAX_RETRIES` (default `3`).
+the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW` and `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
 A present-but-unparseable value is an error, never a silent fallback to the
 default. Telemetry is enabled solely by the standard OTel variables
 (`OTEL_EXPORTER_OTLP_ENDPOINT` et al.; `OTEL_SDK_DISABLED=true` honored
@@ -293,7 +293,9 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `063-research-injection-screen`; all 9 tasks
+**Active Spec Kit feature: `064-jev-first-pass`; planned, tasks not yet generated** ([plan](specs/064-jev-first-pass/plan.md)) - TypeSafe's Jev (a fast typed-answer model) as a cheap judgment tier, run in shadow beside the end-of-turn review and research claim verification: answers recorded next to the big model's, nothing changes. Off in code; turned on in the operator's setup. Mandatory redaction before every request; no stored memories sent. Measurements in 064: noise, self-agreement, option order, base rate, injection back-test. Full roadmap 064-067 in the approved plan.
+
+**063 (`063-research-injection-screen`); all 9 tasks
 closed** ([plan](specs/063-research-injection-screen/plan.md)) — research
 screens each page chosen for extraction (title plus the capped text) for
 instruction-override phrases, chat role markers and zero-width or
