@@ -164,7 +164,7 @@ fn sample_results() -> Results {
         }],
         skipped: vec![
             ("turn_review".into(), "noise: transcript missing".into(), 3),
-            ("all".into(), "noise: failed calls".into(), 2),
+            ("research_claims".into(), "noise: failed calls".into(), 2),
         ],
         base_rate: Some(BaseRate {
             evaluations: 761,
@@ -254,6 +254,134 @@ fn replacing_one_sites_agreement_keeps_the_other_sites() {
         .self_agreement
         .iter()
         .any(|i| i.site == "research_claims"));
+}
+
+fn counts(pairs: &[(&str, u32)]) -> BTreeMap<String, u32> {
+    pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
+}
+
+fn skips_for<'a>(results: &'a Results, site: &str) -> Vec<&'a (String, String, u32)> {
+    results
+        .skipped
+        .iter()
+        .filter(|(s, _, _)| s == site)
+        .collect()
+}
+
+#[test]
+fn a_site_whose_rows_were_all_skipped_keeps_its_items_but_updates_its_counts() {
+    let mut results = sample_results();
+    let before = results.noise.clone();
+    results.record_noise_run("turn_review", None, &counts(&[("transcript missing", 9)]));
+    assert_eq!(results.noise, before);
+    let turn = skips_for(&results, "turn_review");
+    assert_eq!(turn.len(), 1);
+    assert_eq!(turn[0].1, "noise: transcript missing");
+    assert_eq!(turn[0].2, 9);
+}
+
+#[test]
+fn a_site_with_usable_rows_replaces_its_items_and_counts() {
+    let mut results = sample_results();
+    let fresh = vec![noise("turn_review", "contradiction", &[0.1; 5], &[])];
+    results.record_noise_run("turn_review", Some(fresh), &counts(&[]));
+    assert_eq!(
+        results
+            .noise
+            .iter()
+            .filter(|i| i.site == "turn_review")
+            .count(),
+        1
+    );
+    assert!(skips_for(&results, "turn_review").is_empty());
+    assert_eq!(skips_for(&results, "research_claims").len(), 1);
+}
+
+#[test]
+fn a_site_the_run_found_nothing_for_is_left_alone() {
+    let mut results = sample_results();
+    let before = results.clone();
+    results.record_noise_run("turn_review", None, &counts(&[]));
+    results.record_agreement_run("turn_review", None, &counts(&[]));
+    assert_eq!(results, before);
+}
+
+#[test]
+fn agreement_runs_follow_the_same_rule() {
+    let mut results = sample_results();
+    results.record_agreement_run("research_claims", None, &counts(&[("no stored state", 4)]));
+    assert_eq!(results.self_agreement.len(), 1);
+    assert!(results
+        .skipped
+        .iter()
+        .any(|(s, r, n)| s == "research_claims"
+            && r == "self-agreement: no stored state"
+            && *n == 4));
+}
+
+#[test]
+fn replacing_a_note_keeps_the_other_notes() {
+    let mut results = sample_results();
+    results.replace_note(
+        "self-agreement turn_review",
+        "self-agreement turn_review: model a".into(),
+    );
+    results.replace_note(
+        "self-agreement research_claims",
+        "self-agreement research_claims: model b".into(),
+    );
+    results.replace_note(
+        "self-agreement turn_review",
+        "self-agreement turn_review: model c".into(),
+    );
+    assert!(results
+        .notes
+        .contains(&"self-agreement research_claims: model b".to_string()));
+    assert!(results
+        .notes
+        .contains(&"self-agreement turn_review: model c".to_string()));
+    assert!(!results
+        .notes
+        .contains(&"self-agreement turn_review: model a".to_string()));
+    assert!(results
+        .notes
+        .contains(&"turn review run without stored preferences".to_string()));
+}
+
+#[test]
+fn old_format_self_agreement_notes_are_dropped() {
+    let mut results = sample_results();
+    results
+        .notes
+        .push("self-agreement models: research verify a (effort None)".into());
+    results
+        .notes
+        .push("self-agreement: turn review run without stored preferences".into());
+    results
+        .notes
+        .push("self-agreement turn_review: turn review model b (effort None)".into());
+    results.drop_legacy_notes();
+    assert!(!results
+        .notes
+        .iter()
+        .any(|n| n.starts_with("self-agreement models:") || n.starts_with("self-agreement: ")));
+    assert!(results
+        .notes
+        .contains(&"self-agreement turn_review: turn review model b (effort None)".to_string()));
+    assert!(results
+        .notes
+        .contains(&"turn review run without stored preferences".to_string()));
+}
+
+#[test]
+fn old_all_site_entries_are_dropped() {
+    let mut results = sample_results();
+    results
+        .skipped
+        .push(("all".into(), "noise: failed calls".into(), 7));
+    results.drop_legacy_all();
+    assert!(results.skipped.iter().all(|(s, _, _)| s != "all"));
+    assert_eq!(results.skipped.len(), 2);
 }
 
 #[test]

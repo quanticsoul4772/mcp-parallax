@@ -221,6 +221,76 @@ impl Results {
         self.self_agreement.retain(|i| i.site != site);
         self.self_agreement.extend(items);
     }
+
+    /// Replace the skip and loss counts a measurement recorded for `site`
+    /// under `prefix`; zero counts are not kept.
+    pub fn replace_skips(&mut self, prefix: &str, site: &str, counts: &BTreeMap<String, u32>) {
+        let tag = format!("{prefix}: ");
+        self.skipped
+            .retain(|(s, reason, _)| !(s == site && reason.starts_with(&tag)));
+        for (reason, count) in counts {
+            if *count > 0 {
+                self.skipped
+                    .push((site.to_string(), format!("{tag}{reason}"), *count));
+            }
+        }
+    }
+
+    /// Save one site's noise run. `items` is `None` when the run had no
+    /// usable row for the site, and then the saved items stay. The counts are
+    /// replaced whenever the run found rows for the site, usable or skipped.
+    pub fn record_noise_run(
+        &mut self,
+        site: &str,
+        items: Option<Vec<NoiseItem>>,
+        counts: &BTreeMap<String, u32>,
+    ) {
+        let found = items.is_some() || counts.values().any(|c| *c > 0);
+        if let Some(items) = items {
+            self.replace_noise(site, items);
+        }
+        if found {
+            self.replace_skips("noise", site, counts);
+        }
+    }
+
+    /// Save one site's self-agreement run, by the same rule as
+    /// [`Self::record_noise_run`].
+    pub fn record_agreement_run(
+        &mut self,
+        site: &str,
+        items: Option<Vec<AgreementItem>>,
+        counts: &BTreeMap<String, u32>,
+    ) {
+        let found = items.is_some() || counts.values().any(|c| *c > 0);
+        if let Some(items) = items {
+            self.replace_agreement(site, items);
+        }
+        if found {
+            self.replace_skips("self-agreement", site, counts);
+        }
+    }
+
+    /// Replace the notes starting with `prefix` with `note`; other notes
+    /// stay.
+    pub fn replace_note(&mut self, prefix: &str, note: String) {
+        self.notes.retain(|n| !n.starts_with(prefix));
+        self.notes.push(note);
+    }
+
+    /// Drop skip entries under the old `all` site, which earlier harness
+    /// versions wrote and no run replaces any more.
+    pub fn drop_legacy_all(&mut self) {
+        self.skipped.retain(|(site, _, _)| site != "all");
+    }
+
+    /// Drop self-agreement notes in the old single-note format, which the
+    /// per-site notes no longer replace.
+    pub fn drop_legacy_notes(&mut self) {
+        self.notes.retain(|n| {
+            !n.starts_with("self-agreement models:") && !n.starts_with("self-agreement: ")
+        });
+    }
 }
 
 /// Read a results file. A missing file is empty results unless `must_exist`;

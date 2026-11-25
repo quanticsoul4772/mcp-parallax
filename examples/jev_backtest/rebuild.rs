@@ -17,7 +17,6 @@ use mcp_parallax::jev::shadow::turn_state;
 use mcp_parallax::storage::jev::{JevOutcome, JevRecord};
 use mcp_parallax::traits::classifier::JevSite;
 use mcp_parallax::traits::trajectory::{FsTrajectoryReader, TrajectoryReader};
-use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Where live runs save their results, beside the databases (gitignored).
@@ -120,7 +119,7 @@ pub fn record_skips(
     results: &mut Results,
     prefix: &str,
     site: &str,
-    skips: &BTreeMap<String, u32>,
+    skips: &std::collections::BTreeMap<String, u32>,
 ) {
     let tag = format!("{prefix}: ");
     results

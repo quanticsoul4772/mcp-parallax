@@ -182,25 +182,30 @@ pub async fn noise(config: &Config, storage: &SqliteStorage, limit: usize) {
     // A site's saved items and counts are replaced only when this database
     // had usable rows for it; otherwise an earlier run's results stay.
     let (rows, mut research_counts) = research_rows(storage, limit).await;
-    if !rows.is_empty() {
+    let research_items = if rows.is_empty() {
+        None
+    } else {
         let mut items = Vec::new();
         for row in rows {
             let req = research_request(config, &row, research_questions(&row));
             items.extend(five(&client, &req, RESEARCH, &row.id, &mut research_counts).await);
         }
-        results.replace_noise(RESEARCH, items);
-        rebuild::record_skips(&mut results, "noise", RESEARCH, &research_counts);
-    }
+        Some(items)
+    };
+    results.record_noise_run(RESEARCH, research_items, &research_counts);
     let (turns, mut turn_counts) = turn_rows(storage, limit, |_| Ok(())).await;
-    if !turns.is_empty() {
+    let turn_items = if turns.is_empty() {
+        None
+    } else {
         let mut items = Vec::new();
         for (row, turn) in turns {
             let req = request(config, turn.state, turn_questions(&row));
             items.extend(five(&client, &req, TURN, &row.id, &mut turn_counts).await);
         }
-        results.replace_noise(TURN, items);
-        rebuild::record_skips(&mut results, "noise", TURN, &turn_counts);
-    }
+        Some(items)
+    };
+    results.record_noise_run(TURN, turn_items, &turn_counts);
+    results.drop_legacy_all();
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
 }
@@ -396,19 +401,18 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     });
     let verify_client = pool.for_site(CallSite::ResearchVerify);
     let review_client = pool.for_site(CallSite::CheckpointReview);
-    let models = format!(
-        "self-agreement models: research verify {} (effort {:?}), turn review {} (effort {:?})",
+    let research_note = format!(
+        "self-agreement {RESEARCH}: research verify model {} (effort {:?})",
         config.routing.model_for(CallSite::ResearchVerify),
         config.routing.effort_for(CallSite::ResearchVerify),
+    );
+    let turn_note = format!(
+        "self-agreement {TURN}: turn review model {} (effort {:?}); run without stored \
+         preferences, which aren't recorded",
         config.routing.model_for(CallSite::CheckpointReview),
         config.routing.effort_for(CallSite::CheckpointReview),
     );
     let mut results = rebuild::load();
-    results.notes.retain(|n| !n.starts_with("self-agreement"));
-    results.notes.push(models);
-    results.notes.push(
-        "self-agreement: turn review run without stored preferences, which aren't recorded".into(),
-    );
 
     let mut registry = ModeRegistry::new();
     verify::register(&mut registry, config.verify_ensemble_k).expect("register verify");
@@ -416,8 +420,10 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     let verify_mode = mcp_parallax::research::pipeline::research_verify_mode(
         registry.get(verify::VERIFY_ID).expect("verify mode"),
     );
-    // As in noise: a site is replaced only when this database had rows for it.
+    // As in noise: a site's items, and its model note, are replaced only when
+    // this database had usable rows for it.
     let (rows, mut research_counts) = research_rows(storage, limit).await;
+    let mut research_items = None;
     if !rows.is_empty() {
         let mut items = Vec::new();
         for row in rows {
@@ -426,12 +432,14 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
                 None => bump(&mut research_counts, "pair dropped: a run failed"),
             }
         }
-        results.replace_agreement(RESEARCH, items);
-        rebuild::record_skips(&mut results, "self-agreement", RESEARCH, &research_counts);
+        research_items = Some(items);
+        results.replace_note(&format!("self-agreement {RESEARCH}"), research_note);
     }
+    results.record_agreement_run(RESEARCH, research_items, &research_counts);
 
     let review_mode = registry.get(review::REVIEW_MODE_ID).expect("review mode");
     let (turns, mut turn_counts) = turn_rows(storage, limit, no_memory_candidates).await;
+    let mut turn_items = None;
     if !turns.is_empty() {
         let mut items = Vec::new();
         for (row, turn) in turns {
@@ -440,9 +448,11 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
                 None => bump(&mut turn_counts, "pair dropped: a run failed"),
             }
         }
-        results.replace_agreement(TURN, items);
-        rebuild::record_skips(&mut results, "self-agreement", TURN, &turn_counts);
+        turn_items = Some(items);
+        results.replace_note(&format!("self-agreement {TURN}"), turn_note);
     }
+    results.record_agreement_run(TURN, turn_items, &turn_counts);
+    results.drop_legacy_notes();
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
 }
