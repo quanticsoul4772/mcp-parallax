@@ -168,11 +168,14 @@ pub async fn shadow_claim(
     }
 }
 
+/// The error class of a Jev call abandoned because verify finished first.
+pub const ABANDONED_ERROR: &str = "verify_finished; cost unknown";
+
 /// The row of a Jev call abandoned because verify finished first.
 #[must_use]
 pub fn abandoned(mut row: JevRecord) -> JevRecord {
     row.outcome = JevOutcome::Call(Outcome::Timeout);
-    row.error_class = Some("verify_finished; cost unknown".into());
+    row.error_class = Some(ABANDONED_ERROR.into());
     row
 }
 

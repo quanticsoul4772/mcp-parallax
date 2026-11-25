@@ -7,7 +7,7 @@ mod turn;
 
 pub use claim::{
     abandoned, ask_claim, claim_label, prepare_claim, shadow_claim, ClaimJev, ClaimSource,
-    PreparedClaim,
+    PreparedClaim, ABANDONED_ERROR,
 };
 pub use turn::{shadow_turn, turn_label, TurnIds, TurnInputs, TurnJev};
 
