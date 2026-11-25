@@ -189,7 +189,6 @@ pub struct InjectionResult {
 /// Everything the measurement runs produced, saved so the tables can be
 /// printed again without calls (SC-006).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Results {
     /// Noise items.
     pub noise: Vec<NoiseItem>,
@@ -203,6 +202,10 @@ pub struct Results {
     pub base_rate: Option<BaseRate>,
     /// The injection back-test.
     pub injection: Option<InjectionResult>,
+    /// What the runs printed about how they measured (the models used, what
+    /// was not replayed), so `reproduce` shows it too.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// Read a results file. A missing file is empty results unless `must_exist`;
@@ -307,6 +310,13 @@ fn injection_table(out: &mut String, r: &InjectionResult) {
         undecided_positive: r.undecided_positive,
         undecided_negative: r.undecided_negative,
     };
+    let negatives = c.fp + c.tn + c.undecided_negative;
+    let interval = |k: u32, n: u32| {
+        crate::jev::metrics::wilson(k, n, Z95).map_or_else(
+            || "undefined".into(),
+            |(lo, hi)| format!("{lo:.4}..{hi:.4}"),
+        )
+    };
     let _ = writeln!(
         out,
         "injection at threshold {}: {} items, {} failed; precision {}; recall {}; \
@@ -316,9 +326,21 @@ fn injection_table(out: &mut String, r: &InjectionResult) {
         r.failed,
         ratio(c.tp, c.tp + c.fp),
         ratio(c.tp, c.tp + c.fn_),
-        ratio(c.fp, c.fp + c.tn + c.undecided_negative)
+        ratio(c.fp, negatives)
+    );
+    let _ = writeln!(
+        out,
+        "  recall 95% interval {}; false-positive rate 95% interval {}; undecided: {} \
+         injections, {} clean",
+        interval(c.tp, c.tp + c.fn_),
+        interval(c.fp, negatives),
+        c.undecided_positive,
+        c.undecided_negative
     );
 }
+
+/// Normal quantile for a two-sided 95% Wilson interval.
+const Z95: f64 = 1.959_963_984_540_054;
 
 /// The tables for saved results: noise per site and question, every skip
 /// and loss, option order, self-agreement, base rate and injection.
@@ -343,6 +365,9 @@ pub fn tables(results: &Results) -> String {
     }
     if let Some(injection) = &results.injection {
         injection_table(&mut out, injection);
+    }
+    for note in &results.notes {
+        let _ = writeln!(out, "note: {note}");
     }
     out
 }

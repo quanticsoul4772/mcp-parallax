@@ -308,6 +308,41 @@ fn no_memory_candidates(row: &JevRecord) -> Result<(), &'static str> {
     }
 }
 
+/// The research verify run twice on one stored claim with its stored
+/// excerpts; `None` when either run failed (the second is skipped then).
+async fn verify_twice(
+    config: &Config,
+    client: &dyn mcp_parallax::traits::client::ModelClient,
+    mode: &mcp_parallax::modes::CorrectiveMode,
+    row: &JevRecord,
+) -> Option<AgreementItem> {
+    let state = row.state_json.as_ref().expect("filtered on state_json");
+    let excerpts: Vec<String> = state["sources"]
+        .as_object()
+        .map(|sources| {
+            sources
+                .values()
+                .filter_map(|s| s["excerpts"][0].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let params = verify::VerifyParams {
+        claim: state["claim"].as_str().unwrap_or_default().to_string(),
+        context: Some(format!("Source excerpts:\n\n{}", excerpts.join("\n\n"))),
+        effort: None,
+        passes: None,
+    };
+    let max = config.input_max_chars;
+    let first = verify::run(client, mode, &params, max).await.ok()?;
+    let second = verify::run(client, mode, &params, max).await.ok()?;
+    Some(AgreementItem {
+        site: RESEARCH.into(),
+        row_id: row.id.clone(),
+        first: format!("{:?}", first.verdict.verdict),
+        second: format!("{:?}", second.verdict.verdict),
+    })
+}
+
 /// The big model's repeatability on tune rows, through the server's own
 /// per-site routing: the research verify run twice on each stored claim,
 /// and the end-of-turn review run twice on each rebuilt turn whose review
@@ -319,16 +354,20 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     });
     let verify_client = pool.for_site(CallSite::ResearchVerify);
     let review_client = pool.for_site(CallSite::CheckpointReview);
-    println!(
-        "models: research verify {} (effort {:?}), turn review {} (effort {:?})",
+    let models = format!(
+        "self-agreement models: research verify {} (effort {:?}), turn review {} (effort {:?})",
         config.routing.model_for(CallSite::ResearchVerify),
         config.routing.effort_for(CallSite::ResearchVerify),
         config.routing.model_for(CallSite::CheckpointReview),
         config.routing.effort_for(CallSite::CheckpointReview),
     );
-    println!("the turn review is re-run without stored preferences, which aren't recorded");
     let mut results = rebuild::load();
     results.self_agreement.clear();
+    results.notes.retain(|n| !n.starts_with("self-agreement"));
+    results.notes.push(models);
+    results.notes.push(
+        "self-agreement: turn review run without stored preferences, which aren't recorded".into(),
+    );
 
     let mut registry = ModeRegistry::new();
     verify::register(&mut registry, config.verify_ensemble_k).expect("register verify");
@@ -338,34 +377,9 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     );
     let (rows, mut research_counts) = research_rows(storage, limit).await;
     for row in rows {
-        let state = row.state_json.as_ref().expect("filtered on state_json");
-        let excerpts: Vec<String> = state["sources"]
-            .as_object()
-            .map(|sources| {
-                sources
-                    .values()
-                    .filter_map(|s| s["excerpts"][0].as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let params = verify::VerifyParams {
-            claim: state["claim"].as_str().unwrap_or_default().to_string(),
-            context: Some(format!("Source excerpts:\n\n{}", excerpts.join("\n\n"))),
-            effort: None,
-            passes: None,
-        };
-        let max = config.input_max_chars;
-        let first = verify::run(verify_client.as_ref(), &verify_mode, &params, max).await;
-        let second = verify::run(verify_client.as_ref(), &verify_mode, &params, max).await;
-        if let (Ok(a), Ok(b)) = (first, second) {
-            results.self_agreement.push(AgreementItem {
-                site: RESEARCH.into(),
-                row_id: row.id.clone(),
-                first: format!("{:?}", a.verdict.verdict),
-                second: format!("{:?}", b.verdict.verdict),
-            });
-        } else {
-            bump(&mut research_counts, "pair dropped: a run failed");
+        match verify_twice(config, verify_client.as_ref(), &verify_mode, &row).await {
+            Some(item) => results.self_agreement.push(item),
+            None => bump(&mut research_counts, "pair dropped: a run failed"),
         }
     }
 
@@ -415,6 +429,8 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
 /// A labeled set from your folder, asked with the question in your file;
 /// saved with the other results and printed as a table.
 pub async fn injection(config: &Config, folder: &str, question_file: &str, threshold: f64) {
+    // Checked before any call is paid for: a broken file stops the run here.
+    let mut results = rebuild::load();
     let client = jev(config);
     let instructions = std::fs::read_to_string(question_file)
         .expect("question file")
@@ -468,7 +484,6 @@ pub async fn injection(config: &Config, folder: &str, question_file: &str, thres
         }
     }
     let c = Confusion::from_pairs(&pairs);
-    let mut results = rebuild::load();
     results.injection = Some(InjectionResult {
         threshold,
         items: u32::try_from(pairs.len()).unwrap_or(u32::MAX),

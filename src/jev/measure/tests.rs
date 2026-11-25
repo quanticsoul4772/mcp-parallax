@@ -182,6 +182,7 @@ fn sample_results() -> Results {
             undecided_positive: 0,
             undecided_negative: 0,
         }),
+        notes: vec!["turn review run without stored preferences".into()],
     }
 }
 
@@ -205,6 +206,10 @@ fn results_round_trip_and_reproduce_the_same_tables() {
         "base rate: 761 turn evaluations, 648 reviews run",
         "fired self_contradiction: 5",
         "injection at threshold 0.35: 10 items, 1 failed",
+        "recall 95% interval",
+        "false-positive rate 95% interval",
+        "undecided: 0 injections, 0 clean",
+        "note: turn review run without stored preferences",
     ] {
         assert!(
             printed.contains(expected),
@@ -222,6 +227,9 @@ fn a_broken_results_file_is_an_error_not_empty_results() {
     let broken = dir.path().join("broken.json");
     std::fs::write(&broken, "{ not json").unwrap();
     assert!(read_results(&broken, false).is_err());
+    let unrelated = dir.path().join("unrelated.json");
+    std::fs::write(&unrelated, r#"{"a":1}"#).unwrap();
+    assert!(read_results(&unrelated, true).is_err());
     let good = dir.path().join("good.json");
     std::fs::write(&good, serde_json::to_string(&sample_results()).unwrap()).unwrap();
     assert_eq!(read_results(&good, true).unwrap(), sample_results());
