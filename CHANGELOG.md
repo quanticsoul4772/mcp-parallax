@@ -355,6 +355,12 @@ arc.
   result as it was. Lines may carry a `set`; the run saves and prints one row
   per set (recall and false-positive rate) beside the pooled result.
 
+* **Turn self-agreement uses older turn rows** (064 recovery) — a stored
+  turn counts as having no memory candidates when either its
+  `contradiction_flagged` or, on rows written before that field, its
+  `contradicts` is true or false; both are null exactly when memory
+  candidates were present.
+
 * **The Jev back-test's live measurements follow FR-011** (064 recovery) —
   `noise`, `order` and `self-agreement` read tune-split rows only, so the
   sealed confirm split stays unread. Noise reports spread on the logit scale

@@ -227,6 +227,29 @@ pub fn turn_label(
     })
 }
 
+/// Whether a stored turn label shows the review saw no memory-derived
+/// candidates, which a replay without stored memories needs.
+///
+/// The label nulls `contradiction_flagged` exactly when memory candidates
+/// were present; labels written before that field existed null
+/// `contradicts` under the same condition, so either field answers it.
+///
+/// # Errors
+///
+/// "memory candidates present" when the field is null, "no review outcome
+/// in the label" when neither field is there.
+pub fn no_memory_candidates(label: Option<&Value>) -> Result<(), &'static str> {
+    let field = label.and_then(|l| {
+        l.get("contradiction_flagged")
+            .or_else(|| l.get("contradicts"))
+    });
+    match field {
+        Some(Value::Bool(_)) => Ok(()),
+        Some(Value::Null) => Err("memory candidates present"),
+        _ => Err("no review outcome in the label"),
+    }
+}
+
 /// The turn row before any request: identity, questions, where it belongs.
 fn turn_row(jev: &TurnJev, questions: &[JevQuestion], ids: &TurnIds<'_>) -> JevRecord {
     JevRecord {
@@ -304,5 +327,43 @@ mod tests {
             .err()
             .expect("a state over the redactor's cap fails");
         assert!(failed.truncated);
+    }
+
+    #[test]
+    fn a_label_shows_no_memory_candidates_by_either_contradiction_field() {
+        let raw = ReviewRaw {
+            contradicts: false,
+            violates: false,
+            capture_kind: CaptureKind::None,
+        };
+        let did = ReviewOutcome {
+            contradiction_flagged: false,
+            violation_flagged: false,
+            captured: false,
+        };
+        // Labels as the server writes them now.
+        assert_eq!(
+            no_memory_candidates(Some(&turn_label(&raw, false, true, did))),
+            Ok(())
+        );
+        assert_eq!(
+            no_memory_candidates(Some(&turn_label(&raw, true, true, did))),
+            Err("memory candidates present")
+        );
+        // Labels as 064 first wrote them, before the outcome fields.
+        let old = |contradicts: Value| json!({ "contradicts": contradicts, "violates": false });
+        assert_eq!(no_memory_candidates(Some(&old(json!(true)))), Ok(()));
+        assert_eq!(
+            no_memory_candidates(Some(&old(Value::Null))),
+            Err("memory candidates present")
+        );
+        assert_eq!(
+            no_memory_candidates(Some(&json!({ "violates": false }))),
+            Err("no review outcome in the label")
+        );
+        assert_eq!(
+            no_memory_candidates(None),
+            Err("no review outcome in the label")
+        );
     }
 }

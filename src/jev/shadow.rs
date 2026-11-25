@@ -10,8 +10,8 @@ pub use claim::{
     PreparedClaim, ABANDONED_ERROR,
 };
 pub use turn::{
-    shadow_turn, turn_label, turn_state, ReviewOutcome, TurnIds, TurnInputs, TurnJev, TurnState,
-    TurnStateError,
+    no_memory_candidates, shadow_turn, turn_label, turn_state, ReviewOutcome, TurnIds, TurnInputs,
+    TurnJev, TurnState, TurnStateError,
 };
 
 use crate::error::{AppError, Outcome};
