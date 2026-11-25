@@ -18,6 +18,12 @@ path = "src/lib.rs"
 name = "mcp-parallax"
 path = "src/main.rs"
 
+# Its unit tests run in the gate (`cargo test --tests`); the live example
+# itself runs only by hand.
+[[example]]
+name = "acceptance_jev"
+test = true
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "process"] }

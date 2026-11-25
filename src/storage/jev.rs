@@ -270,6 +270,40 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn every_turn_label_the_server_writes_fits_the_contract() {
+        use crate::checkpoint::review::{CaptureKind, ReviewRaw};
+        use crate::jev::shadow::{turn_label, ReviewOutcome};
+        let label_schema = schema()["properties"]["label_json"].clone();
+        let raw = ReviewRaw {
+            contradicts: true,
+            violates: true,
+            capture_kind: CaptureKind::Lesson,
+        };
+        let did = ReviewOutcome {
+            contradiction_flagged: true,
+            violation_flagged: true,
+            captured: true,
+        };
+        for memory_pairs in [false, true] {
+            for capture_enabled in [false, true] {
+                let label = turn_label(&raw, memory_pairs, capture_enabled, did);
+                let checked = crate::schema::validate(&label_schema, &label);
+                assert!(
+                    checked.is_ok(),
+                    "memory {memory_pairs}, capture {capture_enabled}: {checked:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_contract_says_labels_without_the_outcome_fields_are_unlabeled() {
+        let turn = &schema()["properties"]["label_json"]["oneOf"][1];
+        let description = turn["description"].as_str().unwrap_or_default();
+        assert!(description.contains("unlabeled"), "{description}");
+    }
+
     /// `(name, notnull)` for every column of a fresh `jev_records` table.
     async fn columns() -> Vec<(String, bool)> {
         let pool = SqlitePoolOptions::new()

@@ -64,13 +64,17 @@
       "oneOf": [
         { "type": "null" },
         {
+          "description": "Turn review. contradicts, violates and capture_kind are the review model's raw answers; contradiction_flagged, violation_flagged and captured record what the review did (flags raised, capture stored), which plan 7.1 counts. Labels written before 2026-11-25 lack the outcome fields; the back-test report treats them as unlabeled.",
           "type": "object",
           "additionalProperties": false,
           "required": ["violates"],
           "properties": {
             "contradicts": { "type": ["boolean", "null"] },
             "violates": { "type": "boolean" },
-            "capture_kind": { "enum": ["skill", "lesson", "none", null] }
+            "capture_kind": { "enum": ["skill", "lesson", "none", null] },
+            "contradiction_flagged": { "type": ["boolean", "null"] },
+            "violation_flagged": { "type": "boolean" },
+            "captured": { "type": ["boolean", "null"] }
           }
         },
         {
