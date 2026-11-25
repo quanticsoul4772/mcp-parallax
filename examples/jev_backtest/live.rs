@@ -28,7 +28,6 @@ use std::time::Duration;
 const TIMEOUT: Duration = Duration::from_secs(5);
 const RESEARCH: &str = "research_claims";
 const TURN: &str = "turn_review";
-const ALL: &str = "all";
 
 type Counts = BTreeMap<String, u32>;
 
@@ -151,7 +150,7 @@ async fn five(
     for _ in 0..5 {
         match client.classify(req).await {
             Ok(response) => runs.push(values(&response)),
-            Err(_) => bump(losses, "noise: failed calls"),
+            Err(_) => bump(losses, "failed calls"),
         }
     }
     let Some(first) = runs.first() else {
@@ -180,27 +179,33 @@ async fn five(
 pub async fn noise(config: &Config, storage: &SqliteStorage, limit: usize) {
     let client = jev(config);
     let mut results = rebuild::load();
-    results.noise.clear();
-    let mut losses = Counts::new();
-    let (rows, research_skips) = research_rows(storage, limit).await;
-    for row in rows {
-        let req = research_request(config, &row, research_questions(&row));
-        let items = five(&client, &req, RESEARCH, &row.id, &mut losses).await;
-        results.noise.extend(items);
-    }
-    let (turns, turn_skips) = turn_rows(storage, limit, |_| Ok(())).await;
-    for (row, turn) in turns {
-        let req = request(config, turn.state, turn_questions(&row));
-        let items = five(&client, &req, TURN, &row.id, &mut losses).await;
-        results.noise.extend(items);
-    }
-    rebuild::record_skips(&mut results, "noise", RESEARCH, &research_skips);
-    rebuild::record_skips(&mut results, "noise", TURN, &turn_skips);
-    let losses: Counts = losses
-        .into_iter()
-        .map(|(k, v)| (k.trim_start_matches("noise: ").to_string(), v))
-        .collect();
-    rebuild::record_skips(&mut results, "noise", ALL, &losses);
+    // A site's saved items and counts are replaced only when this database
+    // had usable rows for it; otherwise an earlier run's results stay.
+    let (rows, mut research_counts) = research_rows(storage, limit).await;
+    let research_items = if rows.is_empty() {
+        None
+    } else {
+        let mut items = Vec::new();
+        for row in rows {
+            let req = research_request(config, &row, research_questions(&row));
+            items.extend(five(&client, &req, RESEARCH, &row.id, &mut research_counts).await);
+        }
+        Some(items)
+    };
+    results.record_noise_run(RESEARCH, research_items, &research_counts);
+    let (turns, mut turn_counts) = turn_rows(storage, limit, |_| Ok(())).await;
+    let turn_items = if turns.is_empty() {
+        None
+    } else {
+        let mut items = Vec::new();
+        for (row, turn) in turns {
+            let req = request(config, turn.state, turn_questions(&row));
+            items.extend(five(&client, &req, TURN, &row.id, &mut turn_counts).await);
+        }
+        Some(items)
+    };
+    results.record_noise_run(TURN, turn_items, &turn_counts);
+    results.drop_legacy_all();
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
 }
@@ -343,6 +348,48 @@ async fn verify_twice(
     })
 }
 
+/// The end-of-turn review run twice on one rebuilt turn; `None` when either
+/// run failed. Both runs always happen.
+async fn review_twice(
+    client: &dyn mcp_parallax::traits::client::ModelClient,
+    mode: &mcp_parallax::modes::CorrectiveMode,
+    row: &JevRecord,
+    turn: &Rebuilt,
+) -> Option<AgreementItem> {
+    let capture_enabled = asked(row).iter().any(|q| q == "capture_worthy");
+    let candidates = review::mine_candidates(&turn.window, &turn.final_message, &[]);
+    let mut verdicts = Vec::new();
+    for _ in 0..2 {
+        let outcome = review::review_once(
+            client,
+            mode,
+            &candidates,
+            &[],
+            &turn.final_message,
+            &turn.activity,
+            capture_enabled,
+        )
+        .await;
+        if let Ok((flags, proposal, _, _, _)) = outcome {
+            let has = |kind: SignalKind| flags.iter().any(|(s, _)| s.kind == kind);
+            verdicts.push(format!(
+                "contradiction={} capture={}",
+                has(SignalKind::SelfContradiction),
+                proposal.is_some()
+            ));
+        }
+    }
+    let [first, second] = verdicts.as_slice() else {
+        return None;
+    };
+    Some(AgreementItem {
+        site: TURN.into(),
+        row_id: row.id.clone(),
+        first: first.clone(),
+        second: second.clone(),
+    })
+}
+
 /// The big model's repeatability on tune rows, through the server's own
 /// per-site routing: the research verify run twice on each stored claim,
 /// and the end-of-turn review run twice on each rebuilt turn whose review
@@ -354,20 +401,18 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     });
     let verify_client = pool.for_site(CallSite::ResearchVerify);
     let review_client = pool.for_site(CallSite::CheckpointReview);
-    let models = format!(
-        "self-agreement models: research verify {} (effort {:?}), turn review {} (effort {:?})",
+    let research_note = format!(
+        "self-agreement {RESEARCH}: research verify model {} (effort {:?})",
         config.routing.model_for(CallSite::ResearchVerify),
         config.routing.effort_for(CallSite::ResearchVerify),
+    );
+    let turn_note = format!(
+        "self-agreement {TURN}: turn review model {} (effort {:?}); run without stored \
+         preferences, which aren't recorded",
         config.routing.model_for(CallSite::CheckpointReview),
         config.routing.effort_for(CallSite::CheckpointReview),
     );
     let mut results = rebuild::load();
-    results.self_agreement.clear();
-    results.notes.retain(|n| !n.starts_with("self-agreement"));
-    results.notes.push(models);
-    results.notes.push(
-        "self-agreement: turn review run without stored preferences, which aren't recorded".into(),
-    );
 
     let mut registry = ModeRegistry::new();
     verify::register(&mut registry, config.verify_ensemble_k).expect("register verify");
@@ -375,53 +420,39 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     let verify_mode = mcp_parallax::research::pipeline::research_verify_mode(
         registry.get(verify::VERIFY_ID).expect("verify mode"),
     );
+    // As in noise: a site's items, and its model note, are replaced only when
+    // this database had usable rows for it.
     let (rows, mut research_counts) = research_rows(storage, limit).await;
-    for row in rows {
-        match verify_twice(config, verify_client.as_ref(), &verify_mode, &row).await {
-            Some(item) => results.self_agreement.push(item),
-            None => bump(&mut research_counts, "pair dropped: a run failed"),
+    let mut research_items = None;
+    if !rows.is_empty() {
+        let mut items = Vec::new();
+        for row in rows {
+            match verify_twice(config, verify_client.as_ref(), &verify_mode, &row).await {
+                Some(item) => items.push(item),
+                None => bump(&mut research_counts, "pair dropped: a run failed"),
+            }
         }
+        research_items = Some(items);
+        results.replace_note(&format!("self-agreement {RESEARCH}"), research_note);
     }
+    results.record_agreement_run(RESEARCH, research_items, &research_counts);
 
     let review_mode = registry.get(review::REVIEW_MODE_ID).expect("review mode");
     let (turns, mut turn_counts) = turn_rows(storage, limit, no_memory_candidates).await;
-    for (row, turn) in turns {
-        let capture_enabled = asked(&row).iter().any(|q| q == "capture_worthy");
-        let candidates = review::mine_candidates(&turn.window, &turn.final_message, &[]);
-        let mut verdicts = Vec::new();
-        for _ in 0..2 {
-            let outcome = review::review_once(
-                review_client.as_ref(),
-                review_mode,
-                &candidates,
-                &[],
-                &turn.final_message,
-                &turn.activity,
-                capture_enabled,
-            )
-            .await;
-            if let Ok((flags, proposal, _, _, _)) = outcome {
-                let has = |kind: SignalKind| flags.iter().any(|(s, _)| s.kind == kind);
-                verdicts.push(format!(
-                    "contradiction={} capture={}",
-                    has(SignalKind::SelfContradiction),
-                    proposal.is_some()
-                ));
+    let mut turn_items = None;
+    if !turns.is_empty() {
+        let mut items = Vec::new();
+        for (row, turn) in turns {
+            match review_twice(review_client.as_ref(), review_mode, &row, &turn).await {
+                Some(item) => items.push(item),
+                None => bump(&mut turn_counts, "pair dropped: a run failed"),
             }
         }
-        if let [first, second] = verdicts.as_slice() {
-            results.self_agreement.push(AgreementItem {
-                site: TURN.into(),
-                row_id: row.id.clone(),
-                first: first.clone(),
-                second: second.clone(),
-            });
-        } else {
-            bump(&mut turn_counts, "pair dropped: a run failed");
-        }
+        turn_items = Some(items);
+        results.replace_note(&format!("self-agreement {TURN}"), turn_note);
     }
-    rebuild::record_skips(&mut results, "self-agreement", RESEARCH, &research_counts);
-    rebuild::record_skips(&mut results, "self-agreement", TURN, &turn_counts);
+    results.record_agreement_run(TURN, turn_items, &turn_counts);
+    results.drop_legacy_notes();
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
 }
