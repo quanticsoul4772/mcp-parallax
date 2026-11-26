@@ -1,4 +1,4 @@
-//! Inputs of the FR-011(e) injection back-test, ported from exa-mcp-server's
+//! Inputs of the FR-011(e) injection back-test, ported from an earlier
 //! back-test: the dataset lines.
 
 use crate::jev::metrics::{Confusion, Decision};

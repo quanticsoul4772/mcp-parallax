@@ -14,7 +14,7 @@
 confidence computed from the gap between the top two scores. Its description
 tells callers this is "a confidence calibrated to how close the call is", and
 the design document says gaps of 17 points or more were "perfectly stable".
-The owner reads these numbers before nearly every choice.
+Callers read these numbers before nearly every choice.
 
 A measurement shows the stability statement is false: winners reversed
 between identical calls at gaps of 25, 31, and 28 to 38 points. The
@@ -54,7 +54,7 @@ split, so the label is itself uncertain).
 **Limits of this sample.**
 
 - 10 inputs, one model. Inputs were chosen in bands by their recorded gap, so
-  pooled counts describe those bands, not the owner's real mix of calls.
+  pooled counts describe those bands, not the real mix of calls.
 - Five inputs have 10 identical runs and five have 5. One input showed one
   winner in its first 5 runs and three different winners after 10; 5 runs is
   too few to call an input stable. The four inputs with the largest recorded
@@ -131,9 +131,8 @@ A caller sends the same call as before and receives the same result shape,
 the same confidence for the same scores, and the server makes the same model
 request.
 
-**Why this priority**: The owner chose a words-only change. A behaviour
-change slipping in under it would be exactly the kind of unapproved step this
-feature must not take.
+**Why this priority**: This is a words-only change. A behaviour
+change slipping in under it would be outside this feature's scope.
 
 **Independent Test**: No test that asserts `decide`'s computed values is
 edited, and all of them pass unchanged.
@@ -200,7 +199,7 @@ running the committed script prints the table.
   7. The model setting used and that it is not recorded in the result files, both sample sizes, and the limits of this sample.
 - **FR-007**: These live-text locations MUST be corrected in place and afterwards not contain the word stem `calibrat` in any letter case, with two named exceptions: the new test that searches for the stem necessarily contains it, and the `check` tool's description in the server file says "no calibration" about a different tool and is left alone. The locations: the `decide` module's source file (its opening documentation, the registered description, the confidence field's documentation, and its comments including those in its test module); the served description and the comment above it; the earlier `decide` contract file's confidence description (property names and constraints untouched); the earlier `decide` contract note's quoted description; the project guide's `decide` statements; the opening comment of the offline `decide` acceptance example; and the comment and name of the `decide` integration test that carries the word. Renaming that test changes no assertion. The README's `decide` row and the contract file's opening comment already say "derived from the score margin", which is true, and are left alone.
 - **FR-008**: Two historical records MUST each gain one dated line that points to this specification and makes no claim of its own, and MUST NOT otherwise be edited: the earlier `decide` specification and the earlier order-bias experiment's analysis. The earlier specification's other documents are not touched. Past change-log entries are left as written; this feature adds one entry under Unreleased, in the Changed section, saying the description changed and no behaviour did. The earlier contract note and contract file are treated as live, unlike the rest of that specification, because the server's tests and callers read them.
-- **FR-009**: The four places that cite a "stable band" for a choice made with `decide` (the memory push module's comment; the push-memory specification and its research; the memory-consolidation specification) MUST be given a recorded disposition: the choices stand as decisions the owner accepted; the words "stable band" are removed from the live code comment; the three documents gain the same dated line as FR-008. Whether to revisit those choices, and the four clarifications in the same two specifications that were settled by a `decide` confirmation pass, is a named open question for the owner, not decided here.
+- **FR-009**: The four places that cite a "stable band" for a choice made with `decide` (the memory push module's comment; the push-memory specification and its research; the memory-consolidation specification) MUST be given a recorded disposition: the choices stand as accepted decisions; the words "stable band" are removed from the live code comment; the three documents gain the same dated line as FR-008. Whether to revisit those choices, and the four clarifications in the same two specifications that were settled by a `decide` confirmation pass, is a named open question, not decided here.
 - **FR-010**: An evidence folder MUST be committed at `claudedocs/experiments/decide-stability/` holding: the per-call results for all 460 attempted calls (case id, variant, option ordering, scores, methodology, token counts; failed calls reduced to their id, variant, option ordering and the word "billing", with provider text and request identifiers removed; the redaction MUST stop with an error if any failed call's error text is not the provider's billing error, so that no other kind of failure is relabelled); a redacted plan (per case: id, number of options, number of context sentences, recorded scores, recorded gap; no decision, option or context text); one script that prints the measurement table from those two files alone; the probe program's source as a non-buildable record with its header corrected; and a note stating what is withheld and why, the dates on the files, that the model and effort are not recorded and routing was bypassed, and why the 60 first-stage single reorder and removal runs are not used in the table (one run per variant, where the table's reorder and removal rows need five).
 - **FR-011**: The temporary probe program MUST NOT remain in the examples folder.
 
@@ -225,14 +224,14 @@ running the committed script prints the table.
 ## Assumptions
 
 - Delivered as one pull request.
-- Nothing sent to `decide`'s own model changes and no computed value changes, so building and testing need no live model call. The project keeps a note that any model-facing prompt or schema change must pass the live example before a pull request. The description is read by calling models, and no live `decide` example exists (the existing one is offline, against a substituted model). So the owner is asked, on its own and with its price beforehand, whether one live `decide` call is made before the pull request.
-- The redaction in FR-010 is done by a script whose output the owner can inspect before commit, because the unredacted plan contains text from the owner's other projects. Case ids are checked to be the plain labels c00 to c09 and nothing derived from a project.
+- Nothing sent to `decide`'s own model changes and no computed value changes, so building and testing need no live model call. The project keeps a note that any model-facing prompt or schema change must pass the live example before a pull request. The description is read by calling models, and no live `decide` example exists (the existing one is offline, against a substituted model). So whether one live `decide` call is made before the pull request is decided on its own, with its price stated beforehand.
+- The redaction in FR-010 is done by a script whose output can be inspected before commit, because the unredacted plan contains text from other projects. Case ids are checked to be the plain labels c00 to c09 and nothing derived from a project.
 - The description grows from four sentences to seven; callers read it once per session.
 - The third required sentence asks calling agents to report the lead in points. Nothing in the server can test that an agent does so; it is guidance, and the specification claims no more for it.
 
 ## Deferred (named, not built here)
 
-- **Changing the confidence number.** The owner first chose a fixed value, then, once the evidence was stated correctly, chose to leave the number alone. Any change needs a larger measurement first.
+- **Changing the confidence number.** A fixed value was chosen first; once the evidence was stated correctly, the number was left alone. Any change needs a larger measurement first.
 - **Running more than one pass.** Needs its own specification and measurement. Two findings to carry into it: under three identical passes a "separated" style label was produced for opposite answers when the option order or one context sentence changed; and it would depart from two design rules (repeated passes should differ; the caller owns the pass count) that must be named and justified there.
 - **Detecting sensitivity to wording or order.**
 - **A reliability label or a too-close-to-call label on the result.**

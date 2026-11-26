@@ -21,7 +21,7 @@ All spec clarifications are answered (spec, Clarifications, 2026-11-25). Each de
 
 ## D4. Question
 
-- **Decision**: `directs_ai`, `QuestionKind::Noul`, version 1, with options `("true", criteria true)` and `("false", criteria false)` so the client sends them as criteria (PR #170); the wording is exa-mcp-server's verbatim, the same text `jev_backtest injection` sent. It moves from the back-test's question file into `src/jev/questions.rs`; a test binds the two.
+- **Decision**: `directs_ai`, `QuestionKind::Noul`, version 1, with options `("true", criteria true)` and `("false", criteria false)` so the client sends them as criteria (PR #170); the wording is the earlier back-test's, verbatim, the same text `jev_backtest injection` sent. It moves from the back-test's question file into `src/jev/questions.rs`; a test binds the two.
 - **Rationale**: FR-001; one source of the wording.
 
 ## D5. Deadline and retries
@@ -52,4 +52,4 @@ All spec clarifications are answered (spec, Clarifications, 2026-11-25). Each de
 
 ## D10. Live acceptance
 
-- **Decision**: `examples/acceptance_jev_injection.rs` runs one research question with the site `on` against the live services and asserts SC-005: one row per kept page, all joined, answered rows carry `jev-1.14.0`, every kept page shows screened or a reason; it exits non-zero on failure. Run by the user, as in 064 T037.
+- **Decision**: `examples/acceptance_jev_injection.rs` runs one research question with the site `on` against the live services and asserts SC-005: one row per kept page, all joined, answered rows carry `jev-1.14.0`, every kept page shows screened or a reason; it exits non-zero on failure. Run after merge and rebuild, as in 064 T037.

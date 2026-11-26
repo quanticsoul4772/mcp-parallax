@@ -59,12 +59,12 @@ call, which would let the two drift.
 write a fixed notice; skip arithmetic settlement. The confidence number is
 not changed.
 
-**History**: the owner first chose leave-out-and-list over failing the call.
+**History**: leave-out-and-list was chosen first over failing the call.
 Review then showed a verdict could come back at full confidence over reduced
-evidence, and the owner chose to add a notice and to lower confidence. A cap
-was specified; review showed it changed only unanimous results while the
-text said confidence was always lowered. Offered the alternatives, the owner
-chose to leave the number alone and add a flag.
+evidence, so a notice and lower confidence were chosen. A cap was specified;
+review showed it changed only unanimous results while the text said
+confidence was always lowered. Of the alternatives, leaving the number alone
+and adding a flag was chosen.
 
 **Why the number is left alone**: it is defined, in the code and in the
 published contract, as the share of completed passes that agreed. Any rule
@@ -104,7 +104,7 @@ Each is exercised on a real disk, through assembly with the real reader.
 3. **A full path to a refused file with a trailing dot, and with a trailing
    space**, is refused. Windows trims these, so the name as written does not
    match a rule; the resolved name must. If `canonicalize` does not return
-   the trimmed on-disk name, the finding goes back to the owner.
+   the trimmed on-disk name, the finding is reported.
 4. **A folder junction with an ordinary name into a refused folder inside the
    root.** To confirm: `canonicalize` returns the target's real name.
 

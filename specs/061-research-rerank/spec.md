@@ -9,7 +9,7 @@
 **Input**: Rerank research pages by relevance after their text is fetched, with
 Voyage rerank-3 (the provider's current reranker; rerank-2.5 is listed as an older model, 2026-11-23), and extract claims only from the most relevant ones, so a
 research run makes fewer model calls. On when VOYAGE_API_KEY is set; a failed
-rerank falls back to today's order and is recorded (operator-approved exception
+rerank falls back to today's order and is recorded (named exception
 to the no-fallback rule).
 
 ## User Scenarios & Testing *(mandatory)*

@@ -13,7 +13,7 @@ description: "Task list for 055: grounded_verify refuses files whose names mark 
 
 **Tests**: REQUIRED (Constitution Principle IV). Every piece is test-first: the test is written, run, and its stated first result recorded, before the code it checks.
 
-**Every step that changes a file, commits, pushes or calls a model is asked of the owner first.** If a test's first result is not the one stated here, stop and tell the owner; do not adjust the test to fit.
+If a test's first result is not the one stated here, stop; do not adjust the test to fit.
 
 **The gate** is `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test` (run on this machine with `-j 2` on the clippy and test steps). It does not include the markdown check, which is its own step (T044).
 
@@ -154,7 +154,7 @@ Tasks run in order. None is marked parallel.
   The tests and doubles written in this feature change only their names: T010's tests call `list_files` for `list_flagged`; T012's tests call `expand` for the flagged expansion and set up `expect_list_files` for `expect_list_flagged`; the recording doubles from T014 and T016 drop `read` and the old `list_files` and rename `list_flagged`; the `list_flagged` call T011 added to `mock_source_reader_honors_the_contract` becomes `list_files`.
 - [X] T025 [US1] Gate. **Expected: passes.** Confirm from the diff that in T024 only the calls changed, apart from the named removal and the two assertions tightened to the other-fault kind. Record the gate output and per-file line counts. (SC-007)
 
-**Checkpoint**: commit point for phases 4 and 5 together, when the owner says.
+**Checkpoint**: commit point for phases 4 and 5 together.
 
 ---
 
@@ -164,7 +164,7 @@ These go through `assemble` with the real reader. A test that cannot create its 
 
 - [X] T026 [US1] All systems: with a folder `.ssh` inside the root, `.ssh/../README.md` is read. A root named `.config` holding `gh/x`: `gh/x` is refused. A root named `x.git` holding `config`: `config` is refused.
 - [X] T027 [US1] Windows: a `\\?\C:\` path, with each slash direction, to an ordinary file inside the root is read.
-- [X] T028 [US1] Windows: a full non-verbatim path to a refused file with a trailing dot, and with a trailing space, using `id_rsa` (not `.env`, whose trailing-dot form is caught from text by another rule). **Expected: refused, with the "likely secret" text.** If it is instead read or reported not found, stop and tell the owner (research D6.3).
+- [X] T028 [US1] Windows: a full non-verbatim path to a refused file with a trailing dot, and with a trailing space, using `id_rsa` (not `.env`, whose trailing-dot form is caught from text by another rule). **Expected: refused, with the "likely secret" text.** If it is instead read or reported not found, stop (research D6.3).
 - [X] T029 [US1] Windows: the stream test. Write a stream on a file in a temporary folder and read it back with the standard library; if either fails, the test fails with a message. Then: a locator naming the stream on an ordinary file is refused with the colon text; one on `.env` likewise. The test's comment cites what T001 recorded.
 - [X] T030 [US1] Windows: a folder junction `docs` to `.ssh`, both inside the root, made with `mklink /J`; `docs/known_hosts` is refused, and the error does not contain `.ssh`. And a junction inside a folder that a glob walks: the walk does not descend through it and nothing under it is read or listed.
 - [X] T031 [US1] Other systems: a symbolic link `docs` to `.ssh`, and a symbolic link `notes.txt` to `.env`, each refused, with an error that does not contain the target's name; a file whose name contains a colon is read.
@@ -183,28 +183,26 @@ These go through `assemble` with the real reader. A test that cannot create its 
 
 ## Phase 8: The record (US3, FR-012, FR-013)
 
-Each document is shown to the owner where the task says so.
-
 - [X] T037 [US3] Write the binding test: parse the fenced block in `specs/055-grounded-verify-secret-refusal/contracts/refusal.md`; fail on any line that is not one of the eight kinds; assert the number of lines of each kind (55 exact, 4 prefix, 20 ending, 1 contains, 6 backup, 10 part, 2 gitconfig, 2 sequence); assert each list equals the matching table in `secrets.rs` in both directions. Run. **Expected: passes.** Then prove it can fail: temporarily change one line of the block, see the failure, restore it, and record both runs.
-- [X] T038 [US3] `docs/design/NEW_SERVER_DESIGN.md`: a dated amendment (FR-012 item 1). **New text longer than ten lines in the source of truth: the owner is shown its outline and asked before it is written.**
+- [X] T038 [US3] `docs/design/NEW_SERVER_DESIGN.md`: a dated amendment (FR-012 item 1).
 - [X] T039 [US3] `specs/008-grounded-verify/spec.md` and `contracts/grounded-verify.md`: the one exception to all-or-nothing; the new errors; the four result additions.
 - [X] T040 [US3] `specs/009-glob-locators/spec.md` and `contracts/glob-locator.md`: the "silently dropped" wording; "all-or-nothing" and "output unchanged"; how refused files count; the superseded requirement that exact-path code and tests are unchanged.
 - [X] T041 [US3] `specs/011-grounded-compute-settle`: spec, contract and data model state that settlement is not used when any file was left out.
 - [X] T042 [US3] `SECURITY.md`; the README's row for the tool and its description of the root; the tool's line in `src/main.rs` help text; the server instructions text in `src/server.rs`; the header of `examples/acceptance_grounded_verify.rs`; the opening documentation of `src/traits/source.rs`, `src/grounded/mod.rs`, `src/grounded/assemble.rs` and the run function in `src/modes/grounded_verify.rs`.
-- [X] T043 [US3] `CLAUDE.md`: the tool's description. **An instruction file: the owner is shown the exact before and after and asked.** `CHANGELOG.md`: one entry under Unreleased; the owner is shown it before it is written.
+- [X] T043 [US3] `CLAUDE.md`: the tool's description. `CHANGELOG.md`: one entry under Unreleased.
 - [X] T044 [US3] Run the markdown check on every document written or amended, as its own command. Then the gate. Check SC-008 by hand against FR-012's seven items.
 
 ---
 
 ## Phase 9: Review and close
 
-- [X] T045 Independent review of the whole diff by a fresh reviewer given the diff and told to trace every caller, to look for any file the rules intend to refuse that could still be read, and for any change to a call with nothing refused. The owner is shown the brief and asked first. Findings go to the owner, most severe first.
-- [X] T046 Ask the owner: whether to add a Windows check to pull requests; and whether a live call is made before the pull request (the project's note says a model-facing description or schema change must pass the live example first; the vehicle is `examples/acceptance_grounded_verify`; state how many model calls it makes and their price from the project's price table).
-- [X] T047 Mark every task in this file done with a capital X, this one included; the test in `src/main.rs` counts exactly that form and requires none left open. Then `CLAUDE.md`'s Active feature section: the owner is shown the exact before and after and asked. Gate afterwards.
+- [X] T045 Independent review of the whole diff by a fresh reviewer given the diff and told to trace every caller, to look for any file the rules intend to refuse that could still be read, and for any change to a call with nothing refused.
+- [X] T046 Decide whether to add a Windows check to pull requests, and whether a live call is made before the pull request (the project's note says a model-facing description or schema change must pass the live example first; the vehicle is `examples/acceptance_grounded_verify`; state how many model calls it makes and their price from the project's price table).
+- [X] T047 Mark every task in this file done with a capital X, this one included; the test in `src/main.rs` counts exactly that form and requires none left open. Then `CLAUDE.md`'s Active feature section: updated. Gate afterwards.
 
 ## Delivery (steps, not counted tasks)
 
-These follow T047, so that everything written is in what is pushed. Each is asked.
+These follow T047, so that everything written is in what is pushed.
 
 1. Commits: phases 1 to 3 may be one; phases 4 and 5 are one.
 2. Review the commits before pushing.

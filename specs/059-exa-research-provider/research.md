@@ -1,6 +1,6 @@
 # Research: Exa replaces Brave for research
 
-Reference implementation: the user's `D:\Projects\exa-mcp-server` (0.9.1),
+Reference implementation: an earlier private Exa integration (0.9.1),
 read 2026-11-21: `src/tools/webSearch.ts`, `src/tools/webFetch.ts`,
 `src/tools/shared.ts`, `src/utils/exaClient.ts`, `src/types.ts`,
 `docs/TOOL_REFERENCE.md`. Exa API facts below come from it.
@@ -41,7 +41,7 @@ angles, 8 sources, 1 vote). `deep` and `deep-reasoning` are avoided: the
 reference marks them multi-step and able to run for minutes per search, and a
 deep run makes 8 searches. `deep-lite`'s cost and latency are measured in the live acceptance
 run (quickstart); if they are out of line with `auto`, changing the mapping is
-a plan change brought back to the user, not a silent swap.
+a plan change, not a silent swap.
 
 **Alternatives considered**: `lite` for `quick`, checked live (undocumented
 restrictions); keeping legacy `fast`; `deep` for `deep` (latency risk under
@@ -106,7 +106,7 @@ the private-address guard has nothing to guard. Exa crawls on its side.
 `BRAVE_API_KEY` present with `EXA_API_KEY` absent is a `ConfigError` naming
 both and saying Brave is removed; with `EXA_API_KEY` present, `BRAVE_API_KEY`
 is ignored (amended 2026-11-22: other tools share `BRAVE_API_KEY`, and the
-user's environment sets it, so a blanket error would stop Parallax on every
+operator's environment sets it, so a blanket error would stop Parallax on every
 launch).
 
 **Rationale**: the project's loud-configuration rule; a silent loss of the

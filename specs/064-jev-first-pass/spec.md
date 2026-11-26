@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: plan `~/.claude/plans/warm-kindling-shell.md` §4-§5 (approved 2026-11-24).
+**Input**: plan `~/.claude/plans/warm-kindling-shell.md` §4-§5 (2026-11-24).
 
 ## Clarifications
 

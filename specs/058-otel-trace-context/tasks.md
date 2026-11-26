@@ -66,7 +66,7 @@ provides the W3C propagator, research D2).
 - [X] T015 Add an "Added" entry to `CHANGELOG.md` under Unreleased
 - [X] T016 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
 - [X] T017 Independent review of the branch diff by a fresh subagent; act on findings
-- [X] T018 Update the CLAUDE.md active-feature block for 058 (exact text approved first)
+- [X] T018 Update the CLAUDE.md active-feature block for 058
 
 ## Deferred
 

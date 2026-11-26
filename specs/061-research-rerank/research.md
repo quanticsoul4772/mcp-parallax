@@ -51,7 +51,7 @@ using the same `VoyageClient` as the memory tools. No new setting.
 **Decision**: an error, a timeout past the run's deadline, or a malformed
 reply leaves the pages unreranked: every fetched page goes to extraction, as
 before this feature, and `stats.rerank_skipped` names the reason. The run
-never fails on rerank (FR-005, operator-approved 2026-11-23).
+never fails on rerank (FR-005, 2026-11-23).
 **Retries**: the client's existing Voyage retry and backoff apply; the call
 is additionally bounded by the run's remaining time.
 

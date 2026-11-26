@@ -840,7 +840,7 @@ fn unbilled(error: &AppError) -> Option<f64> {
 /// the scorable pages are reranked in fetched order and the top `keep` go on;
 /// pages without text are not sent and stay out, as before (D7).
 ///
-/// A failed rerank never fails the run (FR-005, the operator-approved
+/// A failed rerank never fails the run (FR-005, the named
 /// exception): an error, a malformed reply, or the call outlasting
 /// `time_left` keeps every candidate, scores nothing, and returns the reason.
 async fn rerank_pages(

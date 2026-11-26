@@ -20,7 +20,7 @@ US3 and US4 build on US1's client.
 - [X] T002 Write failing unit tests in `src/traits/runner.rs` for the `CliRunner` seam using its mock: a `CliRequest` (program, arguments, stdin text, variables to remove, variables to set, working folder, timeout) returns a `CliOutput` (exit code, stdout, stderr) or a timeout error
 - [X] T003 Implement `CliRunner`, `CliRequest`, `CliOutput` in `src/traits/runner.rs` and the process-backed `TokioCliRunner` (piped stdin/stdout/stderr, never inherited; `kill_on_drop`; timeout kills the child) in `src/client/claude_cli.rs`; export from `src/traits/mod.rs`. `TokioCliRunner` gets its own tests, seen failing first, against stand-in programs, never `claude` (analyze A1): an environment print (`cmd /C set` on Windows, `env` elsewhere) shows the removed variables absent and the set ones present; `rustc --version` shows stdout captured; a 30 s sleep (`ping -n 30 127.0.0.1` / `sleep 30`) under a short timeout returns the timeout error and leaves no process running
 - [X] T004 Add `reported_cost_micros: Option<u64>` to `Completion` in `src/traits/client.rs`, `None` at every existing construction site (both clients, mocks, tests), so the crate builds unchanged
-- [X] T005 Add `CLAUDE_CLI_PATH` (default `claude`), `CLAUDE_CLI_MODEL` (default `claude-sonnet-5-5`), `CLAUDE_CLI_CONCURRENCY` (default 4, `1..=32`, out of range or unparseable is a startup error naming it) and `DefaultVar::ClaudeCliModel` to `src/config.rs` and `src/routing.rs`, tests first; update `src/config_facts/`, `--help` in `src/main.rs` and README's configuration rows (exact text approved first) so their binding tests pass. The backend value itself lands with its client in T011, so no match arm is ever a stub
+- [X] T005 Add `CLAUDE_CLI_PATH` (default `claude`), `CLAUDE_CLI_MODEL` (default `claude-sonnet-5-5`), `CLAUDE_CLI_CONCURRENCY` (default 4, `1..=32`, out of range or unparseable is a startup error naming it) and `DefaultVar::ClaudeCliModel` to `src/config.rs` and `src/routing.rs`, tests first; update `src/config_facts/`, `--help` in `src/main.rs` and README's configuration rows so their binding tests pass. The backend value itself lands with its client in T011, so no match arm is ever a stub
 
 **Checkpoint**: the seam and settings exist; no backend uses them yet.
 
@@ -81,11 +81,11 @@ US3 and US4 build on US1's client.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [X] T025 Dated amendments to `docs/design/NEW_SERVER_DESIGN.md` §3.1 and `docs/design/SDK_LANDSCAPE.md` §core; README backend section with the research.md D12 statement; `CHANGELOG.md` `[Unreleased]` (exact text of each approved first)
+- [X] T025 Dated amendments to `docs/design/NEW_SERVER_DESIGN.md` §3.1 and `docs/design/SDK_LANDSCAPE.md` §core; README backend section with the research.md D12 statement; `CHANGELOG.md` `[Unreleased]`
 - [X] T026 Write `examples/acceptance_claude_cli.rs` (quickstart §Live acceptance): every always-on tool once and one quick `research` question through the server; then 20 `decide`-schema calls made directly through `ClaudeCliClient` with the real runner wrapped by a recording runner, so each call's wall time can be compared with the reply's `duration_api_ms` (SC-003) and its first attempt checked by the local validator (SC-004) (analyze A2); prints time, overhead, first-attempt pass, tokens and estimate per call, and fails if any record shows a recursive Parallax call
-- [X] T027 Independent review: a fresh subagent given only the diff, told to trace every caller (brief approved first); findings asked one by one
+- [X] T027 Independent review: a fresh subagent given only the diff, told to trace every caller
 - [X] T028 Live acceptance (quickstart.md) with `ANTHROPIC_API_KEY` unset and Parallax configured as an MCP server in Claude Code; record results in quickstart.md (SC-001 to SC-005)
-- [X] T029 Update the CLAUDE.md active-feature block for 060 (exact text approved first)
+- [X] T029 Update the CLAUDE.md active-feature block for 060
 
 ## Dependencies & Execution Order
 

@@ -30,7 +30,7 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 
 - [X] T003 [US1] Write failing wiremock tests for `ExaClient` in `src/client/exa.rs`: `POST /search` with `x-api-key`, `type`, `numResults`, `includeDomains`/`excludeDomains` only when non-empty and no contents request, mapping to hits (title falls back to the URL); `POST /contents` with `urls`, `text.maxCharacters` and `maxAgeHours`, mapping to pages (text ≥ 99% of the cap is truncated; missing text is empty; a URL with an `error` status is absent)
 - [X] T004 [US1] Implement `ExaClient` in `src/client/exa.rs` (`new`, `with_base_url`, `with_backoff_base_ms`) and export it from `src/client/mod.rs`
-- [X] T005 [US1] Add `EXA_API_KEY` and `EXA_MAX_AGE_HOURS` (-1..=720, default 168; out of range or unparseable is a startup error naming it) to `src/config.rs`, with tests first; update the config facts in `src/config_facts/` and `--help` in `src/main.rs` and README's configuration rows (exact text approved first) so their binding tests pass (analyze A2)
+- [X] T005 [US1] Add `EXA_API_KEY` and `EXA_MAX_AGE_HOURS` (-1..=720, default 168; out of range or unparseable is a startup error naming it) to `src/config.rs`, with tests first; update the config facts in `src/config_facts/` and `--help` in `src/main.rs` and README's configuration rows so their binding tests pass (analyze A2)
 - [X] T006 [US1] Write failing pipeline tests in `src/research/pipeline_tests.rs`: text comes from one contents call for the kept URLs only (after dedup, domain filter and the source cap; no fetcher); a page with empty text, or a URL absent from the contents response, is dropped and counted; domain constraints reach the search request and the local filter still excludes; each depth sends its search type; a truncated page yields `sources[].truncated = true`; every Exa search failing returns the provider error, not an empty answer (analyze A5); the contents request failing returns its error, metered (analyze B1)
 - [X] T007 [US1] Rework `src/research/pipeline.rs`: build the `SearchRequest` per angle from settings and constraints, make one `ContentsRequest` for the kept URLs, take each source's title and text from its page (trimmed, the existing 16,000 cap), drop the `Fetcher` parameter from `run_at`/`run_metered_at` and update the call in `src/server.rs` (analyze A1); add `truncated` to `SourceRef` in `src/research/contract.rs`; reword the `sources_fetched`, `fetched_at` and per-angle count-cap comments (analyze A6)
 - [X] T008 [US1] Remove `readable_text` and `ReadablePage`'s HTML path from `src/research/extract.rs` (the extraction prompt is unchanged), delete `src/research/fetch.rs` and `src/traits/fetcher.rs`, remove `rs-trafilatura` and `robotstxt` from `Cargo.toml` (and `reqwest`'s `stream` feature if nothing else uses it)
@@ -46,7 +46,7 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 **Independent test**: load config with each removed variable set and read the error.
 
 - [X] T011 [US2] Write failing tests in `src/config.rs`: `BRAVE_API_KEY` set without `EXA_API_KEY` is a `ConfigError` naming both; with both set, config loads and ignores `BRAVE_API_KEY`; `FETCH_ALLOW_PRIVATE` and `FETCH_TIMEOUT_MS` set are errors naming each and saying Parallax no longer fetches pages
-- [X] T012 [US2] Implement the three removed-variable errors in `src/config.rs`; remove the `brave_api_key`, `fetch_timeout_ms` and `fetch_allow_private` fields and their uses; update `src/config_facts/` (sources and exclusions), `--help`, and README's configuration rows (exact text approved first; analyze A2)
+- [X] T012 [US2] Implement the three removed-variable errors in `src/config.rs`; remove the `brave_api_key`, `fetch_timeout_ms` and `fetch_allow_private` fields and their uses; update `src/config_facts/` (sources and exclusions), `--help`, and README's configuration rows (analyze A2)
 
 **Checkpoint**: US2 complete.
 
@@ -68,13 +68,13 @@ None: no new dependency. Two are removed in US1 (`rs-trafilatura`,
 ## Phase 6: Polish & Cross-Cutting
 
 - [X] T019 Update `specs/007-observability-layer/contracts/telemetry.md` with `parallax.search.cost_usd` and the record contract for `search_cost_usd`
-- [X] T020 Dated amendments (2026-11-22) to `docs/design/SDK_LANDSCAPE.md`, `docs/design/RESEARCH_PRIMITIVE.md` and `docs/design/NEW_SERVER_DESIGN.md` §10 (research.md D13), exact text approved first
-- [X] T021 README's tools table and security paragraph, the `research` tool description in `src/server.rs`, and CLAUDE.md's runtime-configuration paragraph name `EXA_API_KEY` and `EXA_MAX_AGE_HOURS` and drop the removed variables (exact text approved first; README's configuration rows are done in T005 and T012)
+- [X] T020 Dated amendments (2026-11-22) to `docs/design/SDK_LANDSCAPE.md`, `docs/design/RESEARCH_PRIMITIVE.md` and `docs/design/NEW_SERVER_DESIGN.md` §10 (research.md D13)
+- [X] T021 README's tools table and security paragraph, the `research` tool description in `src/server.rs`, and CLAUDE.md's runtime-configuration paragraph name `EXA_API_KEY` and `EXA_MAX_AGE_HOURS` and drop the removed variables (README's configuration rows are done in T005 and T012)
 - [X] T022 CHANGELOG `Unreleased`: Changed (research on Exa, `sources[].truncated`, `search_cost_usd`) and Removed (Brave, the page fetcher, three variables, now startup errors)
 - [X] T023 Run the full gate (`cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo test --all-features --tests`)
 - [X] T024 Independent review of the branch diff by a fresh subagent; act on findings
 - [X] T025 Live acceptance (quickstart.md): three runs of `acceptance_research` with `EXA_API_KEY`, one at `deep`; record findings, sources, truncated sources, Exa cost and elapsed time in quickstart.md (SC-001, research.md D2). Done in part 2026-11-22: nine questions passed on real Exa; the rest is deferred (see Deferred).
-- [X] T026 Update the CLAUDE.md active-feature block for 059 (exact text approved first)
+- [X] T026 Update the CLAUDE.md active-feature block for 059
 
 ## Deferred
 

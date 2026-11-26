@@ -12,7 +12,7 @@
 
 ### Session 2026-11-25
 
-- Q: Should the user's setup be `on` at 0.35 at the end of 065, or `shadow` until plan §7.3 passes on real traffic? → A: `on` at 0.35, as plan §6.1 and §4.1 say; the tool docs state the measured false-positive rate.
+- Q: Should the operator's setup be `on` at 0.35 at the end of 065, or `shadow` until plan §7.3 passes on real traffic? → A: `on` at 0.35, as plan §6.1 and §4.1 say; the tool docs state the measured false-positive rate.
 - Q: What text does Jev screen? → A: The same capped text research reads for extraction and 063 screens, one call per page; no splitting.
 - Q: When does each page's Jev call happen? → A: Concurrently with that page's extraction call, joined before the page's result is assembled.
 - Q: What deadline does each Jev call have? → A: 2000 ms per call including retries, capped by the run's remaining time (064's research-claim deadline).
@@ -78,7 +78,7 @@ The site is off unless the operator sets it; a misconfiguration stops startup wi
 
 ### Functional Requirements
 
-- **FR-001 Question**: the `directs_ai` yes/no question, with exa-mcp-server's instructions and both criteria verbatim (as recorded in `claudedocs/jev-064-measurements-2026-11-24.md`), at a pinned question version.
+- **FR-001 Question**: the `directs_ai` yes/no question, with the earlier back-test's instructions and both criteria verbatim (as recorded in `claudedocs/jev-064-measurements-2026-11-24.md`), at a pinned question version.
 - **FR-002 What is sent**: each kept page as `{page_url, page_text}`, through the mandatory redactor (URL included), to the pinned model `jev-1.14.0`. The page text is the capped text research reads for extraction, the same text 063 screens. Stored memories and the caller's question are never sent.
 - **FR-003 Warning**: a page whose probability is at or above the threshold pinned for the answering model carries a warning; the threshold for `jev-1.14.0` is 0.35. A missing, invalid or other-model answer never warns.
 - **FR-004 Warn only**: the warning changes no page selection, extraction, verification, grounding, label, confidence or other field. It appears in its own per-source field and a stats count, separate from 063's fields; the source also shows whether it was screened and, if not, why. These fields and the count appear only with the site on; with it off or in shadow they are left out.
@@ -87,7 +87,7 @@ The site is off unless the operator sets it; a misconfiguration stops startup wi
 - **FR-007 Calls**: one request per kept page, made concurrently with that page's extraction call and joined before the page's result is assembled, within 064's limit of 4 in flight per process, under a deadline of 2000 ms per call, retries included, capped by the run's remaining time; `on` retries 429, 529 and 5xx through the shared retry helpers within that time; shadow makes exactly one request.
 - **FR-008 Records**: one `jev_records` row per page request, with the new site `research_injection`, the mode, the answer and decision band, the answering model, outcome, cost, links to the research invocation and source, and as its label the names of the 063 patterns that matched the page (names only, no page text); A row's `applied` flag is 1 only for an `on` row whose decision warned, and 0 otherwise. Jev cost goes into the invocation's `jev_cost_usd`. Jev tokens stay out of the research token ceiling.
 - **FR-009 Measurement**: the back-test harness reports the injection site from stored records: share warned, failures by outcome, and agreement with 063's pattern screen on the same pages.
-- **FR-010 Setup**: the last task sets the site in the operator's Parallax settings, after merge and rebuild, with a backup taken first; only that key changes. The value is `on`, at the pinned 0.35 threshold, as plan §6.1 and §4.1 say (Clarifications).
+- **FR-010 Setup**: a closing task sets the site in the operator's Parallax settings, after merge and rebuild, with a backup taken first; only that key changes. The value is `on`, at the pinned 0.35 threshold, as plan §6.1 and §4.1 say (Clarifications).
 
 ### Key Entities
 

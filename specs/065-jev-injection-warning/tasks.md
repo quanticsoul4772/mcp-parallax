@@ -15,7 +15,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T002 Implement the site and mode, and add `research_injection` to `specs/064-jev-first-pass/contracts/jev-record.schema.json`. Files: `src/traits/classifier.rs`, the schema.
 - [x] T003 [P] Test the pinned threshold table and decision: `injection_threshold("jev-1.14.0") == Some(0.35)`, any other model gives `None`; `injection_decision` warns at exactly 0.35 and not just below it (`next_down`), and a missing probability is never `Warned`; the 0.35 value is bound to the T038 (e) section of `claudedocs/jev-064-measurements-2026-11-24.md`. Files: `src/jev/policy.rs` tests.
 - [x] T004 Implement `INJECTION_THRESHOLDS`, `injection_threshold` and `injection_decision`. Files: `src/jev/policy.rs`.
-- [x] T005 [P] Test the `directs_ai` question: yes/no, version 1, exa-mcp-server's instructions and both criteria verbatim, criteria declared `true` then `false`; bound to the wording the back-test sent. Files: `src/jev/questions.rs` tests.
+- [x] T005 [P] Test the `directs_ai` question: yes/no, version 1, the earlier back-test's instructions and both criteria verbatim, criteria declared `true` then `false`; bound to the wording the back-test sent. Files: `src/jev/questions.rs` tests.
 - [x] T006 Implement `injection_question()` in `src/jev/questions.rs`; `jev_backtest injection` uses it and drops its question-file argument (usage text and CHANGELOG updated). Files: `src/jev/questions.rs`, `examples/jev_backtest/main.rs`, `examples/jev_backtest/live.rs`.
 - [x] T007 [P] Test config (research D2): `PARALLAX_JEV_MODE_RESEARCH_INJECTION` accepts `off`, `shadow` and `on`, defaults to `off`; non-off without the key is an error naming the variable; `on` with a model lacking a pinned threshold is an error naming both variables; `on` for `TURN_REVIEW` or `RESEARCH_CLAIMS` is still an error. Files: `src/config.rs` tests.
 - [x] T008 Implement the config, and the new field in the three Config fixtures (`src/config.rs` `test_config`, `tests/common/mod.rs`, `examples/common/mod.rs`). Files: `src/config.rs`.
@@ -65,9 +65,10 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T023 [P] Test, then extend `jev_backtest report` with the injection site from stored records (FR-009): share warned, failures by outcome, agreement with 063 on the same pages. Files: `src/jev/report.rs`, `src/jev/report/tests.rs`.
 - [x] T024 Write the live example `examples/acceptance_jev_injection.rs` asserting SC-005, exiting non-zero on failure; register it in `Cargo.toml` with `test = true` for its helpers.
 - [x] T025 CHANGELOG `[Unreleased]` entry. Files: `CHANGELOG.md`.
-- [ ] T026 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` (design corpus) and `code-reviewer` (Rust conventions) agents.
-- [ ] T027 Push and PR; CI.
+- [x] T026 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` (design corpus) and `code-reviewer` (Rust conventions) agents.
+- [x] T027 Push and PR; CI.
 - [ ] T028 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
+- [ ] T028a Add a harness mode that asks `directs_ai` with its two criteria in both orders and reports the flip rate with McNemar's test (test first); rebuild the injection dataset; run it. T029 needs a flip rate of 5% or less (`docs/design/NEW_SERVER_DESIGN.md:304`); results go to the 064 measurements doc.
 - [ ] T029 Turn it on in the operator's setup (FR-010): back up `~/.claude.json`; add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key; restart Claude Code.
 - [ ] T030 Update the CLAUDE.md active-feature block to the shipped state.
 
@@ -75,7 +76,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 - Phase 1 blocks every story. T001 → T002; T003 → T004; T005 → T006; T007 → T008 (needs T002, T004); T009 → T010.
 - US1 (T011–T015) needs Phase 1. US2 (T016–T017) needs T014. US3 (T018–T021) needs T012 and T014.
-- Phase 5 needs all stories; T026 → T027 → merge → T028 → T029 → T030.
+- Phase 5 needs all stories; T026 → T027 → merge → T028 → T028a → T029 → T030.
 
 ## Parallel examples
 

@@ -10,7 +10,7 @@ After research's one contents call returns the kept sources' text, a new
 claim extraction, the step that costs one model call per page. The reranker
 is the existing `VoyageClient` (new `POST /v1/rerank` method), present when
 `VOYAGE_API_KEY` is set. A failed rerank leaves today's behavior in place and
-is recorded in the result's stats (operator-approved exception). Rerank
+is recorded in the result's stats (named exception). Rerank
 tokens are accounted like any other model's, under `rerank-3`, so they reach
 the record's usage and cost.
 
@@ -34,7 +34,7 @@ result-contract fields
 |---|---|---|
 | I. Design-corpus fidelity | Amend | SDK_LANDSCAPE names `rerank-2.5`; the provider now lists `rerank-3` as current (pricing page, 2026-11-23). A dated amendment records the change. |
 | II. Constrained output | N/A | No model-facing schema or prompt changes. |
-| III. Compiler discipline | Deviation, named | FR-005's fallback is the operator-approved exception to "no fallbacks": rerank only trims work, so a skipped rerank costs usage, never correctness, and the skip is recorded, not hidden. |
+| III. Compiler discipline | Deviation, named | FR-005's fallback is the named exception to "no fallbacks": rerank only trims work, so a skipped rerank costs usage, never correctness, and the skip is recorded, not hidden. |
 | IV. Seams and tests | Pass | `Reranker` trait with a mock; Voyage endpoint tested through wiremock. |
 | V. Deterministic over probabilistic | Pass | Selection is a deterministic top-K over scores, ties in fetched order. |
 | VI. Off by default | Pass | Gated on `VOYAGE_API_KEY`, which already gates memory. |

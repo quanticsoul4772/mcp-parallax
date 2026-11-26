@@ -4,7 +4,7 @@
 //! and titles (no text requested, so text is not billed for candidates the
 //! pipeline drops), and `POST /contents` returns the text of the kept
 //! sources (research.md D1). Request and response shapes follow Exa's
-//! OpenAPI spec and the user's exa-mcp-server.
+//! OpenAPI spec and an earlier Exa integration.
 
 use super::retry::{cap_detail, retry_after, time_until};
 use crate::config::Config;
