@@ -140,6 +140,16 @@ pub fn values(response: &JevResponse) -> Vec<(String, f64, Option<String>)> {
         .collect()
 }
 
+/// The turn-review questions' version (066: version 2).
+fn turn_version() -> u32 {
+    turn_review_questions().first().map_or(1, |q| q.version)
+}
+
+/// The research claim questions' version.
+fn research_version() -> u32 {
+    research_claim_questions(1).first().map_or(1, |q| q.version)
+}
+
 /// Ask one request five times; one noise item per question answered.
 async fn five(
     client: &TypesafeClient,
@@ -171,6 +181,11 @@ async fn five(
                 question: id.clone(),
                 samples: answers.iter().map(|(_, p, _)| *p).collect(),
                 choices: answers.iter().filter_map(|(_, _, c)| c.clone()).collect(),
+                version: req
+                    .questions
+                    .iter()
+                    .find(|q| q.id == *id)
+                    .map_or(1, |q| q.version),
             }
         })
         .collect()
@@ -194,7 +209,12 @@ pub async fn noise(config: &Config, storage: &SqliteStorage, limit: usize) {
         }
         Some(items)
     };
-    results.record_noise_run(RESEARCH, research_items, &research_counts);
+    results.record_noise_run(
+        RESEARCH,
+        research_version(),
+        research_items,
+        &research_counts,
+    );
     let (turns, mut turn_counts) = turn_rows(storage, limit, |_| Ok(())).await;
     let turn_items = if turns.is_empty() {
         None
@@ -206,7 +226,7 @@ pub async fn noise(config: &Config, storage: &SqliteStorage, limit: usize) {
         }
         Some(items)
     };
-    results.record_noise_run(TURN, turn_items, &turn_counts);
+    results.record_noise_run(TURN, turn_version(), turn_items, &turn_counts);
     results.drop_legacy_all();
     rebuild::save(&results);
     print!("{}", measure::tables(&results));
@@ -292,6 +312,7 @@ pub async fn order(config: &Config, storage: &SqliteStorage, limit: usize) {
                         order: order.iter().map(|o| (*o).to_string()).collect(),
                         base_supports: *before,
                         supports: now,
+                        version: research_version(),
                     });
                 }
             }
@@ -342,6 +363,7 @@ async fn verify_twice(
         row_id: row.id.clone(),
         first: format!("{:?}", first.verdict.verdict),
         second: format!("{:?}", second.verdict.verdict),
+        version: research_version(),
     })
 }
 
@@ -384,6 +406,7 @@ async fn review_twice(
         row_id: row.id.clone(),
         first: first.clone(),
         second: second.clone(),
+        version: turn_version(),
     })
 }
 
@@ -432,7 +455,12 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
         research_items = Some(items);
         results.replace_note(&format!("self-agreement {RESEARCH}"), research_note);
     }
-    results.record_agreement_run(RESEARCH, research_items, &research_counts);
+    results.record_agreement_run(
+        RESEARCH,
+        research_version(),
+        research_items,
+        &research_counts,
+    );
 
     let review_mode = registry.get(review::REVIEW_MODE_ID).expect("review mode");
     let (turns, mut turn_counts) = turn_rows(storage, limit, no_memory_candidates).await;
@@ -448,7 +476,7 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
         turn_items = Some(items);
         results.replace_note(&format!("self-agreement {TURN}"), turn_note);
     }
-    results.record_agreement_run(TURN, turn_items, &turn_counts);
+    results.record_agreement_run(TURN, turn_version(), turn_items, &turn_counts);
     results.drop_legacy_notes();
     rebuild::save(&results);
     print!("{}", measure::tables(&results));

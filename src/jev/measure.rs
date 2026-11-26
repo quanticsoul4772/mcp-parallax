@@ -111,6 +111,20 @@ pub fn last_assistant_text(text: &str) -> Option<String> {
     })
 }
 
+const fn version_one() -> u32 {
+    1
+}
+
+/// The skip-count prefix for `name` at `version`: version 1 keeps the
+/// pre-066 prefix, so saved counts still match.
+fn versioned(name: &str, version: u32) -> String {
+    if version == 1 {
+        name.to_string()
+    } else {
+        format!("{name} v{version}")
+    }
+}
+
 /// One item asked several times.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoiseItem {
@@ -126,6 +140,9 @@ pub struct NoiseItem {
     /// yes/no question.
     #[serde(default)]
     pub choices: Vec<String>,
+    /// The question version asked (066); files saved before 066 read as 1.
+    #[serde(default = "version_one")]
+    pub version: u32,
 }
 
 /// One relation decision under a non-default option order.
@@ -141,6 +158,9 @@ pub struct OrderItem {
     pub base_supports: bool,
     /// `supports` was chosen under this order.
     pub supports: bool,
+    /// The question version asked (066); files saved before 066 read as 1.
+    #[serde(default = "version_one")]
+    pub version: u32,
 }
 
 /// One item judged twice by the big model.
@@ -154,6 +174,9 @@ pub struct AgreementItem {
     pub first: String,
     /// The second verdict.
     pub second: String,
+    /// The question version asked (066); files saved before 066 read as 1.
+    #[serde(default = "version_one")]
+    pub version: u32,
 }
 
 /// The FR-011(d) base rate from the checkpoint records.
@@ -219,16 +242,19 @@ pub struct Results {
 }
 
 impl Results {
-    /// Replace the noise items of `site` only; other sites' items stay.
-    pub fn replace_noise(&mut self, site: &str, items: Vec<NoiseItem>) {
-        self.noise.retain(|i| i.site != site);
+    /// Replace the noise items of `site` at `version` only; other sites'
+    /// items, and other versions', stay.
+    pub fn replace_noise(&mut self, site: &str, version: u32, items: Vec<NoiseItem>) {
+        self.noise
+            .retain(|i| i.site != site || i.version != version);
         self.noise.extend(items);
     }
 
-    /// Replace the self-agreement items of `site` only; other sites' items
-    /// stay.
-    pub fn replace_agreement(&mut self, site: &str, items: Vec<AgreementItem>) {
-        self.self_agreement.retain(|i| i.site != site);
+    /// Replace the self-agreement items of `site` at `version` only; other
+    /// sites' items, and other versions', stay.
+    pub fn replace_agreement(&mut self, site: &str, version: u32, items: Vec<AgreementItem>) {
+        self.self_agreement
+            .retain(|i| i.site != site || i.version != version);
         self.self_agreement.extend(items);
     }
 
@@ -269,16 +295,18 @@ impl Results {
     pub fn record_noise_run(
         &mut self,
         site: &str,
+        version: u32,
         items: Option<Vec<NoiseItem>>,
         counts: &BTreeMap<String, u32>,
     ) {
+        let prefix = versioned("noise", version);
         match items {
             Some(items) => {
-                self.replace_noise(site, items);
-                self.replace_skips("noise", site, counts);
+                self.replace_noise(site, version, items);
+                self.replace_skips(&prefix, site, counts);
             }
             None if counts.values().any(|c| *c > 0) => {
-                self.replace_skip_reasons("noise", site, counts);
+                self.replace_skip_reasons(&prefix, site, counts);
             }
             None => {}
         }
@@ -289,16 +317,18 @@ impl Results {
     pub fn record_agreement_run(
         &mut self,
         site: &str,
+        version: u32,
         items: Option<Vec<AgreementItem>>,
         counts: &BTreeMap<String, u32>,
     ) {
+        let prefix = versioned("self-agreement", version);
         match items {
             Some(items) => {
-                self.replace_agreement(site, items);
-                self.replace_skips("self-agreement", site, counts);
+                self.replace_agreement(site, version, items);
+                self.replace_skips(&prefix, site, counts);
             }
             None if counts.values().any(|c| *c > 0) => {
-                self.replace_skip_reasons("self-agreement", site, counts);
+                self.replace_skip_reasons(&prefix, site, counts);
             }
             None => {}
         }
@@ -342,10 +372,13 @@ pub fn read_results(path: &Path, must_exist: bool) -> Result<Results, String> {
 }
 
 fn noise_table(out: &mut String, noise: &[NoiseItem]) {
-    let mut groups: BTreeMap<(&str, &str), Vec<&NoiseItem>> = BTreeMap::new();
+    let mut groups: BTreeMap<(&str, String), Vec<&NoiseItem>> = BTreeMap::new();
     for item in noise {
         groups
-            .entry((item.site.as_str(), question_family(&item.question)))
+            .entry((
+                item.site.as_str(),
+                versioned(question_family(&item.question), item.version),
+            ))
             .or_default()
             .push(item);
     }
@@ -372,7 +405,12 @@ fn noise_table(out: &mut String, noise: &[NoiseItem]) {
 fn order_table(out: &mut String, order: &[OrderItem]) {
     let mut by_order: BTreeMap<String, (u32, u32, u32)> = BTreeMap::new();
     for item in order {
-        let entry = by_order.entry(item.order.join(",")).or_default();
+        let entry = by_order
+            .entry(versioned(
+                &format!("[{}]", item.order.join(",")),
+                item.version,
+            ))
+            .or_default();
         entry.0 += 1;
         match (item.base_supports, item.supports) {
             (true, false) => entry.1 += 1,
@@ -388,16 +426,18 @@ fn order_table(out: &mut String, order: &[OrderItem]) {
         };
         let _ = writeln!(
             out,
-            "order [{order}]: {compared} decisions, {} flips, McNemar {statistic:.3}",
+            "order {order}: {compared} decisions, {} flips, McNemar {statistic:.3}",
             b + c
         );
     }
 }
 
 fn agreement_table(out: &mut String, items: &[AgreementItem]) {
-    let mut by_site: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
+    let mut by_site: BTreeMap<String, (u32, u32)> = BTreeMap::new();
     for item in items {
-        let entry = by_site.entry(item.site.as_str()).or_default();
+        let entry = by_site
+            .entry(versioned(&item.site, item.version))
+            .or_default();
         entry.0 += 1;
         if item.first == item.second {
             entry.1 += 1;

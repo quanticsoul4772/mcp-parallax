@@ -49,8 +49,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T018a [P] [US2] Test that the report separates turn-review rows by question version and feeds only version-2 rows to the promotion decision. Files: `src/jev/report/tests.rs`.
 - [x] T018b [US2] Implement the version separation in the report. Files: `src/jev/report.rs`.
 - [x] T019 [US2] Implement version 2 as separate question values, leaving `noul()` unchanged; correct the comment at `src/traits/classifier.rs:109-111` (options are not always empty for yes/no questions). Files: `src/jev/questions.rs`, `src/traits/classifier.rs`.
-- [ ] T019a [P] [US2] Test the saved measurements: noise, self-agreement and order results carry the question version; a version-2 run does not overwrite version-1 results; `reproduce` prints the version. Files: `src/jev/measure.rs` tests.
-- [ ] T019b [US2] Implement the version field in the saved measurements. Files: `src/jev/measure.rs`, `examples/jev_backtest/`.
+- [x] T019a [P] [US2] Test the saved measurements: noise, self-agreement and order results carry the question version; a version-2 run does not overwrite version-1 results; `reproduce` prints the version. Files: `src/jev/measure.rs` tests.
+- [x] T019b [US2] Implement the version field in the saved measurements. Files: `src/jev/measure.rs`, `examples/jev_backtest/`.
 - [ ] T019c [P] [US2] Test the swapped turn-review questions (criteria order reversed) and a yes/no order result type that is saved and reproduced. Files: `src/jev/questions.rs` tests, `src/jev/measure.rs` tests, `src/client/typesafe/tests.rs`.
 - [ ] T019d [US2] Implement the swapped turn-review questions, the yes/no order result type, and the harness subcommand that runs both orders. Files: `src/jev/questions.rs`, `src/jev/measure.rs`, `examples/jev_backtest/`.
 - [ ] T020 [P] [US2] Test the skip decision: pinned tables keyed by Jev model, big-model id and question versions (empty); memory required; any candidate blocks; truncated state blocks; the audit share from `fnv1a64(eval_id)`. Files: `src/jev/policy.rs` tests.
