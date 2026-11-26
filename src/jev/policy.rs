@@ -6,6 +6,8 @@
 use crate::traits::classifier::{JevAnswer, JevQuestion, JevResponse, QuestionKind};
 use std::collections::BTreeSet;
 
+pub mod skip;
+
 /// How far a choice's probabilities may stray from summing to 1.
 const SUM_TOLERANCE: f64 = 0.01;
 
