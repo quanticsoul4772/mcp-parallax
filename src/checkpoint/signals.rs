@@ -1,0 +1,344 @@
+//! The 066 turn signals: `pushback_reversal` and `unverified_fact` (FR-003).
+//!
+//! Cheap detectors in code, run at every non-continuation turn end with a
+//! final message, independent of the review. No Jev call is made and nothing
+//! leaves the machine; the results go to `turn_signal_records` only.
+
+use crate::checkpoint::review::mine_candidates;
+use crate::checkpoint::trajectory::{TrajectoryEntry, TrajectoryWindow};
+use crate::checkpoint::turn_view::TurnData;
+use crate::jev::entities::{unmatched, Unmatched};
+use crate::storage::turn_signals::TurnSignalRecord;
+use chrono::{DateTime, Utc};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// The turn start was not in the lines read.
+pub const TURN_START_NOT_FOUND: &str = "turn start not found";
+/// No final message is held for this session (first turn, or a restart).
+pub const NO_PREVIOUS_FINAL: &str = "no previous final message";
+/// The transcript could not be read.
+pub const TRANSCRIPT_UNREADABLE: &str = "transcript unreadable";
+/// A tool ran after the prompt, so the reversal may rest on new evidence.
+pub const TOOL_CALL_AFTER_PROMPT: &str = "tool call after prompt";
+
+/// One signal's outcome for a turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalResult {
+    /// The detector found its pattern.
+    Fired,
+    /// The detector ran and found nothing.
+    NotFired,
+    /// The detector could not run; the reason is recorded.
+    Excluded(&'static str),
+}
+
+impl SignalResult {
+    /// The value stored in `turn_signal_records`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fired => "fired",
+            Self::NotFired => "not_fired",
+            Self::Excluded(reason) => reason,
+        }
+    }
+}
+
+/// The last final message per harness session, held in memory only
+/// (FR-005), updated at every turn end including continuation turns.
+#[derive(Debug, Default)]
+pub struct PreviousFinals(Mutex<HashMap<String, String>>);
+
+impl PreviousFinals {
+    /// Store `final_message` for `session` and return the one it replaces.
+    pub fn swap(&self, session: &str, final_message: &str) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(session.to_string(), final_message.to_string())
+    }
+}
+
+/// `pushback_reversal` (research D5).
+///
+/// After a real prompt with no tool call, the pair miner (lexical overlap
+/// plus opposing polarity, no stored memories) finds a pair between the
+/// previous and the final message.
+#[must_use]
+pub fn pushback(
+    turn: &TurnData,
+    previous_final: Option<&str>,
+    final_message: &str,
+) -> SignalResult {
+    if turn.start.is_none() {
+        return SignalResult::Excluded(TURN_START_NOT_FOUND);
+    }
+    let Some(previous) = previous_final else {
+        return SignalResult::Excluded(NO_PREVIOUS_FINAL);
+    };
+    if turn.tool_calls_after_prompt > 0 {
+        return SignalResult::Excluded(TOOL_CALL_AFTER_PROMPT);
+    }
+    let window = TrajectoryWindow {
+        session_id: String::new(),
+        entries: vec![TrajectoryEntry::Assistant {
+            text: previous.to_string(),
+        }],
+    };
+    if mine_candidates(&window, final_message, &[]).is_empty() {
+        SignalResult::NotFired
+    } else {
+        SignalResult::Fired
+    }
+}
+
+/// `unverified_fact` (research D6): entities of the final message not found
+/// in the turn's tool inputs, tool outputs or user prompt.
+#[must_use]
+pub fn unverified_fact(turn: &TurnData, final_message: &str) -> (SignalResult, Vec<Unmatched>) {
+    if turn.start.is_none() {
+        return (SignalResult::Excluded(TURN_START_NOT_FOUND), Vec::new());
+    }
+    let mut evidence: Vec<&str> = turn
+        .tool_inputs
+        .iter()
+        .chain(&turn.tool_outputs)
+        .map(String::as_str)
+        .collect();
+    evidence.push(&turn.user_prompt);
+    let missing = unmatched(final_message, &evidence);
+    let result = if missing.is_empty() {
+        SignalResult::NotFired
+    } else {
+        SignalResult::Fired
+    };
+    (result, missing)
+}
+
+/// The corrective each signal names (FR-007): `verify` for a reversal;
+/// `grounded_verify`, else `research`, else none for an unverified fact.
+#[must_use]
+pub fn recommendations(grounded_verify: bool, research: bool) -> Value {
+    let unverified = if grounded_verify {
+        Some("grounded_verify")
+    } else if research {
+        Some("research")
+    } else {
+        None
+    };
+    json!({ "pushback_reversal": "verify", "unverified_fact": unverified })
+}
+
+/// Everything one row needs.
+#[derive(Debug, Clone)]
+pub struct RowInput<'a> {
+    /// Row id.
+    pub id: String,
+    /// The checkpoint record's id.
+    pub eval_id: &'a str,
+    /// The harness session.
+    pub harness_session_id: &'a str,
+    /// The transcript path.
+    pub transcript_ref: &'a str,
+    /// The turn data; `None` when the transcript could not be read.
+    pub turn: Option<&'a TurnData>,
+    /// Line index of the final message in the tail read.
+    pub final_line: Option<u32>,
+    /// The previous final message for this session.
+    pub previous_final: Option<&'a str>,
+    /// This turn's final message.
+    pub final_message: &'a str,
+    /// Whether `grounded_verify` is in the catalog.
+    pub grounded_verify: bool,
+    /// Whether `research` is in the catalog.
+    pub research: bool,
+    /// Evaluation time.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Run both detectors and build the row (FR-011).
+#[must_use]
+pub fn build_row(input: &RowInput<'_>) -> TurnSignalRecord {
+    let (pushback_result, unverified_result, missing) = input.turn.map_or_else(
+        || {
+            (
+                SignalResult::Excluded(TRANSCRIPT_UNREADABLE),
+                SignalResult::Excluded(TRANSCRIPT_UNREADABLE),
+                Vec::new(),
+            )
+        },
+        |turn| {
+            let (unverified, missing) = unverified_fact(turn, input.final_message);
+            (
+                pushback(turn, input.previous_final, input.final_message),
+                unverified,
+                missing,
+            )
+        },
+    );
+    TurnSignalRecord {
+        id: input.id.clone(),
+        created_at: input.created_at,
+        eval_id: input.eval_id.to_string(),
+        harness_session_id: Some(input.harness_session_id.to_string()),
+        transcript_ref: Some(input.transcript_ref.to_string()),
+        turn_start_line: input
+            .turn
+            .and_then(|t| t.start)
+            .and_then(|s| u32::try_from(s).ok()),
+        final_line: input.final_line,
+        pushback_result: pushback_result.as_str().to_string(),
+        unverified_result: unverified_result.as_str().to_string(),
+        unmatched_entities: Value::Array(
+            missing
+                .iter()
+                .map(|m| json!({ "kind": m.kind.as_str(), "hash": m.hash }))
+                .collect(),
+        ),
+        recommendations: recommendations(input.grounded_verify, input.research),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::checkpoint::turn_view::TurnData;
+
+    fn turn(prompt: &str, tool_calls: u32) -> TurnData {
+        TurnData {
+            start: Some(3),
+            user_prompt: prompt.to_string(),
+            tool_inputs: Vec::new(),
+            tool_outputs: Vec::new(),
+            tool_calls_after_prompt: tool_calls,
+        }
+    }
+
+    const EARLIER: &str = "The database migration is fully reversible and safe to run.";
+    const REVERSED: &str = "You are right, the database migration is not reversible after all.";
+    const UNRELATED: &str = "The parser handles every input format we listed earlier today.";
+
+    // ---- T013: pushback_reversal ----
+
+    #[test]
+    fn pushback_fires_on_a_reversed_pair_after_a_prompt_with_no_tool_call() {
+        let result = pushback(&turn("are you sure?", 0), Some(EARLIER), REVERSED);
+        assert_eq!(result, SignalResult::Fired);
+    }
+
+    #[test]
+    fn pushback_does_not_fire_without_an_opposing_pair() {
+        let result = pushback(&turn("are you sure?", 0), Some(EARLIER), UNRELATED);
+        assert_eq!(result, SignalResult::NotFired);
+    }
+
+    #[test]
+    fn a_tool_call_after_the_prompt_excludes_pushback() {
+        let result = pushback(&turn("are you sure?", 1), Some(EARLIER), REVERSED);
+        assert_eq!(result, SignalResult::Excluded(TOOL_CALL_AFTER_PROMPT));
+        assert_eq!(result.as_str(), "tool call after prompt");
+    }
+
+    #[test]
+    fn no_previous_final_message_excludes_pushback() {
+        let result = pushback(&turn("are you sure?", 0), None, REVERSED);
+        assert_eq!(result.as_str(), "no previous final message");
+    }
+
+    #[test]
+    fn a_missing_turn_start_excludes_pushback_first() {
+        let no_start = TurnData::default();
+        assert_eq!(
+            pushback(&no_start, None, REVERSED).as_str(),
+            "turn start not found"
+        );
+    }
+
+    #[test]
+    fn pushback_fires_again_on_each_later_turn_with_no_cooldown() {
+        for _ in 0..3 {
+            assert_eq!(
+                pushback(&turn("really?", 0), Some(EARLIER), REVERSED),
+                SignalResult::Fired
+            );
+        }
+    }
+
+    #[test]
+    fn the_previous_final_map_returns_the_last_message_and_keeps_the_new_one() {
+        let finals = PreviousFinals::default();
+        assert_eq!(finals.swap("s1", "first"), None);
+        assert_eq!(finals.swap("s1", "second").as_deref(), Some("first"));
+        assert_eq!(finals.swap("s2", "other"), None);
+        assert_eq!(finals.swap("s1", "third").as_deref(), Some("second"));
+    }
+
+    // ---- T014: unverified_fact ----
+
+    #[test]
+    fn unverified_fact_fires_when_an_entity_is_missing_from_the_turn_evidence() {
+        let mut t = turn("check the build", 1);
+        t.tool_outputs = vec!["parser = \"1.2.4\"".to_string()];
+        let (result, unmatched) = unverified_fact(&t, "The parser is at 1.2.3.");
+        assert_eq!(result, SignalResult::Fired);
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].kind.as_str(), "version");
+    }
+
+    #[test]
+    fn unverified_fact_does_not_fire_when_every_entity_is_found() {
+        let mut t = turn("what is in src/lib.rs?", 1);
+        t.tool_inputs = vec![r#"{"file_path":"src/lib.rs"}"#.to_string()];
+        t.tool_outputs = vec!["version 1.2.3, 4096 lines".to_string()];
+        let (result, unmatched) = unverified_fact(&t, "src/lib.rs is at 1.2.3 and has 4096 lines.");
+        assert_eq!(result, SignalResult::NotFired);
+        assert!(unmatched.is_empty());
+    }
+
+    #[test]
+    fn the_user_prompt_counts_as_evidence() {
+        let t = turn("rename toolu_f01 please", 0);
+        let (result, _) = unverified_fact(&t, "Renamed toolu_f01.");
+        assert_eq!(result, SignalResult::NotFired);
+    }
+
+    #[test]
+    fn a_missing_turn_start_excludes_unverified_fact() {
+        let (result, unmatched) = unverified_fact(&TurnData::default(), "at 1.2.3");
+        assert_eq!(result.as_str(), "turn start not found");
+        assert!(unmatched.is_empty());
+    }
+
+    #[test]
+    fn unverified_fact_fires_again_on_each_later_turn() {
+        for _ in 0..3 {
+            let (result, _) = unverified_fact(&turn("go", 0), "Merged a60f12d.");
+            assert_eq!(result, SignalResult::Fired);
+        }
+    }
+
+    // ---- FR-007: recommendations ----
+
+    #[test]
+    fn pushback_recommends_verify_and_unverified_fact_follows_the_catalog() {
+        let r = recommendations(true, true);
+        assert_eq!(r["pushback_reversal"], "verify");
+        assert_eq!(r["unverified_fact"], "grounded_verify");
+        assert_eq!(recommendations(false, true)["unverified_fact"], "research");
+        assert!(recommendations(false, false)["unverified_fact"].is_null());
+        assert_eq!(recommendations(false, false)["pushback_reversal"], "verify");
+    }
+
+    #[test]
+    fn transcript_unreadable_is_a_named_exclusion() {
+        assert_eq!(
+            SignalResult::Excluded(TRANSCRIPT_UNREADABLE).as_str(),
+            "transcript unreadable"
+        );
+        assert_eq!(SignalResult::Fired.as_str(), "fired");
+        assert_eq!(SignalResult::NotFired.as_str(), "not_fired");
+    }
+}
