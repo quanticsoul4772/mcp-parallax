@@ -20,7 +20,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [ ] T004 Implement the `(TrajectoryWindow, Vec<String>)` return; update every caller and every mock stub (empty line list). Files: `src/traits/trajectory.rs`, `src/checkpoint/run.rs`, other callers.
 - [ ] T005 [P] Test the flag prefixes: each template (review, preference, batch, hold, surface) builds its message from an exported prefix constant. Files: `src/checkpoint/review.rs`, `preference.rs`, `run.rs`, `src/memory/push.rs` tests.
 - [ ] T006 Implement the exported prefix constants and use them in the templates. Files: same as T005.
-- [ ] T007 [P] Test `parse_turn` against every T001 fixture: turn start found (line id) or not found; excluded kinds and lines containing a flag prefix anywhere are skipped; user prompt, tool inputs and outputs, tool calls after the prompt. Files: `src/checkpoint/turn_view.rs` tests.
+- [ ] T007 [P] Test `parse_turn` against every T001 fixture: turn start found (line id) or not found; excluded kinds and lines containing a flag prefix anywhere are skipped; user prompt, tool inputs and outputs, tool calls after the prompt. Round trip (SC-006): each flag built through its template (review, preference, batch, hold, surface) is skipped by the turn-start finder. Files: `src/checkpoint/turn_view.rs` tests.
 - [ ] T008 Implement `parse_turn`. Files: `src/checkpoint/turn_view.rs`, `src/checkpoint/mod.rs`.
 - [ ] T009 [P] Test entity extraction and lookup (research D6): paths with backslashes and JSON escapes normalize to `/`; version strings; identifiers and hashes of 7+ characters; numbers of 3+ digits on word boundaries (`142` does not match `42`); no names, no dates; unmatched entities come back with kind and hash. Files: `src/jev/entities.rs` tests.
 - [ ] T010 Implement `src/jev/entities.rs` and add it to `src/jev/mod.rs`.
@@ -33,10 +33,10 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 **Independent test**: fixture transcripts give the expected rows; the checkpoint result and record are unchanged with the signals on and off.
 
-- [ ] T013 [P] [US1] Test the pushback detector (research D5): fires on a candidate pair after a real user prompt with no tool call after it; records `tool call after prompt`, `no previous final message` and `turn start not found` in their cases; runs the pair miner with no stored memories. Files: `src/checkpoint/signals.rs` tests.
-- [ ] T014 [P] [US1] Test the unverified-fact detector: fires when an entity is missing from the turn's tool inputs, outputs and user prompt; not fired when all are found; records unmatched kinds and hashes. Files: `src/checkpoint/signals.rs` tests.
+- [ ] T013 [P] [US1] Test the pushback detector (research D5): fires on a candidate pair after a real user prompt with no tool call after it; records `tool call after prompt`, `no previous final message` and `turn start not found` in their cases; runs the pair miner with no stored memories; recommends `verify` (FR-007); fires and is recorded on each of several consecutive turns of one session, with no cooldown (FR-008). Files: `src/checkpoint/signals.rs` tests.
+- [ ] T014 [P] [US1] Test the unverified-fact detector: fires when an entity is missing from the turn's tool inputs, outputs and user prompt; not fired when all are found; records unmatched kinds and hashes; recommends `grounded_verify` when configured, else `research` when configured, else none (FR-007); fires and is recorded on each of several consecutive turns (FR-008). Files: `src/checkpoint/signals.rs` tests.
 - [ ] T015 [US1] Implement `src/checkpoint/signals.rs`: the previous-final map (updated at every turn end, continuation included), both detectors, the recommendation mapping (FR-007), and the row.
-- [ ] T016 [US1] Test `run_turn` with the signals on: one row per covered turn end, whether or not the review ran; no row on continuation turns; a transcript read failure records `transcript unreadable`; the checkpoint result and record are identical with the signals on and off (SC-001); no sentinel string in any request body (SC-002). Files: `src/checkpoint/run.rs` tests.
+- [ ] T016 [US1] Test `run_turn` with the signals on: one row per covered turn end, whether or not the review ran; no row on continuation turns; a transcript read failure records `transcript unreadable`; the checkpoint result and record are identical with the signals on and off (SC-001); no sentinel string in any request body (SC-002); with `CHECKPOINT_TURN_SIGNALS` off, `parse_turn` is not called and no row is written (US3 scenario 1). Files: `src/checkpoint/run.rs` tests.
 - [ ] T017 [US1] Wire the signals into `run_turn` and `CheckpointDeps`. Files: `src/checkpoint/run.rs`, `src/server.rs`.
 
 ## Phase 4: User Story 2 - Review skip, off until measured (P2)
@@ -45,8 +45,14 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 **Independent test**: each skip condition made false or missing makes the review run; `on` fails startup.
 
-- [ ] T018 [P] [US2] Test the turn-review questions at version 2 with the criteria in `contracts/questions.md`; the version-1 rows are told apart in reports. Files: `src/jev/questions.rs` tests.
-- [ ] T019 [US2] Implement version 2. Files: `src/jev/questions.rs`.
+- [ ] T018 [P] [US2] Test the turn-review questions at version 2 with the criteria in `contracts/questions.md`, `true` first, each built as its own question value; the research `same_subject` questions stay at version 1 with no criteria (`noul()` unchanged). Files: `src/jev/questions.rs` tests.
+- [ ] T018a [P] [US2] Test that the report separates turn-review rows by question version and feeds only version-2 rows to the promotion decision. Files: `src/jev/report/tests.rs`.
+- [ ] T018b [US2] Implement the version separation in the report. Files: `src/jev/report.rs`.
+- [ ] T019 [US2] Implement version 2 as separate question values, leaving `noul()` unchanged; correct the comment at `src/traits/classifier.rs:109-111` (options are not always empty for yes/no questions). Files: `src/jev/questions.rs`, `src/traits/classifier.rs`.
+- [ ] T019a [P] [US2] Test the saved measurements: noise, self-agreement and order results carry the question version; a version-2 run does not overwrite version-1 results; `reproduce` prints the version. Files: `src/jev/measure.rs` tests.
+- [ ] T019b [US2] Implement the version field in the saved measurements. Files: `src/jev/measure.rs`, `examples/jev_backtest/`.
+- [ ] T019c [P] [US2] Test the swapped turn-review questions (criteria order reversed) and a yes/no order result type that is saved and reproduced. Files: `src/jev/questions.rs` tests, `src/jev/measure.rs` tests, `src/client/typesafe/tests.rs`.
+- [ ] T019d [US2] Implement the swapped turn-review questions, the yes/no order result type, and the harness subcommand that runs both orders. Files: `src/jev/questions.rs`, `src/jev/measure.rs`, `examples/jev_backtest/`.
 - [ ] T020 [P] [US2] Test the skip decision: pinned tables keyed by Jev model, big-model id and question versions (empty); memory required; any candidate blocks; truncated state blocks; the audit share from `fnv1a64(eval_id)`. Files: `src/jev/policy.rs` tests.
 - [ ] T021 [US2] Implement the tables and the decision. Files: `src/jev/policy.rs`.
 - [ ] T022 [US2] Test `run_turn` with injected thresholds and evaluation ids: a skipped turn sets `review_skipped_by = jev` and the 064 row's `applied = 1`; an audited turn runs the review and sets `audit`; any failed condition runs the review; Jev's added time is at most the turn deadline (SC-005); with the skip off, today's concurrent order is unchanged. Files: `src/checkpoint/run.rs` tests.
@@ -61,13 +67,14 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T028 [P] `jev_backtest report` covers `turn_signal_records` (fire rates and exclusion reasons) and tells version-1 and version-2 turn-review rows apart. Files: `examples/jev_backtest/`, `src/jev/report.rs`.
+- [ ] T028 [P] `jev_backtest report` covers `turn_signal_records` (fire rates and exclusion reasons). Files: `examples/jev_backtest/`, `src/jev/report.rs`.
 - [ ] T029 Live example `examples/acceptance_turn_signals.rs` (SC-004): fixtures through `run_turn` with the signals on and a scratch database; one joined row per covered turn end with the expected results; no sentinel string in any request body; exits non-zero on failure. Register it in `Cargo.toml`.
 - [ ] T030 Amendments (FR-013): `docs/design/MEMORY_LAYER.md`, `docs/design/WATCHDOG_LAYER.md:59`, `docs/design/CORRECTIVE_SELECTION.md:89`, `docs/design/NEW_SERVER_DESIGN.md` §10, `specs/017-memory-consolidation/spec.md`, and the CHANGELOG.
 - [ ] T031 Analyze (Spec Kit) across spec, plan and tasks, with the three reviewers on the version-2 criteria in `contracts/questions.md`.
 - [ ] T032 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` and `code-reviewer` agents.
 - [ ] T033 Push and PR; CI.
 - [ ] T034 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
+- [ ] T034a After merge and rebuild, re-run the noise and self-agreement measurements, and run the order check in both criteria orders (research D9, FR-010), on the version-2 turn-review questions with `jev_backtest`; results go to the 064 measurements doc under a 066 section.
 - [ ] T035 Update the CLAUDE.md active-feature block to the shipped state.
 
 ## Dependencies
@@ -75,13 +82,14 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - Phase 1 blocks Phase 2's parser tasks (T007 needs T001's fixtures).
 - Phase 2 blocks every story. T003 → T004; T005 → T006; T007 → T008 (needs T006); T009 → T010; T011 → T012.
 - US1 (T013–T017) needs T004, T008, T010, T012. US2 (T018–T023) needs T012. US3 (T024–T027) needs T012.
-- Phase 6 needs all stories; T031 → T032 → T033 → merge → T034 → T035.
+- Within US2: T018a → T018b → T019 (the report separates versions before version 2 is sent); T018 → T019; T019a → T019b; T019c → T019d (needs T019 and T019b).
+- Phase 6 needs all stories; T031 → T032 → T033 → merge → T034 → T034a → T035.
 
 ## Parallel examples
 
 - Phase 2: T005, T007, T009 and T011 tests can be written together.
 - US1: T013 and T014 tests together.
-- US2: T018 and T020 tests together.
+- US2: T018, T018a, T019a, T019c and T020 tests together.
 
 ## Implementation strategy
 
