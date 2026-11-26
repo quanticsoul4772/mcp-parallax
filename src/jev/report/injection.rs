@@ -37,6 +37,14 @@ pub struct InjectionTable {
     pub agreement: Agreement,
 }
 
+/// Whether an injection row has a usable answer: the call succeeded and
+/// Jev returned a probability. The same rule `screen_page` uses, so every
+/// surface counts screened pages alike.
+#[must_use]
+pub fn is_screened(row: &JevRecord) -> bool {
+    row.outcome == JevOutcome::Call(Outcome::Success) && row.questions_json[0]["answer"].is_f64()
+}
+
 /// The table for `rows`; rows from other sites are ignored.
 #[must_use]
 pub fn injection_table(rows: &[&JevRecord]) -> InjectionTable {
@@ -49,13 +57,17 @@ pub fn injection_table(rows: &[&JevRecord]) -> InjectionTable {
                 .entry(row.outcome.as_str().to_string())
                 .or_default() += 1;
         }
-        let band = row.questions_json[0]["band"].as_str();
-        let warned = match band {
+        if !is_screened(row) {
+            continue;
+        }
+        table.screened += 1;
+        // Warned versus clear needs a pinned threshold; without one there is
+        // a probability but no decision to compare.
+        let warned = match row.questions_json[0]["band"].as_str() {
             Some("warned") => true,
             Some("clear") => false,
             _ => continue,
         };
-        table.screened += 1;
         table.warned += u32::from(warned);
         let flagged_063 = row
             .label_json

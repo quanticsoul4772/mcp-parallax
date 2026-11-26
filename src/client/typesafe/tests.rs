@@ -281,6 +281,29 @@ async fn a_retry_after_past_the_deadline_is_not_waited_for() {
 }
 
 #[tokio::test]
+async fn a_huge_retry_after_returns_the_error_without_panicking() {
+    let mock = once_then_ok(
+        ResponseTemplate::new(429).insert_header("retry-after", "18446744073709551615"),
+    )
+    .await;
+    client(&mock).classify(&retrying(SECOND)).await.unwrap_err();
+    assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_zero_retry_after_still_backs_off_and_stops_after_three_retries() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+        .mount(&mock)
+        .await;
+    let started = Instant::now();
+    client(&mock).classify(&retrying(SECOND)).await.unwrap_err();
+    assert_eq!(mock.received_requests().await.unwrap().len(), 4);
+    assert!(started.elapsed() >= Duration::from_millis(700));
+}
+
+#[tokio::test]
 async fn a_retrying_request_never_retries_a_401_or_other_4xx() {
     for status in [400, 401, 422] {
         let mock = once_then_ok(ResponseTemplate::new(status)).await;

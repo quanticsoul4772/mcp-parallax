@@ -222,13 +222,16 @@ impl Classifier for TypesafeClient {
             if !(request.retry && failed.retryable) {
                 return Err(failed.error);
             }
-            let Some(wait) = failed
-                .retry_after
-                .or_else(|| backoff.next().map(|ms| Duration::from_millis(*ms)))
-            else {
+            // Every retry uses a backoff step, so there are at most
+            // `BACKOFF_MS.len()` retries; `Retry-After` can lengthen a wait,
+            // never shorten it below the step.
+            let Some(step) = backoff.next().map(|ms| Duration::from_millis(*ms)) else {
                 return Err(failed.error);
             };
-            if Instant::now() + wait >= deadline {
+            let wait = failed.retry_after.map_or(step, |asked| asked.max(step));
+            // Compared with the time left, never added to an `Instant`: a huge
+            // `Retry-After` would overflow it.
+            if wait >= deadline.saturating_duration_since(Instant::now()) {
                 return Err(failed.error);
             }
             tokio::time::sleep(wait).await;

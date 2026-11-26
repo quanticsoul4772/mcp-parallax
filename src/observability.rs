@@ -390,7 +390,14 @@ impl JevSpanSummary {
                 JevMode::Shadow
             },
             injection_warned: injection_count(&|b| b.as_deref() == Some("warned")),
-            injection_unscreened: injection_count(&|b| b.is_none()),
+            injection_unscreened: (!injection.is_empty()).then(|| {
+                count(
+                    injection
+                        .iter()
+                        .filter(|r| !crate::jev::report::injection::is_screened(r))
+                        .count(),
+                )
+            }),
             requests: count(rows.iter().filter(sent).count()),
             excluded: count(
                 rows.iter()
@@ -1691,6 +1698,19 @@ mod tests {
     }
 
     #[test]
+    fn a_successful_injection_answer_without_a_band_counts_as_screened() {
+        use crate::storage::jev::JevOutcome;
+        use crate::traits::classifier::JevSite;
+        let mut r = crate::jev::shadow::tests_support::claim_row();
+        r.site = JevSite::ResearchInjection;
+        r.questions_json = serde_json::json!([{ "id": "directs_ai", "answer": 0.2, "band": null }]);
+        r.outcome = JevOutcome::Call(Outcome::Success);
+        let s = JevSpanSummary::from_rows(&[r], 0);
+        assert_eq!(s.injection_unscreened, Some(0));
+        assert_eq!(s.injection_warned, Some(0));
+    }
+
+    #[test]
     fn injection_rows_add_warned_and_unscreened_counts_and_set_the_mode() {
         use crate::storage::jev::JevOutcome;
         use crate::traits::classifier::{JevMode, JevSite};
@@ -1698,7 +1718,13 @@ mod tests {
             let mut r = crate::jev::shadow::tests_support::claim_row();
             r.site = JevSite::ResearchInjection;
             r.mode = mode;
-            r.questions_json = serde_json::json!([{ "id": "directs_ai", "band": band }]);
+            let answer = match band.as_str() {
+                Some("warned") => serde_json::json!(0.9),
+                Some("clear") => serde_json::json!(0.1),
+                _ => serde_json::Value::Null,
+            };
+            r.questions_json =
+                serde_json::json!([{ "id": "directs_ai", "answer": answer, "band": band }]);
             r.outcome = JevOutcome::Call(outcome);
             r
         };

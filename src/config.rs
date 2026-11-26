@@ -100,8 +100,10 @@ impl JevSettings {
     /// # Errors
     ///
     /// [`ConfigError::Jev`] naming the variable when a `PARALLAX_JEV_MODE_*`
-    /// suffix is unknown, its value isn't `off` or `shadow`, or a site is set
-    /// to `shadow` without a non-blank `TYPESAFE_API_KEY`.
+    /// suffix is unknown, its value isn't `off`, `shadow` or `on`, `on` is
+    /// set for a site other than `RESEARCH_INJECTION` or for a model with no
+    /// pinned injection threshold, or a site is not `off` without a non-blank
+    /// `TYPESAFE_API_KEY`.
     pub fn resolve<I>(vars: I) -> Result<Self, ConfigError>
     where
         I: IntoIterator<Item = (String, String)>,
@@ -151,7 +153,8 @@ impl JevSettings {
             })?;
             if mode == JevMode::On && site != JevSite::ResearchInjection {
                 return Err(ConfigError::Jev(format!(
-                    "`{name}` is `on`, but only RESEARCH_INJECTION has a measured threshold; \n                     use `off` or `shadow`"
+                    "`{name}` is `on`, but only RESEARCH_INJECTION has a measured threshold; \
+                     use `off` or `shadow`"
                 )));
             }
             if mode != JevMode::Off && settings.api_key.is_none() {
@@ -170,7 +173,9 @@ impl JevSettings {
             && crate::jev::policy::injection_threshold(&settings.model).is_none()
         {
             return Err(ConfigError::Jev(format!(
-                "`PARALLAX_JEV_MODE_RESEARCH_INJECTION` is `on`, but `PARALLAX_JEV_MODEL` \n                 (`{}`) has no pinned injection threshold; use {DEFAULT_JEV_MODEL} or \n                 `shadow`",
+                "`PARALLAX_JEV_MODE_RESEARCH_INJECTION` is `on`, but `PARALLAX_JEV_MODEL` \
+                 (`{}`) has no pinned injection threshold; use {DEFAULT_JEV_MODEL} or \
+                 `shadow`",
                 settings.model
             )));
         }
@@ -1198,6 +1203,26 @@ mod tests {
                 err.to_string().contains("PARALLAX_JEV_MODE_TURN_REVIEW"),
                 "{err}"
             );
+        }
+
+        #[test]
+        fn no_jev_config_error_spans_lines() {
+            let cases: [&[(&str, &str)]; 5] = [
+                &[KEY, ("PARALLAX_JEV_MODE_NOPE", "shadow")],
+                &[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "maybe")],
+                &[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "on")],
+                &[("PARALLAX_JEV_MODE_RESEARCH_INJECTION", "shadow")],
+                &[
+                    KEY,
+                    ("PARALLAX_JEV_MODE_RESEARCH_INJECTION", "on"),
+                    ("PARALLAX_JEV_MODEL", "jev-1.13.0"),
+                ],
+            ];
+            for case in cases {
+                let err = JevSettings::resolve(vars(case)).unwrap_err().to_string();
+                assert!(!err.contains('\n'), "{err:?}");
+                assert!(!err.contains("  "), "{err:?}");
+            }
         }
 
         #[test]

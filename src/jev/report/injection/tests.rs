@@ -11,7 +11,12 @@ use serde_json::{json, Value};
 fn row(band: &Value, patterns: &[&str], outcome: Outcome) -> JevRecord {
     let mut r = crate::jev::shadow::tests_support::claim_row();
     r.site = JevSite::ResearchInjection;
-    r.questions_json = json!([{ "id": "directs_ai", "band": band.clone() }]);
+    let answer = match band.as_str() {
+        Some("warned") => json!(0.9),
+        Some("clear") => json!(0.1),
+        _ => Value::Null,
+    };
+    r.questions_json = json!([{ "id": "directs_ai", "answer": answer, "band": band.clone() }]);
     r.label_json = Some(json!({ "patterns063": patterns }));
     r.outcome = JevOutcome::Call(outcome);
     r
@@ -52,4 +57,16 @@ fn rows_from_other_sites_are_ignored() {
     let table = injection_table(&[&claim]);
     assert_eq!(table.rows, 0);
     assert_eq!(table.screened, 0);
+}
+
+#[test]
+fn a_successful_answer_without_a_band_is_screened_but_not_compared() {
+    let mut r = crate::jev::shadow::tests_support::claim_row();
+    r.site = JevSite::ResearchInjection;
+    r.questions_json = json!([{ "id": "directs_ai", "answer": 0.2, "band": null }]);
+    r.outcome = JevOutcome::Call(Outcome::Success);
+    let table = injection_table(&[&r]);
+    assert_eq!(table.screened, 1);
+    assert_eq!(table.warned, 0);
+    assert_eq!(table.agreement, Agreement::default());
 }

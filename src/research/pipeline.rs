@@ -444,10 +444,13 @@ async fn run_metered_at(
                 let p = page.as_ref().filter(|p| has_text(Some(p)))?;
                 Some(screen_beside(
                     jev,
-                    id.clone(),
-                    p.url.clone(),
-                    extract::capped_text(&p.text),
-                    patterns.clone(),
+                    sinks.jev_rows,
+                    PageToScreen {
+                        id: id.clone(),
+                        url: p.url.clone(),
+                        text: extract::capped_text(&p.text),
+                        patterns: patterns.clone(),
+                    },
                     ceiling.time_left(),
                     deps.clock.now(),
                 ))
@@ -488,8 +491,7 @@ async fn run_metered_at(
             .zip(task_relevance)
             .zip(task_patterns)
         {
-            let shown = screened.map(|(row, screening)| {
-                sinks.jev_rows.push(row);
+            let shown = screened.map(|screening| {
                 warned += u32::from(screening.warned);
                 unscreened += u32::from(!screening.screened);
                 crate::research::contract::JevInjection {
@@ -920,21 +922,38 @@ async fn rerank_pages(
     (kept, relevance, None)
 }
 
-/// 065: one kept page's Jev injection screen, on owned inputs so it can run
-/// beside the page's extraction call.
-async fn screen_beside(
-    jev: &crate::jev::shadow::InjectionJev,
+/// One kept page as the injection screen sees it (065), owned so the screen
+/// can run beside the page's extraction call.
+struct PageToScreen {
     id: String,
     url: String,
+    /// The capped text extraction and 063 read.
     text: String,
+    /// 063's pattern names for the page.
     patterns: Vec<&'static str>,
+}
+
+/// 065: one kept page's Jev injection screen. The row goes to `rows` as soon
+/// as the call ends, so a run cancelled during extraction still records it.
+async fn screen_beside(
+    jev: &crate::jev::shadow::InjectionJev,
+    rows: &crate::telemetry::JevShadow,
+    page: PageToScreen,
     time_left: std::time::Duration,
     now: DateTime<Utc>,
-) -> (
-    crate::storage::jev::JevRecord,
-    crate::jev::shadow::Screening,
-) {
-    crate::jev::shadow::screen_page(jev, &id, &url, &text, &patterns, time_left, now).await
+) -> crate::jev::shadow::Screening {
+    let (row, screening) = crate::jev::shadow::screen_page(
+        jev,
+        &page.id,
+        &page.url,
+        &page.text,
+        &page.patterns,
+        time_left,
+        now,
+    )
+    .await;
+    rows.push(row);
+    screening
 }
 
 async fn extract_source(
