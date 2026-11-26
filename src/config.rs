@@ -79,6 +79,9 @@ pub struct JevSettings {
     pub turn_review: crate::traits::classifier::JevMode,
     /// `PARALLAX_JEV_MODE_RESEARCH_CLAIMS`, default off.
     pub research_claims: crate::traits::classifier::JevMode,
+    /// `PARALLAX_JEV_MODE_RESEARCH_INJECTION`, default off; the only site
+    /// that accepts `on`, and only with a pinned threshold (065).
+    pub research_injection: crate::traits::classifier::JevMode,
 }
 
 impl JevSettings {
@@ -97,8 +100,10 @@ impl JevSettings {
     /// # Errors
     ///
     /// [`ConfigError::Jev`] naming the variable when a `PARALLAX_JEV_MODE_*`
-    /// suffix is unknown, its value isn't `off` or `shadow`, or a site is set
-    /// to `shadow` without a non-blank `TYPESAFE_API_KEY`.
+    /// suffix is unknown, its value isn't `off`, `shadow` or `on`, `on` is
+    /// set for a site other than `RESEARCH_INJECTION` or for a model with no
+    /// pinned injection threshold, or a site is not `off` without a non-blank
+    /// `TYPESAFE_API_KEY`.
     pub fn resolve<I>(vars: I) -> Result<Self, ConfigError>
     where
         I: IntoIterator<Item = (String, String)>,
@@ -124,6 +129,7 @@ impl JevSettings {
             model,
             turn_review: JevMode::Off,
             research_claims: JevMode::Off,
+            research_injection: JevMode::Off,
         };
         for (name, value) in vars
             .iter()
@@ -136,15 +142,21 @@ impl JevSettings {
                 .ok_or_else(|| {
                     ConfigError::Jev(format!(
                         "unknown variable `{name}` in the reserved `{JEV_MODE_PREFIX}*` \
-                         namespace — the sites are TURN_REVIEW and RESEARCH_CLAIMS"
+                         namespace — the sites are TURN_REVIEW, RESEARCH_CLAIMS and RESEARCH_INJECTION"
                     ))
                 })?;
             let mode = JevMode::parse(value).ok_or_else(|| {
                 ConfigError::Jev(format!(
-                    "`{name}` must be `off` or `shadow` (got `{}`)",
+                    "`{name}` must be `off`, `shadow` or `on` (got `{}`)",
                     value.trim()
                 ))
             })?;
+            if mode == JevMode::On && site != JevSite::ResearchInjection {
+                return Err(ConfigError::Jev(format!(
+                    "`{name}` is `on`, but only RESEARCH_INJECTION has a measured threshold; \
+                     use `off` or `shadow`"
+                )));
+            }
             if mode != JevMode::Off && settings.api_key.is_none() {
                 return Err(ConfigError::Jev(format!(
                     "`{name}` is `{}` but TYPESAFE_API_KEY is not set",
@@ -154,12 +166,24 @@ impl JevSettings {
             match site {
                 JevSite::TurnReview => settings.turn_review = mode,
                 JevSite::ResearchClaims => settings.research_claims = mode,
+                JevSite::ResearchInjection => settings.research_injection = mode,
             }
+        }
+        if settings.research_injection == JevMode::On
+            && crate::jev::policy::injection_threshold(&settings.model).is_none()
+        {
+            return Err(ConfigError::Jev(format!(
+                "`PARALLAX_JEV_MODE_RESEARCH_INJECTION` is `on`, but `PARALLAX_JEV_MODEL` \
+                 (`{}`) has no pinned injection threshold; use {DEFAULT_JEV_MODEL} or \
+                 `shadow`",
+                settings.model
+            )));
         }
         // 064 review D: a site in shadow is costed per request, so its model
         // must have a price row; the fallback rate would overstate it ~120x.
-        let shadowed =
-            settings.turn_review != JevMode::Off || settings.research_claims != JevMode::Off;
+        let shadowed = settings.turn_review != JevMode::Off
+            || settings.research_claims != JevMode::Off
+            || settings.research_injection != JevMode::Off;
         if shadowed && !crate::telemetry::pricing_known(&settings.model) {
             return Err(ConfigError::Jev(format!(
                 "`PARALLAX_JEV_MODEL` is `{}`, which has no price row; Jev costs would be \
@@ -1175,6 +1199,80 @@ mod tests {
             let err =
                 JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "maybe")]))
                     .unwrap_err();
+            assert!(
+                err.to_string().contains("PARALLAX_JEV_MODE_TURN_REVIEW"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn no_jev_config_error_spans_lines() {
+            let cases: [&[(&str, &str)]; 5] = [
+                &[KEY, ("PARALLAX_JEV_MODE_NOPE", "shadow")],
+                &[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "maybe")],
+                &[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "on")],
+                &[("PARALLAX_JEV_MODE_RESEARCH_INJECTION", "shadow")],
+                &[
+                    KEY,
+                    ("PARALLAX_JEV_MODE_RESEARCH_INJECTION", "on"),
+                    ("PARALLAX_JEV_MODEL", "jev-1.13.0"),
+                ],
+            ];
+            for case in cases {
+                let err = JevSettings::resolve(vars(case)).unwrap_err().to_string();
+                assert!(!err.contains('\n'), "{err:?}");
+                assert!(!err.contains("  "), "{err:?}");
+            }
+        }
+
+        #[test]
+        fn the_injection_site_takes_off_shadow_and_on() {
+            let off = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(off.research_injection, JevMode::Off);
+            for (value, mode) in [("shadow", JevMode::Shadow), ("on", JevMode::On)] {
+                let s = JevSettings::resolve(vars(&[
+                    KEY,
+                    ("PARALLAX_JEV_MODE_RESEARCH_INJECTION", value),
+                ]))
+                .unwrap();
+                assert_eq!(s.research_injection, mode);
+            }
+        }
+
+        #[test]
+        fn injection_on_without_a_pinned_threshold_names_both_variables() {
+            let err = JevSettings::resolve(vars(&[
+                KEY,
+                ("PARALLAX_JEV_MODE_RESEARCH_INJECTION", "on"),
+                ("PARALLAX_JEV_MODEL", "jev-1.13.0"),
+            ]))
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("PARALLAX_JEV_MODE_RESEARCH_INJECTION"),
+                "{err}"
+            );
+            assert!(err.contains("PARALLAX_JEV_MODEL"), "{err}");
+        }
+
+        #[test]
+        fn injection_without_a_key_is_an_error_naming_the_variable() {
+            for value in ["shadow", "on"] {
+                let err =
+                    JevSettings::resolve(vars(&[("PARALLAX_JEV_MODE_RESEARCH_INJECTION", value)]))
+                        .unwrap_err();
+                assert!(
+                    err.to_string()
+                        .contains("PARALLAX_JEV_MODE_RESEARCH_INJECTION"),
+                    "{err}"
+                );
+            }
+        }
+
+        #[test]
+        fn on_stays_an_error_for_the_turn_review_site() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "on")]))
+                .unwrap_err();
             assert!(
                 err.to_string().contains("PARALLAX_JEV_MODE_TURN_REVIEW"),
                 "{err}"

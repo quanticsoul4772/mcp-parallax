@@ -16,11 +16,17 @@ pub enum JevSite {
     TurnReview,
     /// Research claim verification.
     ResearchClaims,
+    /// The injection screen on kept research pages (065).
+    ResearchInjection,
 }
 
 impl JevSite {
     /// Every site, in declaration order.
-    pub const ALL: [Self; 2] = [Self::TurnReview, Self::ResearchClaims];
+    pub const ALL: [Self; 3] = [
+        Self::TurnReview,
+        Self::ResearchClaims,
+        Self::ResearchInjection,
+    ];
 
     /// The stable name recorded in `jev_records.site`.
     #[must_use]
@@ -28,6 +34,7 @@ impl JevSite {
         match self {
             Self::TurnReview => "turn_review",
             Self::ResearchClaims => "research_claims",
+            Self::ResearchInjection => "research_injection",
         }
     }
 
@@ -37,12 +44,13 @@ impl JevSite {
         match self {
             Self::TurnReview => "TURN_REVIEW",
             Self::ResearchClaims => "RESEARCH_CLAIMS",
+            Self::ResearchInjection => "RESEARCH_INJECTION",
         }
     }
 }
 
-/// How a site uses Jev (064). `On`, which lets an answer change behavior,
-/// arrives with measured thresholds in 065/066.
+/// How a site uses Jev (064). `On` lets an answer change what Parallax
+/// returns; config accepts it only for a site with a pinned threshold (065).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum JevMode {
     /// No Jev call.
@@ -50,11 +58,13 @@ pub enum JevMode {
     Off,
     /// Jev answers beside the big model; recorded only, nothing changes.
     Shadow,
+    /// Jev's answer is used, at a pinned threshold (065).
+    On,
 }
 
 impl JevMode {
     /// Every mode, in declaration order.
-    pub const ALL: [Self; 2] = [Self::Off, Self::Shadow];
+    pub const ALL: [Self; 3] = [Self::Off, Self::Shadow, Self::On];
 
     /// The stable name used in configuration and records.
     #[must_use]
@@ -62,6 +72,7 @@ impl JevMode {
         match self {
             Self::Off => "off",
             Self::Shadow => "shadow",
+            Self::On => "on",
         }
     }
 
@@ -144,6 +155,9 @@ pub struct JevRequest {
     pub questions: Vec<JevQuestion>,
     /// Time left for this request, body included. Zero means nothing is sent.
     pub timeout: Duration,
+    /// Retry 429, 529 and 5xx within `timeout` (065: `on` sites only). False
+    /// means exactly one attempt, as every shadow site makes.
+    pub retry: bool,
 }
 
 /// A Jev backend.
@@ -175,6 +189,7 @@ mod tests {
             state: Redactor::new(vec![]).redact("state").unwrap(),
             questions: crate::jev::questions::turn_review_questions(),
             timeout: Duration::from_millis(1000),
+            retry: false,
         }
     }
 
@@ -195,6 +210,16 @@ mod tests {
         let response = mock.classify(&request()).await.unwrap();
         assert_eq!(response.request_id.as_deref(), Some("req-1"));
         assert_eq!(mock.model_id(), "jev-1.14.0");
+    }
+
+    #[test]
+    fn the_injection_site_and_the_on_mode_are_listed() {
+        assert!(JevSite::ALL.contains(&JevSite::ResearchInjection));
+        assert_eq!(JevSite::ResearchInjection.as_str(), "research_injection");
+        assert_eq!(JevSite::ResearchInjection.suffix(), "RESEARCH_INJECTION");
+        assert!(JevMode::ALL.contains(&JevMode::On));
+        assert_eq!(JevMode::parse("on"), Some(JevMode::On));
+        assert_eq!(JevMode::On.as_str(), "on");
     }
 
     #[tokio::test]

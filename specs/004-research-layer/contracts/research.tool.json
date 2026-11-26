@@ -1,7 +1,7 @@
 {
   "$comment": "MCP tool contract for `research`. MCP-side only (no model hop for this shape - 003 D6 precedent). key_findings/disagreements/sources/stats are server-assembled; the model writes the answer prose, the gaps, and the sub-question each gap concerns (021 gap_targets). Every published number is computed by the server from that input - the model never emits a confidence, coverage, or rate directly. Every key finding cites at least one source; every cited id resolves in sources; the grounding gate enforces this before return.",
   "name": "research",
-  "description": "Offload a research question; get back a short, cited, adversarially-verified answer - not a pile of links. Runs scoped parallel searches, reads each kept source's text, extracts claims, verifies every claim with independent refute-biased passes, leaving out claims every verifier found the sources did not establish (which is not a finding that they are false), and surfacing split verdicts as contested, and synthesizes a compact answer with inline citations, surfaced disagreements, and stated gaps. Depth scales rigor; budget and deadline ceilings synthesize early and say so. Every citation resolves to a source read during the run; a source whose text was cut at the length cap is marked truncated.",
+  "description": "Offload a research question; get back a short, cited, adversarially-verified answer - not a pile of links. Runs scoped parallel searches, reads each kept source's text, extracts claims, verifies every claim with independent refute-biased passes, leaving out claims every verifier found the sources did not establish (which is not a finding that they are false), and surfacing split verdicts as contested, and synthesizes a compact answer with inline citations, surfaced disagreements, and stated gaps. Depth scales rigor; budget and deadline ceilings synthesize early and say so. Every citation resolves to a source read during the run; a source whose text was cut at the length cap is marked truncated. With the Jev injection screen on, a source whose page text addresses an AI carries an advisory warning (measured recall 0.86; 10 of 413 clean pages warned, 9 of them about prompt injection); no warning does not mean the page is clean.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -276,6 +276,21 @@
                 ]
               },
               "description": "063: names of the prompt-injection patterns found in this source's page text, sorted; empty when none. Warn only: the page was still read."
+            },
+            "jev_injection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["screened", "probability", "warned", "reason"],
+              "properties": {
+                "screened": { "type": "boolean" },
+                "probability": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+                "warned": { "type": "boolean" },
+                "reason": {
+                  "type": ["string", "null"],
+                  "enum": ["timeout", "classifier_provider", "provider_rejected", "validation_failure", "redaction_failed", "disabled", null]
+                }
+              },
+              "description": "065: Jev's injection screen of this page; present only with the injection site on. Advisory: no warning does not mean the page is clean."
             }
           },
           "required": [
@@ -325,6 +340,29 @@
             "type": "integer",
             "minimum": 0,
             "description": "063: pages selected for extraction with at least one injection pattern (the length of flagged_pages)."
+          },
+          "jev_warned_pages": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "065: kept pages Jev warned on; present only with PARALLAX_JEV_MODE_RESEARCH_INJECTION=on."
+          },
+          "jev_unscreened_pages": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "065: kept pages Jev could not screen; present only with the injection site on."
+          },
+          "jev_warned_list": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "url"],
+              "properties": {
+                "id": { "type": "string" },
+                "url": { "type": "string" }
+              }
+            },
+            "description": "065: every kept page Jev warned on, cited or not, with its run-scoped id and URL; present only with the injection site on."
           },
           "flagged_pages": {
             "type": "array",

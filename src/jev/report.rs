@@ -272,5 +272,7 @@ pub fn site_tables(items: &[Item]) -> SiteTables {
     }
 }
 
+pub mod injection;
+
 #[cfg(test)]
 mod tests;

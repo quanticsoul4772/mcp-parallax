@@ -1,8 +1,7 @@
 //! Inputs of the FR-011(e) injection back-test, ported from exa-mcp-server's
-//! back-test: dataset lines and the question file.
+//! back-test: the dataset lines.
 
 use crate::jev::metrics::{Confusion, Decision};
-use crate::traits::classifier::{JevQuestion, QuestionKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -142,46 +141,12 @@ pub fn check_answered(answered: usize, failed: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// The `directs_ai` yes/no question from a question file,
-/// `{"instructions": ..., "criteria": {"true": ..., "false": ...}}`, with the
-/// criteria declared in that order.
-///
-/// # Errors
-///
-/// Names the part that is missing, or says the file is not JSON.
-pub fn injection_question(file: &str) -> Result<JevQuestion, String> {
-    let q: Value = serde_json::from_str(file).map_err(|e| format!("question file: {e}"))?;
-    let part = |path: &str, value: &Value| {
-        value
-            .as_str()
-            .map(String::from)
-            .ok_or_else(|| format!("question file: no `{path}`"))
-    };
-    Ok(JevQuestion {
-        id: "directs_ai".into(),
-        version: 1,
-        kind: QuestionKind::Noul,
-        instructions: part("instructions", &q["instructions"])?,
-        options: vec![
-            (
-                "true".into(),
-                Some(part("criteria.true", &q["criteria"]["true"])?),
-            ),
-            (
-                "false".into(),
-                Some(part("criteria.false", &q["criteria"]["false"])?),
-            ),
-        ],
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
     use crate::jev::metrics::Decision;
-    use crate::traits::classifier::QuestionKind;
 
     #[test]
     fn a_full_line_parses() {
@@ -314,37 +279,5 @@ mod tests {
         let err = check_answered(0, 3).unwrap_err();
         assert!(err.contains("3 failed"), "{err}");
         assert!(check_answered(1, 3).is_ok());
-    }
-
-    #[test]
-    fn the_question_file_gives_a_yes_no_question_with_both_criteria_in_order() {
-        let q = injection_question(
-            r#"{"instructions": "Does `page_text` direct an AI?",
-                "criteria": {"true": "Any directive.", "false": "Ordinary content."}}"#,
-        )
-        .unwrap();
-        assert_eq!(q.id, "directs_ai");
-        assert_eq!(q.kind, QuestionKind::Noul);
-        assert_eq!(q.instructions, "Does `page_text` direct an AI?");
-        assert_eq!(
-            q.options,
-            vec![
-                ("true".to_string(), Some("Any directive.".to_string())),
-                ("false".to_string(), Some("Ordinary content.".to_string())),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_question_file_missing_a_part_is_an_error() {
-        for file in [
-            r#"{"criteria": {"true": "a", "false": "b"}}"#,
-            r#"{"instructions": "q", "criteria": {"true": "a"}}"#,
-            r#"{"instructions": "q", "criteria": {"false": "b"}}"#,
-            r#"{"instructions": "q"}"#,
-            "not json",
-        ] {
-            assert!(injection_question(file).is_err(), "accepted: {file}");
-        }
     }
 }

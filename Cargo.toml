@@ -24,6 +24,10 @@ path = "src/main.rs"
 name = "acceptance_jev"
 test = true
 
+[[example]]
+name = "acceptance_jev_injection"
+test = true
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "process"] }

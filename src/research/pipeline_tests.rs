@@ -147,6 +147,7 @@ fn deps_with_client(
         ),
         reranker: None,
         jev: None,
+        jev_injection: None,
     }
 }
 
@@ -3588,3 +3589,8 @@ mod jev_shadow {
         assert_eq!(rows.prep_count(), 2);
     }
 }
+
+// ---- 065 T013: the injection screen in the pipeline --------------------------
+
+#[path = "pipeline_tests/jev_injection.rs"]
+mod jev_injection;

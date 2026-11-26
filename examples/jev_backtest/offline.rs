@@ -39,12 +39,33 @@ pub async fn base_rate(storage: &SqliteStorage) {
     print!("{}", mcp_parallax::jev::measure::tables(&results));
 }
 
+/// How one stored row becomes a §7 item, or why it can't.
+type ItemFn = fn(&JevRecord) -> Result<tables::Item, tables::Skip>;
+
 /// Row counts and outcomes, then the plan §7 tables on the tune split (064
 /// SC-005). Labels are the big model's: agreement, not correctness, which
 /// needs hand labels. The confirm split is counted, never read.
 pub async fn report(storage: &SqliteStorage) {
     let rows = storage.load_jev_records().await.expect("jev records");
-    for site in JevSite::ALL {
+    // The §7 skip-gate sites, each with how one of its rows becomes an item;
+    // the injection site has its own report (065).
+    let sites: [(JevSite, ItemFn); 2] = [
+        (JevSite::TurnReview, |row| {
+            tables::turn_item(
+                row.label_json.as_ref(),
+                &row.questions_json,
+                row.harness_session_id.as_deref(),
+            )
+        }),
+        (JevSite::ResearchClaims, |row| {
+            tables::claim_item(
+                row.label_json.as_ref(),
+                &row.questions_json,
+                row.invocation_id.as_deref(),
+            )
+        }),
+    ];
+    for (site, to_item) in sites {
         let site_rows: Vec<&JevRecord> = rows.iter().filter(|r| r.site == site).collect();
         let mut outcomes: BTreeMap<&str, usize> = BTreeMap::new();
         for row in &site_rows {
@@ -69,18 +90,7 @@ pub async fn report(storage: &SqliteStorage) {
             .iter()
             .filter(|r| split(&r.id, tables::CONFIRM_PERCENT) == Split::Tune)
         {
-            let item = match site {
-                JevSite::TurnReview => tables::turn_item(
-                    row.label_json.as_ref(),
-                    &row.questions_json,
-                    row.harness_session_id.as_deref(),
-                ),
-                JevSite::ResearchClaims => tables::claim_item(
-                    row.label_json.as_ref(),
-                    &row.questions_json,
-                    row.invocation_id.as_deref(),
-                ),
-            };
+            let item = to_item(row);
             match item {
                 Ok(item) => {
                     if tables::is_abandoned(row.error_class.as_deref()) {
@@ -108,6 +118,46 @@ pub async fn report(storage: &SqliteStorage) {
         );
         print_tables(&t);
     }
+    print_injection(&rows);
+}
+
+/// The injection site (065): share warned, failures, agreement with 063, on
+/// the tune split; the confirm split is counted, never read.
+fn print_injection(rows: &[JevRecord]) {
+    let site_rows: Vec<&JevRecord> = rows
+        .iter()
+        .filter(|r| r.site == JevSite::ResearchInjection)
+        .collect();
+    if site_rows.is_empty() {
+        return;
+    }
+    let tune: Vec<&JevRecord> = site_rows
+        .iter()
+        .copied()
+        .filter(|r| split(&r.id, tables::CONFIRM_PERCENT) == Split::Tune)
+        .collect();
+    let t = mcp_parallax::jev::report::injection::injection_table(&tune);
+    println!(
+        "== {} ({} rows; confirm set {} rows, sealed)",
+        JevSite::ResearchInjection.as_str(),
+        site_rows.len(),
+        site_rows.len() - tune.len()
+    );
+    println!(
+        "  tune rows: {}; screened {}; warned {} ({})",
+        t.rows,
+        t.screened,
+        t.warned,
+        fmt((t.screened > 0).then(|| f64::from(t.warned) / f64::from(t.screened)))
+    );
+    for (outcome, count) in &t.failures {
+        println!("  not screened, {outcome}: {count}");
+    }
+    let a = &t.agreement;
+    println!(
+        "  against 063 on screened pages: both {}, Jev only {}, 063 only {}, neither {}          (agreement, not correctness)",
+        a.both, a.jev_only, a.only_063, a.neither
+    );
 }
 
 fn fmt(value: Option<f64>) -> String {

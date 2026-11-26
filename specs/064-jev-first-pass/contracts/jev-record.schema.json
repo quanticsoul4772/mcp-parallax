@@ -23,8 +23,8 @@
     "created_at": { "type": "string", "format": "date-time" },
     "server_session_id": { "type": "string" },
     "harness_session_id": { "type": ["string", "null"] },
-    "site": { "enum": ["turn_review", "research_claims"] },
-    "mode": { "enum": ["shadow"] },
+    "site": { "enum": ["turn_review", "research_claims", "research_injection"] },
+    "mode": { "enum": ["shadow", "on"] },
     "questions_json": {
       "type": "array",
       "items": {

@@ -1,8 +1,10 @@
 //! The TypeSafe (Jev) client (064).
 //!
-//! `POST /v1/systemone` with bearer auth, behind [`Classifier`]. Shadow use
-//! only in 064: no retries, at most [`MAX_IN_FLIGHT`] requests at once, and
-//! a 401 turns Jev off for the life of the client. Error bodies are never
+//! `POST /v1/systemone` with bearer auth, behind [`Classifier`]. A request
+//! retries 429, 529 and 5xx within its deadline only when it sets `retry`
+//! (065: `on` sites); shadow requests make one attempt. At most
+//! [`MAX_IN_FLIGHT`] requests run at once, and a 401 turns Jev off for the
+//! life of the client. Error bodies are never
 //! kept or logged: an error holds the status, a known error code and the
 //! request id only.
 
@@ -37,6 +39,29 @@ pub const MAX_IN_FLIGHT: usize = 4;
 const KNOWN_CODES: [&str; 1] = ["max_tokens_exceeded"];
 
 const REQUEST_ID_HEADER: &str = "x-typesafe-request-id";
+
+/// Waits between retries when the response gives no `Retry-After` (065
+/// research D5); after the last one the error is returned.
+const BACKOFF_MS: [u64; 3] = [100, 200, 400];
+
+/// A failed attempt: the error, and what a retry needs to know.
+struct Failed {
+    error: AppError,
+    /// 429, 529 or 5xx.
+    retryable: bool,
+    /// The response's `Retry-After`, when it had one.
+    retry_after: Option<Duration>,
+}
+
+impl From<AppError> for Failed {
+    fn from(error: AppError) -> Self {
+        Self {
+            error,
+            retryable: false,
+            retry_after: None,
+        }
+    }
+}
 
 /// The TypeSafe client. Its `Debug` hides the key (064 review P).
 pub struct TypesafeClient {
@@ -96,7 +121,7 @@ impl TypesafeClient {
         body: String,
         deadline: Instant,
         timeout: Duration,
-    ) -> Result<JevResponse, AppError> {
+    ) -> Result<JevResponse, Failed> {
         let started = Instant::now();
         let response = self
             .http
@@ -107,22 +132,33 @@ impl TypesafeClient {
             .body(body)
             .send()
             .await
-            .map_err(|e| transport_error(&e, timeout))?;
+            .map_err(|e| Failed::from(transport_error(&e, timeout)))?;
         let status = response.status().as_u16();
         let request_id = response
             .headers()
             .get(REQUEST_ID_HEADER)
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
+        let retry_after = super::retry::retry_after(
+            response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            chrono::Utc::now(),
+        );
         let bytes = response
             .bytes()
             .await
-            .map_err(|e| transport_error(&e, timeout))?;
+            .map_err(|e| Failed::from(transport_error(&e, timeout)))?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         if (200..300).contains(&status) {
-            return parse_response(&bytes, request_id, latency_ms);
+            return parse_response(&bytes, request_id, latency_ms).map_err(Failed::from);
         }
-        Err(self.status_error(status, &bytes, request_id.as_deref()))
+        Err(Failed {
+            error: self.status_error(status, &bytes, request_id.as_deref()),
+            retryable: status == 429 || status >= 500,
+            retry_after,
+        })
     }
 
     fn status_error(&self, status: u16, body: &[u8], request_id: Option<&str>) -> AppError {
@@ -173,9 +209,33 @@ impl Classifier for TypesafeClient {
                 ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
             })?
             .map_err(|_| AppError::ClassifierProvider("typesafe client closed".into()))?;
-        tokio::time::timeout_at(deadline, self.send(body, deadline, timeout))
-            .await
-            .map_err(|_| timed_out(timeout))?
+        let mut backoff = BACKOFF_MS.iter();
+        loop {
+            let failed =
+                match tokio::time::timeout_at(deadline, self.send(body.clone(), deadline, timeout))
+                    .await
+                {
+                    Err(_) => return Err(timed_out(timeout)),
+                    Ok(Ok(response)) => return Ok(response),
+                    Ok(Err(failed)) => failed,
+                };
+            if !(request.retry && failed.retryable) {
+                return Err(failed.error);
+            }
+            // Every retry uses a backoff step, so there are at most
+            // `BACKOFF_MS.len()` retries; `Retry-After` can lengthen a wait,
+            // never shorten it below the step.
+            let Some(step) = backoff.next().map(|ms| Duration::from_millis(*ms)) else {
+                return Err(failed.error);
+            };
+            let wait = failed.retry_after.map_or(step, |asked| asked.max(step));
+            // Compared with the time left, never added to an `Instant`: a huge
+            // `Retry-After` would overflow it.
+            if wait >= deadline.saturating_duration_since(Instant::now()) {
+                return Err(failed.error);
+            }
+            tokio::time::sleep(wait).await;
+        }
     }
 
     fn model_id(&self) -> &str {

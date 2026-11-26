@@ -702,7 +702,11 @@ async fn record_with_jev(
     jev: Option<TurnJevOutcome>,
 ) -> Result<(), AppError> {
     let jev_summary = jev.as_ref().map(|j| {
-        crate::observability::JevSpanSummary::from_rows(std::slice::from_ref(&j.row), j.wait_ms)
+        crate::observability::JevSpanSummary::from_rows(
+            std::slice::from_ref(&j.row),
+            j.wait_ms,
+            crate::traits::classifier::JevMode::Shadow,
+        )
     });
     let jev_row = jev.map(|j| *j.row);
     let row = CheckpointRecord {

@@ -252,9 +252,30 @@ pub struct JevShadow {
     prep_micros: std::sync::atomic::AtomicU64,
     /// Claims whose preparation was timed.
     prep_count: std::sync::atomic::AtomicU64,
+    /// The configured mode the span reports (065 review finding 8): `on`
+    /// when the call's injection site is on, otherwise shadow.
+    on: std::sync::atomic::AtomicBool,
 }
 
 impl JevShadow {
+    /// Record the call's configured Jev mode for its span.
+    pub fn set_mode(&self, mode: crate::traits::classifier::JevMode) {
+        self.on.store(
+            mode == crate::traits::classifier::JevMode::On,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    /// The call's configured Jev mode: shadow unless set to on.
+    #[must_use]
+    pub fn mode(&self) -> crate::traits::classifier::JevMode {
+        if self.on.load(std::sync::atomic::Ordering::Relaxed) {
+            crate::traits::classifier::JevMode::On
+        } else {
+            crate::traits::classifier::JevMode::Shadow
+        }
+    }
+
     /// Keep one row.
     pub fn push(&self, row: crate::storage::jev::JevRecord) {
         // A panic elsewhere must not lose the measurement (064 review N).
@@ -697,6 +718,15 @@ impl InvocationRecord {
 mod tests {
     use super::*;
     use crate::traits::clock::MockTimeProvider;
+
+    #[test]
+    fn the_jev_row_collector_carries_the_configured_mode() {
+        use crate::traits::classifier::JevMode;
+        let rows = JevShadow::default();
+        assert_eq!(rows.mode(), JevMode::Shadow);
+        rows.set_mode(JevMode::On);
+        assert_eq!(rows.mode(), JevMode::On);
+    }
 
     /// 060 review finding 5: the CLI figure replaces only the Claude models'
     /// share; an embedding model's price-table cost stays in the total.

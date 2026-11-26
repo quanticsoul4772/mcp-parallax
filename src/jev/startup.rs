@@ -19,6 +19,7 @@ const fn data_sent(site: JevSite) -> &'static str {
             "each research claim with redacted excerpts of its public sources (claims with \
              numbers, dates or flagged sources are never sent)"
         }
+        JevSite::ResearchInjection => "kept research pages (URL and capped text, redacted)",
     }
 }
 
@@ -26,11 +27,13 @@ const fn mode(settings: &JevSettings, site: JevSite) -> JevMode {
     match site {
         JevSite::TurnReview => settings.turn_review,
         JevSite::ResearchClaims => settings.research_claims,
+        JevSite::ResearchInjection => settings.research_injection,
     }
 }
 
 /// The startup lines: [`NO_KEY_LINE`] without a key; otherwise one line per
-/// site in shadow, naming the host and the data sent. The key never appears.
+/// site in shadow or on, naming the host and the data sent. The key never
+/// appears.
 #[must_use]
 pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
     if settings.api_key.is_none() {
@@ -38,25 +41,35 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
     }
     JevSite::ALL
         .into_iter()
-        .filter(|site| mode(settings, *site) == JevMode::Shadow)
-        .map(|site| {
-            format!(
-                "Jev shadow on for {}: sends {} to api.typesafe.ai; answers are recorded only",
+        .filter_map(|site| {
+            let effect = match mode(settings, site) {
+                JevMode::Off => return None,
+                JevMode::Shadow => "answers are recorded only",
+                JevMode::On => "pages at or above the pinned threshold carry an advisory warning",
+            };
+            // The shadow wording is 064's, unchanged.
+            let lead = if mode(settings, site) == JevMode::Shadow {
+                "Jev shadow on"
+            } else {
+                "Jev on"
+            };
+            Some(format!(
+                "{lead} for {}: sends {} to api.typesafe.ai; {effect}",
                 site.as_str(),
                 data_sent(site)
-            )
+            ))
         })
         .collect()
 }
 
-/// Whether to build the TypeSafe client: a key is set and some site is in
-/// shadow.
+/// Whether to build the TypeSafe client: a key is set and some site is not
+/// off.
 #[must_use]
 pub fn wants_client(settings: &JevSettings) -> bool {
     settings.api_key.is_some()
         && JevSite::ALL
             .into_iter()
-            .any(|site| mode(settings, site) == JevMode::Shadow)
+            .any(|site| mode(settings, site) != JevMode::Off)
 }
 
 #[cfg(test)]
@@ -72,6 +85,7 @@ mod tests {
             model: DEFAULT_JEV_MODEL.into(),
             turn_review: turn,
             research_claims: research,
+            research_injection: JevMode::Off,
         }
     }
 
@@ -104,5 +118,27 @@ mod tests {
         assert!(lines[0].contains("turn_review"));
         assert!(lines[1].contains("research_claims"));
         assert!(wants_client(&s));
+    }
+
+    #[test]
+    fn the_injection_site_gets_a_line_in_shadow_and_on_and_on_builds_the_client() {
+        for (mode, lead) in [
+            (JevMode::Shadow, "Jev shadow on for"),
+            (JevMode::On, "Jev on for"),
+        ] {
+            let mut s = settings(Some("ts-key-value-123"), JevMode::Off, JevMode::Off);
+            s.research_injection = mode;
+            let lines = startup_lines(&s);
+            assert_eq!(lines.len(), 1, "{lines:?}");
+            assert!(lines[0].contains("research_injection"), "{}", lines[0]);
+            assert!(lines[0].starts_with(lead), "{}", lines[0]);
+            assert!(
+                lines[0].contains("kept research pages (URL and capped text, redacted)"),
+                "{}",
+                lines[0]
+            );
+            assert!(lines[0].contains("api.typesafe.ai"), "{}", lines[0]);
+            assert!(wants_client(&s));
+        }
     }
 }

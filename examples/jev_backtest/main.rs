@@ -9,7 +9,7 @@
 //! cargo run --release --example jev_backtest -- noise [rows]            (live, Jev)
 //! cargo run --release --example jev_backtest -- order [rows]            (live, Jev)
 //! cargo run --release --example jev_backtest -- self-agreement [rows]   (live, big model)
-//! cargo run --release --example jev_backtest -- injection <folder> <question-file> [threshold]
+//! cargo run --release --example jev_backtest -- injection <folder> [threshold]
 //! cargo run --release --example jev_backtest -- reproduce [file]
 //! ```
 //!
@@ -28,8 +28,8 @@
 //! `https://github.[REDACTED]`). Lines that are not JSON or lack a field are
 //! counted as skipped, and a dataset with no usable line stops the run before
 //! any call, leaving the saved result as it was; so does a run in which no
-//! call produced an answer. The question file is JSON,
-//! `{"instructions": ..., "criteria": {"true": ..., "false": ...}}`.
+//! call produced an answer. The question is the server's own `directs_ai`
+//! (`jev::questions::injection_question`).
 
 // Manual tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]
@@ -45,7 +45,7 @@ use mcp_parallax::storage::SqliteStorage;
 fn usage() {
     println!(
         "usage: jev_backtest <base-rate | report | noise [rows] | order [rows] | \
-         self-agreement [rows] | injection <folder> <question-file> [threshold] | \
+         self-agreement [rows] | injection <folder> [threshold] | \
          reproduce [file]>"
     );
 }
@@ -84,11 +84,10 @@ async fn main() {
         }
         "injection" => {
             let folder = args.get(1).expect("the dataset folder");
-            let question = args.get(2).expect("the question file");
             let threshold = args
-                .get(3)
+                .get(2)
                 .map_or(0.35, |t| t.parse().expect("a threshold"));
-            live::injection(&config, folder, question, threshold).await;
+            live::injection(&config, folder, threshold).await;
         }
         _ => {
             usage();

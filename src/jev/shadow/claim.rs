@@ -96,6 +96,7 @@ pub fn prepare_claim(
         transcript_ref: None,
         redaction_count: 0,
         truncated: false,
+        applied: false,
     };
     if let Some(reason) = claim_exclusion(claim_text, sources.iter().any(|s| s.flagged)) {
         row.outcome = JevOutcome::Excluded;
@@ -125,6 +126,7 @@ pub fn prepare_claim(
                 state: redacted,
                 questions,
                 timeout: jev.deadline,
+                retry: false,
             };
             PreparedClaim::Ask(Box::new(row), Box::new(request))
         }

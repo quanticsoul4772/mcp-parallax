@@ -95,6 +95,7 @@ pub fn assemble_result(outcome: Outcome<'_>, stats: Stats) -> ResearchResult {
                 .iter()
                 .map(|p| (*p).to_string())
                 .collect(),
+            jev_injection: s.jev_injection.clone(),
         })
         .collect();
 
