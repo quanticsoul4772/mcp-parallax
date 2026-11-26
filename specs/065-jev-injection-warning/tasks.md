@@ -66,7 +66,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T022 [P] Test, then add the telemetry counts (research D9) `parallax.jev.injection.warned` and `parallax.jev.injection.unscreened` on the research invocation span, with `telemetry.md` updated (exact text first). Files: `src/observability.rs`, `specs/007-observability-layer/contracts/telemetry.md`.
 - [x] T023 [P] Test, then extend `jev_backtest report` with the injection site from stored records (FR-009): share warned, failures by outcome, agreement with 063 on the same pages. Files: `src/jev/report.rs`, `src/jev/report/tests.rs`.
 - [x] T024 Write the live example `examples/acceptance_jev_injection.rs` asserting SC-005, exiting non-zero on failure; register it in `Cargo.toml` with `test = true` for its helpers.
-- [ ] T025 CHANGELOG `[Unreleased]` entry (exact text first). Files: `CHANGELOG.md`.
+- [x] T025 CHANGELOG `[Unreleased]` entry (exact text first). Files: `CHANGELOG.md`.
 - [ ] T026 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` (design corpus) and `code-reviewer` (Rust conventions) agents, each brief shown first; each finding asked.
 - [ ] T027 Account-name check, push and PR (text shown first); CI.
 - [ ] T028 After merge and rebuild, the user runs the live example (quickstart §3); results go to `quickstart.md` (exact text first).

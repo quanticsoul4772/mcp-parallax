@@ -13,6 +13,19 @@ arc.
 
 ### Added
 
+* **Jev injection warning on research sources** (065) — with
+  `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` (off by default; needs
+  `TYPESAFE_API_KEY` and a pinned threshold for the model), research asks Jev's
+  `directs_ai` question about each kept page beside its extraction call, on the
+  same capped text 063 screens. Pages at or above the pinned threshold (0.35 on
+  `jev-1.14.0`; 064 back-test: recall 0.86, false-positive rate 0.024) carry an
+  advisory `jev_injection` warning, and the stats count warned and unscreened
+  pages. Shadow records the calls only. Warn only: no page is dropped, 063's
+  screen is unchanged, and no warning does not mean clean. A Jev request now
+  retries 429, 529 and 5xx within its deadline when it asks to (only this site's
+  `on` calls do); records carry `applied`; the research span gains
+  `parallax.jev.injection.warned` and `.unscreened`.
+
 * **Jev shadow answers (064)**: with `TYPESAFE_API_KEY` set and a
   `PARALLAX_JEV_MODE_TURN_REVIEW` / `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` site set
   to `shadow`, TypeSafe's Jev (`jev-1.14.0`) answers typed questions beside the
