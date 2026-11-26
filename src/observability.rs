@@ -1587,6 +1587,7 @@ mod tests {
             transcript_ref: None,
             redaction_count: 0,
             truncated: false,
+            applied: false,
         }
     }
 

@@ -2,7 +2,8 @@
 //! research claim, beside the big model's label for the same item.
 //!
 //! Bound to `specs/064-jev-first-pass/contracts/jev-record.schema.json` by a
-//! two-way test. `applied` is always written as 0 in 064 (shadow only).
+//! two-way test. `applied` is 1 only for an `on` row whose answer was used
+//! (065); every shadow row writes 0.
 
 use crate::error::{AppError, Outcome};
 use crate::traits::classifier::{JevMode, JevSite};
@@ -107,6 +108,9 @@ pub struct JevRecord {
     pub transcript_ref: Option<String>,
     pub redaction_count: u32,
     pub truncated: bool,
+    /// The answer changed what Parallax returned (065: an `on` injection row
+    /// that warned). Always false in shadow.
+    pub applied: bool,
 }
 
 fn storage_err(what: &str) -> impl Fn(sqlx::Error) -> AppError + '_ {
@@ -141,7 +145,7 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
                 error_class, request_id, latency_ms, input_tokens, cost_usd, applied,
                 eval_id, invocation_id, claim_key, source_ids, label_json, label_source,
                 state_json, state_hash, transcript_ref, redaction_count, truncated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&r.id)
         .bind(r.created_at.to_rfc3339())
@@ -158,6 +162,7 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
         .bind(to_i64(r.latency_ms, "latency_ms")?)
         .bind(to_i64(r.input_tokens, "input_tokens")?)
         .bind(r.cost_usd)
+        .bind(i64::from(r.applied))
         .bind(&r.eval_id)
         .bind(&r.invocation_id)
         .bind(&r.claim_key)
@@ -247,6 +252,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<JevRecord, AppError> {
         redaction_count: u32::try_from(redaction_count)
             .map_err(|_| bad("redaction_count", &redaction_count.to_string()))?,
         truncated: row.get::<i64, _>("truncated") != 0,
+        applied: row.get::<i64, _>("applied") != 0,
     })
 }
 
@@ -427,6 +433,7 @@ mod tests {
             transcript_ref: None,
             redaction_count: 0,
             truncated: false,
+            applied: false,
         }
     }
 

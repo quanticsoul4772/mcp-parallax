@@ -280,6 +280,7 @@ fn turn_row(jev: &TurnJev, questions: &[JevQuestion], ids: &TurnIds<'_>) -> JevR
         transcript_ref: Some(ids.transcript_path.to_string()),
         redaction_count: 0,
         truncated: false,
+        applied: false,
     }
 }
 
