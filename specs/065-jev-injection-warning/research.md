@@ -26,7 +26,7 @@ All spec clarifications are answered (spec, Clarifications, 2026-11-25). Each de
 
 ## D5. Deadline and retries
 
-- **Decision**: per call, a deadline of `min(2000 ms, run time left)` measured from the first attempt. Shadow makes one attempt. `on` retries 429, 529 and 5xx while time remains, waiting the `Retry-After` value when the response has one (`client::retry::retry_after`) and otherwise 100 ms then 200 ms then 400 ms, never past the deadline (`client::retry::time_until`). The client surfaces `Retry-After` on those errors without logging the body (064 FR-001 unchanged).
+- **Decision**: per call, a deadline of `min(2000 ms, run time left)` measured from the first attempt. Shadow makes one attempt. `on` retries 429, 529 and 5xx while time remains, waiting the `Retry-After` value when the response has one (`client::retry::retry_after`) and otherwise 100 ms then 200 ms then 400 ms, never past the deadline (`client::retry::time_until`). The client applies this rule itself when the request's `retry` flag is set, as the Exa client does; the flag is false for shadow and the 064 sites, and error bodies are still never logged (064 FR-001 unchanged).
 - **Rationale**: the user's choice (2000 ms, 064's claim deadline); plan §6.1 "retries via the shared helpers are enabled for `on` sites only".
 - **Alternatives**: no retries (rejected by the plan); jitter (no randomness dependency, as in 064).
 
