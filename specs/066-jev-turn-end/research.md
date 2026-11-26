@@ -4,6 +4,21 @@
 
 - **Decision**: the first task reads real Claude Code transcripts on the operator's machine (shapes only) and writes scrubbed fixtures for each line kind 066 reads. Field names used to tell the kinds apart come from these fixtures. Scrubbing removes user names, paths containing an account name, session ids and real prompt text; a test checks the committed fixtures for them.
 - **Rationale**: the transcript format belongs to Claude Code and is not documented in the repository.
+- **Spike result (T001, 2026-11-26)**: shapes counted across the local transcripts; no content kept. Fixtures: `tests/fixtures/transcripts/` (`turn_string_prompt`, `turn_block_prompt`, `turn_slash_command`, `turn_compacted`).
+
+| Line kind | How it is told apart | Observed |
+|---|---|---|
+| Real user prompt | `type: "user"`, `origin.kind: "human"`, no `tool_result` block, not `isMeta`, `isCompactSummary` or `isSidechain` | string content; text blocks only with an image block; slash commands typed by the user also carry `origin.kind: "human"` |
+| Tool input | `type: "assistant"`, `message.content[].type: "tool_use"`, field `input` | |
+| Tool result | `type: "user"` with a `toolUseResult` key and `message.content[].type: "tool_result"` | `content` is a string, a list of `text` blocks, or a list of `tool_reference` blocks; `is_error` absent, false or true |
+| Subagent line | `isSidechain: true` | in `subagents/` files, not the main transcript |
+| Hook-injected context | `type: "attachment"`, `attachment.type` `hook_additional_context` or `hook_success`, with `hookEvent` | never a `user` line |
+| Interruption marker | `type: "user"`, content a `text` block starting `[Request interrupted` | no `origin` |
+| Meta line | `isMeta: true` | string or text-block content; `origin.kind` absent or `plugin` |
+| Compaction summary | `isCompactSummary: true` (with `isVisibleInTranscriptOnly`); preceded by `type: "system"`, `subtype: "compact_boundary"` | may carry `turnOrigin: "human"` |
+| Other user-role lines | `origin.kind` `task-notification` or `peer`, or no `origin`: `turnOrigin` `scheduled` or `sdk`, `<bash-input>`/`<bash-stdout>`, `<command-name>`, `<local-command-stdout>` | excluded by the `origin.kind: "human"` rule |
+| Stop-hook block reason | — | not observed: no `stop_hook_summary` with `preventedContinuation: true` and no `Stop hook feedback` line in any local transcript; Stop-hook output appears as `attachment` lines with `hookEvent: "Stop"` |
+| `surface` block | — | no fixture: hook output, carried by `attachment` lines, which are never `user` lines; the flag-prefix tests (T005-T007) build it from its template |
 
 ## D2. Turn start
 
