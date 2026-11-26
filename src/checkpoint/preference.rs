@@ -56,6 +56,7 @@ pub fn mine_preference_candidates(recall: &[(f32, Memory)]) -> Vec<PreferenceCan
 /// closing clause implements FR-002's "fix or push back".
 #[must_use]
 pub fn violation_signal(candidate: &PreferenceCandidate, basis: &str) -> (Signal, String) {
+    use crate::checkpoint::review::REVIEW_FLAG_PREFIX;
     let signal = Signal::new(
         SignalKind::PreferenceViolation,
         format!(
@@ -67,7 +68,7 @@ pub fn violation_signal(candidate: &PreferenceCandidate, basis: &str) -> (Signal
         &candidate.memory_id,
     );
     let message = format!(
-        "End-of-turn review: this turn appears to violate a stored preference: \
+        "{REVIEW_FLAG_PREFIX}this turn appears to violate a stored preference: \
          \"{}\" (memory {}, {} provenance). Basis: {} Revise the response to \
          honor it, or state explicitly why it does not apply here.",
         candidate.content,
@@ -82,6 +83,19 @@ pub fn violation_signal(candidate: &PreferenceCandidate, basis: &str) -> (Signal
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // 066 T005: the violation flag shares the review's exported prefix.
+    #[test]
+    fn the_violation_flag_starts_with_the_exported_review_prefix() {
+        let candidate = PreferenceCandidate {
+            memory_id: "mem-1".into(),
+            content: "c".into(),
+            trust: Trust::FirstHand,
+            score: 0.8,
+        };
+        let (_, message) = violation_signal(&candidate, "b.");
+        assert!(message.starts_with(crate::checkpoint::review::REVIEW_FLAG_PREFIX));
+    }
     use crate::memory::Kind;
     use chrono::{DateTime, Utc};
 

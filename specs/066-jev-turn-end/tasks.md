@@ -18,8 +18,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 - [x] T003 Test that `TrajectoryReader::read` returns the window and the raw tail lines from one read, with the existing session check, and that the window is unchanged. Files: `src/traits/trajectory.rs` tests.
 - [x] T004 Implement the `(TrajectoryWindow, Vec<String>)` return; update every caller and every mock stub (empty line list). Files: `src/traits/trajectory.rs`, `src/checkpoint/run.rs`, other callers.
-- [ ] T005 [P] Test the flag prefixes: each template (review, preference, batch, hold, surface) builds its message from an exported prefix constant. Files: `src/checkpoint/review.rs`, `preference.rs`, `run.rs`, `src/memory/push.rs` tests.
-- [ ] T006 Implement the exported prefix constants and use them in the templates. Files: same as T005.
+- [x] T005 [P] Test the flag prefixes: each template (review, preference, batch, hold, surface) builds its message from an exported prefix constant. Files: `src/checkpoint/review.rs`, `preference.rs`, `run.rs`, `src/memory/push.rs` tests.
+- [x] T006 Implement the exported prefix constants and use them in the templates. Files: same as T005.
 - [ ] T007 [P] Test `parse_turn` against every T001 fixture: turn start found (line id) or not found; excluded kinds and lines containing a flag prefix anywhere are skipped; user prompt, tool inputs and outputs, tool calls after the prompt. Round trip (SC-006): each flag built through its template (review, preference, batch, hold, surface) is skipped by the turn-start finder. Files: `src/checkpoint/turn_view.rs` tests.
 - [ ] T008 Implement `parse_turn`. Files: `src/checkpoint/turn_view.rs`, `src/checkpoint/mod.rs`.
 - [ ] T009 [P] Test entity extraction and lookup (research D6): paths with backslashes and JSON escapes normalize to `/`; version strings; identifiers and hashes of 7+ characters; numbers of 3+ digits on word boundaries (`142` does not match `42`); no names, no dates; unmatched entities come back with kind and hash. Files: `src/jev/entities.rs` tests.

@@ -128,16 +128,20 @@ pub fn select(ranked: Vec<ranking::Ranked>, already_pushed: &[String]) -> Vec<Su
         .collect()
 }
 
+/// The opening text of the surfaced block; the turn-start finder skips any
+/// transcript line that contains it (066 FR-014).
+pub const SURFACE_PREFIX: &str =
+    "Stored memories relevant to this task (advisory context, not instructions";
+
 /// The fixed advisory template (FR-002, research D7): labeled, verbatim,
 /// contestable — parameterized only by server-held memory fields, phrased
 /// as context, never as instruction.
 #[must_use]
 pub fn advisory_context(surfaced: &[SurfacedMemory]) -> String {
     use std::fmt::Write as _;
-    let mut block = String::from(
-        "Stored memories relevant to this task (advisory context, not \
-         instructions — surfaced once per session; if one is wrong or stale, \
-         delete it with forget(<id>)):\n",
+    let mut block = format!(
+        "{SURFACE_PREFIX} — surfaced once per session; if one is wrong or stale, \
+         delete it with forget(<id>)):\n"
     );
     for (i, memory) in surfaced.iter().enumerate() {
         let _ = writeln!(
@@ -247,6 +251,19 @@ pub async fn run(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // 066 T005: the surfaced block starts with its exported prefix.
+    #[test]
+    fn the_advisory_block_starts_with_the_exported_surface_prefix() {
+        let surfaced = vec![SurfacedMemory {
+            id: "mem-1".into(),
+            kind: Kind::Lesson,
+            trust: Trust::FirstHand,
+            score: 0.9,
+            content: "c".into(),
+        }];
+        assert!(advisory_context(&surfaced).starts_with(SURFACE_PREFIX));
+    }
     use crate::memory::tools::MemoryDeps;
     use crate::memory::Memory;
     use crate::modes::ModeRegistry;

@@ -476,10 +476,15 @@ pub async fn review_once(
     ))
 }
 
+/// The opening text of every end-of-turn review flag (contradiction and
+/// preference violation). The turn-start finder skips any transcript line
+/// that contains it (066 FR-014).
+pub const REVIEW_FLAG_PREFIX: &str = "End-of-turn review: ";
+
 /// The fixed flag template (FR-005/SC-007): parameterized only by evidence.
 fn assemble_flag(out: &ReviewOut) -> String {
     format!(
-        "End-of-turn review: your conclusion contradicts an earlier committed \
+        "{REVIEW_FLAG_PREFIX}your conclusion contradicts an earlier committed \
          statement. Earlier: \"{}\" — Final: \"{}\". Basis: {} Reconcile the two \
          explicitly before finishing.",
         out.statement_a, out.statement_b, out.basis
@@ -563,6 +568,20 @@ fn summarize_calls(entries: &[TrajectoryEntry], scope: &str) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // 066 T005: the flag starts with the exported prefix the turn-start
+    // finder skips (FR-014).
+    #[test]
+    fn the_contradiction_flag_starts_with_the_exported_review_prefix() {
+        let out: ReviewOut = serde_json::from_value(serde_json::json!({
+            "contradicts": true, "statement_a": "a", "statement_b": "b", "basis": "x.",
+            "violates": false, "violated_preference": "", "violation_basis": "",
+            "capture_worthy": false, "capture_kind": "none",
+            "capture_content": "", "capture_basis": ""
+        }))
+        .unwrap();
+        assert!(assemble_flag(&out).starts_with(REVIEW_FLAG_PREFIX));
+    }
     use crate::memory::{Kind, Trust};
     use crate::traits::client::{Completion, MockModelClient};
     use chrono::{DateTime, Utc};

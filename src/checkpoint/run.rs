@@ -740,11 +740,19 @@ async fn record_with_jev(
     Ok(())
 }
 
+/// The opening text of the batch flag; the turn-start finder skips any
+/// transcript line that contains it (066 FR-014).
+pub const BATCH_FLAG_PREFIX: &str = "Trajectory checkpoint (automated): ";
+
+/// The opening text of the gate hold; the turn-start finder skips any
+/// transcript line that contains it (066 FR-014).
+pub const HOLD_PREFIX: &str = "Checkpoint hold (automated): ";
+
 /// Fixed message templates (FR-005/SC-007): parameterized only by evidence.
 fn batch_flag_message(signals: &[Signal]) -> String {
     let evidence: Vec<&str> = signals.iter().map(|s| s.evidence.as_str()).collect();
     format!(
-        "Trajectory checkpoint (automated): {}. This pattern suggests the current \
+        "{BATCH_FLAG_PREFIX}{}. This pattern suggests the current \
          approach is looping — change the approach (or call the unstick corrective) \
          instead of repeating it.",
         evidence.join("; ")
@@ -753,7 +761,7 @@ fn batch_flag_message(signals: &[Signal]) -> String {
 
 fn hold_message(memory_content: &str) -> String {
     format!(
-        "Checkpoint hold (automated): this action appears to conflict with a stored, \
+        "{HOLD_PREFIX}this action appears to conflict with a stored, \
          verified constraint: \"{memory_content}\". Confirm to run it unchanged, or \
          deny it to let the agent course-correct."
     )
@@ -768,6 +776,14 @@ fn elapsed_ms(started: Instant) -> u64 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // 066 T005: the batch flag and the hold start with their exported prefixes.
+    #[test]
+    fn the_batch_flag_and_the_hold_start_with_their_exported_prefixes() {
+        let signal = Signal::new(SignalKind::Repetition, "e".into(), "k");
+        assert!(batch_flag_message(&[signal]).starts_with(BATCH_FLAG_PREFIX));
+        assert!(hold_message("c").starts_with(HOLD_PREFIX));
+    }
     use crate::checkpoint::trajectory::{TrajectoryEntry, TrajectoryWindow};
     use crate::checkpoint::Verdict;
     use crate::modes::ModeRegistry;
