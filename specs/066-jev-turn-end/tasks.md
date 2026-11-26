@@ -45,10 +45,10 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 **Independent test**: each skip condition made false or missing makes the review run; `on` fails startup.
 
-- [ ] T018 [P] [US2] Test the turn-review questions at version 2 with the criteria in `contracts/questions.md`, `true` first, each built as its own question value; the research `same_subject` questions stay at version 1 with no criteria (`noul()` unchanged). Files: `src/jev/questions.rs` tests.
+- [x] T018 [P] [US2] Test the turn-review questions at version 2 with the criteria in `contracts/questions.md`, `true` first, each built as its own question value; the research `same_subject` questions stay at version 1 with no criteria (`noul()` unchanged). Files: `src/jev/questions.rs` tests.
 - [x] T018a [P] [US2] Test that the report separates turn-review rows by question version and feeds only version-2 rows to the promotion decision. Files: `src/jev/report/tests.rs`.
 - [x] T018b [US2] Implement the version separation in the report. Files: `src/jev/report.rs`.
-- [ ] T019 [US2] Implement version 2 as separate question values, leaving `noul()` unchanged; correct the comment at `src/traits/classifier.rs:109-111` (options are not always empty for yes/no questions). Files: `src/jev/questions.rs`, `src/traits/classifier.rs`.
+- [x] T019 [US2] Implement version 2 as separate question values, leaving `noul()` unchanged; correct the comment at `src/traits/classifier.rs:109-111` (options are not always empty for yes/no questions). Files: `src/jev/questions.rs`, `src/traits/classifier.rs`.
 - [ ] T019a [P] [US2] Test the saved measurements: noise, self-agreement and order results carry the question version; a version-2 run does not overwrite version-1 results; `reproduce` prints the version. Files: `src/jev/measure.rs` tests.
 - [ ] T019b [US2] Implement the version field in the saved measurements. Files: `src/jev/measure.rs`, `examples/jev_backtest/`.
 - [ ] T019c [P] [US2] Test the swapped turn-review questions (criteria order reversed) and a yes/no order result type that is saved and reproduced. Files: `src/jev/questions.rs` tests, `src/jev/measure.rs` tests, `src/client/typesafe/tests.rs`.
@@ -72,6 +72,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [ ] T030 Amendments (FR-013): `docs/design/MEMORY_LAYER.md`, `docs/design/WATCHDOG_LAYER.md:59`, `docs/design/CORRECTIVE_SELECTION.md:89`, `docs/design/NEW_SERVER_DESIGN.md` §10, `specs/017-memory-consolidation/spec.md`, and the CHANGELOG.
 - [ ] T031 Analyze (Spec Kit) across spec, plan and tasks, with the three reviewers on the version-2 criteria in `contracts/questions.md`.
 - [ ] T032 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` and `code-reviewer` agents.
+- [ ] T032a Before the PR, run `examples/acceptance_jev.rs` on the branch, so the version-2 turn-review wording passes the live example before its PR (real redacted test requests to TypeSafe); results go to `quickstart.md`.
 - [ ] T033 Push and PR; CI.
 - [ ] T034 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
 - [ ] T034a After merge and rebuild, re-run the noise and self-agreement measurements, and run the order check in both criteria orders (research D9, FR-010), on the version-2 turn-review questions with `jev_backtest`; results go to the 064 measurements doc under a 066 section.
@@ -83,7 +84,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - Phase 2 blocks every story. T003 → T004; T005 → T006; T007 → T008 (needs T006); T009 → T010; T011 → T012.
 - US1 (T013–T017) needs T004, T008, T010, T012. US2 (T018–T023) needs T012. US3 (T024–T027) needs T012.
 - Within US2: T018a → T018b → T019 (the report separates versions before version 2 is sent); T018 → T019; T019a → T019b; T019c → T019d (needs T019 and T019b).
-- Phase 6 needs all stories; T031 → T032 → T033 → merge → T034 → T034a → T035.
+- Phase 6 needs all stories; T031 → T032 → T032a → T033 → merge → T034 → T034a → T035.
 
 ## Parallel examples
 
