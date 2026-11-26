@@ -63,7 +63,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Phase 5: Polish and cross-cutting
 
-- [ ] T022 [P] Test, then add the telemetry counts (research D9) `parallax.jev.injection.warned` and `parallax.jev.injection.unscreened` on the research invocation span, with `telemetry.md` updated (exact text first). Files: `src/observability.rs`, `specs/007-observability-layer/contracts/telemetry.md`.
+- [x] T022 [P] Test, then add the telemetry counts (research D9) `parallax.jev.injection.warned` and `parallax.jev.injection.unscreened` on the research invocation span, with `telemetry.md` updated (exact text first). Files: `src/observability.rs`, `specs/007-observability-layer/contracts/telemetry.md`.
 - [ ] T023 [P] Test, then extend `jev_backtest report` with the injection site from stored records (FR-009): share warned, failures by outcome, agreement with 063 on the same pages. Files: `src/jev/report.rs`, `src/jev/report/tests.rs`.
 - [ ] T024 Write the live example `examples/acceptance_jev_injection.rs` asserting SC-005, exiting non-zero on failure; register it in `Cargo.toml` with `test = true` for its helpers.
 - [ ] T025 CHANGELOG `[Unreleased]` entry (exact text first). Files: `CHANGELOG.md`.
