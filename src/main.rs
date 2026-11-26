@@ -271,10 +271,12 @@ CHECKPOINTS:
 JEV (TypeSafe; every site off by default; shadow records answers only):
     TYPESAFE_API_KEY              TypeSafe key; enables nothing by itself;
                                   never logged
-    PARALLAX_JEV_MODE_<SITE>      off | shadow; unset is off. shadow asks Jev beside
-                                  the big model and records its answer; nothing
-                                  changes. Needs TYPESAFE_API_KEY
-    SITES:  TURN_REVIEW RESEARCH_CLAIMS
+    PARALLAX_JEV_MODE_<SITE>      off | shadow | on; unset is off. shadow asks Jev
+                                  beside the big model and records its answer;
+                                  nothing changes. on (RESEARCH_INJECTION only,
+                                  pinned threshold) warns on kept research pages.
+                                  Needs TYPESAFE_API_KEY
+    SITES:  TURN_REVIEW RESEARCH_CLAIMS RESEARCH_INJECTION
     PARALLAX_JEV_MODEL            Pinned Jev model; jev-1.14.0 unless set
 
 PER-CALL-SITE ROUTING (both off by default; unset changes nothing):

@@ -13,14 +13,14 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Phase 1: Foundation (blocks all stories)
 
-- [ ] T001 Test the new site and mode: `JevSite::ResearchInjection` (suffix `RESEARCH_INJECTION`, stored as `research_injection`) is in `JevSite::ALL`; `JevMode::On` is in `JevMode::ALL` and parses from `on`; the `jev_records` two-way binding test covers the new site value. Files: `src/traits/classifier.rs` tests, `src/storage/jev.rs` tests.
-- [ ] T002 Implement the site and mode, and add `research_injection` to `specs/064-jev-first-pass/contracts/jev-record.schema.json` (exact text shown first). Files: `src/traits/classifier.rs`, the schema.
-- [ ] T003 [P] Test the pinned threshold table and decision: `injection_threshold("jev-1.14.0") == Some(0.35)`, any other model gives `None`; `injection_decision` warns at exactly 0.35 and not just below it (`next_down`), and a missing probability is never `Warned`; the 0.35 value is bound to the T038 (e) section of `claudedocs/jev-064-measurements-2026-11-24.md`. Files: `src/jev/policy.rs` tests.
-- [ ] T004 Implement `INJECTION_THRESHOLDS`, `injection_threshold` and `injection_decision`. Files: `src/jev/policy.rs`.
+- [x] T001 Test the new site and mode: `JevSite::ResearchInjection` (suffix `RESEARCH_INJECTION`, stored as `research_injection`) is in `JevSite::ALL`; `JevMode::On` is in `JevMode::ALL` and parses from `on`; the `jev_records` two-way binding test covers the new site value. Files: `src/traits/classifier.rs` tests, `src/storage/jev.rs` tests.
+- [x] T002 Implement the site and mode, and add `research_injection` to `specs/064-jev-first-pass/contracts/jev-record.schema.json` (exact text shown first). Files: `src/traits/classifier.rs`, the schema.
+- [x] T003 [P] Test the pinned threshold table and decision: `injection_threshold("jev-1.14.0") == Some(0.35)`, any other model gives `None`; `injection_decision` warns at exactly 0.35 and not just below it (`next_down`), and a missing probability is never `Warned`; the 0.35 value is bound to the T038 (e) section of `claudedocs/jev-064-measurements-2026-11-24.md`. Files: `src/jev/policy.rs` tests.
+- [x] T004 Implement `INJECTION_THRESHOLDS`, `injection_threshold` and `injection_decision`. Files: `src/jev/policy.rs`.
 - [ ] T005 [P] Test the `directs_ai` question: yes/no, version 1, exa-mcp-server's instructions and both criteria verbatim, criteria declared `true` then `false`; bound to the wording the back-test sent. Files: `src/jev/questions.rs` tests.
 - [ ] T006 Implement `injection_question()` in `src/jev/questions.rs`; `jev_backtest injection` uses it and drops its question-file argument (usage text and CHANGELOG updated). Files: `src/jev/questions.rs`, `examples/jev_backtest/main.rs`, `examples/jev_backtest/live.rs`.
-- [ ] T007 [P] Test config (research D2): `PARALLAX_JEV_MODE_RESEARCH_INJECTION` accepts `off`, `shadow` and `on`, defaults to `off`; non-off without the key is an error naming the variable; `on` with a model lacking a pinned threshold is an error naming both variables; `on` for `TURN_REVIEW` or `RESEARCH_CLAIMS` is still an error. Files: `src/config.rs` tests.
-- [ ] T008 Implement the config, and the new field in the three Config fixtures (`src/config.rs` `test_config`, `tests/common/mod.rs`, `examples/common/mod.rs`). Files: `src/config.rs`.
+- [x] T007 [P] Test config (research D2): `PARALLAX_JEV_MODE_RESEARCH_INJECTION` accepts `off`, `shadow` and `on`, defaults to `off`; non-off without the key is an error naming the variable; `on` with a model lacking a pinned threshold is an error naming both variables; `on` for `TURN_REVIEW` or `RESEARCH_CLAIMS` is still an error. Files: `src/config.rs` tests.
+- [x] T008 Implement the config, and the new field in the three Config fixtures (`src/config.rs` `test_config`, `tests/common/mod.rs`, `examples/common/mod.rs`). Files: `src/config.rs`.
 - [ ] T009 [P] Test that the client surfaces `Retry-After` on 429 and 529 without logging the body, and still sends exactly one request per `classify` call. Files: `src/client/typesafe/tests.rs`.
 - [ ] T010 Implement the `Retry-After` surfacing. Files: `src/client/typesafe.rs`, `src/error.rs` if the error type needs a field.
 
@@ -55,6 +55,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [ ] T019 [US3] Implement the rows through the run's `JevShadow` accumulator. Files: `src/research/pipeline.rs`, `src/jev/shadow/injection.rs`.
 - [ ] T020 [P] [US3] Test the startup line (host and data class) and `--help`, README and the `PARALLAX_JEV_MODE_` prefix help test listing the new site and `on`. Files: `src/jev/startup.rs` tests, `src/main.rs` tests.
 - [ ] T021 [US3] Implement the startup line and the help and README text (exact text shown first). Files: `src/jev/startup.rs`, `src/main.rs`, `README.md`.
+  - The startup line, --help and README text were done early, with T002 (2026-11-25).
 
 ## Phase 5: Polish and cross-cutting
 

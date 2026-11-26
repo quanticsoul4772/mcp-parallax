@@ -22,6 +22,41 @@ pub enum Band {
     Missing,
 }
 
+/// The injection threshold pinned per Jev model (065, research D3): the
+/// 064 back-test measured 0.35 on `jev-1.14.0`. A model not listed has no
+/// threshold, so the injection site cannot be `on` for it.
+pub const INJECTION_THRESHOLDS: &[(&str, f64)] = &[("jev-1.14.0", 0.35)];
+
+/// The pinned injection threshold for `model`, if there is one.
+#[must_use]
+pub fn injection_threshold(model: &str) -> Option<f64> {
+    INJECTION_THRESHOLDS
+        .iter()
+        .find(|(m, _)| *m == model)
+        .map(|(_, t)| *t)
+}
+
+/// An injection answer against its threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectionDecision {
+    /// At or above the threshold.
+    Warned,
+    /// Below the threshold.
+    Clear,
+    /// No usable answer; never a warning.
+    Missing,
+}
+
+/// The decision for a validated probability `p` at `threshold`.
+#[must_use]
+pub fn injection_decision(p: Option<f64>, threshold: f64) -> InjectionDecision {
+    match p {
+        Some(p) if p >= threshold => InjectionDecision::Warned,
+        Some(_) => InjectionDecision::Clear,
+        None => InjectionDecision::Missing,
+    }
+}
+
 /// The band for `p` against `no_at` and `yes_at`. A missing answer is
 /// [`Band::Missing`], whichever direction a caller acts on.
 #[must_use]
@@ -135,7 +170,9 @@ fn check_answer(question: &JevQuestion, answer: &JevAnswer) -> Result<(), String
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
 mod tests {
-    use super::{band, noul_p, validate, Band};
+    use super::{
+        band, injection_decision, injection_threshold, noul_p, validate, Band, InjectionDecision,
+    };
     use crate::traits::classifier::{JevAnswer, JevQuestion, JevResponse, QuestionKind};
 
     const PINNED: &str = "jev-1.14.0";
@@ -296,5 +333,33 @@ mod tests {
         assert_eq!(noul_p(&r, "q1"), Some(0.9));
         assert_eq!(noul_p(&r, "q2"), None);
         assert_eq!(band(noul_p(&r, "q2"), 0.3, 0.7), Band::Missing);
+    }
+
+    #[test]
+    fn the_injection_threshold_is_pinned_to_the_model() {
+        assert_eq!(injection_threshold("jev-1.14.0"), Some(0.35));
+        assert_eq!(injection_threshold("jev-1.13.0"), None);
+        assert_eq!(injection_threshold("jev-latest"), None);
+    }
+
+    #[test]
+    fn the_pinned_threshold_is_the_one_the_back_test_measured() {
+        let doc = include_str!("../../claudedocs/jev-064-measurements-2026-11-24.md");
+        assert!(
+            doc.contains("injection at threshold 0.35:"),
+            "the T038 (e) record no longer shows the 0.35 run"
+        );
+    }
+
+    #[test]
+    fn injection_warns_at_the_threshold_and_never_without_an_answer() {
+        let t = 0.35_f64;
+        assert_eq!(injection_decision(Some(t), t), InjectionDecision::Warned);
+        assert_eq!(
+            injection_decision(Some(t.next_down()), t),
+            InjectionDecision::Clear
+        );
+        assert_eq!(injection_decision(Some(1.0), t), InjectionDecision::Warned);
+        assert_eq!(injection_decision(None, t), InjectionDecision::Missing);
     }
 }

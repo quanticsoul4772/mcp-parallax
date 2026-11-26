@@ -39,12 +39,33 @@ pub async fn base_rate(storage: &SqliteStorage) {
     print!("{}", mcp_parallax::jev::measure::tables(&results));
 }
 
+/// How one stored row becomes a §7 item, or why it can't.
+type ItemFn = fn(&JevRecord) -> Result<tables::Item, tables::Skip>;
+
 /// Row counts and outcomes, then the plan §7 tables on the tune split (064
 /// SC-005). Labels are the big model's: agreement, not correctness, which
 /// needs hand labels. The confirm split is counted, never read.
 pub async fn report(storage: &SqliteStorage) {
     let rows = storage.load_jev_records().await.expect("jev records");
-    for site in JevSite::ALL {
+    // The §7 skip-gate sites, each with how one of its rows becomes an item;
+    // the injection site has its own report (065).
+    let sites: [(JevSite, ItemFn); 2] = [
+        (JevSite::TurnReview, |row| {
+            tables::turn_item(
+                row.label_json.as_ref(),
+                &row.questions_json,
+                row.harness_session_id.as_deref(),
+            )
+        }),
+        (JevSite::ResearchClaims, |row| {
+            tables::claim_item(
+                row.label_json.as_ref(),
+                &row.questions_json,
+                row.invocation_id.as_deref(),
+            )
+        }),
+    ];
+    for (site, to_item) in sites {
         let site_rows: Vec<&JevRecord> = rows.iter().filter(|r| r.site == site).collect();
         let mut outcomes: BTreeMap<&str, usize> = BTreeMap::new();
         for row in &site_rows {
@@ -69,18 +90,7 @@ pub async fn report(storage: &SqliteStorage) {
             .iter()
             .filter(|r| split(&r.id, tables::CONFIRM_PERCENT) == Split::Tune)
         {
-            let item = match site {
-                JevSite::TurnReview => tables::turn_item(
-                    row.label_json.as_ref(),
-                    &row.questions_json,
-                    row.harness_session_id.as_deref(),
-                ),
-                JevSite::ResearchClaims => tables::claim_item(
-                    row.label_json.as_ref(),
-                    &row.questions_json,
-                    row.invocation_id.as_deref(),
-                ),
-            };
+            let item = to_item(row);
             match item {
                 Ok(item) => {
                     if tables::is_abandoned(row.error_class.as_deref()) {
