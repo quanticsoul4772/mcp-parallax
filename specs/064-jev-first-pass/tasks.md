@@ -164,7 +164,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
   - the `design-reviewer` agent, because 064 touches schemas, trait seams and the dependency stack;
   - the `code-reviewer` agent, for all Rust changes.
 - [x] T036 Push (account-name check first), PR text shown first, CI.
-- [x] T037 The user runs the live acceptance example (command per quickstart §3). Results go to `quickstart.md` §6 (exact text first).
+- [x] T037 Run the live acceptance example (command per quickstart §3). Results go to `quickstart.md` §6 (exact text first).
 - [x] T038 FR-011 measurements per quickstart §4:
   - the base-rate query is approved first;
   - live calls are made only after the user approves;
