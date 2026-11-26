@@ -88,6 +88,7 @@ fn deps(config: &Config) -> ResearchDeps {
         routing: config.routing.clone(),
         backend: config.backend,
         jev: None,
+        jev_injection: None,
     }
 }
 

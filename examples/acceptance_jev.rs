@@ -206,6 +206,8 @@ async fn main() {
             server_session_id: "acceptance".into(),
             deadline: Duration::from_millis(JEV_CLAIM_DEADLINE_MS),
         }),
+        // 064's acceptance covers the claim site only; 065 has its own example.
+        jev_injection: None,
     };
     let rows = JevShadow::default();
     let started = SystemClock.now();

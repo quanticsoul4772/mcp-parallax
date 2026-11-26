@@ -344,6 +344,8 @@ pub(crate) struct SourceRecord {
     pub(crate) relevance: Option<f32>,
     /// Injection patterns found in the extracted text (063); empty when none.
     pub(crate) injection_patterns: Vec<&'static str>,
+    /// Jev's injection screen of the page (065), kept only with the site on.
+    pub(crate) jev_injection: Option<crate::research::contract::JevInjection>,
 }
 
 /// A claim after verification.

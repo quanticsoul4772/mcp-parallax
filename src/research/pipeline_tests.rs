@@ -147,6 +147,7 @@ fn deps_with_client(
         ),
         reranker: None,
         jev: None,
+        jev_injection: None,
     }
 }
 
@@ -3586,5 +3587,197 @@ mod jev_shadow {
         .await
         .unwrap();
         assert_eq!(rows.prep_count(), 2);
+    }
+}
+
+// ---- 065 T013: the injection screen in the pipeline --------------------------
+
+mod jev_injection {
+    use super::*;
+    use crate::jev::redact::Redactor;
+    use crate::jev::shadow::InjectionJev;
+    use crate::storage::jev::JevRecord;
+    use crate::telemetry::{JevShadow, NonModelUsage, PageCounts, SearchCost};
+    use crate::traits::classifier::{
+        Classifier, JevAnswer, JevMode, JevRequest, JevResponse, MockClassifier,
+    };
+    use std::time::Duration as StdDuration;
+
+    const PINNED: &str = "jev-1.14.0";
+    type Requests = Arc<std::sync::Mutex<Vec<JevRequest>>>;
+
+    fn injection_jev(classifier: Arc<dyn Classifier>, mode: JevMode, ms: u64) -> InjectionJev {
+        InjectionJev {
+            classifier,
+            redactor: Redactor::new(vec![]),
+            model: PINNED.into(),
+            server_session_id: "server-1".into(),
+            mode,
+            threshold: Some(0.35),
+            deadline: StdDuration::from_millis(ms),
+        }
+    }
+
+    /// Scores example.com/a at 0.9 and every other page at 0.1.
+    fn by_page(requests: Requests) -> MockClassifier {
+        let mut mock = MockClassifier::new();
+        mock.expect_model_id().return_const(PINNED.to_string());
+        mock.expect_classify().returning(move |request| {
+            requests.lock().unwrap().push(request.clone());
+            let url = request.state.as_json().unwrap()["page_url"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let p = if url.contains("example.com/a") {
+                0.9
+            } else {
+                0.1
+            };
+            Ok(JevResponse {
+                model_answered: PINNED.into(),
+                answers: vec![("directs_ai".into(), JevAnswer::Noul { p })],
+                input_tokens: Some(200),
+                request_id: Some("req-i".into()),
+                latency_ms: 90,
+            })
+        });
+        mock
+    }
+
+    struct Never;
+
+    #[async_trait::async_trait]
+    impl Classifier for Never {
+        async fn classify(&self, _: &JevRequest) -> Result<JevResponse, AppError> {
+            tokio::time::sleep(StdDuration::from_secs(3600)).await;
+            Err(AppError::ClassifierProvider("never".into()))
+        }
+        fn model_id(&self) -> &str {
+            PINNED
+        }
+    }
+
+    fn happy_client() -> Arc<ScriptedClient> {
+        scripted(
+            scope_value(),
+            |prompt| {
+                if prompt.contains("example.com/a") {
+                    json!({ "claims": ["the shared claim holds"] })
+                } else {
+                    json!({ "claims": ["the shared claim holds", "a solo claim"] })
+                }
+            },
+            |_, _| supported(),
+            |_| json!({ "answer": "Shared holds [s1][s2]; solo noted [s2].", "gaps": [], "gap_targets": [] }),
+        )
+    }
+
+    /// One quick run; the result as JSON minus elapsed time, and the rows.
+    async fn run_with(injection: Option<InjectionJev>) -> (Value, Vec<JevRecord>) {
+        let client = happy_client();
+        let search = search_returning(&["https://example.com/a", "https://example.com/b"]);
+        let mut clock = MockTimeProvider::new();
+        clock.expect_now().return_const(
+            DateTime::parse_from_rfc3339("2026-11-25T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        );
+        let mut deps = deps_with(client, search, Arc::new(clock));
+        deps.jev_injection = injection;
+        let rows = JevShadow::default();
+        let (result, _) = run_at(
+            &deps,
+            &params("does it hold?", Some(Depth::Quick)),
+            deps.concurrency,
+            &SearchCost::default(),
+            &PageCounts::default(),
+            &NonModelUsage::default(),
+            &rows,
+        )
+        .await
+        .unwrap();
+        let mut value = serde_json::to_value(&result).unwrap();
+        value["stats"].as_object_mut().unwrap().remove("elapsed_ms");
+        (value, rows.take())
+    }
+
+    /// The result without the injection fields.
+    fn without_jev(mut value: Value) -> Value {
+        for source in value["sources"].as_array_mut().unwrap() {
+            source.as_object_mut().unwrap().remove("jev_injection");
+        }
+        let stats = value["stats"].as_object_mut().unwrap();
+        stats.remove("jev_warned_pages");
+        stats.remove("jev_unscreened_pages");
+        value
+    }
+
+    fn source<'a>(value: &'a Value, url: &str) -> &'a Value {
+        value["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["url"] == url)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn with_the_site_on_only_the_jev_fields_differ_and_mark_the_high_page() {
+        let (off, _) = run_with(None).await;
+        let requests: Requests = Arc::default();
+        let (on, _) = run_with(Some(injection_jev(
+            Arc::new(by_page(Arc::clone(&requests))),
+            JevMode::On,
+            2000,
+        )))
+        .await;
+        assert_eq!(without_jev(on.clone()), off);
+        assert_eq!(
+            source(&on, "https://example.com/a")["jev_injection"],
+            json!({ "screened": true, "probability": 0.9, "warned": true, "reason": null })
+        );
+        assert_eq!(
+            source(&on, "https://example.com/b")["jev_injection"],
+            json!({ "screened": true, "probability": 0.1, "warned": false, "reason": null })
+        );
+        assert_eq!(on["stats"]["jev_warned_pages"], 1);
+        assert_eq!(on["stats"]["jev_unscreened_pages"], 0);
+        // Jev reads the same capped text extraction and 063 read.
+        for request in requests.lock().unwrap().iter() {
+            let state = request.state.as_json().unwrap();
+            let url = state["page_url"].as_str().unwrap();
+            let text = format!("Content of {url}.");
+            assert_eq!(state["page_text"], extract::capped_text(&text).as_str());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_jev_that_fails_or_never_returns_warns_nothing_and_never_holds_the_run() {
+        let (off, _) = run_with(None).await;
+        let mut failing = MockClassifier::new();
+        failing.expect_model_id().return_const(PINNED.to_string());
+        failing
+            .expect_classify()
+            .returning(|_| Err(AppError::ClassifierProvider("typesafe 529".into())));
+        let cases: [(&str, Arc<dyn Classifier>, &str); 2] = [
+            ("errors", Arc::new(failing), "classifier_provider"),
+            ("never returns", Arc::new(Never), "timeout"),
+        ];
+        for (name, classifier, reason) in cases {
+            let started = std::time::Instant::now();
+            let (on, rows) = run_with(Some(injection_jev(classifier, JevMode::On, 200))).await;
+            assert!(started.elapsed() < StdDuration::from_secs(5), "{name}");
+            assert_eq!(without_jev(on.clone()), off, "{name}");
+            for url in ["https://example.com/a", "https://example.com/b"] {
+                assert_eq!(
+                    source(&on, url)["jev_injection"],
+                    json!({ "screened": false, "probability": null, "warned": false, "reason": reason }),
+                    "{name}"
+                );
+            }
+            assert_eq!(on["stats"]["jev_warned_pages"], 0, "{name}");
+            assert_eq!(on["stats"]["jev_unscreened_pages"], 2, "{name}");
+            assert_eq!(rows.len(), 2, "{name}: one row per kept page");
+        }
     }
 }

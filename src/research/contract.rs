@@ -164,6 +164,26 @@ pub struct SourceRef {
     /// Names of the prompt-injection patterns found in this source's page
     /// text, sorted; empty when none (063). Warn only: the page was read.
     pub injection_patterns: Vec<String>,
+    /// Jev's injection screen of this page (065), present only with
+    /// `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on`. Advisory: no warning does
+    /// not mean the page is clean.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jev_injection: Option<JevInjection>,
+}
+
+/// One page's Jev injection screen (065).
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct JevInjection {
+    /// Jev returned a valid answer from the pinned model in time.
+    pub screened: bool,
+    /// P(the page addresses an AI) when screened, else null.
+    pub probability: Option<f64>,
+    /// Screened and at or above the pinned threshold.
+    pub warned: bool,
+    /// Why the page was not screened (`timeout`, `classifier_provider`,
+    /// `provider_rejected`, `validation_failure`, `redaction_failed`,
+    /// `disabled`), else null.
+    pub reason: Option<String>,
 }
 
 /// A page the injection screen flagged (063).
@@ -216,6 +236,14 @@ pub struct Stats {
     pub stopped_early: bool,
     /// Why it stopped early (`budget` | `deadline` | `grounding`), or null.
     pub stop_reason: Option<StopReason>,
+    /// Kept pages Jev warned on (065); present only with the injection site
+    /// on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jev_warned_pages: Option<u32>,
+    /// Kept pages Jev could not screen (065); present only with the
+    /// injection site on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jev_unscreened_pages: Option<u32>,
 }
 
 /// Why a run synthesized early.

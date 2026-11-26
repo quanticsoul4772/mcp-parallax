@@ -401,6 +401,19 @@ impl Parallax {
         } else {
             None
         };
+        let injection_jev =
+            if config.jev.research_injection == crate::traits::classifier::JevMode::Off {
+                None
+            } else {
+                typesafe.clone().map(|client| {
+                    crate::jev::shadow::InjectionJev::new(
+                        client,
+                        config.jev.model.clone(),
+                        session_id.clone(),
+                        config.jev.research_injection,
+                    )
+                })
+            };
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
             storage: Arc::clone(&storage),
@@ -451,6 +464,7 @@ impl Parallax {
                 concurrency: usize::from(config.research_concurrency),
                 max_age_hours: config.exa_max_age_hours,
                 jev: claim_jev,
+                jev_injection: injection_jev,
             })),
             None => None,
         };
@@ -1000,7 +1014,8 @@ impl Parallax {
         let non_model = Arc::new(crate::telemetry::NonModelUsage::default());
         // 064: the run's Jev rows, written by the record guard on every exit.
         let jev_rows = Arc::new(crate::telemetry::JevShadow::default());
-        let jev_dims = deps.jev.as_ref().map(|_| Arc::clone(&jev_rows));
+        let jev_dims =
+            (deps.jev.is_some() || deps.jev_injection.is_some()).then(|| Arc::clone(&jev_rows));
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped
         // rather than rejected — see 028 research D3: the caller asked for the
         // research, and the concurrency was advice about running it, so a

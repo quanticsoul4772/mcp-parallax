@@ -84,6 +84,8 @@ pub struct ResearchDeps {
     pub backend: crate::config::Backend,
     /// The Jev claim shadow (064); `None` when the site is off.
     pub jev: Option<crate::jev::shadow::ClaimJev>,
+    /// The Jev injection screen (065); `None` when the site is off.
+    pub jev_injection: Option<crate::jev::shadow::InjectionJev>,
 }
 
 /// The run's enforced ceilings: the budget meter and the wall clock, with a
@@ -437,9 +439,22 @@ async fn run_metered_at(
                         injection_patterns: patterns.iter().map(|n| (*n).to_string()).collect(),
                     });
             }
+            // 065: Jev screens the same capped text, beside the extraction call.
+            let screen = deps.jev_injection.as_ref().and_then(|jev| {
+                let p = page.as_ref().filter(|p| has_text(Some(p)))?;
+                Some(screen_beside(
+                    jev,
+                    id.clone(),
+                    p.url.clone(),
+                    extract::capped_text(&p.text),
+                    patterns.clone(),
+                    ceiling.time_left(),
+                    deps.clock.now(),
+                ))
+            });
             task_patterns.push(patterns);
             task_relevance.push(relevance[index]);
-            tasks.push(extract_source(
+            let extract = extract_source(
                 deps,
                 Arc::clone(&semaphore),
                 meter,
@@ -447,27 +462,57 @@ async fn run_metered_at(
                 id,
                 url.clone(),
                 page,
-            ));
+            );
+            tasks.push(async move {
+                match screen {
+                    Some(screen) => {
+                        let (outcome, screened) = tokio::join!(extract, screen);
+                        (outcome, Some(screened))
+                    }
+                    None => (extract.await, None),
+                }
+            });
         }
         stats.sources_kept = pages_kept;
         stats.pages_flagged = u32::try_from(stats.flagged_pages.len()).unwrap_or(u32::MAX);
         pages_counted.set(pages_fetched, pages_kept);
         let mut failures: Vec<AppError> = Vec::new();
-        for ((outcome, score), patterns) in futures::future::join_all(tasks)
+        let injection_on = deps
+            .jev_injection
+            .as_ref()
+            .is_some_and(|jev| jev.mode == crate::traits::classifier::JevMode::On);
+        let (mut warned, mut unscreened) = (0_u32, 0_u32);
+        for (((outcome, screened), score), patterns) in futures::future::join_all(tasks)
             .await
             .into_iter()
             .zip(task_relevance)
             .zip(task_patterns)
         {
+            let shown = screened.map(|(row, screening)| {
+                sinks.jev_rows.push(row);
+                warned += u32::from(screening.warned);
+                unscreened += u32::from(!screening.screened);
+                crate::research::contract::JevInjection {
+                    screened: screening.screened,
+                    probability: screening.probability,
+                    warned: screening.warned,
+                    reason: screening.reason.map(String::from),
+                }
+            });
             match outcome {
                 SourceOutcome::Extracted(mut record) => {
                     record.relevance = score;
                     record.injection_patterns = patterns;
+                    record.jev_injection = shown.filter(|_| injection_on);
                     sources.push(*record);
                 }
                 SourceOutcome::Empty => {}
                 SourceOutcome::Failed(error) => failures.push(*error),
             }
+        }
+        if injection_on {
+            stats.jev_warned_pages = Some(warned);
+            stats.jev_unscreened_pages = Some(unscreened);
         }
         // 023: every source failing is a phase failure, not degradation. The
         // search phase already draws this line — it propagates when no search
@@ -875,6 +920,23 @@ async fn rerank_pages(
     (kept, relevance, None)
 }
 
+/// 065: one kept page's Jev injection screen, on owned inputs so it can run
+/// beside the page's extraction call.
+async fn screen_beside(
+    jev: &crate::jev::shadow::InjectionJev,
+    id: String,
+    url: String,
+    text: String,
+    patterns: Vec<&'static str>,
+    time_left: std::time::Duration,
+    now: DateTime<Utc>,
+) -> (
+    crate::storage::jev::JevRecord,
+    crate::jev::shadow::Screening,
+) {
+    crate::jev::shadow::screen_page(jev, &id, &url, &text, &patterns, time_left, now).await
+}
+
 async fn extract_source(
     deps: &ResearchDeps,
     semaphore: Arc<Semaphore>,
@@ -955,6 +1017,7 @@ async fn extract_source(
         truncated: page.truncated,
         relevance: None,
         injection_patterns: Vec::new(),
+        jev_injection: None,
     }))
 }
 

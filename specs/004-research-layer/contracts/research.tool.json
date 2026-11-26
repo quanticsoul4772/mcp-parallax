@@ -276,6 +276,21 @@
                 ]
               },
               "description": "063: names of the prompt-injection patterns found in this source's page text, sorted; empty when none. Warn only: the page was still read."
+            },
+            "jev_injection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["screened", "probability", "warned", "reason"],
+              "properties": {
+                "screened": { "type": "boolean" },
+                "probability": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+                "warned": { "type": "boolean" },
+                "reason": {
+                  "type": ["string", "null"],
+                  "enum": ["timeout", "classifier_provider", "provider_rejected", "validation_failure", "redaction_failed", "disabled", null]
+                }
+              },
+              "description": "065: Jev's injection screen of this page; present only with the injection site on. Advisory: no warning does not mean the page is clean."
             }
           },
           "required": [
@@ -325,6 +340,16 @@
             "type": "integer",
             "minimum": 0,
             "description": "063: pages selected for extraction with at least one injection pattern (the length of flagged_pages)."
+          },
+          "jev_warned_pages": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "065: kept pages Jev warned on; present only with PARALLAX_JEV_MODE_RESEARCH_INJECTION=on."
+          },
+          "jev_unscreened_pages": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "065: kept pages Jev could not screen; present only with the injection site on."
           },
           "flagged_pages": {
             "type": "array",
