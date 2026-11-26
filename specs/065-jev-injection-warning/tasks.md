@@ -69,8 +69,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T027 Push and PR; CI.
 - [x] T028 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
 - [x] T028a Add a harness mode that asks `directs_ai` with its two criteria in both orders and reports the flip rate with McNemar's test (test first); rebuild the injection dataset; run it. T029 needs a flip rate of 5% or less (`docs/design/NEW_SERVER_DESIGN.md:304`); results go to the 064 measurements doc.
-- [ ] T029 Turn it on in the operator's setup (FR-010): back up `~/.claude.json`; add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key; restart Claude Code.
-- [ ] T030 Update the CLAUDE.md active-feature block to the shipped state.
+- [x] T029 Turn it on in the operator's setup (FR-010): back up `~/.claude.json`; add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key; restart Claude Code.
+- [x] T030 Update the CLAUDE.md active-feature block to the shipped state.
 
 ## Dependencies
 

@@ -164,7 +164,7 @@ secret folder (055) or is a drive root or the home folder; absent, the tool is n
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
 `REQUEST_TIMEOUT_MS` (default `120000` — raised from 30 s by 018 D7 in step with
-the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW` and `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
+the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW` and `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error), `PARALLAX_JEV_MODE_RESEARCH_INJECTION` (`off`|`shadow`|`on`; `on` needs a pinned threshold for the configured model) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
 A present-but-unparseable value is an error, never a silent fallback to the
 default. Telemetry is enabled solely by the standard OTel variables
 (`OTEL_EXPORTER_OTLP_ENDPOINT` et al.; `OTEL_SDK_DISABLED=true` honored
@@ -293,7 +293,7 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
-**Active Spec Kit feature: `065-jev-injection-warning`; merged in #176, the live run, the option-order check and turning it on still open** ([plan](specs/065-jev-injection-warning/plan.md)) - Jev's `directs_ai` question on each page research keeps, asked beside that page's extraction call; with `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on`, pages at or above the pinned threshold (0.35 on `jev-1.14.0`) carry an advisory warning, separate from 063's pattern screen. Off in code; shadow records only; the operator's setup goes to `on` after the option-order check passes. Claim settling moved to a later feature.
+**065 (`065-jev-injection-warning`); shipped** ([plan](specs/065-jev-injection-warning/plan.md)) - Jev's `directs_ai` question on each page research keeps, asked beside that page's extraction call; with `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on`, pages at or above the pinned threshold (0.35 on `jev-1.14.0`) carry an advisory warning, separate from 063's pattern screen. Off in code; on in the operator's setup since 2026-11-26. Live run: 5 pages kept, all screened (SC-005 pass). Option order: 4 flips in 612 pages (0.65%), under the 5% gate. Claim settling moved to a later feature.
 
 **064 (`064-jev-first-pass`); shipped, every T038 measurement recorded** ([plan](specs/064-jev-first-pass/plan.md)) - TypeSafe's Jev (a fast typed-answer model) as a cheap judgment tier, run in shadow beside the end-of-turn review and research claim verification: answers recorded next to the big model's, nothing changes. Off in code; on in the operator's setup since 2026-11-25. Mandatory redaction before every request; no stored memories sent. The back-test harness (`examples/jev_backtest`) measures noise, self-agreement, option order, base rate and the injection back-test, saves them to `./data/jev-measurements.json` and reprints them with `reproduce`; results are in `claudedocs/jev-064-measurements-2026-11-24.md`. Full roadmap 064-067 in the Jev roadmap file.
 
