@@ -348,8 +348,8 @@ arc.
   them (questions with none, which is all of the server's, are sent as
   before); `jev_backtest injection` reads `{"text", "label", "url"}` lines,
   sends each page as `{"page_url", "page_text"}` after redacting both (unlike
-  exa-mcp-server, which sent the URL as is), reads a JSON question file with
-  instructions and both criteria, and counts and saves the dataset lines it
+  exa-mcp-server, which sent the URL as is), asks the server's own `directs_ai`
+  question (065; the question-file argument is gone), and counts and saves the dataset lines it
   skipped. A dataset with no usable line stops before any call, and a run in
   which no call produced an answer stops before saving; both leave the saved
   result as it was. Lines may carry a `set`; the run saves and prints one row

@@ -9,7 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::jev::injection::{check_answered, injection_question, parse_dataset, tally_sets};
+use mcp_parallax::jev::injection::{check_answered, parse_dataset, tally_sets};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -453,18 +453,13 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
     print!("{}", measure::tables(&results));
 }
 
-/// A labeled set from your folder, asked with the question in your file;
-/// saved with the other results and printed as a table.
-pub async fn injection(config: &Config, folder: &str, question_file: &str, threshold: f64) {
+/// A labeled set from your folder, asked the server's `directs_ai` question
+/// (065); saved with the other results and printed as a table.
+pub async fn injection(config: &Config, folder: &str, threshold: f64) {
     // Checked before any call is paid for: a broken file stops the run here.
     let mut results = rebuild::load();
     let client = jev(config);
-    let question =
-        injection_question(&std::fs::read_to_string(question_file).expect("question file"))
-            .unwrap_or_else(|e| {
-                eprintln!("{e}");
-                std::process::exit(1)
-            });
+    let question = mcp_parallax::jev::questions::injection_question();
     let redactor = Redactor::new(vec![]);
     let mut pairs: Vec<(Decision, bool)> = Vec::new();
     let mut failed = 0_u32;
