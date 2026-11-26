@@ -3935,4 +3935,37 @@ mod jev_injection {
             "a Jev warning excluded a claim"
         );
     }
+
+    // ---- 065 T018: the injection rows ---------------------------------------
+
+    #[tokio::test]
+    async fn each_kept_page_leaves_one_row_with_its_source_063_label_and_applied_flag() {
+        let (on, rows) = run_on(
+            Some(injection_jev(
+                Arc::new(by_page(Arc::default())),
+                JevMode::On,
+                2000,
+            )),
+            None,
+            search_flagging_b(),
+        )
+        .await;
+        let id_of = |url: &str| source(&on, url)["id"].as_str().unwrap().to_string();
+        let row_for = |url: &str| {
+            let id = id_of(url);
+            rows.iter()
+                .find(|r| r.source_ids.as_deref() == Some(&[id.clone()][..]))
+                .expect("one row per kept page")
+        };
+        let a = row_for("https://example.com/a");
+        assert!(a.applied, "a warned with the site on");
+        assert_eq!(a.label_json, Some(json!({ "patterns063": [] })));
+        let b = row_for("https://example.com/b");
+        assert!(!b.applied, "b was not warned");
+        assert_eq!(
+            b.label_json.as_ref().unwrap()["patterns063"],
+            source(&on, "https://example.com/b")["injection_patterns"]
+        );
+        assert!(rows.iter().all(|r| r.state_json.is_none()));
+    }
 }

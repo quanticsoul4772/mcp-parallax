@@ -52,10 +52,13 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 **Independent test**: config error tests (T007) and a records test joining every injection row to its invocation.
 
-- [ ] T018 [P] [US3] Test records (research D7) on `SqliteStorage`: one `research_injection` row per page request, joined to the invocation and source id; `label_json` holds the 063 pattern names; `state_json` null; `applied` 1 only for an `on` row that warned; rows written on cancellation; the invocation's `jev_cost_usd` includes injection rows; Jev tokens stay out of the research token ceiling. Files: `src/research/pipeline_tests.rs`, `tests/integration.rs` if needed.
-- [ ] T019 [US3] Implement the rows through the run's `JevShadow` accumulator. Files: `src/research/pipeline.rs`, `src/jev/shadow/injection.rs`.
-- [ ] T020 [P] [US3] Test the startup line (host and data class) and `--help`, README and the `PARALLAX_JEV_MODE_` prefix help test listing the new site and `on`. Files: `src/jev/startup.rs` tests, `src/main.rs` tests.
-- [ ] T021 [US3] Implement the startup line and the help and README text (exact text shown first). Files: `src/jev/startup.rs`, `src/main.rs`, `README.md`.
+- [x] T018 [P] [US3] Test records (research D7) on `SqliteStorage`: one `research_injection` row per page request, joined to the invocation and source id; `label_json` holds the 063 pattern names; `state_json` null; `applied` 1 only for an `on` row that warned; rows written on cancellation; the invocation's `jev_cost_usd` includes injection rows; Jev tokens stay out of the research token ceiling. Files: `src/research/pipeline_tests.rs`, `tests/integration.rs` if needed.
+  - Passed on first run against T012/T014; invocation linkage, cancellation and jev_cost_usd are covered by 064's site-independent RecordGuard tests (2026-11-25).
+- [x] T019 [US3] Implement the rows through the run's `JevShadow` accumulator. Files: `src/research/pipeline.rs`, `src/jev/shadow/injection.rs`.
+  - Done in T014 (2026-11-25).
+- [x] T020 [P] [US3] Test the startup line (host and data class) and `--help`, README and the `PARALLAX_JEV_MODE_` prefix help test listing the new site and `on`. Files: `src/jev/startup.rs` tests, `src/main.rs` tests.
+  - The startup test was added with T002; the help-and-README test covers the new site and `on` through `JevSite::ALL` and `JevMode::ALL` (2026-11-25).
+- [x] T021 [US3] Implement the startup line and the help and README text (exact text shown first). Files: `src/jev/startup.rs`, `src/main.rs`, `README.md`.
   - The startup line, --help and README text were done early, with T002 (2026-11-25).
 
 ## Phase 5: Polish and cross-cutting

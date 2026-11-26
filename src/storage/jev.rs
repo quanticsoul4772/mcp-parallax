@@ -449,6 +449,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_applied_injection_row_reads_back_applied() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let mut written = record("row-i");
+        written.site = JevSite::ResearchInjection;
+        written.mode = JevMode::On;
+        written.applied = true;
+        written.label_json = Some(serde_json::json!({ "patterns063": ["role_marker"] }));
+        written.state_json = None;
+        storage
+            .record_jev(std::slice::from_ref(&written))
+            .await
+            .unwrap();
+        let read = storage.load_jev_records().await.unwrap();
+        assert_eq!(read, vec![written]);
+        assert!(read[0].applied);
+    }
+
+    #[tokio::test]
     async fn a_batch_is_written_all_or_none() {
         let storage = SqliteStorage::connect(":memory:").await.unwrap();
         let batch = [record("a"), record("b"), record("c")];
