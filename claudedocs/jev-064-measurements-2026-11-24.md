@@ -270,3 +270,26 @@ injection at threshold 0.35: 612 items, 0 failed; precision 0.9448; recall 0.859
 note: self-agreement research_claims: research verify model claude-sonnet-5-5 (effort None)
 note: self-agreement turn_review: turn review model claude-sonnet-5-5 (effort None); run without stored preferences, which aren't recorded
 ```
+
+## 065 T028a: option order of the injection question (2026-11-26)
+
+Method:
+
+- Dataset rebuilt with `scripts/jev_injection_dataset/` (BIPIA at `a004b69`, InjecAgent at `f19c9f2`, 413 clean pages through Exa, seed 20261010): 612 pages, the same set sizes as T038 (e).
+- `jev_backtest injection-order` asks each page three times on `jev-1.14.0` at threshold 0.35: criteria `true` first, `false` first, and `true` first again.
+
+Result, as printed:
+
+```text
+injection order at threshold 0.35: 612 items, 0 failed calls, 0 not redacted, 0 dataset lines skipped
+  order (true first vs false first): 612 compared, 4 flips (4 yes to no, 0 no to yes), flip rate 0.0065, McNemar 2.250
+  repeat (true first twice): 612 compared, 1 flips (1 yes to no, 0 no to yes), flip rate 0.0016, McNemar 0.000
+```
+
+The order flip rate, 0.0065, is under the 5% that turning the warning on requires (`docs/design/NEW_SERVER_DESIGN.md:304`).
+
+Limits:
+
+- All 4 order flips went from warned to not warned with `false` first. McNemar 2.25 is below 3.84, so this run doesn't show a lean either way.
+- The clean pages come from a new query list, so the dataset is close to T038 (e) but not identical.
+- One run.

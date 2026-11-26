@@ -9,7 +9,7 @@ use mcp_parallax::checkpoint::{review, SignalKind};
 use mcp_parallax::client::pool::ClientPool;
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
-use mcp_parallax::jev::injection::{check_answered, parse_dataset, tally_sets};
+use mcp_parallax::jev::injection::{check_answered, parse_dataset, tally_sets, Dataset};
 use mcp_parallax::jev::measure::{self, AgreementItem, InjectionResult, NoiseItem, OrderItem};
 use mcp_parallax::jev::metrics::{Confusion, Decision};
 use mcp_parallax::jev::questions::{
@@ -36,7 +36,7 @@ fn bump(counts: &mut Counts, reason: &str) {
     *counts.entry(reason.to_string()).or_default() += 1;
 }
 
-fn jev(config: &Config) -> TypesafeClient {
+pub fn jev(config: &Config) -> TypesafeClient {
     TypesafeClient::new(&config.jev).expect("TYPESAFE_API_KEY is required for live subcommands")
 }
 
@@ -91,7 +91,7 @@ async fn turn_rows(
     (rebuilt, skips)
 }
 
-fn request(config: &Config, state: RedactedState, questions: Vec<JevQuestion>) -> JevRequest {
+pub fn request(config: &Config, state: RedactedState, questions: Vec<JevQuestion>) -> JevRequest {
     JevRequest {
         model: config.jev.model.clone(),
         state,
@@ -123,7 +123,7 @@ fn turn_questions(row: &JevRecord) -> Vec<JevQuestion> {
 
 /// Per question: P(yes) for yes/no, P(supports) for relation, and the chosen
 /// option for a choice question.
-fn values(response: &JevResponse) -> Vec<(String, f64, Option<String>)> {
+pub fn values(response: &JevResponse) -> Vec<(String, f64, Option<String>)> {
     response
         .answers
         .iter()
@@ -456,14 +456,10 @@ pub async fn self_agreement(config: &Config, storage: &SqliteStorage, limit: usi
 
 /// A labeled set from your folder, asked the server's `directs_ai` question
 /// (065); saved with the other results and printed as a table.
-pub async fn injection(config: &Config, folder: &str, threshold: f64) {
-    // Checked before any call is paid for: a broken file stops the run here.
-    let mut results = rebuild::load();
-    let client = jev(config);
-    let question = mcp_parallax::jev::questions::injection_question();
-    let redactor = Redactor::new(vec![]);
-    let mut pairs: Vec<(Decision, bool)> = Vec::new();
-    let mut failed = 0_u32;
+/// Every `.jsonl` line in `folder`, in file-name order. Every line is checked
+/// before any call: a dataset with nothing usable stops here, and the saved
+/// result is left as it was.
+pub fn read_dataset(folder: &str) -> Dataset {
     let mut paths: Vec<_> = std::fs::read_dir(folder)
         .expect("dataset folder")
         .filter_map(Result::ok)
@@ -475,12 +471,21 @@ pub async fn injection(config: &Config, folder: &str, threshold: f64) {
         .iter()
         .map(|path| std::fs::read_to_string(path).expect("dataset file"))
         .collect();
-    // Every line is checked before any call: a dataset with nothing usable
-    // stops here, and the saved result is left as it was.
-    let dataset = parse_dataset(files.iter().flat_map(|f| f.lines())).unwrap_or_else(|e| {
+    parse_dataset(files.iter().flat_map(|f| f.lines())).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1)
-    });
+    })
+}
+
+pub async fn injection(config: &Config, folder: &str, threshold: f64) {
+    // Checked before any call is paid for: a broken file stops the run here.
+    let mut results = rebuild::load();
+    let client = jev(config);
+    let question = mcp_parallax::jev::questions::injection_question();
+    let redactor = Redactor::new(vec![]);
+    let mut pairs: Vec<(Decision, bool)> = Vec::new();
+    let mut failed = 0_u32;
+    let dataset = read_dataset(folder);
     let mut by_set: Vec<(String, Option<Decision>, bool)> = Vec::new();
     for item in dataset.items {
         let page = serde_json::json!({ "page_url": item.url, "page_text": item.text });

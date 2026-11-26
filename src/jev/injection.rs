@@ -141,6 +141,65 @@ pub fn check_answered(answered: usize, failed: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Paired decisions on the same items under the two criteria orders (065
+/// T028a). Only pairs decided in both orders are compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OrderFlips {
+    /// Pairs decided (yes or no) in both orders.
+    pub compared: u32,
+    /// Yes in the first order, no in the second.
+    pub yes_to_no: u32,
+    /// No in the first order, yes in the second.
+    pub no_to_yes: u32,
+}
+
+impl OrderFlips {
+    /// Pairs whose decision changed with the order.
+    #[must_use]
+    pub const fn flips(&self) -> u32 {
+        self.yes_to_no + self.no_to_yes
+    }
+
+    /// Flips over compared pairs; `None` when nothing was compared.
+    #[must_use]
+    pub fn flip_rate(&self) -> Option<f64> {
+        (self.compared > 0).then(|| f64::from(self.flips()) / f64::from(self.compared))
+    }
+
+    /// McNemar's statistic with continuity correction, as the research
+    /// order table computes it; 0 when nothing flipped.
+    #[must_use]
+    pub fn mcnemar(&self) -> f64 {
+        let (b, c) = (self.yes_to_no, self.no_to_yes);
+        if b + c == 0 {
+            0.0
+        } else {
+            (f64::from(b.abs_diff(c)) - 1.0).max(0.0).powi(2) / f64::from(b + c)
+        }
+    }
+}
+
+/// Count flips over `(first order, second order)` decision pairs.
+#[must_use]
+pub fn order_flips(pairs: &[(Decision, Decision)]) -> OrderFlips {
+    let mut f = OrderFlips::default();
+    for pair in pairs {
+        match pair {
+            (Decision::Yes, Decision::Yes) | (Decision::No, Decision::No) => f.compared += 1,
+            (Decision::Yes, Decision::No) => {
+                f.compared += 1;
+                f.yes_to_no += 1;
+            }
+            (Decision::No, Decision::Yes) => {
+                f.compared += 1;
+                f.no_to_yes += 1;
+            }
+            _ => {}
+        }
+    }
+    f
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -279,5 +338,46 @@ mod tests {
         let err = check_answered(0, 3).unwrap_err();
         assert!(err.contains("3 failed"), "{err}");
         assert!(check_answered(1, 3).is_ok());
+    }
+
+    #[test]
+    fn matching_decisions_in_both_orders_are_no_flips() {
+        let f = order_flips(&[(Decision::Yes, Decision::Yes), (Decision::No, Decision::No)]);
+        assert_eq!((f.compared, f.yes_to_no, f.no_to_yes), (2, 0, 0));
+        assert_eq!(f.flips(), 0);
+        assert!(f.mcnemar().abs() < f64::EPSILON);
+        assert_eq!(f.flip_rate(), Some(0.0));
+    }
+
+    #[test]
+    fn flips_are_counted_by_direction_with_a_continuity_corrected_mcnemar() {
+        let mut pairs = vec![(Decision::Yes, Decision::No); 3];
+        pairs.push((Decision::No, Decision::Yes));
+        pairs.extend(vec![(Decision::No, Decision::No); 4]);
+        let f = order_flips(&pairs);
+        assert_eq!((f.compared, f.yes_to_no, f.no_to_yes), (8, 3, 1));
+        assert_eq!(f.flips(), 4);
+        // (|3 - 1| - 1)^2 / (3 + 1)
+        assert!((f.mcnemar() - 0.25).abs() < 1e-12);
+        assert_eq!(f.flip_rate(), Some(0.5));
+    }
+
+    #[test]
+    fn a_pair_with_an_undecided_side_is_not_compared() {
+        let f = order_flips(&[
+            (Decision::Undecided, Decision::Yes),
+            (Decision::No, Decision::Undecided),
+            (Decision::Yes, Decision::Yes),
+        ]);
+        assert_eq!(f.compared, 1);
+        assert_eq!(f.flips(), 0);
+    }
+
+    #[test]
+    fn no_compared_pairs_give_no_flip_rate() {
+        let f = order_flips(&[]);
+        assert_eq!(f.compared, 0);
+        assert_eq!(f.flip_rate(), None);
+        assert!(f.mcnemar().abs() < f64::EPSILON);
     }
 }

@@ -1348,7 +1348,7 @@ mod tests {
         }
 
         #[test]
-        fn exa_mcp_servers_jev_model_is_ignored() {
+        fn a_jev_model_variable_is_ignored() {
             let s = JevSettings::resolve(vars(&[KEY, ("JEV_MODEL", "jev-latest")])).unwrap();
             assert_eq!(s.model, "jev-1.14.0");
         }

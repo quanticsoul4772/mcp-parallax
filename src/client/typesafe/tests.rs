@@ -4,7 +4,7 @@
 
 use super::{TypesafeClient, MAX_IN_FLIGHT};
 use crate::error::AppError;
-use crate::jev::questions::research_claim_questions;
+use crate::jev::questions::{injection_question_swapped, research_claim_questions};
 use crate::jev::redact::Redactor;
 use crate::traits::classifier::{Classifier, JevAnswer, JevQuestion, JevRequest, QuestionKind};
 use std::io::Write;
@@ -137,6 +137,28 @@ async fn a_yes_no_question_sends_criteria_only_when_it_declares_them() {
         body["questions"]["without"],
         serde_json::json!({ "type": "noul", "instructions": "Is it?" })
     );
+}
+
+/// 065 T028a: the swapped injection question reaches the wire with `false`
+/// declared before `true`, so a check that finds no flips has really sent
+/// both orders.
+#[tokio::test]
+async fn the_swapped_injection_question_sends_false_before_true() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ok())
+        .mount(&mock)
+        .await;
+    let mut req = request(SECOND);
+    req.questions = vec![injection_question_swapped()];
+    let _ = client(&mock).classify(&req).await;
+
+    let received = mock.received_requests().await.unwrap();
+    let raw = String::from_utf8(received[0].body.clone()).unwrap();
+    let falses = raw.find("\"false\":").expect("false criterion sent");
+    let trues = raw.find("\"true\":").expect("true criterion sent");
+    assert!(falses < trues, "criteria not swapped on the wire: {raw}");
 }
 
 #[tokio::test]
