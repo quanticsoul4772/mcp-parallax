@@ -42,8 +42,9 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 **Independent test**: shadow equals site-off except elapsed time; 063's fields are identical in all three modes.
 
-- [ ] T016 [P] [US2] Test SC-001: with the site off and in shadow, the research result is byte-identical to the site-off result except `stats.elapsed_ms`, for a confident, erroring, invalid and never-returning Jev; with it off, no call and no row. Test that 063's `injection_patterns`, `pages_flagged` and `flagged_pages` are identical in off, shadow and on, including pages one screen flags and the other does not; a source Jev warned on but 063 did not flag still has its claims sent in 064's claim shadow. Files: `src/research/pipeline_tests.rs`.
-- [ ] T017 [US2] Make whatever T016 shows is needed (shadow path through the same module, fields omitted with `skip_serializing_if`). Files: `src/research/*`, `src/jev/shadow/injection.rs`.
+- [x] T016 [P] [US2] Test SC-001: with the site off and in shadow, the research result is byte-identical to the site-off result except `stats.elapsed_ms`, for a confident, erroring, invalid and never-returning Jev; with it off, no call and no row. Test that 063's `injection_patterns`, `pages_flagged` and `flagged_pages` are identical in off, shadow and on, including pages one screen flags and the other does not; a source Jev warned on but 063 did not flag still has its claims sent in 064's claim shadow. Files: `src/research/pipeline_tests.rs`.
+- [x] T017 [US2] Make whatever T016 shows is needed (shadow path through the same module, fields omitted with `skip_serializing_if`). Files: `src/research/*`, `src/jev/shadow/injection.rs`.
+  - No change needed: T016's tests passed against T014's code (2026-11-25).
 
 ## Phase 4: User Story 3 - Safe configuration and records (P2)
 
