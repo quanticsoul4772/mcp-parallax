@@ -364,6 +364,11 @@ pub struct Config {
     /// `CHECKPOINT_GATE_PATTERNS`, default empty. A present value with an
     /// empty entry (`"a,,b"`) is an error, never silently skipped.
     pub checkpoint_gate_patterns: Vec<String>,
+    /// The 066 turn signals. `CHECKPOINT_TURN_SIGNALS`: `off` | `on`, unset
+    /// is `off`; any other present value is an error. With `on`, each turn
+    /// end runs the two detectors in code and writes one
+    /// `turn_signal_records` row; nothing is sent.
+    pub checkpoint_turn_signals: bool,
     /// The single source root for the `grounded_verify` tool (008). **Optional
     /// — its presence enables the tool**; absent, the tool does not exist and
     /// no file-read path is ever taken. `GROUNDED_VERIFY_ROOT`.
@@ -506,6 +511,9 @@ impl Config {
         )?)?;
         let checkpoint_gate_patterns =
             parse_gate_patterns(std::env::var("CHECKPOINT_GATE_PATTERNS").ok().as_deref())?;
+        let turn_signals_raw =
+            std::env::var("CHECKPOINT_TURN_SIGNALS").unwrap_or_else(|_| "off".to_string());
+        let checkpoint_turn_signals = parse_turn_signals(&turn_signals_raw)?;
         let grounded_verify_root = std::env::var("GROUNDED_VERIFY_ROOT")
             .ok()
             .filter(|root| !root.trim().is_empty());
@@ -551,6 +559,7 @@ impl Config {
             claude_cli_model,
             claude_cli_concurrency,
             checkpoint_gate_patterns,
+            checkpoint_turn_signals,
             grounded_verify_root,
             grounded_verify_max_bytes,
             grounded_verify_max_locators,
@@ -753,6 +762,16 @@ fn parse_gate_patterns(raw: Option<&str>) -> Result<Vec<String>, ConfigError> {
     Ok(patterns)
 }
 
+/// Parse `CHECKPOINT_TURN_SIGNALS` (066): `off` is off, `on` is on, anything
+/// else is an error, never a silent fallback. Unset reads as `off`.
+fn parse_turn_signals(raw: &str) -> Result<bool, ConfigError> {
+    match raw {
+        "off" => Ok(false),
+        "on" => Ok(true),
+        _ => Err(ConfigError::Invalid("CHECKPOINT_TURN_SIGNALS")),
+    }
+}
+
 /// Read an environment variable and parse it, falling back to `default` when the
 /// variable is unset. A present-but-unparseable value is an error, not a silent
 /// fallback.
@@ -808,6 +827,7 @@ pub(crate) fn test_config() -> Config {
         claude_cli_model: DEFAULT_CLAUDE_CLI_MODEL.into(),
         claude_cli_concurrency: DEFAULT_CLAUDE_CLI_CONCURRENCY,
         checkpoint_gate_patterns: vec![],
+        checkpoint_turn_signals: false,
         grounded_verify_root: None,
         grounded_verify_max_bytes: DEFAULT_GROUNDED_VERIFY_MAX_BYTES,
         grounded_verify_max_locators: DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS,
@@ -994,6 +1014,18 @@ mod tests {
         );
         let err = parse_gate_patterns(Some("a,,b")).unwrap_err();
         assert!(err.to_string().contains("CHECKPOINT_GATE_PATTERNS"));
+    }
+
+    // 066 T024 (switch part): CHECKPOINT_TURN_SIGNALS is off unless set to
+    // `on`; any other present value is a startup error naming the variable.
+    #[test]
+    fn turn_signals_are_off_unless_on_and_reject_anything_else() {
+        assert!(!parse_turn_signals("off").unwrap());
+        assert!(parse_turn_signals("on").unwrap());
+        for bad in ["", "ON", "true", "1", "shadow"] {
+            let err = parse_turn_signals(bad).unwrap_err();
+            assert!(err.to_string().contains("CHECKPOINT_TURN_SIGNALS"), "{bad}");
+        }
     }
 
     #[test]
