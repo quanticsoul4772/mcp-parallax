@@ -207,7 +207,7 @@ Each document is shown to the owner where the task says so.
 These follow T047, so that everything written is in what is pushed. Each is asked.
 
 1. Commits: phases 1 to 3 may be one; phases 4 and 5 are one.
-2. Search the commits for the Windows account name before pushing.
+2. Review the commits before pushing.
 3. Push, then the pull request. It states: what the guard stops and what it does not; that a call with nothing refused is unchanged apart from which fault is reported when there are several; which tests ran on Windows only; the reviews at each stage; what is deferred.
 
 ---

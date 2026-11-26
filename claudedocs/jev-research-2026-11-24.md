@@ -399,7 +399,7 @@ Line numbers refer to this session's transcript file.
 - **After later compactions:** the summaries (L55268, L59170) no longer
   mentioned Jev.
 - **How 063 became phrase matching:**
-  - On 2026-11-23 the user chose the injection screen as the next feature
+  - On 2026-11-23 the injection screen was picked as the next feature
     (L58421).
   - The assistant grepped only the Parallax repository for "jev" and wrote
     (L58462): "I can't find what Jev is in the repo."

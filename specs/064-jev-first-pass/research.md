@@ -59,7 +59,7 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
 - **Why:**
   - The constitution requires outbound features to ship off and be enabled deliberately (`:92-94`).
   - exa-mcp-server reads `JEV_MODEL` and other `JEV_*` names. A shared environment would override Parallax's pin or trip the closed namespace (Design-re B2; Architecture I6; Security M5).
-  - The user chose "code off, your setup on" (2026-11-24).
+  - Decided: off in code, on in the operator's setup (2026-11-24).
 - **Rejected:**
   - "Shadow whenever the key is set": an upgrade would turn on data sending because of a key set for another project.
   - A base-URL environment variable: it could redirect the key (Security M6). Tests use constructor injection instead.
@@ -168,7 +168,7 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
 | Base rate | Share of turn reviews that flagged or captured, from existing `checkpoint_records`. A read-only query, approved first. Sizes the shadow period. |
 | Injection | exa-mcp-server's back-test method ported onto `metrics.rs`, run on `jev-1.14.0` with InjecAgent, BIPIA and at least 300 real research pages. Datasets downloaded into an isolated folder; Python run with `-I`. |
 
-- **Why:** the calibration review (B2, I4, I8, I10, I11), and the user's choice of the measurements that need no labeling time.
+- **Why:** the calibration review (B2, I4, I8, I10, I11), and the choice of the measurements that need no labeling time.
 - **Deferred:** hand-labeled correctness moves to 065/066.
 
 ## D14. Statistics in `metrics.rs`

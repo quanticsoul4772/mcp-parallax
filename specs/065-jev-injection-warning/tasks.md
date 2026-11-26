@@ -68,7 +68,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T024 Write the live example `examples/acceptance_jev_injection.rs` asserting SC-005, exiting non-zero on failure; register it in `Cargo.toml` with `test = true` for its helpers.
 - [x] T025 CHANGELOG `[Unreleased]` entry (exact text first). Files: `CHANGELOG.md`.
 - [ ] T026 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` (design corpus) and `code-reviewer` (Rust conventions) agents, each brief shown first; each finding asked.
-- [ ] T027 Account-name check, push and PR (text shown first); CI.
+- [ ] T027 Push and PR; CI.
 - [ ] T028 After merge and rebuild, the user runs the live example (quickstart §3); results go to `quickstart.md` (exact text first).
 - [ ] T029 Turn it on in the user's setup (FR-010): back up `~/.claude.json`; add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key, exact key shown first; the user restarts.
 - [ ] T030 Update the CLAUDE.md active-feature block to the shipped state (exact text first).

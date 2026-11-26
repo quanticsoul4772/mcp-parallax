@@ -8,7 +8,7 @@
 - **Rationale**: deterministic, no dependency, linear in the text length
   (pages are capped by the extraction character limit), and simple to test.
 - **Alternatives**: `fancy-regex` (already a dependency, but backtracking is
-  unnecessary for fixed phrases); a model classifier (rejected by the user,
+  unnecessary for fixed phrases); a model classifier (rejected,
   2026-11-23).
 
 ## D2: Pattern families and names

@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Both clarifications answered by the user 2026-11-25 (`on` at 0.35; capped text) and recorded in the spec.
+- Both clarifications answered 2026-11-25 (`on` at 0.35; capped text) and recorded in the spec.
 - Variable names, field names and the records table are named on purpose, following the 064 spec's practice in this repository: the operator configures by these names and the plan's §7 rule reads these records. Left unchecked rather than rewritten.

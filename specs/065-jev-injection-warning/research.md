@@ -5,8 +5,8 @@ All spec clarifications are answered (spec, Clarifications, 2026-11-25). Each de
 ## D1. Where the call happens
 
 - **Decision**: in `src/research/pipeline.rs`, where 063 screens each kept page (`screen_page` on the title and `extract::capped_text`), the Jev call is prepared from the same capped text and joined with that page's `extract_source` future; the source's screening result is attached when the joined result is assembled.
-- **Rationale**: the user's choice (beside extraction); extraction takes seconds, so Jev adds no time when it answers first; the capped text is what extraction reads and what 063 screens.
-- **Alternatives**: before extraction (adds time); after extraction (adds time); full text split into segments (rejected by the user).
+- **Rationale**: per the spec's Clarifications (beside extraction); extraction takes seconds, so Jev adds no time when it answers first; the capped text is what extraction reads and what 063 screens.
+- **Alternatives**: before extraction (adds time); after extraction (adds time); full text split into segments (rejected).
 
 ## D2. Modes and the first `on`
 
@@ -27,18 +27,18 @@ All spec clarifications are answered (spec, Clarifications, 2026-11-25). Each de
 ## D5. Deadline and retries
 
 - **Decision**: per call, a deadline of `min(2000 ms, run time left)` measured from the first attempt. Shadow makes one attempt. `on` retries 429, 529 and 5xx at most three times; each wait is the larger of the backoff step (100, 200, then 400 ms) and the response's `Retry-After` (`client::retry::retry_after`), and no wait runs past the deadline, which it is compared with rather than added to (065 review findings 1 and 2). The client applies this rule itself when the request's `retry` flag is set, as the Exa client does; the flag is false for shadow and the 064 sites, and error bodies are still never logged (064 FR-001 unchanged).
-- **Rationale**: the user's choice (2000 ms, 064's claim deadline); plan §6.1 "retries via the shared helpers are enabled for `on` sites only".
+- **Rationale**: per the spec's Clarifications (2000 ms, 064's claim deadline); plan §6.1 "retries via the shared helpers are enabled for `on` sites only".
 - **Alternatives**: no retries (rejected by the plan); jitter (no randomness dependency, as in 064).
 
 ## D6. What the result shows
 
 - **Decision**: with the site `on`, each source gains `jev_injection: { screened, probability, warned, reason }` and stats gain `jev_warned_pages` (count) and `jev_unscreened_pages` (count); both are omitted (`skip_serializing_if`) when the site is off or in shadow, so those results are byte-identical to today's. 063's `injection_patterns`, `pages_flagged` and `flagged_pages` are untouched.
-- **Rationale**: the user's choice (leave them out); SC-001 and SC-002.
+- **Rationale**: per the spec's Clarifications (leave them out); SC-001 and SC-002.
 
 ## D7. Records
 
 - **Decision**: one `jev_records` row per page request, `site = research_injection`, linked to the invocation id and the source id, collected in the run's existing `JevShadow` accumulator and written with the other Jev rows when the call ends (cancellation included); `label_json = { "patterns063": [names] }`; `applied = true` only for an `on` row whose decision was `warned`. Jev cost joins the invocation's `jev_cost_usd`. No new column.
-- **Rationale**: the user's choice (063 names as the label); 064's accumulator pattern; FR-008.
+- **Rationale**: per the spec's Clarifications (063 names as the label); 064's accumulator pattern; FR-008.
 
 ## D8. Docs and wording
 

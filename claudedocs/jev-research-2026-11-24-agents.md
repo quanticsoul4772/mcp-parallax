@@ -1,7 +1,7 @@
 <!-- markdownlint-disable -->
 # Jev research: agent reports (2026-11-24)
 
-Seven read-only research agents ran on 2026-11-24 for the Jev work. Their final reports are reproduced below as written, with two edits: sentences about a past exposure of the user's TypeSafe key are removed, and the Windows account name is replaced with `<user>`. These are the sources the 064 plan and spec cite for Jev facts; the earlier summary report is `claudedocs/jev-research-2026-11-24.md`.
+Seven read-only research agents ran on 2026-11-24 for the Jev work. Their final reports are reproduced below, lightly edited. These are the sources the 064 plan and spec cite for Jev facts; the earlier summary report is `claudedocs/jev-research-2026-11-24.md`.
 
 ## 1. TypeSafe documentation
 
