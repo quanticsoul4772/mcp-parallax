@@ -93,7 +93,7 @@ pub async fn run_batch(
     let evaluated_kinds = vec![SignalKind::Repetition, SignalKind::RepeatedFailure];
 
     let evaluation = async {
-        let window = deps
+        let (window, _lines) = deps
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
@@ -307,7 +307,7 @@ pub async fn run_turn(
                 CheckpointResult::silence(elapsed_ms(started)),
             ));
         }
-        let window = deps
+        let (window, _lines) = deps
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
@@ -857,7 +857,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(looping_window()));
+            .returning(|_, _| Ok((looping_window(), vec![])));
         b.storage
             .expect_delivered_signal_keys_since()
             .returning(|_, _| Ok(vec![]));
@@ -885,7 +885,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(looping_window()));
+            .returning(|_, _| Ok((looping_window(), vec![])));
         // The same signal key was delivered recently.
         let key = screen::screen(&looping_window())[0].signal_key.clone();
         b.storage
@@ -930,7 +930,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         // The routed review client is unreachable.
         b.client.expect_complete().returning(|_, _| {
             Err(AppError::RetriesExhausted {
@@ -1152,7 +1152,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         b.client.expect_complete().times(1).returning(|_, _| {
             Ok(Completion {
                 value: json!({
@@ -1208,10 +1208,13 @@ mod tests {
     async fn turn_with_no_candidates_never_invokes_the_hop() {
         let mut b = DepsBuilder::new();
         b.reader.expect_read().returning(|_, _| {
-            Ok(TrajectoryWindow {
-                session_id: "s1".into(),
-                entries: vec![],
-            })
+            Ok((
+                TrajectoryWindow {
+                    session_id: "s1".into(),
+                    entries: vec![],
+                },
+                vec![],
+            ))
         });
         b.client.expect_complete().times(0);
         b.storage
@@ -1235,7 +1238,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         b.client.expect_complete().times(1).returning(|_, _| {
             Ok(Completion {
                 value: json!({
@@ -1354,7 +1357,9 @@ mod tests {
     #[tokio::test]
     async fn turn_flags_a_preference_violation_quoting_memory_and_provenance() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1417,7 +1422,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1485,7 +1490,9 @@ mod tests {
     #[tokio::test]
     async fn turn_without_memory_lists_only_the_contradiction_signal() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.client.expect_complete().times(0);
         b.storage
             .expect_record_checkpoint()
@@ -1510,7 +1517,9 @@ mod tests {
     #[tokio::test]
     async fn turn_fails_open_when_recall_errors_and_still_records() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         let mut embedder = MockEmbedder::new();
         embedder
             .expect_embed_query()
@@ -1537,7 +1546,9 @@ mod tests {
     #[tokio::test]
     async fn turn_with_only_untrusted_memories_never_mines_preference_candidates() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1618,7 +1629,9 @@ mod tests {
     #[tokio::test]
     async fn turn_stores_a_capture_proposal_quarantined_with_one_audit_row() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         let mut embedder = matching_embedder();
         embedder.expect_embed_document().times(1).returning(|_| {
             Ok(Embedding {
@@ -1688,7 +1701,9 @@ mod tests {
     #[tokio::test]
     async fn turn_drops_capture_proposals_at_the_session_cap() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| Ok(vec![]));
         b.client
@@ -1725,7 +1740,9 @@ mod tests {
     #[tokio::test]
     async fn capture_storage_failure_never_affects_the_turn_verdict() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         let mut embedder = matching_embedder();
         embedder
             .expect_embed_document()
@@ -1760,7 +1777,9 @@ mod tests {
     #[tokio::test]
     async fn turn_suppresses_a_recently_delivered_violation_by_memory_id() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1803,7 +1822,9 @@ mod tests {
     #[tokio::test]
     async fn turn_cooldown_is_per_key_a_different_memory_still_delivers() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -2008,7 +2029,7 @@ mod tests {
             let mut b = capturing(written);
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .times(1)
@@ -2115,7 +2136,9 @@ mod tests {
         async fn a_violation_flag_is_labeled_as_a_violation_not_a_contradiction() {
             let written = Written::new();
             let mut b = capturing(&written);
-            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok((empty_window(), vec![])));
             b.embedder = Some(Arc::new(matching_embedder()));
             b.storage.expect_load_memories().returning(|| {
                 Ok(vec![preference_memory(
@@ -2161,7 +2184,9 @@ mod tests {
             audit_ok: bool,
         ) -> DepsBuilder {
             let mut b = capturing(written);
-            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok((empty_window(), vec![])));
             b.embedder = Some(Arc::new(storing_embedder()));
             b.storage.expect_load_memories().returning(|| Ok(vec![]));
             b.client
@@ -2217,7 +2242,7 @@ mod tests {
             let mut b = capturing(&written);
             b.reader
                 .expect_read()
-                .returning(move |_, _| Ok(window.clone()));
+                .returning(move |_, _| Ok((window.clone(), vec![])));
             b.client.expect_complete().times(0);
             let mut mock = MockClassifier::new();
             mock.expect_classify().times(0);
@@ -2247,7 +2272,7 @@ mod tests {
             let mut b = capturing(&written);
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .returning(|_, _| Err(AppError::ValidationFailure("bad shape".into())));
@@ -2267,7 +2292,7 @@ mod tests {
             let mut b = capturing(&written);
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .returning(|_, _| Ok(contradiction_completion()));
@@ -2285,7 +2310,9 @@ mod tests {
             let written = Written::new();
             let requests: Shared<JevRequest> = Arc::default();
             let mut b = capturing(&written);
-            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok((empty_window(), vec![])));
             b.embedder = Some(Arc::new(matching_embedder()));
             b.storage.expect_load_memories().returning(|| {
                 Ok(vec![preference_memory(
@@ -2335,7 +2362,7 @@ mod tests {
             let mut b = DepsBuilder::new();
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .returning(|_, _| Ok(contradiction_completion()));

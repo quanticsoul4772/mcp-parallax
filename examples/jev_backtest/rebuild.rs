@@ -70,7 +70,7 @@ pub async fn rebuild(row: &JevRecord) -> Result<Rebuilt, &'static str> {
         .read(&temp.to_string_lossy(), session)
         .await;
     let _ = std::fs::remove_file(&temp);
-    let window = window.map_err(|_| "window unreadable")?;
+    let (window, _lines) = window.map_err(|_| "window unreadable")?;
     let activity = review::turn_activity(&window);
     let built = turn_state(&Redactor::from_env(), &window, &activity, &final_message)
         .map_err(|_| "redaction failed")?;

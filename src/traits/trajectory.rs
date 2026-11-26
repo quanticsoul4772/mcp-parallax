@@ -17,13 +17,18 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 #[async_trait::async_trait]
 pub trait TrajectoryReader: Send + Sync {
     /// Read the recent window of the trajectory at `path`, verifying it
-    /// belongs to `session_id`.
+    /// belongs to `session_id`. Also returns the raw tail lines the window
+    /// was parsed from (a cut first line dropped), from the same read.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::ValidationFailure`] for any path-validation or
     /// session-mismatch violation, [`AppError::Storage`] for I/O failures.
-    async fn read(&self, path: &str, session_id: &str) -> Result<TrajectoryWindow, AppError>;
+    async fn read(
+        &self,
+        path: &str,
+        session_id: &str,
+    ) -> Result<(TrajectoryWindow, Vec<String>), AppError>;
 }
 
 /// Production [`TrajectoryReader`]: validated, bounded JSONL tail read.
@@ -32,7 +37,11 @@ pub struct FsTrajectoryReader;
 
 #[async_trait::async_trait]
 impl TrajectoryReader for FsTrajectoryReader {
-    async fn read(&self, path: &str, session_id: &str) -> Result<TrajectoryWindow, AppError> {
+    async fn read(
+        &self,
+        path: &str,
+        session_id: &str,
+    ) -> Result<(TrajectoryWindow, Vec<String>), AppError> {
         // Validation order (data-model.md 006 §5): canonicalize (fails for a
         // missing file), regular file, `.jsonl` extension — all before any
         // content is read.
@@ -101,10 +110,14 @@ impl TrajectoryReader for FsTrajectoryReader {
         if entries.len() > WINDOW_ENTRIES {
             entries.drain(..entries.len() - WINDOW_ENTRIES);
         }
-        Ok(TrajectoryWindow {
-            session_id: session_id.to_string(),
-            entries,
-        })
+        let raw = lines.iter().map(|line| (*line).to_string()).collect();
+        Ok((
+            TrajectoryWindow {
+                session_id: session_id.to_string(),
+                entries,
+            },
+            raw,
+        ))
     }
 }
 
@@ -144,7 +157,7 @@ mod tests {
             "t.jsonl",
             &[tool_line("s1", 1, "cargo test"), tool_line("s1", 2, "ls")],
         );
-        let window = FsTrajectoryReader.read(&path, "s1").await.unwrap();
+        let (window, _) = FsTrajectoryReader.read(&path, "s1").await.unwrap();
         assert_eq!(window.session_id, "s1");
         assert_eq!(window.entries.len(), 2);
     }
@@ -191,7 +204,7 @@ mod tests {
             .map(|i| tool_line("s1", i, &format!("cmd {i}")))
             .collect();
         let path = write_transcript(dir.path(), "t.jsonl", &lines);
-        let window = FsTrajectoryReader.read(&path, "s1").await.unwrap();
+        let (window, _) = FsTrajectoryReader.read(&path, "s1").await.unwrap();
         assert_eq!(window.entries.len(), WINDOW_ENTRIES);
         // The window is the TAIL: the last command must be present.
         let last = window.entries.last().unwrap();
@@ -202,5 +215,55 @@ mod tests {
             panic!("expected a tool call");
         };
         assert!(normalized_input.contains(&format!("cmd {}", WINDOW_ENTRIES + 49)));
+    }
+
+    // 066 T003: one read returns the window and the raw tail lines it was
+    // parsed from (research D3), so turn data and the window share a snapshot.
+    #[tokio::test]
+    async fn read_returns_the_raw_tail_lines_beside_an_unchanged_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = json!({
+            "type": "user", "sessionId": "s1",
+            "message": { "role": "user", "content": "a prompt" }
+        })
+        .to_string();
+        let written = vec![
+            tool_line("s1", 1, "cargo test"),
+            user,
+            tool_line("s1", 2, "ls"),
+        ];
+        let path = write_transcript(dir.path(), "t.jsonl", &written);
+        let (window, lines) = FsTrajectoryReader.read(&path, "s1").await.unwrap();
+        assert_eq!(lines, written);
+        // The window still drops the user line, as before.
+        assert_eq!(window.session_id, "s1");
+        assert_eq!(window.entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_oversize_read_drops_the_cut_first_line_from_the_raw_lines_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let written: Vec<String> = (0..(u32::try_from(WINDOW_ENTRIES).unwrap() + 50))
+            .map(|i| tool_line("s1", i, &format!("cmd {i} {}", "x".repeat(20_000))))
+            .collect();
+        let path = write_transcript(dir.path(), "t.jsonl", &written);
+        let (_, lines) = FsTrajectoryReader.read(&path, "s1").await.unwrap();
+        assert!(lines.len() < written.len());
+        assert_eq!(lines.last(), written.last());
+        for line in &lines {
+            assert!(
+                serde_json::from_str::<serde_json::Value>(line).is_ok(),
+                "cut line kept"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_mismatch_returns_no_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_transcript(dir.path(), "t.jsonl", &[tool_line("other", 1, "x")]);
+        let result: Result<(TrajectoryWindow, Vec<String>), AppError> =
+            FsTrajectoryReader.read(&path, "s1").await;
+        assert!(matches!(result, Err(AppError::ValidationFailure(_))));
     }
 }
