@@ -87,7 +87,7 @@ The site is off unless the operator sets it; a misconfiguration stops startup wi
 - **FR-007 Calls**: one request per kept page, made concurrently with that page's extraction call and joined before the page's result is assembled, within 064's limit of 4 in flight per process, under a deadline of 2000 ms per call, retries included, capped by the run's remaining time; `on` retries 429, 529 and 5xx through the shared retry helpers within that time; shadow makes exactly one request.
 - **FR-008 Records**: one `jev_records` row per page request, with the new site `research_injection`, the mode, the answer and decision band, the answering model, outcome, cost, links to the research invocation and source, and as its label the names of the 063 patterns that matched the page (names only, no page text); A row's `applied` flag is 1 only for an `on` row whose decision warned, and 0 otherwise. Jev cost goes into the invocation's `jev_cost_usd`. Jev tokens stay out of the research token ceiling.
 - **FR-009 Measurement**: the back-test harness reports the injection site from stored records: share warned, failures by outcome, and agreement with 063's pattern screen on the same pages.
-- **FR-010 Setup**: the last task sets the site in the user's Parallax settings, after merge and rebuild, with the exact key shown first and a backup taken; only that key changes. The value is `on`, at the pinned 0.35 threshold, as plan §6.1 and §4.1 say (Clarifications).
+- **FR-010 Setup**: the last task sets the site in the operator's Parallax settings, after merge and rebuild, with a backup taken first; only that key changes. The value is `on`, at the pinned 0.35 threshold, as plan §6.1 and §4.1 say (Clarifications).
 
 ### Key Entities
 

@@ -4,10 +4,8 @@
 
 **Rules for every task:**
 
-- Each code task writes its failing test first, shows it failing, then implements.
+- Each code task writes its test first, runs it to confirm it fails, then implements.
 - The full gate runs before every commit.
-- Every step (each read, edit, commit and push) is asked first.
-- Doc and contract text is shown as exact text before it is written.
 
 Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run in parallel: different files, no open dependency.
 
@@ -28,7 +26,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
   Files: `src/config.rs` tests.
 - [x] T004 Implement config, prefix validation modeled on `src/routing.rs:471-483`, and the new fields in the three Config fixtures (`src/config.rs:652`, `tests/common/mod.rs:20`, `examples/common/mod.rs:55`). Files: `src/config.rs`.
 - [x] T005 [P] Test that `classifier_provider` is in `Outcome::ALL`, with the 057 binding test (`src/error.rs:527-565`) extended to the schema and `telemetry.md` lists. Files: `src/error.rs` tests.
-- [x] T006 Add `Outcome::ClassifierProvider`, and update `invocation-record.schema.json` and the `telemetry.md` outcome list (exact text shown first). Files: `src/error.rs`, contracts.
+- [x] T006 Add `Outcome::ClassifierProvider`, and update `invocation-record.schema.json` and the `telemetry.md` outcome list. Files: `src/error.rs`, contracts.
 - [x] T007 [P] Test the validator and bands:
   - every rejection rule: range, undeclared choice, missing option, sum outside 0.01, id or count mismatch, model mismatch;
   - band edges via `next_up`/`next_down`;
@@ -60,7 +58,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T013 [P] Test the `jev_records` two-way binding: `PRAGMA table_info` against `contracts/jev-record.schema.json`, with enums from `::ALL`. Test writes and reads on `SqliteStorage`, including a single-transaction batch write. Files: `src/storage/jev.rs` tests.
 - [x] T014 Implement the table migration, `record_jev` and the batch write on `Storage` (`src/traits/storage.rs`), and the published schema. Files: `src/storage/jev.rs`, `specs/...` contracts.
 - [x] T015 [P] Test `jev_cost_usd` on the checkpoint and invocation records, and `DEFAULT_JEV_MODEL` in `every_default_model_has_a_price_row` (`src/telemetry.rs:818-831`). Files: `src/telemetry.rs` tests.
-- [x] T016 Implement the price row and the cost fields, plus the record schema additions (exact text shown first).
+- [x] T016 Implement the price row and the cost fields, plus the record schema additions.
   - Includes a migration that adds `jev_cost_usd` to existing `checkpoint_records` and `invocation_records` tables when the column is missing.
   - The test opens an old-shape database, migrates it, and writes both record types.
 
@@ -117,7 +115,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
   - the span/record parity test is extended (`tests/integration.rs:2382`).
 
   Files: `src/observability.rs` tests.
-- [x] T028 Implement the attributes, update `telemetry.md` (exact text first), and fix its stale signal list (`:89`). Files: `src/observability.rs`, contracts.
+- [x] T028 Implement the attributes, update `telemetry.md`, and fix its stale signal list (`:89`). Files: `src/observability.rs`, contracts.
 
 ## Phase 6: US3, measurement (P2)
 
@@ -138,7 +136,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T031 [US3] Build the harness `examples/jev_backtest.rs`:
   - subcommands `noise`, `self-agreement`, `order`, `base-rate`, `injection` and `report`;
   - synthetic fixtures in `tests/fixtures/jev/` with a provenance-marker test;
-  - the `detect-private-key` hook from pre-commit-hooks over that folder (`.pre-commit-config.yaml`; exact change shown first);
+  - the `detect-private-key` hook from pre-commit-hooks over that folder (`.pre-commit-config.yaml`);
   - a Rust test that runs the redactor's own patterns over every fixture file and fails if any match unredacted;
   - `data/jev/` gitignored.
 
@@ -148,7 +146,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T033 Wiring and docs:
   - Server construction builds the classifier when the key is set and a site is on, and writes the startup lines (`src/server.rs`).
   - Add `TYPESAFE_API_KEY` to `ENV_REMOVE` (`src/client/claude_cli/invocation.rs:17-24`).
-  - Docs, each with exact text shown first:
+  - Docs:
     - the README environment table, and `--help`;
     - CHANGELOG `[Unreleased]`;
     - `docs/design/SDK_LANDSCAPE.md` (TypeSafe mechanism-tier row);
@@ -159,28 +157,26 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 ## Phase 8: Acceptance and ship
 
 - [x] T034 Write the live example `examples/acceptance_jev.rs`. It asserts the SC-004 checks, including at least 5 turn-review rows and at least 10 research-claim rows. It exits non-zero on failure, and prints rows, outcomes, the excluded share and critical-path time.
-- [x] T035 Reviews before merge, as the constitution requires (each brief shown to the user first; findings listed, then one question per finding):
+- [x] T035 Reviews before merge:
   - an independent reviewer given only the diff;
-  - the `design-reviewer` agent, because 064 touches schemas, trait seams and the dependency stack;
-  - the `code-reviewer` agent, for all Rust changes.
+  - the `design-reviewer` agent, as the constitution requires, because 064 touches schemas, trait seams and the dependency stack;
+  - the `code-reviewer` agent, as the constitution requires, for all Rust changes.
 - [x] T036 Push, PR, CI.
 - [x] T037 Run the live acceptance example (command per quickstart §3). Results go to `quickstart.md` §6.
 - [x] T038 FR-011 measurements per quickstart §4:
-  - the base-rate query is approved first;
-  - live calls are made only after the user approves;
-  - results are saved to `claudedocs/jev-064-measurements-<date>.md` (exact text first).
+  - results are saved to `claudedocs/jev-064-measurements-<date>.md`.
   - Done 2026-11-25: noise, self-agreement (research and turn), option order, base rate and the injection back-test, recorded in `claudedocs/jev-064-measurements-2026-11-24.md`.
 - [x] T039 Run the harness `report` twice, saving both outputs with the measurement results:
   - on the T038 saved inputs, to reproduce the measurement tables (SC-006);
   - on the stored records from the T037 live run, to print the §7 tables for both sites (SC-005).
   - Done 2026-11-25: SC-005 in the T039 section of the measurements doc; SC-006 with `jev_backtest reproduce`, which replaced `report` for saved inputs, in its own section.
-- [x] T040 Turn it on in the user's setup (FR-010), after merge and rebuild:
+- [x] T040 Turn it on in the operator's setup (FR-010), after merge and rebuild:
   - back up `~/.claude.json`;
   - add the two `PARALLAX_JEV_MODE_*=shadow` keys to the Parallax `env` block, changing only those keys;
-  - install the project's Stop hook in `.claude/settings.json`, with the exact entry shown first;
-  - the user restarts.
+  - install the project's Stop hook in `.claude/settings.json`;
+  - restart Claude Code.
   - Done 2026-11-25. The Stop hook went into the user-level `~/.claude/settings.json` instead, so turn reviews run in every project. The first live shadow row was written 2026-11-25 04:21 UTC.
-- [x] T041 Update the CLAUDE.md active-feature block to the shipped state (exact text first).
+- [x] T041 Update the CLAUDE.md active-feature block to the shipped state.
 
 ## Dependencies
 
@@ -199,8 +195,6 @@ These are test-writing tasks in different files, with no open dependency:
 - Within Phase 2: T005, T007, T009, T011, T013 and T015.
 - T021 alongside T017.
 - T027 and T029 once their prerequisites land.
-
-(Execution is still one tool call per message under the user's rules; "parallel" means there is no ordering constraint.)
 
 ## Implementation strategy
 

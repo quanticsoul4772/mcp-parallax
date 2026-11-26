@@ -2,7 +2,7 @@
 
 **Branch**: `065-jev-injection-warning` | **Date**: 2026-11-25 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `specs/065-jev-injection-warning/spec.md`; approved plan `~/.claude/plans/warm-kindling-shell.md` §6.1 U5 (amended 2026-11-25).
+**Input**: Feature specification from `specs/065-jev-injection-warning/spec.md`; Jev roadmap `~/.claude/plans/warm-kindling-shell.md` §6.1 U5 (amended 2026-11-25).
 
 ## Summary
 
@@ -37,7 +37,7 @@ Research asks Jev the `directs_ai` question about each page it keeps for extract
 - **III. Compiler-Enforced Discipline**: no `unwrap`/`expect` in production; pedantic clippy; files ≤500 lines for new modules (`src/jev/shadow/injection.rs`). Pass.
 - **IV. Seams, Composition, and Tests**: Jev stays behind the `Classifier` seam; every behavior is test-first with `MockClassifier`/wiremock; a live example asserts SC-005. Pass.
 - **V. Deterministic Over Probabilistic**: 063's deterministic screen is untouched and runs first; Jev only adds an advisory field and never clears or weakens a deterministic finding. Pass.
-- **VI. Capabilities Off By Default**: `PARALLAX_JEV_MODE_RESEARCH_INJECTION` defaults to `off`; the key alone enables nothing; egress is named in a startup line. Turning it on in the operator's setup is a separate approved step (FR-010). Pass.
+- **VI. Capabilities Off By Default**: `PARALLAX_JEV_MODE_RESEARCH_INJECTION` defaults to `off`; the key alone enables nothing; egress is named in a startup line. Turning it on in the operator's setup is a separate operator decision (FR-010). Pass.
 - **VII. Simplicity and Scope Discipline**: one question, one call per page, no splitting, no breaker, no claim settling. Pass.
 
 Re-check after Phase 1: unchanged, pass.
