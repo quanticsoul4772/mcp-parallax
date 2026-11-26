@@ -749,7 +749,7 @@ pub const BATCH_FLAG_PREFIX: &str = "Trajectory checkpoint (automated): ";
 pub const HOLD_PREFIX: &str = "Checkpoint hold (automated): ";
 
 /// Fixed message templates (FR-005/SC-007): parameterized only by evidence.
-fn batch_flag_message(signals: &[Signal]) -> String {
+pub(crate) fn batch_flag_message(signals: &[Signal]) -> String {
     let evidence: Vec<&str> = signals.iter().map(|s| s.evidence.as_str()).collect();
     format!(
         "{BATCH_FLAG_PREFIX}{}. This pattern suggests the current \
@@ -759,7 +759,7 @@ fn batch_flag_message(signals: &[Signal]) -> String {
     )
 }
 
-fn hold_message(memory_content: &str) -> String {
+pub(crate) fn hold_message(memory_content: &str) -> String {
     format!(
         "{HOLD_PREFIX}this action appears to conflict with a stored, \
          verified constraint: \"{memory_content}\". Confirm to run it unchanged, or \

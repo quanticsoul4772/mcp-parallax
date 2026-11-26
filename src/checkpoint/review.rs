@@ -482,7 +482,7 @@ pub async fn review_once(
 pub const REVIEW_FLAG_PREFIX: &str = "End-of-turn review: ";
 
 /// The fixed flag template (FR-005/SC-007): parameterized only by evidence.
-fn assemble_flag(out: &ReviewOut) -> String {
+pub(crate) fn assemble_flag(out: &ReviewOut) -> String {
     format!(
         "{REVIEW_FLAG_PREFIX}your conclusion contradicts an earlier committed \
          statement. Earlier: \"{}\" — Final: \"{}\". Basis: {} Reconcile the two \
