@@ -20,9 +20,11 @@ Stats:
 
 ```json
 "jev_warned_pages": 1,
-"jev_unscreened_pages": 0
+"jev_unscreened_pages": 0,
+"jev_warned_list": [{ "id": "s1", "url": "https://example.com/a" }]
 ```
 
+- `jev_warned_list` lists every kept page Jev warned on, cited or not, like 063's `flagged_pages`.
 - 063's `injection_patterns`, `pages_flagged` and `flagged_pages` are unchanged in every mode.
 - The tool description states that the warning is advisory, that "no warning" does not mean clean, and the measured rates at the threshold.
 - The output schema marks every addition optional; a schema test binds the field names to this contract.
