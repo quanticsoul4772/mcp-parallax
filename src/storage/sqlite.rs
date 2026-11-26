@@ -128,8 +128,44 @@ impl SqliteStorage {
             .execute(&pool)
             .await
             .map_err(|e| AppError::Storage(format!("jev_records migration failed: {e}")))?;
+        sqlx::raw_sql(super::turn_signals::TURN_SIGNALS_MIGRATION)
+            .execute(&pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("turn_signal_records migration failed: {e}")))?;
+        Self::migrate_review_skipped_by(&pool).await?;
 
         Ok(Self { pool })
+    }
+
+    /// 066: `review_skipped_by` on `checkpoint_records`, added when missing.
+    async fn migrate_review_skipped_by(pool: &SqlitePool) -> Result<(), AppError> {
+        let has = sqlx::query("PRAGMA table_info(checkpoint_records)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("cannot inspect columns: {e}")))?
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "review_skipped_by");
+        if !has {
+            sqlx::query("ALTER TABLE checkpoint_records ADD COLUMN review_skipped_by TEXT")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    AppError::Storage(format!("review_skipped_by migration failed: {e}"))
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Read back every turn-signal record, oldest first (066; the report
+    /// reads these). Not part of the [`Storage`] seam.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Storage`] when the read fails.
+    pub async fn load_turn_signal_records(
+        &self,
+    ) -> Result<Vec<super::turn_signals::TurnSignalRecord>, AppError> {
+        super::turn_signals::load(&self.pool).await
     }
 
     /// Read back every Jev record, oldest first (064; the back-test harness
@@ -689,6 +725,13 @@ impl Storage for SqliteStorage {
         super::jev::insert(&self.pool, records).await
     }
 
+    async fn record_turn_signals(
+        &self,
+        record: &super::turn_signals::TurnSignalRecord,
+    ) -> Result<(), AppError> {
+        super::turn_signals::insert(&self.pool, record).await
+    }
+
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
         let signals_evaluated: Vec<&str> = record
             .signals_evaluated
@@ -1049,6 +1092,59 @@ mod tests {
         };
         storage.record_checkpoint(&checkpoint).await.unwrap();
         assert_eq!(storage.list_checkpoints().await.unwrap(), vec![checkpoint]);
+    }
+
+    // 066 T011: a database from before 066 gains review_skipped_by on
+    // checkpoint_records, and the turn_signal_records table, on open.
+    #[tokio::test]
+    async fn a_pre_066_database_gains_review_skipped_by_and_the_turn_signal_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre066.db").to_string_lossy().to_string();
+        {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{path}"))
+                        .unwrap()
+                        .create_if_missing(true),
+                )
+                .await
+                .unwrap();
+            sqlx::raw_sql(
+                "CREATE TABLE checkpoint_records (
+                    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, boundary TEXT NOT NULL,
+                    signals_evaluated TEXT NOT NULL, signals_fired TEXT NOT NULL,
+                    delivered_keys TEXT NOT NULL, review_ran INTEGER NOT NULL,
+                    verdict TEXT NOT NULL, suppressed INTEGER NOT NULL,
+                    fail_open INTEGER NOT NULL, latency_ms INTEGER NOT NULL,
+                    cost_usd REAL NOT NULL, created_at TEXT NOT NULL,
+                    jev_cost_usd REAL
+                );",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+        }
+        let storage = SqliteStorage::connect(&path).await.unwrap();
+        let names = |rows: Vec<sqlx::sqlite::SqliteRow>| -> Vec<String> {
+            rows.iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect()
+        };
+        let checkpoint = sqlx::query("PRAGMA table_info(checkpoint_records)")
+            .fetch_all(&storage.pool)
+            .await
+            .unwrap();
+        assert!(names(checkpoint).contains(&"review_skipped_by".to_string()));
+        let turn_signals = sqlx::query("PRAGMA table_info(turn_signal_records)")
+            .fetch_all(&storage.pool)
+            .await
+            .unwrap();
+        assert!(names(turn_signals).contains(&"eval_id".to_string()));
+        // Reopening runs the migration again without error.
+        drop(storage);
+        SqliteStorage::connect(&path).await.unwrap();
     }
 
     // 064 T015/T016: a database from before 064 gains jev_cost_usd on open

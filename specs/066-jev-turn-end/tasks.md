@@ -24,8 +24,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T008 Implement `parse_turn`. Files: `src/checkpoint/turn_view.rs`, `src/checkpoint/mod.rs`.
 - [x] T009 [P] Test entity extraction and lookup (research D6): paths with backslashes and JSON escapes normalize to `/`; version strings; identifiers and hashes of 7+ characters; numbers of 3+ digits on word boundaries (`142` does not match `42`); no names, no dates; unmatched entities come back with kind and hash. Files: `src/jev/entities.rs` tests.
 - [x] T010 Implement `src/jev/entities.rs` and add it to `src/jev/mod.rs`.
-- [ ] T011 [P] Test the `turn_signal_records` table: two-way binding with `contracts/turn-signal-record.schema.json` via `PRAGMA table_info`; write and read a row; the `review_skipped_by` migration on an old-shape database. Files: `src/storage/turn_signals.rs` tests, `src/storage/sqlite.rs` tests.
-- [ ] T012 Implement the table, `record_turn_signals` on `Storage`, and the `review_skipped_by` migration. Files: `src/storage/turn_signals.rs`, `src/storage/sqlite.rs`, `src/traits/storage.rs`.
+- [x] T011 [P] Test the `turn_signal_records` table: two-way binding with `contracts/turn-signal-record.schema.json` via `PRAGMA table_info`; write and read a row; the `review_skipped_by` migration on an old-shape database. Files: `src/storage/turn_signals.rs` tests, `src/storage/sqlite.rs` tests.
+- [x] T012 Implement the table, `record_turn_signals` on `Storage`, and the `review_skipped_by` migration. Files: `src/storage/turn_signals.rs`, `src/storage/sqlite.rs`, `src/traits/storage.rs`.
 
 ## Phase 3: User Story 1 - Turn signals recorded (P1)
 
