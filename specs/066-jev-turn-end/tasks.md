@@ -46,8 +46,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 **Independent test**: each skip condition made false or missing makes the review run; `on` fails startup.
 
 - [ ] T018 [P] [US2] Test the turn-review questions at version 2 with the criteria in `contracts/questions.md`, `true` first, each built as its own question value; the research `same_subject` questions stay at version 1 with no criteria (`noul()` unchanged). Files: `src/jev/questions.rs` tests.
-- [ ] T018a [P] [US2] Test that the report separates turn-review rows by question version and feeds only version-2 rows to the promotion decision. Files: `src/jev/report/tests.rs`.
-- [ ] T018b [US2] Implement the version separation in the report. Files: `src/jev/report.rs`.
+- [x] T018a [P] [US2] Test that the report separates turn-review rows by question version and feeds only version-2 rows to the promotion decision. Files: `src/jev/report/tests.rs`.
+- [x] T018b [US2] Implement the version separation in the report. Files: `src/jev/report.rs`.
 - [ ] T019 [US2] Implement version 2 as separate question values, leaving `noul()` unchanged; correct the comment at `src/traits/classifier.rs:109-111` (options are not always empty for yes/no questions). Files: `src/jev/questions.rs`, `src/traits/classifier.rs`.
 - [ ] T019a [P] [US2] Test the saved measurements: noise, self-agreement and order results carry the question version; a version-2 run does not overwrite version-1 results; `reproduce` prints the version. Files: `src/jev/measure.rs` tests.
 - [ ] T019b [US2] Implement the version field in the saved measurements. Files: `src/jev/measure.rs`, `examples/jev_backtest/`.

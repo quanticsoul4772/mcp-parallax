@@ -6,9 +6,9 @@ use crate::jev::shadow::{turn_label, ReviewOutcome};
 use serde_json::json;
 
 fn turn_questions(contradiction: f64, capture: Option<f64>) -> Value {
-    let mut qs = vec![json!({ "id": "contradiction", "answer": contradiction })];
+    let mut qs = vec![json!({ "id": "contradiction", "version": 2, "answer": contradiction })];
     if let Some(p) = capture {
-        qs.push(json!({ "id": "capture_worthy", "answer": p }));
+        qs.push(json!({ "id": "capture_worthy", "version": 2, "answer": p }));
     }
     Value::Array(qs)
 }
@@ -142,7 +142,7 @@ fn a_labeled_turn_without_answers_is_kept_unscored() {
         raw(true, false, CaptureKind::None),
         outcome(true, false, false),
     );
-    let missing = json!([{ "id": "contradiction" }]);
+    let missing = json!([{ "id": "contradiction", "version": 2 }]);
     let item = turn_item(Some(&l), &missing, Some("s")).unwrap();
     assert_eq!(item.safe, None);
     assert!(item.harmful);
@@ -347,4 +347,57 @@ fn enough_separated_positives_pick_the_threshold_and_pass_the_dry_run() {
     assert_eq!(t.clusters, 7);
     assert!(t.recall_bootstrap.is_some());
     assert!(t.dry_run.promote, "{:?}", t.dry_run.reasons);
+}
+
+// 066 T018a: only rows asked with the version-2 turn-review questions count
+// toward promotion; version-1 rows, and rows that carry no version, are left
+// out under their own reason.
+fn versioned_questions(version: Option<u64>) -> Value {
+    let entry = |id: &str, answer: f64| {
+        let mut q = json!({ "id": id, "answer": answer });
+        if let Some(v) = version {
+            q["version"] = json!(v);
+        }
+        q
+    };
+    Value::Array(vec![
+        entry("contradiction", 0.2),
+        entry("capture_worthy", 0.1),
+    ])
+}
+
+#[test]
+fn a_version_1_turn_row_is_left_out_as_an_old_question_version() {
+    let l = label(
+        raw(false, false, CaptureKind::None),
+        outcome(false, false, false),
+    );
+    assert_eq!(
+        turn_item(Some(&l), &versioned_questions(Some(1)), Some("s")).unwrap_err(),
+        Skip::OldQuestionVersion
+    );
+}
+
+#[test]
+fn a_turn_row_without_question_versions_is_left_out_too() {
+    let l = label(
+        raw(false, false, CaptureKind::None),
+        outcome(false, false, false),
+    );
+    assert_eq!(
+        turn_item(Some(&l), &versioned_questions(None), Some("s")).unwrap_err(),
+        Skip::OldQuestionVersion
+    );
+}
+
+#[test]
+fn a_version_2_turn_row_counts() {
+    let l = label(
+        raw(false, false, CaptureKind::None),
+        outcome(false, false, false),
+    );
+    let item = turn_item(Some(&l), &versioned_questions(Some(2)), Some("s")).unwrap();
+    assert!(!item.harmful);
+    assert!((item.safe.unwrap() - 0.8).abs() < 1e-12);
+    assert_eq!(TURN_REVIEW_VERSION, 2);
 }

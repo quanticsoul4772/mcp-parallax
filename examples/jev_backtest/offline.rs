@@ -85,7 +85,7 @@ pub async fn report(storage: &SqliteStorage) {
         println!("  confirm set: {confirm} rows, sealed (not looked at)");
         // Every labeled tune row counts, whatever its outcome: a row Jev did
         // not answer (excluded, failed, rejected) goes to the big model.
-        let (mut items, mut unlabeled, mut abandoned) = (Vec::new(), 0, 0);
+        let (mut items, mut unlabeled, mut abandoned, mut old_version) = (Vec::new(), 0, 0, 0);
         for row in site_rows
             .iter()
             .filter(|r| split(&r.id, tables::CONFIRM_PERCENT) == Split::Tune)
@@ -99,13 +99,14 @@ pub async fn report(storage: &SqliteStorage) {
                     items.push(item);
                 }
                 Err(tables::Skip::Unlabeled) => unlabeled += 1,
+                Err(tables::Skip::OldQuestionVersion) => old_version += 1,
             }
         }
         let t = tables::site_tables(&items);
         println!(
             "  tune items: {} ({} scored, {} unscored and never skipped, of which {abandoned} \
              abandoned because verify finished first; {} without a cluster); \
-             left out: {unlabeled} unlabeled",
+             left out: {unlabeled} unlabeled, {old_version} asked with older question versions",
             t.items,
             t.items - t.unscored,
             t.unscored,

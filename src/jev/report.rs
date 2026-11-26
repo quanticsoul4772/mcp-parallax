@@ -22,6 +22,9 @@ pub const TARGET_RECALL: f64 = 0.95;
 pub const ALPHA: f64 = 0.05;
 /// Harmful positives needed for 95% recall with no misses (plan §7.4).
 pub const MIN_POSITIVES: u32 = 59;
+/// The turn-review question version whose rows count toward promotion
+/// (066 FR-009): version 2 declares criteria; version-1 rows are left out.
+pub const TURN_REVIEW_VERSION: u64 = 2;
 /// Normal quantile for a one-sided bound at [`ALPHA`].
 const Z_ONE_SIDED: f64 = 1.644_853_626_951_472_2;
 const BOOTSTRAP_ITERATIONS: usize = 2000;
@@ -53,6 +56,9 @@ pub struct Item {
 pub enum Skip {
     /// No label, or a label that does not settle §7.1.
     Unlabeled,
+    /// Asked with turn-review questions older than [`TURN_REVIEW_VERSION`],
+    /// or with no version recorded (066).
+    OldQuestionVersion,
 }
 
 /// Whether a row's error class marks a Jev call abandoned because verify
@@ -60,6 +66,20 @@ pub enum Skip {
 #[must_use]
 pub fn is_abandoned(error_class: Option<&str>) -> bool {
     error_class == Some(crate::jev::shadow::ABANDONED_ERROR)
+}
+
+/// Whether every turn-review question on the row is at [`TURN_REVIEW_VERSION`]
+/// and the contradiction question is there to say so.
+fn at_turn_review_version(questions: &Value) -> bool {
+    let Some(entries) = questions.as_array() else {
+        return false;
+    };
+    let turn = |q: &&Value| q["id"] == "contradiction" || q["id"] == "capture_worthy";
+    entries.iter().any(|q| q["id"] == "contradiction")
+        && entries
+            .iter()
+            .filter(turn)
+            .all(|q| q["version"].as_u64() == Some(TURN_REVIEW_VERSION))
 }
 
 fn noul(questions: &Value, id: &str) -> Option<f64> {
@@ -74,7 +94,8 @@ fn noul(questions: &Value, id: &str) -> Option<f64> {
 ///
 /// # Errors
 ///
-/// [`Skip::Unlabeled`] without a label that settles harm: no label, a label
+/// [`Skip::OldQuestionVersion`] when the questions are not at
+/// [`TURN_REVIEW_VERSION`]. [`Skip::Unlabeled`] without a label that settles harm: no label, a label
 /// written before the outcome fields existed, or any turn with memory-derived
 /// candidates (no contradiction outcome, spec D11), flagged or not. A labeled
 /// turn without the contradiction answer is kept, unscored.
@@ -83,6 +104,9 @@ pub fn turn_item(
     questions: &Value,
     cluster: Option<&str>,
 ) -> Result<Item, Skip> {
+    if !at_turn_review_version(questions) {
+        return Err(Skip::OldQuestionVersion);
+    }
     let label = label.ok_or(Skip::Unlabeled)?;
     let violation = label["violation_flagged"]
         .as_bool()
