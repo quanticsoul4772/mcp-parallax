@@ -2,59 +2,51 @@
 
 ## D1. Transcript spike
 
-- **Decision**: the first task reads real Claude Code transcripts from the operator's machine (shapes only) and writes scrubbed fixtures for each line kind 066 reads: user prompts (string and text blocks), subagent lines, hook-injected context, interruption markers, meta lines, compaction summaries, tool inputs and results, Stop-hook block reasons. Field names used to tell them apart come from the fixtures, not from memory.
-- **Rationale**: the format belongs to Claude Code and is not documented in the repository; three reviewers flagged guessed field names.
-- **Alternatives**: hard-code expected field names (rejected: unverified).
+- **Decision**: the first task reads real Claude Code transcripts on the operator's machine (shapes only) and writes scrubbed fixtures for each line kind 066 reads. Field names used to tell the kinds apart come from these fixtures. Scrubbing removes user names, paths containing an account name, session ids and real prompt text; a test checks the committed fixtures for them.
+- **Rationale**: the transcript format belongs to Claude Code and is not documented in the repository.
 
 ## D2. Turn start
 
-- **Decision**: the last line the spike identifies as a real user prompt, skipping every excluded kind and any line containing an exported flag prefix (FR-014). Not found inside the 2 MiB transcript tail → `excluded`, reason `turn start not found`.
-- **Rationale**: a wrong start moves which tool output counts as the turn's evidence.
+- **Decision**: the last line the spike identifies as a real user prompt, skipping every excluded kind and any line containing an exported flag prefix anywhere (FR-014). Not found inside the 2 MiB tail → both signals record `turn start not found`.
 
-## D3. Turn data module
+## D3. One read
 
-- **Decision**: `parse_turn(lines) -> TurnData` in `src/checkpoint/turn_view.rs`, called from `run_turn` on the lines the reader already read. `parse_lines`, `TrajectoryEntry` and `TrajectoryWindow` are unchanged. To get the lines, the reader trait gains a method returning the raw tail lines, used only by `run_turn`.
-- **Rationale**: no change to the batch path, the 200-entry window, the screens, the review miner or 064's fingerprint.
-- **Alternatives**: a field on the window (21 construction sites); a `User` entry (changes every consumer).
+- **Decision**: `TrajectoryReader::read` returns `(TrajectoryWindow, Vec<String>)`, the window and the raw tail lines, from one read with one session check. Batch callers ignore the lines. Mock stubs return an empty list.
+- **Rationale**: one snapshot for the window and the turn data; the reader stays the only path to the transcript.
 
 ## D4. Previous final message
 
-- **Decision**: a per-session map in the server process holding the last `final_message` received at a turn end. Not persisted. Missing → `pushback_reversal` excluded with reason `no previous final message`.
-- **Rationale**: exact text from the harness; no stored conversation text.
+- **Decision**: a per-session map in `CheckpointDeps`, updated at every turn end including continuation turns, never persisted.
 
 ## D5. pushback_reversal detector
 
-- **Decision**: structure check (a real user prompt between the previous and final messages, no tool call after it), then `review::mine_candidates`-style pairing over the two assistant messages (lexical overlap plus opposing polarity). A candidate pair → Jev is asked, with the two messages only.
-- **Rationale**: `WATCHDOG_LAYER.md:151`; judge blindness (`NEW_SERVER_DESIGN.md:81,193,198-200`).
+- **Decision**: structure check (a real user prompt after the previous final message, no tool call after it), then `review::mine_candidates` over a window holding the previous and final assistant messages, called with an empty recall slice as 064 does (`src/jev/shadow/turn.rs:112`). A candidate pair → the signal fires.
 
 ## D6. unverified_fact detector
 
-- **Decision**: `src/jev/entities.rs` extracts entities from the final message (numbers with units, dates, file paths, identifiers such as commit hashes and version strings, capitalized names) and looks each up verbatim in the turn's tool inputs, tool outputs and user prompt, unredacted, on the machine. Claims (sentences) holding an unmatched entity go to Jev as claim text only.
-- **Rationale**: `WATCHDOG_LAYER.md:153` names entity diffs; Constitution V.
-- **Alternatives**: send tool output to Jev (rejected: new data class off the machine).
+- **Decision**: `src/jev/entities.rs` extracts file paths (backslashes and JSON escapes normalized to `/`), version strings (`\d+\.\d+(\.\d+)*`), identifiers and hashes of 7 or more characters, and numbers of 3 or more digits on word boundaries. Each is looked up in the turn's tool inputs (raw, before normalization), tool outputs and user prompt, normalized the same way. Unmatched entities are recorded by kind with a hash of their text.
+- **Rationale**: `WATCHDOG_LAYER.md:153` names entity diffs; names and dates match unreliably against this turn's evidence.
 
-## D7. Redaction and caps
+## D7. Audit share
 
-- **Decision**: assistant text is redacted whole by 064's redactor, then cut: previous and final messages at 2000 characters each (064's excerpt size), claims at 500 characters each and 4000 in total. `truncated` is set on the row when anything is cut.
+- **Decision**: `checkpoint::fnv1a64(eval_id.as_bytes()) % 100 < 10` → audit. The evaluation id is injectable through `CheckpointDeps` for tests.
 
-## D8. Audit share
+## D8. Pinned tables
 
-- **Decision**: `checkpoint::fnv1a64(eval_id) % 100 < 10` → audit. Tests pick ids on each side.
-- **Rationale**: the same function 064 uses for its splits; deterministic and testable.
+- **Decision**: `TURN_REVIEW_THRESHOLDS: &[ThresholdEntry]` keyed by Jev model, big-model id and question versions, and `TURN_REVIEW_ORDER_CHECKED` keyed the same way, both empty, in `src/jev/policy.rs`. Config refuses `TURN_REVIEW=on` unconditionally in 066 because the drift check does not exist. Thresholds are injectable through `CheckpointDeps` so the skip path is tested.
 
-## D9. Pinned tables
+## D9. Turn-review questions version 2
 
-- **Decision**: `TURN_REVIEW_NO_BAND: &[(&str, f64, f64)]` (model, contradiction, capture_worthy) and `TURN_REVIEW_ORDER_CHECKED: &[&str]` (models with a recorded order check) in `src/jev/policy.rs`, both empty. Config refuses `TURN_REVIEW=on` unless the configured model is in both.
+- **Decision**: `contradiction` and `capture_worthy` gain declared criteria and become version 2; production sends version 2 from 066 on. Version-1 rows are excluded from promotion data. The order check (both criteria orders) runs on version 2 with the `jev_backtest` harness.
 
 ## D10. Skip order of work
 
-- **Decision**: while the skip is off, today's `tokio::join!` of review and Jev stays. When on, Jev runs first under the turn deadline; the review starts only if not skipped.
+- **Decision**: while the skip is off, today's `tokio::join!` of review and Jev stays unchanged. When enabled in tests, Jev runs first under the turn deadline; the review starts only if not skipped; a skipped turn's 064 row sets `applied = 1`.
 
 ## D11. Records
 
-- **Decision**: one `turn_signals` row per covered turn end: detector results in `label_json` (entities matched/unmatched counts, pair found, recommendations), questions and answers in `questions_json`, `state_hash` of what was sent, `state_json` null.
-- **Rationale**: no conversation text stored.
+- **Decision**: `turn_signal_records` (schema in `contracts/turn-signal-record.schema.json`, bound two ways by a `PRAGMA table_info` test). The checkpoint record's `review_skipped_by` is mirrored on the OTLP span. Jev request counts and cost per turn are unchanged.
 
 ## D12. Live example
 
-- **Decision**: `examples/acceptance_jev_signals.rs` feeds fixture transcripts through `run_turn` with the real TypeSafe client and the site in shadow, asserts one joined row per turn end and no user text or tool output in any captured request, and exits non-zero on failure.
+- **Decision**: `examples/acceptance_turn_signals.rs` runs the scrubbed fixtures through `run_turn` with the signals on and a scratch database, asserts one joined row per covered turn end with the expected detector results and that no sentinel string reaches any request body, and exits non-zero on failure. It makes no Jev call for the signals.

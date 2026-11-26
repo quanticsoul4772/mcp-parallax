@@ -4,28 +4,33 @@
 
 | Field | Type | Meaning |
 |---|---|---|
-| `start` | `TurnStart` | `Found` or `NotFound` |
-| `user_prompt` | `String` | the turn's real user prompt, raw; never sent or stored |
-| `tool_inputs` | `Vec<String>` | normalized inputs of the turn's tool calls, raw |
-| `tool_outputs` | `Vec<String>` | full tool-result text, raw |
-| `tool_calls_after_prompt` | `u32` | count, for the pushback structure check |
+| `start` | `Option<usize>` | line id of the turn's real user prompt in the tail; `None` when not found |
+| `user_prompt` | `String` | raw; never sent or stored |
+| `tool_inputs` | `Vec<String>` | raw tool inputs of the turn |
+| `tool_outputs` | `Vec<String>` | full tool-result text of the turn |
+| `tool_calls_after_prompt` | `u32` | for the pushback structure check |
 
-## Previous final messages (server, in memory)
+## Previous final messages (`CheckpointDeps`, in memory)
 
-- `HashMap<harness_session_id, String>`: the last `final_message` received at a turn end. Not persisted.
+- Per harness session: the last `final_message` received at a turn end, continuation turns included. Not persisted.
 
-## Jev site (`src/traits/classifier.rs`)
+## turn_signal_records (new table)
 
-- `JevSite::TurnSignals`: suffix `TURN_SIGNALS`, stored as `turn_signals`; added to `JevSite::ALL`.
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | text | row id |
+| `created_at` | text | timestamp |
+| `eval_id` | text | joins the checkpoint record |
+| `harness_session_id` | text | |
+| `transcript_ref` | text | transcript path |
+| `turn_start_line` | integer, nullable | line id of the turn start |
+| `final_line` | integer, nullable | line id of the final message |
+| `pushback_result` | text | `fired`, `not_fired` or an exclusion reason |
+| `unverified_result` | text | `fired`, `not_fired` or an exclusion reason |
+| `unmatched_entities` | text (JSON) | `[{ "kind": "path" \| "version" \| "identifier" \| "number", "hash": "..." }]` |
+| `recommendations` | text (JSON) | `{ "pushback_reversal": "verify", "unverified_fact": "grounded_verify" \| "research" \| null }` |
 
-## Turn signal row (`jev_records`)
-
-- `site = turn_signals`, `mode = shadow`.
-- `questions_json`: the questions asked (`pushback_reversal`, `unverified_fact`), version, answers.
-- `label_json`: `{ "pair_found": bool, "entities_matched": n, "entities_unmatched": n, "recommendations": { "pushback_reversal": "verify", "unverified_fact": "grounded_verify" | "research" | null } }`.
-- `state_hash` of the redacted request state; `state_json` null.
-- `outcome`: a call outcome, or `excluded` with `error_class` naming the reason (`turn start not found`, `no previous final message`, `nothing to ask`).
-- `truncated`, `eval_id`, `harness_session_id`, cost fields as in 064.
+Exclusion reasons: `turn start not found`, `no previous final message`, `transcript unreadable`, `tool call after prompt`.
 
 ## Checkpoint record
 
@@ -33,17 +38,15 @@
 |---|---|---|
 | `review_skipped_by` | text, nullable | null, `jev`, `audit` |
 
-- `jev_cost_usd` sums every Jev row of the evaluation.
-
 ## Pinned tables (`src/jev/policy.rs`)
 
-- `TURN_REVIEW_NO_BAND`: per model, the no-band threshold for `contradiction` and `capture_worthy`. Empty.
-- `TURN_REVIEW_ORDER_CHECKED`: models with a recorded order check. Empty.
+- `TURN_REVIEW_THRESHOLDS`: entries `{ jev_model, big_model, question_versions, contradiction_no, capture_worthy_no }`. Empty.
+- `TURN_REVIEW_ORDER_CHECKED`: entries `{ jev_model, big_model, question_versions }`. Empty.
 
 ## Configuration (`src/config.rs`)
 
 | Variable | Values | Default | Rules |
 |---|---|---|---|
-| `PARALLAX_JEV_MODE_TURN_SIGNALS` | `off`, `shadow` | `off` | non-off needs `TYPESAFE_API_KEY` |
-| `PARALLAX_JEV_MODE_TURN_REVIEW` | `off`, `shadow`, `on` | `off` | `on` needs the configured model in both pinned tables |
-| any other `PARALLAX_JEV_*` | — | — | startup error |
+| `CHECKPOINT_TURN_SIGNALS` | `off`, `on` | `off` | unparseable value is a startup error |
+| `PARALLAX_JEV_MODE_TURN_REVIEW` | `off`, `shadow`, `on` | `off` | `on` refused in 066 |
+| `PARALLAX_JEV_*` names outside the known set | — | — | startup error |

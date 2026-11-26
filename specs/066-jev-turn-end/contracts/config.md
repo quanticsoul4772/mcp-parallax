@@ -2,7 +2,7 @@
 
 | Variable | Values | Default | Effect |
 |---|---|---|---|
-| `PARALLAX_JEV_MODE_TURN_SIGNALS` | `off` \| `shadow` | `off` | `shadow`: at each turn end, cheap detectors run and Jev is asked only what they leave open; results recorded only. Sends redacted assistant text and claims; never user text or tool output. Requires the key. |
-| `PARALLAX_JEV_MODE_TURN_REVIEW` | `off` \| `shadow` \| `on` | `off` | `on` skips the end-of-turn review when Jev is confidently "no"; refused at startup unless the configured model has a pinned threshold entry and a recorded order check. |
+| `CHECKPOINT_TURN_SIGNALS` | `off` \| `on` | `off` | `on`: at each turn end, the pushback-reversal and unverified-fact detectors run in code and one `turn_signal_records` row is written. Nothing is sent off the machine. |
+| `PARALLAX_JEV_MODE_TURN_REVIEW` | `off` \| `shadow` \| `on` | `off` | `on` is refused at startup in 066. |
 
-Unknown `PARALLAX_JEV_*` names and unparseable values are startup errors naming the variable. Both variables are operator-owned (`NEW_SERVER_DESIGN.md` §10).
+Unparseable values and `PARALLAX_JEV_*` names outside the known set are startup errors naming the variable. `CHECKPOINT_TURN_SIGNALS` is operator-owned (`NEW_SERVER_DESIGN.md` §10).

@@ -6,7 +6,7 @@
 
 ## Summary
 
-At every non-continuation turn end, two turn-level failures are checked in shadow. Code runs the design corpus's cheap detector for each first: the existing pair miner over the previous and final assistant messages for `pushback_reversal`, and a verbatim entity lookup against the turn's own evidence for `unverified_fact`. Jev is asked only about what the detector leaves open, and sees only assistant text. Results are recorded in `jev_records` as `turn_signals` rows; nothing changes in the turn. The end-of-turn review skip is built and tested but stays off: `on` needs a pinned threshold table entry and a recorded option-order check.
+At every non-continuation turn end, with `CHECKPOINT_TURN_SIGNALS=on`, two turn-level failures are checked by the design corpus's cheap detectors, in code: the existing pair miner over the previous and final assistant messages after a real user prompt with no tool call (`pushback_reversal`), and a normalized verbatim lookup of the final message's entities in the turn's own evidence (`unverified_fact`). Results go to a new `turn_signal_records` table with anchors back to the transcript; no Jev call is made and nothing leaves the machine. The end-of-turn review skip is built and tested behind injected thresholds and stays off; `on` is refused until promotion data, an order check and the drift check exist.
 
 ## Technical Context
 
@@ -14,31 +14,31 @@ At every non-continuation turn end, two turn-level failures are checked in shado
 
 **Primary Dependencies**: no new crates.
 
-**Storage**: SQLite `jev_records` (064), one new site value `turn_signals`; `checkpoint_records` gains `review_skipped_by` (migration).
+**Storage**: SQLite: new table `turn_signal_records`; `checkpoint_records` gains `review_skipped_by` (migration).
 
-**Testing**: `cargo test --all-features --tests` with `MockClassifier`, the trajectory reader mock, and transcript fixtures from the spike; one live example that exits non-zero on failure.
+**Testing**: `cargo test --all-features --tests` with the trajectory reader mock, `MockClassifier` for the skip, and scrubbed transcript fixtures from the spike; one live example that exits non-zero on failure.
 
 **Target Platform**: the MCP stdio server on the operator's machine (Windows and Linux CI).
 
 **Project Type**: library + binary (MCP server).
 
-**Performance Goals**: no added time on a turn end while the signals run beside the review; `parse_turn` runs only at turn end, never on the batch path.
+**Performance Goals**: the detectors run in code on at most the 2 MiB transcript tail already read; no network call.
 
-**Constraints**: nothing the user wrote and nothing a tool returned leaves the machine; turn deadline 1000 ms; at most 4 Jev requests in flight per process; off in code.
+**Constraints**: nothing new leaves the machine; the turn-review request carries only assistant-written text; off by default.
 
-**Scale/Scope**: one turn end at a time per session; at most one Jev request per turn end.
+**Scale/Scope**: one row per covered turn end.
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-- **I. Design-Corpus Fidelity**: traces to roadmap §6.2 and `WATCHDOG_LAYER.md:151,153`. Departures are named in the spec: the date/number exclusion is dropped (FR-006), the signals run outside the review's gate (FR-013 amends `WATCHDOG_LAYER.md:59`), and the review skip lets Jev stop the review (same amendment). Pass.
-- **II. Constrained-Output Contract**: Jev answers are typed yes/no, validated by 064's validator. Pass.
-- **III. Compiler-Enforced Discipline**: no `unwrap`/`expect` in production; new modules (`src/checkpoint/turn_view.rs`, `src/jev/shadow/signals.rs`, `src/jev/entities.rs`) stay under 500 lines. Pass.
-- **IV. Seams, Composition, and Tests**: Jev stays behind `Classifier`; transcript reads stay behind `TrajectoryReader`; every behavior is test-first. Pass.
-- **V. Deterministic Over Probabilistic**: each signal's cheap detector runs first, in code; Jev judges only what it leaves open; dates and numbers are settled by verbatim match. Pass.
-- **VI. Capabilities Off By Default**: `PARALLAX_JEV_MODE_TURN_SIGNALS` defaults to `off`; the skip's `on` is refused without a pinned table entry and order check; the startup line names destination and data class. Pass.
-- **VII. Simplicity and Scope Discipline**: two questions, one request per turn end, no cooldown in shadow, no promotion. Pass.
+- **I. Design-Corpus Fidelity**: traces to roadmap §6.2 and `WATCHDOG_LAYER.md:151,153`. Named departures, each in the spec: the signals record the cheap detectors without a Jev question (Jev questions deferred to a later feature, because a question that works with the evidence withheld needs its own design and back-test); dates are left out of the entity lookup; the signals run outside the review's gate; the skip lets Jev stop the review; the 064 turn-review questions move to version 2. Amendments in FR-013. Pass.
+- **II. Constrained-Output Contract**: no new model output; the turn-review questions stay typed yes/no. Pass.
+- **III. Compiler-Enforced Discipline**: no `unwrap`/`expect` in production; new modules stay under 500 lines; orchestration goes in `src/checkpoint/signals.rs`, not `run.rs`. Pass.
+- **IV. Seams, Composition, and Tests**: transcript reads stay behind `TrajectoryReader`; the skip is tested through injected thresholds and evaluation ids. Pass.
+- **V. Deterministic Over Probabilistic**: both signals are deterministic detectors. A verbatim match shows an entity appears in the turn's evidence, not that the claim is true; the record says "unmatched", not "unsupported". Pass.
+- **VI. Capabilities Off By Default**: `CHECKPOINT_TURN_SIGNALS` defaults to `off`; the skip's `on` is refused. Pass.
+- **VII. Simplicity and Scope Discipline**: no Jev call for the signals, no cooldown, no promotion, no drift check. Pass.
 
 Re-check after Phase 1: unchanged, pass.
 
@@ -55,6 +55,7 @@ specs/066-jev-turn-end/
 ├── quickstart.md        # Phase 1
 ├── contracts/           # Phase 1
 │   ├── config.md
+│   ├── turn-signal-record.schema.json
 │   ├── questions.md
 │   └── record-additions.md
 └── checklists/requirements.md
@@ -64,32 +65,41 @@ specs/066-jev-turn-end/
 
 ```text
 src/
+├── traits/trajectory.rs      # read returns (window, tail lines); mock stubs updated
 ├── checkpoint/
-│   ├── turn_view.rs          # NEW: parse_turn (turn start, user prompt, tool inputs and outputs)
-│   ├── run.rs                # signals beside the review; skip path when on; audit share; review_skipped_by
-│   ├── mod.rs                # CheckpointRecord.review_skipped_by; flag prefixes exported
-│   ├── review.rs             # flag prefix constant; pair miner reused for pushback_reversal
-│   └── preference.rs         # flag prefix constant
+│   ├── turn_view.rs          # NEW: parse_turn
+│   ├── signals.rs            # NEW: detectors, recommendation mapping, row building, previous-final map
+│   ├── run.rs                # call signals; skip path when enabled; audit share; review_skipped_by; flag prefixes for batch and hold
+│   ├── mod.rs                # CheckpointRecord.review_skipped_by; module list
+│   ├── review.rs             # flag prefix constant (shared with preference.rs)
+│   ├── preference.rs         # uses the shared prefix
+│   └── contract.rs           # signal-enum binding test
 ├── jev/
-│   ├── entities.rs           # NEW: entity extraction and verbatim lookup
-│   ├── questions.rs          # pushback_reversal, unverified_fact; criteria for the turn-review questions
-│   ├── policy.rs             # TURN_REVIEW_NO_BAND table (empty), order-check table, skip decision
-│   ├── startup.rs            # startup line for the signals site
-│   └── shadow/signals.rs     # NEW: detectors → request → turn_signals row; recommendation mapping
-├── memory/push.rs            # surface block prefix exported (turn-start exclusion)
-├── traits/classifier.rs      # JevSite::TurnSignals
-├── config.rs                 # PARALLAX_JEV_MODE_TURN_SIGNALS; closed PARALLAX_JEV_* names; TURN_REVIEW=on gate
-├── server.rs                 # wiring; last final message per session
-├── storage/sqlite.rs         # review_skipped_by migration
-├── storage/jev.rs            # site value
-└── observability.rs          # review_skipped_by and request count on the span
+│   ├── entities.rs           # NEW: entity extraction, normalization, verbatim lookup
+│   ├── questions.rs          # turn-review questions version 2 with criteria
+│   ├── policy.rs             # pinned threshold table and order-check table (empty), skip decision
+│   ├── mod.rs                # module list
+│   └── startup.rs            # turn-review `on` wording
+├── memory/push.rs            # surface prefix exported
+├── config.rs                 # CHECKPOINT_TURN_SIGNALS; PARALLAX_JEV_* known-set check; TURN_REVIEW=on refused
+├── main.rs                   # --help: CHECKPOINT_TURN_SIGNALS
+├── storage/sqlite.rs         # turn_signal_records table; review_skipped_by migration
+├── storage/turn_signals.rs   # NEW: record and read rows; schema binding test
+├── traits/storage.rs         # record_turn_signals on Storage
+└── observability.rs          # review_skipped_by on the span
 examples/
-├── acceptance_jev_signals.rs # NEW live example (SC-004)
-└── jev_backtest/             # order check for the turn-review questions
-tests/fixtures/transcripts/   # NEW: spike fixtures
+├── acceptance_turn_signals.rs  # NEW live example (SC-004)
+└── jev_backtest/             # report covers turn_signal_records; order check for version-2 questions
+tests/fixtures/transcripts/   # NEW: scrubbed spike fixtures
+docs/design/                  # MEMORY_LAYER.md, WATCHDOG_LAYER.md, CORRECTIVE_SELECTION.md, NEW_SERVER_DESIGN.md
+specs/017-memory-consolidation/spec.md   # note
+specs/006-checkpoint-layer/contracts/    # checkpoint record: review_skipped_by
+specs/007-observability-layer/contracts/telemetry.md
+README.md                     # CHECKPOINT_TURN_SIGNALS row
+CHANGELOG.md
 ```
 
-**Structure Decision**: single project, existing layout. Turn data comes from a separate function on the same transcript lines, so the trajectory window and its consumers are untouched.
+**Structure Decision**: single project, existing layout. Turn data comes from a separate function over the lines the reader already read; the window and its consumers are untouched.
 
 ## Complexity Tracking
 

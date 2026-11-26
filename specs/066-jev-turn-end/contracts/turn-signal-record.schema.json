@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "turn-signal-record.schema.json",
+  "title": "turn_signal_records row (066)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "created_at", "eval_id", "pushback_result", "unverified_result", "unmatched_entities", "recommendations"],
+  "properties": {
+    "id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "eval_id": { "type": "string" },
+    "harness_session_id": { "type": ["string", "null"] },
+    "transcript_ref": { "type": ["string", "null"] },
+    "turn_start_line": { "type": ["integer", "null"], "minimum": 0 },
+    "final_line": { "type": ["integer", "null"], "minimum": 0 },
+    "pushback_result": {
+      "enum": ["fired", "not_fired", "turn start not found", "no previous final message", "transcript unreadable", "tool call after prompt"]
+    },
+    "unverified_result": {
+      "enum": ["fired", "not_fired", "turn start not found", "transcript unreadable"]
+    },
+    "unmatched_entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "hash"],
+        "properties": {
+          "kind": { "enum": ["path", "version", "identifier", "number"] },
+          "hash": { "type": "string" }
+        }
+      }
+    },
+    "recommendations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pushback_reversal": { "enum": ["verify", null] },
+        "unverified_fact": { "enum": ["grounded_verify", "research", null] }
+      }
+    }
+  }
+}

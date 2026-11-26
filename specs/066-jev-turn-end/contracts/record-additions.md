@@ -1,16 +1,18 @@
 # Contract: record additions (066)
 
-## jev_records
+## turn_signal_records (new)
 
-- `site` gains `turn_signals` (`specs/064-jev-first-pass/contracts/jev-record.schema.json`).
-- `turn_signals` rows: `state_json` is always null; `label_json` holds `pair_found`, `entities_matched`, `entities_unmatched` and `recommendations`; an `excluded` row names its reason in `error_class`.
+- Schema: `turn-signal-record.schema.json`, bound to the table two ways by a `PRAGMA table_info` test.
+- One row per covered turn end; joins the checkpoint record by `eval_id`; holds no conversation text (unmatched entities are stored as a kind and a hash).
 
 ## checkpoint_records
 
 - New column `review_skipped_by`: null, `jev` or `audit`. Migration adds it to existing databases.
-- `jev_cost_usd` sums every Jev row with the evaluation's `eval_id`.
+
+## jev_records
+
+- Unchanged, except turn-review rows carry question version 2 from 066 on.
 
 ## Telemetry (`specs/007-observability-layer/contracts/telemetry.md`)
 
-- Line 97: `parallax.jev.requests` becomes a count (0-2) per turn boundary; `parallax.jev.cost_usd` equals the record's `jev_cost_usd` (the sum).
-- New attribute `parallax.checkpoint.review_skipped_by` (enum: `jev`, `audit`), present only when set, derived at the same exit point as the record.
+- New attribute `parallax.checkpoint.review_skipped_by` (enum: `jev`, `audit`), present only when set, derived at the same exit point as the record. Jev request count and cost per turn are unchanged.
