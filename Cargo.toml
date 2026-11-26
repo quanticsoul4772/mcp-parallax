@@ -53,14 +53,14 @@ chrono = { version = "0.4", features = ["serde"] }
 # structured_content (T005/T006). Re-run the spike before any major bump.
 rmcp = { version = "3.11.0", features = ["server", "macros", "transport-io", "schemars"] }
 schemars = "1.2.1"
-jsonschema = "0.61.2"
+jsonschema = "0.63.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio"] }
 uuid = { version = "1.23.3", features = ["v4"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query"] }
 futures = "0.3.32"
 tokio-util = "0.7.18"
-z3 = { version = "0.23", features = ["bundled"] }
-evalexpr = "13"
+z3 = { version = "0.24", features = ["bundled"] }
+evalexpr = "14"
 # Exact arithmetic for `check` (deterministic/exact.rs). All three were already
 # in the lockfile as transitive dependencies.
 num-rational = "0.4"
