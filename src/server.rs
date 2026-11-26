@@ -1017,6 +1017,9 @@ impl Parallax {
         let non_model = Arc::new(crate::telemetry::NonModelUsage::default());
         // 064: the run's Jev rows, written by the record guard on every exit.
         let jev_rows = Arc::new(crate::telemetry::JevShadow::default());
+        if let Some(injection) = &deps.jev_injection {
+            jev_rows.set_mode(injection.mode);
+        }
         let jev_dims =
             (deps.jev.is_some() || deps.jev_injection.is_some()).then(|| Arc::clone(&jev_rows));
         // 028 FR-015: a caller may reduce concurrency, never raise it. Clamped

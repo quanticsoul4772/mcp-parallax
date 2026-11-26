@@ -171,6 +171,15 @@ pub struct SourceRef {
     pub jev_injection: Option<JevInjection>,
 }
 
+/// A page Jev warned on (065), cited or not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct WarnedPage {
+    /// Run-scoped id; matches `sources` when the page is cited.
+    pub id: String,
+    /// The page's URL as the provider returned it.
+    pub url: String,
+}
+
 /// One page's Jev injection screen (065).
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct JevInjection {
@@ -244,6 +253,10 @@ pub struct Stats {
     /// injection site on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jev_unscreened_pages: Option<u32>,
+    /// Every kept page Jev warned on, cited or not (065); present only with
+    /// the injection site on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jev_warned_list: Option<Vec<WarnedPage>>,
 }
 
 /// Why a run synthesized early.

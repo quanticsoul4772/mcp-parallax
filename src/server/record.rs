@@ -172,7 +172,11 @@ impl RecordGuard {
         // One measurement, two sinks (007 FR-009): tracing + telemetry, both
         // derived from this record value via the single publish() door.
         let jev_summary = self.jev.as_ref().map(|shadow| {
-            crate::observability::JevSpanSummary::from_rows(&jev_rows, shadow.prep_ms())
+            crate::observability::JevSpanSummary::from_rows(
+                &jev_rows,
+                shadow.prep_ms(),
+                shadow.mode(),
+            )
         });
         record.publish_with_jev(self.caller.as_ref(), jev_summary.as_ref());
         if let Err(e) = self.storage.record_invocation(&record).await {
@@ -213,7 +217,11 @@ impl Drop for RecordGuard {
         .with_id(self.id.clone())
         .with_jev_cost(jev_cost);
         let jev_summary = self.jev.as_ref().map(|shadow| {
-            crate::observability::JevSpanSummary::from_rows(&jev_rows, shadow.prep_ms())
+            crate::observability::JevSpanSummary::from_rows(
+                &jev_rows,
+                shadow.prep_ms(),
+                shadow.mode(),
+            )
         });
         record.publish_with_jev(self.caller.as_ref(), jev_summary.as_ref());
         let storage = Arc::clone(&self.storage);

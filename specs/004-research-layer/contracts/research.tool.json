@@ -351,6 +351,19 @@
             "minimum": 0,
             "description": "065: kept pages Jev could not screen; present only with the injection site on."
           },
+          "jev_warned_list": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "url"],
+              "properties": {
+                "id": { "type": "string" },
+                "url": { "type": "string" }
+              }
+            },
+            "description": "065: every kept page Jev warned on, cited or not, with its run-scoped id and URL; present only with the injection site on."
+          },
           "flagged_pages": {
             "type": "array",
             "items": {

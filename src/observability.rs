@@ -334,8 +334,8 @@ fn record_window(
 /// Exported as `parallax.jev.*` span attributes beside the record's own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JevSpanSummary {
-    /// The site mode: `on` when any row was (065's injection site),
-    /// otherwise `shadow`.
+    /// The configured mode: `on` when the call's injection site is on (065),
+    /// otherwise `shadow`; taken from configuration, not the rows.
     pub mode: crate::traits::classifier::JevMode,
     /// Requests sent (rows that neither were excluded nor had no time left
     /// nor failed redaction).
@@ -361,9 +361,13 @@ pub struct JevSpanSummary {
 impl JevSpanSummary {
     /// Summarize a call's rows.
     #[must_use]
-    pub fn from_rows(rows: &[crate::storage::jev::JevRecord], critical_path_ms: u64) -> Self {
+    pub fn from_rows(
+        rows: &[crate::storage::jev::JevRecord],
+        critical_path_ms: u64,
+        mode: crate::traits::classifier::JevMode,
+    ) -> Self {
         use crate::storage::jev::JevOutcome;
-        use crate::traits::classifier::{JevMode, JevSite};
+        use crate::traits::classifier::JevSite;
         let sent = |row: &&crate::storage::jev::JevRecord| {
             row.outcome != JevOutcome::Excluded
                 && !row.error_class.as_deref().is_some_and(|class| {
@@ -384,11 +388,7 @@ impl JevSpanSummary {
                 .then(|| count(injection.iter().filter(|r| keep(band(r))).count()))
         };
         Self {
-            mode: if rows.iter().any(|r| r.mode == JevMode::On) {
-                JevMode::On
-            } else {
-                JevMode::Shadow
-            },
+            mode,
             injection_warned: injection_count(&|b| b.as_deref() == Some("warned")),
             injection_unscreened: (!injection.is_empty()).then(|| {
                 count(
@@ -1648,7 +1648,8 @@ mod tests {
             jev_row(Call(Outcome::Timeout), Some("no_slot"), None, None),
             jev_row(Call(Outcome::Success), None, Some(0.001), Some(90)),
         ];
-        let summary = JevSpanSummary::from_rows(&rows, 0);
+        let summary =
+            JevSpanSummary::from_rows(&rows, 0, crate::traits::classifier::JevMode::Shadow);
         assert_eq!(summary.requests, 1);
         assert_eq!(summary.failures, 0);
     }
@@ -1668,7 +1669,8 @@ mod tests {
                 Some(5),
             ),
         ];
-        let summary = JevSpanSummary::from_rows(&rows, 7);
+        let summary =
+            JevSpanSummary::from_rows(&rows, 7, crate::traits::classifier::JevMode::Shadow);
         assert_eq!(summary.mode, crate::traits::classifier::JevMode::Shadow);
         assert_eq!(summary.excluded, 1);
         // no_time_left sent nothing, so it is not a request.
@@ -1676,7 +1678,10 @@ mod tests {
         assert_eq!(summary.failures, 2);
         assert_eq!(summary.cost_usd, Some(0.001));
         assert_eq!(summary.critical_path_ms, 7);
-        assert_eq!(JevSpanSummary::from_rows(&[], 0).cost_usd, None);
+        assert_eq!(
+            JevSpanSummary::from_rows(&[], 0, crate::traits::classifier::JevMode::Shadow).cost_usd,
+            None
+        );
     }
 
     fn summary() -> JevSpanSummary {
@@ -1698,6 +1703,22 @@ mod tests {
     }
 
     #[test]
+    fn the_mode_comes_from_configuration_not_the_rows() {
+        use crate::traits::classifier::JevMode;
+        let none = JevSpanSummary::from_rows(&[], 0, JevMode::On);
+        assert_eq!(none.mode, JevMode::On);
+        assert_eq!(
+            int(&none.attributes(false), "parallax.jev.mode").as_deref(),
+            Some("on")
+        );
+        let claim = crate::jev::shadow::tests_support::claim_row();
+        assert_eq!(
+            JevSpanSummary::from_rows(&[claim], 0, JevMode::On).mode,
+            JevMode::On
+        );
+    }
+
+    #[test]
     fn a_successful_injection_answer_without_a_band_counts_as_screened() {
         use crate::storage::jev::JevOutcome;
         use crate::traits::classifier::JevSite;
@@ -1705,7 +1726,7 @@ mod tests {
         r.site = JevSite::ResearchInjection;
         r.questions_json = serde_json::json!([{ "id": "directs_ai", "answer": 0.2, "band": null }]);
         r.outcome = JevOutcome::Call(Outcome::Success);
-        let s = JevSpanSummary::from_rows(&[r], 0);
+        let s = JevSpanSummary::from_rows(&[r], 0, crate::traits::classifier::JevMode::Shadow);
         assert_eq!(s.injection_unscreened, Some(0));
         assert_eq!(s.injection_warned, Some(0));
     }
@@ -1737,7 +1758,7 @@ mod tests {
                 Outcome::ClassifierProvider,
             ),
         ];
-        let s = JevSpanSummary::from_rows(&rows, 0);
+        let s = JevSpanSummary::from_rows(&rows, 0, JevMode::On);
         assert_eq!(s.mode, JevMode::On);
         assert_eq!(s.injection_warned, Some(1));
         assert_eq!(s.injection_unscreened, Some(1));
@@ -1752,8 +1773,11 @@ mod tests {
             Some("1")
         );
 
-        let claims =
-            JevSpanSummary::from_rows(&[crate::jev::shadow::tests_support::claim_row()], 0);
+        let claims = JevSpanSummary::from_rows(
+            &[crate::jev::shadow::tests_support::claim_row()],
+            0,
+            JevMode::Shadow,
+        );
         assert_eq!(claims.injection_warned, None);
         assert!(claims
             .attributes(false)

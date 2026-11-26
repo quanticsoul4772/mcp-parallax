@@ -126,6 +126,7 @@ fn without_jev(mut value: Value) -> Value {
     let stats = value["stats"].as_object_mut().unwrap();
     stats.remove("jev_warned_pages");
     stats.remove("jev_unscreened_pages");
+    stats.remove("jev_warned_list");
     value
 }
 
@@ -159,6 +160,10 @@ async fn with_the_site_on_only_the_jev_fields_differ_and_mark_the_high_page() {
     );
     assert_eq!(on["stats"]["jev_warned_pages"], 1);
     assert_eq!(on["stats"]["jev_unscreened_pages"], 0);
+    assert_eq!(
+        on["stats"]["jev_warned_list"],
+        json!([{ "id": source(&on, "https://example.com/a")["id"], "url": "https://example.com/a" }])
+    );
     // Jev reads the same capped text extraction and 063 read.
     for request in requests.lock().unwrap().iter() {
         let state = request.state.as_json().unwrap();
@@ -426,4 +431,63 @@ async fn a_run_cancelled_during_extraction_keeps_the_rows_of_finished_jev_calls(
     let kept = rows.take();
     assert_eq!(kept.len(), 2, "one row per page Jev already answered");
     assert!(kept.iter().all(|r| r.cost_usd.is_some()));
+}
+
+// ---- 065 review finding 6: every warned page is listed --------------------
+
+#[tokio::test]
+async fn a_warned_page_whose_extraction_fails_is_still_listed() {
+    // example.com/a: Jev warns, then its extraction fails, so it is not a
+    // source; only the list shows it.
+    let client = scripted(
+        scope_value(),
+        |prompt| {
+            if prompt.contains("example.com/a") {
+                json!({ "not": "claims" })
+            } else {
+                json!({ "claims": ["the shared claim holds"] })
+            }
+        },
+        |_, _| supported(),
+        |_| json!({ "answer": "Shared holds [s2].", "gaps": [], "gap_targets": [] }),
+    );
+    let search = search_returning(&["https://example.com/a", "https://example.com/b"]);
+    let mut deps = deps_with(client, search, Arc::new(SystemClock));
+    deps.jev_injection = Some(injection_jev(
+        Arc::new(by_page(Arc::default())),
+        JevMode::On,
+        2000,
+    ));
+    let rows = JevShadow::default();
+    let (result, _) = run_at(
+        &deps,
+        &params("does it hold?", Some(Depth::Quick)),
+        deps.concurrency,
+        &SearchCost::default(),
+        &PageCounts::default(),
+        &NonModelUsage::default(),
+        &rows,
+    )
+    .await
+    .unwrap();
+    let value = serde_json::to_value(&result).unwrap();
+    assert!(value["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["url"] != "https://example.com/a"));
+    assert_eq!(value["stats"]["jev_warned_pages"], 1);
+    assert_eq!(
+        value["stats"]["jev_warned_list"],
+        json!([{ "id": "s1", "url": "https://example.com/a" }])
+    );
+
+    // With the site in shadow, there is no list.
+    let (shadow, _) = run_with(Some(injection_jev(
+        Arc::new(by_page(Arc::default())),
+        JevMode::Shadow,
+        2000,
+    )))
+    .await;
+    assert!(shadow["stats"].get("jev_warned_list").is_none());
 }

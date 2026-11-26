@@ -485,13 +485,20 @@ async fn run_metered_at(
             .as_ref()
             .is_some_and(|jev| jev.mode == crate::traits::classifier::JevMode::On);
         let (mut warned, mut unscreened) = (0_u32, 0_u32);
+        let mut warned_list: Vec<crate::research::contract::WarnedPage> = Vec::new();
         for (((outcome, screened), score), patterns) in futures::future::join_all(tasks)
             .await
             .into_iter()
             .zip(task_relevance)
             .zip(task_patterns)
         {
-            let shown = screened.map(|screening| {
+            let shown = screened.map(|(page, screening)| {
+                if screening.warned {
+                    warned_list.push(crate::research::contract::WarnedPage {
+                        id: page.id,
+                        url: page.url,
+                    });
+                }
                 warned += u32::from(screening.warned);
                 unscreened += u32::from(!screening.screened);
                 crate::research::contract::JevInjection {
@@ -515,6 +522,7 @@ async fn run_metered_at(
         if injection_on {
             stats.jev_warned_pages = Some(warned);
             stats.jev_unscreened_pages = Some(unscreened);
+            stats.jev_warned_list = Some(warned_list);
         }
         // 023: every source failing is a phase failure, not degradation. The
         // search phase already draws this line — it propagates when no search
@@ -941,7 +949,7 @@ async fn screen_beside(
     page: PageToScreen,
     time_left: std::time::Duration,
     now: DateTime<Utc>,
-) -> crate::jev::shadow::Screening {
+) -> (PageToScreen, crate::jev::shadow::Screening) {
     let (row, screening) = crate::jev::shadow::screen_page(
         jev,
         &page.id,
@@ -953,7 +961,7 @@ async fn screen_beside(
     )
     .await;
     rows.push(row);
-    screening
+    (page, screening)
 }
 
 async fn extract_source(
