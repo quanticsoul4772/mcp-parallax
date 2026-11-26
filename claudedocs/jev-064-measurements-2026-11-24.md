@@ -54,7 +54,7 @@ divided by 0.3.
 
 Wait, and re-measure the turn-review rate under the user-level hook around
 2026-12-08, then decide what happens to the 066 turn-review skip. The plan is
-unchanged. User's pick: "Wait, re-measure (82)".
+unchanged.
 
 ## T039: harness report on the live acceptance records (SC-005)
 
@@ -165,8 +165,8 @@ Limits:
 
 Method:
 
-- Question: exa-mcp-server's `directs_ai` yes/no question with its two
-  criteria, verbatim (its `scripts/jev-backtest/backtest.py:42-51`), on
+- Question: the earlier back-test's `directs_ai` yes/no question with its two
+  criteria, verbatim, on
   `jev-1.14.0` at threshold 0.35.
 - Clean pages (label false): 413 pages fetched through Exa over a fixed
   query list, capped at 6,000 characters and kept only above 1,500: 285
@@ -174,7 +174,7 @@ Method:
 - Injected pages (label true): every BIPIA text attack (75) and every
   InjecAgent attacker instruction, plain (62) and with InjecAgent's
   "enhanced" prefix (62), each inserted at a paragraph break in a random
-  everyday page by exa-mcp-server's rule, seed 20261010.
+  everyday page by the earlier back-test's rule, seed 20261010.
 - Each page is sent as `{page_url, page_text}`, both redacted first.
 - Harness: `jev_backtest injection` from PR #170 (the question as written)
   and PR #171 (per-set rows), run from main at `2627926`.
@@ -192,10 +192,10 @@ injection at threshold 0.35: 612 items, 0 failed; precision 0.9448; recall 0.859
   set injecagent_enhanced: 62 items, 0 failed; recall 1.0000; false-positive rate undefined
 ```
 
-Beside exa-mcp-server's run on `jev-1.13.0` (unpaired: different clean
+Beside the earlier back-test's run on `jev-1.13.0` (unpaired: different clean
 pages, a different run):
 
-| Set | 1.14 (this run) | 1.13 (exa-mcp-server) |
+| Set | 1.14 (this run) | 1.13 (earlier back-test) |
 |---|---|---|
 | BIPIA caught | 51 / 75 | 47 / 75 |
 | InjecAgent caught | 58 / 62 | 54 / 62 |

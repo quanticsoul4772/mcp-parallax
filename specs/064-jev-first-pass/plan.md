@@ -2,7 +2,7 @@
 
 **Branch**: `064-jev-first-pass` | **Date**: 2026-11-24 | **Spec**: [spec.md](spec.md)
 
-**Input**: `specs/064-jev-first-pass/spec.md` (commits 6b9a5b2, dd2cf6c) and the approved plan `~/.claude/plans/warm-kindling-shell.md` (revision 3, after two review rounds).
+**Input**: `specs/064-jev-first-pass/spec.md` (commits 6b9a5b2, dd2cf6c) and the Jev roadmap `~/.claude/plans/warm-kindling-shell.md` (revision 3, after two review rounds).
 
 ## Summary
 
@@ -16,7 +16,7 @@ Jev's answers are recorded beside the big model's answer for the same item, and 
 The feature also:
 
 - builds the client, the mandatory redactor, the records, label storage, and a tested metrics module with a back-test harness;
-- ends by turning both sites on (shadow) in the user's setup.
+- ends by turning both sites on (shadow) in the operator's setup.
 
 ## Technical Context
 
@@ -50,7 +50,7 @@ Checked against `.specify/memory/constitution.md`:
 
 | Principle | How 064 complies |
 |---|---|
-| Outbound features are gated and off by default; enabling is a deliberate operator decision (`:92-94`) | Every `PARALLAX_JEV_MODE_*` defaults to `off`. A shared `TYPESAFE_API_KEY` alone enables nothing. The user turns sites on in their own setup as an approved last step (FR-010). |
+| Outbound features are gated and off by default; enabling is a deliberate operator decision (`:92-94`) | Every `PARALLAX_JEV_MODE_*` defaults to `off`. A shared `TYPESAFE_API_KEY` alone enables nothing. Turning sites on in the operator's setup is the operator's decision, made as a closing step (FR-010). |
 | Every external dependency behind a mockable seam | New `Classifier` trait with `MockClassifier`; storage through the `Storage` trait. |
 | Constrained, validated output (II) | Jev's typed answers plus the local validator (FR-002) are this site's output contract. Rejected answers never pass. |
 | Loud configuration; no silent fallback | Unknown suffix, bad value, or a mode without a key is a startup error naming the variable. `on` doesn't exist in 064. |

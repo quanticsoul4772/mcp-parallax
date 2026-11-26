@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: plan `~/.claude/plans/warm-kindling-shell.md` §4-§5 (approved 2026-11-24).
+**Input**: plan `~/.claude/plans/warm-kindling-shell.md` §4-§5 (2026-11-24).
 
 ## Clarifications
 
@@ -64,8 +64,8 @@ Records hold Jev's answers, the big model's labels and enough provenance for the
 - **FR-007 Research claim shadow**: for each verified claim, Jev is asked `relation` (options in the order `says_nothing`, `contradicts`, `supports`) and `same_subject` per source, concurrently with the verify passes, never longer than them; claims with digits, month or weekday names, date words, version strings, or a 063-flagged source are excluded in code and counted; answers and the claim's final label and vote counts are collected during the run and written in one transaction when the call ends, including on cancellation; Jev tokens stay out of the research token ceiling.
 - **FR-008 Measurement**: a tested metrics module computes the plan's §7 rule (bounds, baselines, clustering, promotion decision with reasons); a back-test example uses it; committed fixtures are synthetic or scrubbed with provenance markers and a secret scan; real records stay out of git.
 - **FR-009 Shadow only**: no Jev answer changes any decision, call or output; every row has `applied=false`.
-- **FR-010 Setup**: after merge and rebuild, with the user's approval of exact keys, the project's Stop hook is installed and both sites are set to shadow in the user's Parallax settings (only those keys change; backup first).
-- **FR-011 Measurements**: using the harness, 064 runs and records: (a) Jev noise: 5 calls on each of 100 held-out items per question, reporting the within-item spread and the decision flip rate; (b) big-model self-agreement: the turn review and the verify ensemble each re-run twice on about 100 items, reporting how often each agrees with itself; (c) option-order bias: each held-out choice item under all 6 option orders, reporting the decision flip rate; (d) base rate: the share of turn reviews that flagged or captured, from existing checkpoint records, with the read-only query approved first; (e) injection back-test: the `directs_ai` question on `jev-1.14.0` against InjecAgent, BIPIA and at least 300 real research pages, with datasets downloaded into an isolated folder. Results are saved in claudedocs.
+- **FR-010 Setup**: after merge and rebuild, the project's Stop hook is installed and both sites are set to shadow in the operator's Parallax settings (only those keys change; backup first).
+- **FR-011 Measurements**: using the harness, 064 runs and records: (a) Jev noise: 5 calls on each of 100 held-out items per question, reporting the within-item spread and the decision flip rate; (b) big-model self-agreement: the turn review and the verify ensemble each re-run twice on about 100 items, reporting how often each agrees with itself; (c) option-order bias: each held-out choice item under all 6 option orders, reporting the decision flip rate; (d) base rate: the share of turn reviews that flagged or captured, from existing checkpoint records, with a read-only query; (e) injection back-test: the `directs_ai` question on `jev-1.14.0` against InjecAgent, BIPIA and at least 300 real research pages, with datasets downloaded into an isolated folder. Results are saved in claudedocs.
 
 ### Key Entities
 

@@ -4,7 +4,7 @@
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/decide-pass.md, quickstart.md
 
-**Tests**: required. The owner's rule is test-first for every behaviour change: each test is written and run to fail before the code that makes it pass.
+**Tests**: required. Test-first for every behaviour change: each test is written and run to fail before the code that makes it pass.
 
 **The gate** is `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests` (run with `-j 2` on this machine), plus `pre-commit run markdownlint` on changed markdown.
 
@@ -33,7 +33,7 @@
 - [X] T006 [US1] Implement the per-count pass schema builder and register decide's formats for counts 2..=10 via the T003 method in `src/modes/decide.rs`; replace `DecidePass`'s arrays with position-keyed parsing from the completion value
 - [X] T007 [US1] Implement the 10-option cap in `check_input` in `src/modes/decide.rs` (`DECIDE_OPTIONS_MAX = 10`)
 - [X] T008 [US1] Update `PROMPT_TEMPLATE` rules 3–4 and the violation clause in `src/modes/decide.rs` to name `option_<i>_score` / `option_<i>_rationale` and drop the now-structural "exactly one score and one rationale per option"; update the pinned-schema test (`PIN_SCHEMA`) to the new per-count format
-- [X] T009 [US1] Remove the arity check and its message from `assemble` in `src/modes/decide.rs`, and change these existing tests (each change asked when the task runs, saying it is what lets them pass):
+- [X] T009 [US1] Remove the arity check and its message from `assemble` in `src/modes/decide.rs`, and change these existing tests:
   - `assessment()` helper: rewritten to build the per-field answer; every test that calls it follows unchanged in meaning
   - `arity_mismatch_after_retry_is_a_failed_pass`: rewritten as "a missing per-option field is rejected by the schema validator" (the arity case can no longer be expressed)
   - `a_malformed_assessment_triggers_one_retry_then_succeeds`: rewritten to use an out-of-range score as the malformed first answer instead of an arity mismatch
@@ -52,7 +52,7 @@
 - [X] T011 [US2] Write a test in `src/modes/decide.rs` tests that feeds the same scores and rationales through the new shape and asserts the `DecideResult` (recommended, runner_up, runner_up_reason, confidence, methodology, deciding_factors, assessments) equals the values the pre-change tests expected
 - [X] T012 [US2] Confirm a score outside 0–100 and empty `deciding_factors` still feed the single retry (existing tests, adapted to the new shape) in `src/modes/decide.rs`
 - [X] T013a [US2] Change "two or more options" to "two to ten options" in `DECIDE_DESCRIPTION` and note the 2–10 range on the `options` field doc, both in `src/modes/decide.rs`
-- [X] T013b [P] [US2] Make the same description change in the `#[tool]` literal in `src/server.rs` and in `specs/013-decide-methodology/contracts/decide.tool.json`; update CLAUDE.md's decide description ("≥2 options" to "2 to 10 options") and README if it states the range, each exact text asked when the task runs; after T013a and T013b the existing served-equals-contract and contract-equals-constant tests must pass
+- [X] T013b [P] [US2] Make the same description change in the `#[tool]` literal in `src/server.rs` and in `specs/013-decide-methodology/contracts/decide.tool.json`; update CLAUDE.md's decide description ("≥2 options" to "2 to 10 options") and README if it states the range; after T013a and T013b the existing served-equals-contract and contract-equals-constant tests must pass
 - [X] T014 [US2] Run the decide integration tests in `tests/integration.rs` and the full gate
 
 ## Phase 5: User Story 3 — the design record explains the change (P3)
@@ -63,9 +63,9 @@
 ## Phase 6: Polish & cross-cutting
 
 - [X] T017 Add CHANGELOG entries in `CHANGELOG.md` under `[Unreleased]`: Fixed (arity mismatches impossible) and Changed (10-option cap)
-- [X] T018 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller; each finding asked one question per finding
-- [X] T019 Live check (paid, asked with price): after the owner rebuilds, call `decide` through the running server with 2, 4 and 6 options; record counts, results and cost in `specs/056-decide-per-option-fields/quickstart.md`
-- [X] T020 Update the CLAUDE.md Spec Kit block when the feature closes (exact text asked)
+- [X] T018 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller
+- [X] T019 Live check (paid): after the rebuild, call `decide` through the running server with 2, 4 and 6 options; record counts, results and cost in `specs/056-decide-per-option-fields/quickstart.md`
+- [X] T020 Update the CLAUDE.md Spec Kit block when the feature closes
 
 ## Dependencies
 

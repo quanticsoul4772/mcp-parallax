@@ -101,7 +101,7 @@ writes `results.jsonl` (all 460 attempted calls; scores, orderings,
 methodology, token counts; failures reduced to the word "billing") and
 `plan-redacted.json` (per case: id, option count, sentence count, recorded
 scores, recorded gap). No decision, option or context text, no provider error
-text, no request identifiers. The owner sees both output files before they
+text, no request identifiers. Both output files are checked before they
 are committed.
 
 **Rationale**: the inputs are real decisions from the owner's other projects.
@@ -111,7 +111,7 @@ The numbers in the specification's table need only ids, orderings and scores.
 failed call's error text is not the provider's billing error; it checks that
 every case id is one of `c00` to `c09`; the task list includes a search of
 the two output files for any string value outside the known short
-vocabulary; and the owner inspects both files.
+vocabulary; and both files are inspected.
 
 ## D7 — The probe program
 
@@ -119,7 +119,7 @@ vocabulary; and the owner inspects both files.
 (not compiled, not under `examples/`), with its header changed from
 "TEMPORARY, not committed" to a statement of what it was used for and a
 warning that running it makes paid model calls. The file under `examples/` is
-deleted by the owner.
+deleted.
 
 **Rationale**: without it nobody can see how the runs were made (that it used
 the default model directly and bypassed routing). Left under `examples/` it
@@ -128,10 +128,10 @@ is buildable code that spends money when run.
 ## D8 — Live acceptance
 
 **Decision**: none is required to build or test. Whether to make one live
-`decide` call before the pull request is put to the owner with its price.
+`decide` call before the pull request is decided with its price stated.
 
 **Rationale**: nothing sent to `decide`'s model changes. The project's note
 says any model-facing prompt or schema change must pass the live example
 before a pull request. The description is read by calling models, and no live
 `decide` example exists (the existing acceptance example is offline). The
-owner is asked with that stated.
+decision is made with that stated.

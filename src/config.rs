@@ -72,8 +72,8 @@ const JEV_MODE_PREFIX: &str = "PARALLAX_JEV_MODE_";
 pub struct JevSettings {
     /// `TYPESAFE_API_KEY`; a blank value counts as unset. Never logged.
     pub api_key: Option<String>,
-    /// `PARALLAX_JEV_MODEL`, default [`DEFAULT_JEV_MODEL`]. exa-mcp-server's
-    /// `JEV_MODEL` is never read.
+    /// `PARALLAX_JEV_MODEL`, default [`DEFAULT_JEV_MODEL`]. A
+    /// `JEV_MODEL` variable is never read.
     pub model: String,
     /// `PARALLAX_JEV_MODE_TURN_REVIEW`, default off.
     pub turn_review: crate::traits::classifier::JevMode,

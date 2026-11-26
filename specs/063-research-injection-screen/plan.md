@@ -38,7 +38,7 @@ src/research/mod.rs         # pub mod screen; SourceRecord.injection_patterns
 src/research/pipeline.rs    # extract_source screens the text it extracts
 src/research/contract.rs    # SourceRef.injection_patterns, Stats.pages_flagged
 src/research/outcome.rs     # copies the names; counts flagged pages
-specs/004-research-layer/contracts/research.tool.json   # FR-006 (text approved first)
+specs/004-research-layer/contracts/research.tool.json   # FR-006
 src/research/pipeline_tests.rs  # pipeline tests
 ```
 

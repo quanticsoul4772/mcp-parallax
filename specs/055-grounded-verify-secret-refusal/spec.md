@@ -6,7 +6,7 @@
 
 **Status**: Draft (sixth version; narrowed after review of the first, corrected after each of four further reviews, the last two against the code)
 
-**Input**: User description: "grounded_verify: confine each session to its own project and refuse secret-looking files". The owner then split the work: this specification is the refusal of secret-named files only. Confining each session to its own project is a separate, later specification (see Deferred).
+**Input**: User description: "grounded_verify: confine each session to its own project and refuse secret-looking files". The work was then split: this specification is the refusal of secret-named files only. Confining each session to its own project is a separate, later specification (see Deferred).
 
 ## Why this exists
 
@@ -15,12 +15,12 @@ to the model provider to be judged. Its findings can quote that text back to
 the agent. Its only limit today is one configured folder, the source root:
 any text file inside the root can be read.
 
-An agent's own file-reading tool is subject to the owner's permission prompts
+An agent's own file-reading tool is subject to the operator's permission prompts
 and path rules. A `grounded_verify` call is approved per tool, not per path,
 so it can reach files those guards would stop. Nothing in the tool treats a
 file named `.env` differently from a file named `README.md`.
 
-On 2026-11-17 the root was widened to the folder holding all of the owner's
+On 2026-11-17 the root was widened to the folder holding all of the operator's
 projects, for about two hours, and narrowed again when this was pointed out.
 The server's records for that window hold five calls to the tool. Those
 records carry a session number, token counts and an outcome; they carry no
@@ -227,11 +227,11 @@ equals the registered one; each document in FR-012 is amended.
 
 ## Assumptions
 
-- The root stays set to the Parallax repository, as the owner chose on 2026-11-17, until the later session-folder work is specified, built and deployed. This feature does not make a wide root safe.
+- The root stays set to the Parallax repository, as chosen on 2026-11-17, until the later session-folder work is specified, built and deployed. This feature does not make a wide root safe.
 - Delivered as one pull request.
-- All development and automated tests use a substituted model and temporary folders. The project keeps a note that any model-facing prompt or schema change must pass the live example before a pull request. The tool's description and published result shape change here, and both are read by calling models. Whether a live call is made before the pull request, and what it would cost, is asked of the owner on its own.
-- **The project's automated checks on pull requests run on Linux only.** The Windows tests in SC-002 therefore run only on a Windows machine, through the local gate. This is a known gap in what the pull-request checks prove; whether to add a Windows check is asked of the owner, and the pull request says which tests ran where.
-- No override is offered. If a refused harmless file must be verified, the owner copies it to an ordinary name. That is the same act that defeats the guard, and it is the owner's to make.
+- All development and automated tests use a substituted model and temporary folders. The project keeps a note that any model-facing prompt or schema change must pass the live example before a pull request. The tool's description and published result shape change here, and both are read by calling models. Whether a live call is made before the pull request, and what it would cost, is a separate decision.
+- **The project's automated checks on pull requests run on Linux only.** The Windows tests in SC-002 therefore run only on a Windows machine, through the local gate. This is a known gap in what the pull-request checks prove; whether to add a Windows check is a separate decision, and the pull request says which tests ran where.
+- No override is offered. If a refused harmless file must be verified, the operator copies it to an ordinary name. That is the same act that defeats the guard, and it is the operator's to make.
 
 ## Departure from an existing rule, named
 
@@ -244,7 +244,7 @@ flag and the notice are always present); a countable claim is never settled
 over reduced evidence; and an exact path to a refused file still fails the
 call.
 
-The owner considered lowering the confidence number as well and set it
+Lowering the confidence number as well was considered and set
 aside: the number is the share of passes that agreed, a rule that changed it
 only when all passes agreed would not do what was intended, and one that
 always changed it would stop it meaning what every document says it means.
@@ -256,7 +256,7 @@ The flag carries the fact instead.
 - Detecting secrets by content.
 - Refusing files that have more than one hard link. Considered on 2026-11-21 and not pursued. For a link an agent makes, copying the file to an ordinary name is as easy, and no link-count check catches a copy. For a link that already exists, refusing every file with more than one link would refuse legitimate ones, such as a pnpm store's. And the Windows link count (`MetadataExt::number_of_links`) is unstable in the pinned toolchain, so it would need a new direct dependency.
 - Closing the instant between a file's last check and its being opened, by checking the file once it is open. Named as part of the session-folder specification, where confinement between projects is the goal and a race matters; it needs a new dependency, which that work must justify.
-- Matching by word (any name containing "secret" or "token"), which the owner considered and set aside in favour of a fixed list with backup forms.
+- Matching by word (any name containing "secret" or "token"), which was considered and set aside in favour of a fixed list with backup forms.
 - An operator-editable list, or an override.
 - Recording refusals in invocation records.
 - More than one root.

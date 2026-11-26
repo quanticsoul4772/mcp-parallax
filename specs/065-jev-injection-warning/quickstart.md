@@ -29,4 +29,4 @@ The injection site's table shows the share warned, failures by outcome, and agre
 
 ## 5. Turn it on in the operator's setup (FR-010)
 
-After merge and rebuild, with the exact key shown and approved first and a backup of `~/.claude.json` taken: add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key; the user restarts.
+After merge and rebuild, with a backup of `~/.claude.json` taken: add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key; restart Claude Code.

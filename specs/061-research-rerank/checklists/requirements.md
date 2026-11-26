@@ -33,5 +33,5 @@
 
 - The reranker is named (Voyage rerank-3; rerank-2.5 is an older model, 2026-11-23) because the feature is defined by
   it, as 059 was by Exa.
-- FR-005's fallback is an operator-approved exception (2026-11-23).
+- FR-005's fallback is a named exception (2026-11-23).
 - The keep-count defaults and Voyage request limits are plan decisions.

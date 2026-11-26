@@ -58,15 +58,15 @@ here would double the call count without answering Q1 or Q2.
 
 ## Inputs
 
-- **Population**: recorded successful `decide` calls from the owner's agent
+- **Population**: recorded successful `decide` calls from the operator's agent
   sessions with 2 to 5 options (about 785 after removing duplicates). Unlike
   the first measurement there is no requirement on context length and no
   banding by gap.
 - **Sampling**: simple random sample with a fixed, recorded seed, so the
-  result describes the owner's real mix of calls. The seed and the selection
+  result describes the real mix of calls. The seed and the selection
   script are committed; the input texts are not.
 - **Per input**: 10 identical runs, unchanged input, same option order.
-- **Privacy**: the inputs are real decisions from the owner's other projects.
+- **Privacy**: the inputs are real decisions from other projects.
   They are sent to the same provider API those projects' agents already sent
   them to, and nowhere else. Only labels, scores, methodology names and token
   counts are committed, as in the first measurement.
@@ -83,19 +83,18 @@ output) that is about 1.6 cents per call.
 | 1 | 40 | 400 | about 6.30 dollars | 8 dollars |
 | 2 (only under the rule below) | 40 more | 400 | about 6.30 dollars | 8 dollars |
 
-**These prices hold only for that model.** The model is the one the owner's
+**These prices hold only for that model.** The model is the one the operator's
 server routes `decide` to, which is not known to the author:
 
-> **Model for this run: ________________** (owner to fill in)
+> **Model for this run: ________________**
 
 If it is not `claude-opus-4-8`, the price is recomputed from the project's
-price table and shown to the owner before approval.
+price table before the run.
 
 **Stage 2 runs only if** stage 1 shows a gap band in which the disagreement
 rate is under 10% but its interval is too wide to rely on (upper bound above
-20%). It is asked of the owner again, with its own price. The first
-measurement's overrun was in its second stage; this one cannot start without
-a new approval.
+20%). It has its own price. The first
+measurement's overrun was in its second stage; this one is a separate run.
 
 ## Measures
 
@@ -128,7 +127,7 @@ and each run's top-two gap.
 ## Safeguards
 
 Each is a property of the probe program, checked by a test or by reading it,
-before the owner is asked to approve a run.
+before a run.
 
 1. **Call cap.** The probe takes the maximum number of calls as an argument
    and stops when it is reached.
@@ -140,12 +139,12 @@ before the owner is asked to approve a run.
 4. **It uses the server's own routing** for the `decide` call site, and
    records the model and effort in every output line. The first probe
    bypassed routing and recorded neither.
-5. **Price shown first.** The approval question states the call count, the
-   model, the expected price and the cap.
+5. **Price stated first.** The call count, the model, the expected price and
+   the cap are stated before the run.
 6. **It is not left in `examples/`.** It lives outside the build, and its
    source is committed as text with the results.
-7. **The owner's live server shares this account.** The approval question
-   says so, and the cap is set with that in mind.
+7. **The operator's live server shares this account.** The cap is set with
+   that in mind.
 
 ## Limits
 
@@ -153,13 +152,13 @@ before the owner is asked to approve a run.
 - Ten runs per input estimates an input's majority winner imperfectly; an
   input that splits 6 to 4 can show 7 to 3 the other way.
 - Recorded calls are the calls agents chose to make. They are not every
-  decision the owner faces.
+  decision made.
 - Identical-input runs measure repeatability for that exact wording. They say
   nothing about whether the wording was fair to each option, which the first
   measurement showed also moves the result.
 
 ## What happens to this document
 
-If approved and run, the results, the scripts and an analysis note are
+If run, the results, the scripts and an analysis note are
 committed beside it, and the outcome is recorded in the design document
 whichever way it falls.

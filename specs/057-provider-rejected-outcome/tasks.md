@@ -4,7 +4,7 @@
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/outcome.md, quickstart.md
 
-**Tests**: required. The owner's rule is test-first for every behaviour change: each test is written and run to fail before the code that makes it pass. Where a test cannot fail first, the task says so.
+**Tests**: required. Test-first for every behaviour change: each test is written and run to fail before the code that makes it pass. Where a test cannot fail first, the task says so.
 
 **The gate** is `cargo fmt --all -- --check && cargo clippy --all-features --all-targets -- -D warnings && cargo test --all-features --tests` (run with `-j 2` on this machine, piped steps under `set -o pipefail`), plus `pre-commit run markdownlint` on changed markdown.
 
@@ -22,7 +22,7 @@
 - [X] T002 In `src/error.rs` tests, replace `outcome_strings_match_the_record_contract` (literals only; never opens the contract) with a test that reads the `outcome.enum` array from `specs/001-core-layer/contracts/invocation-record.schema.json` and the backticked values in the `parallax.outcome` row of `specs/007-observability-layer/contracts/telemetry.md`, and asserts each equals the recorded outcomes (`Outcome::ALL` minus `config_error`); plus a test that `Outcome::parse(o.as_str()) == Some(o)` for every `o` in `ALL`. Add `Outcome::ALL` (today's values). This passes on today's code by design: it pins what exists, and T004 makes it fail
 - [X] T003 Write a failing test in `src/error.rs` tests: `AppError::ProviderRejected { status: 400, detail }` has outcome `Outcome::ProviderRejected`, whose string is `provider_rejected`, and its Display contains `HTTP 400` and the detail (fails to compile until T004); and a test in `src/observability.rs` tests that a record with outcome `provider_rejected` exports `parallax.outcome` and `error.type` equal to `provider_rejected`
 - [X] T004 Add `AppError::ProviderRejected { status: u16, detail: String }` (Display `provider rejected the request: HTTP {status}: {detail}`), `Outcome::ProviderRejected`, its `as_str`/`parse` string `provider_rejected`, and the `ALL` entry, in `src/error.rs`; T003 passes and T002 fails on both contracts
-- [X] T005 Add `provider_rejected` to the outcome enum in `specs/001-core-layer/contracts/invocation-record.schema.json` and to the `parallax.outcome` list in `specs/007-observability-layer/contracts/telemetry.md` (exact text asked); T002 and T003 pass
+- [X] T005 Add `provider_rejected` to the outcome enum in `specs/001-core-layer/contracts/invocation-record.schema.json` and to the `parallax.outcome` list in `specs/007-observability-layer/contracts/telemetry.md`; T002 and T003 pass
 
 ## Phase 3: User Story 1 — provider rejections separated from malformed output (P1, MVP)
 
@@ -47,14 +47,14 @@
 
 ## Phase 5: User Story 3 — the published surfaces state it (P3)
 
-- [X] T012 [P] [US3] Add a dated 2026-11-20 amendment to `specs/001-core-layer/data-model.md` §6 adding `provider_rejected` to the taxonomy, with the reason (exact text asked)
-- [X] T013 [P] [US3] Add a CHANGELOG entry under `[Unreleased]` → Changed in `CHANGELOG.md` (exact text asked)
+- [X] T012 [P] [US3] Add a dated 2026-11-20 amendment to `specs/001-core-layer/data-model.md` §6 adding `provider_rejected` to the taxonomy, with the reason
+- [X] T013 [P] [US3] Add a CHANGELOG entry under `[Unreleased]` → Changed in `CHANGELOG.md`
 
 ## Phase 6: Polish & cross-cutting
 
 - [X] T014 Run the full gate and markdownlint on changed markdown
-- [X] T015 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller of `AppError`, `Outcome` and the two changed sites; each finding asked one question per finding
-- [X] T016 Update the CLAUDE.md Spec Kit block when the feature closes (exact text asked)
+- [X] T015 Independent review: a fresh general-purpose subagent given only the diff, told to trace every caller of `AppError`, `Outcome` and the two changed sites
+- [X] T016 Update the CLAUDE.md Spec Kit block when the feature closes
 
 ## Dependencies
 

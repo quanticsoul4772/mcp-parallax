@@ -34,12 +34,12 @@ python -I -X utf8 claudedocs/experiments/decide-stability/table.py
 ## What is withheld, and why
 
 The decisions, options and context of the ten inputs are not here. They are
-real decisions from the owner's other projects. The provider's error text and
+real decisions from other projects. The provider's error text and
 request identifiers for the failed calls are also removed. Everything in
 these files is a label (`c00` to `c09`), a variant name, an ordering, a
 score, a methodology name, a count, or the word `billing`.
 
-Anyone can recompute the numbers. Only the owner can re-run the same inputs.
+Anyone can recompute the numbers. Only the operator can re-run the same inputs.
 
 ## Things to know before leaning on this
 

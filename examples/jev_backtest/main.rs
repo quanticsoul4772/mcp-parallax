@@ -20,7 +20,7 @@
 //! that file without calls (SC-006). The injection folder holds `.jsonl`
 //! lines `{"text": ..., "label": true|false, "url": ...}` that you built
 //! yourself in a fresh folder; the harness never downloads anything. Each
-//! page is sent in the shape exa-mcp-server's back-test used,
+//! page is sent in the shape the earlier back-test used,
 //! `{"page_url", "page_text"}`, but redacted first, the URL included (any
 //! run of 20 or more characters mixing letters and digits, which can cross
 //! `/` and `-`, is replaced, so a URL such as

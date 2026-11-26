@@ -39,7 +39,7 @@ The work is six pieces, each test-first, each ending with the full gate:
 
 **Testing**: `cargo test`, through the `SourceReader` and `ModelClient` seams, plus real-filesystem tests in temporary folders.
 
-**Target Platform**: unchanged (stdio MCP server). The owner's machine is Windows; pull-request checks run on Linux only.
+**Target Platform**: unchanged (stdio MCP server). The development machine is Windows; pull-request checks run on Linux only.
 
 **Project Type**: single Rust crate.
 
@@ -181,12 +181,12 @@ Removing `read` and the old `list_files`, the last step of the work, breaks thes
 | 6 | Real-disk tests | full gate on Windows, and on Linux through the pull-request checks |
 | 7 | Description in both copies; end-to-end tests | full gate |
 | 8 | The contract page and its binding test; the documents of FR-012; change log | full gate and the markdown check |
-| 9 | Independent review of the whole diff; then the owner's decisions below; then commit, push and pull request, each asked | — |
+| 9 | Independent review of the whole diff; then the decisions below; then commit, push and pull request | — |
 
 ## What this plan does not decide
 
 - Whether to add a Windows job to the pull-request checks (a long build, since the solver dependency is compiled from source).
-- Whether a live call is made before the pull request. The project's note says a model-facing description or schema change must pass the live example first; this change is one; the tool's existing acceptance example is the live vehicle. Asked of the owner with its price.
+- Whether a live call is made before the pull request. The project's note says a model-facing description or schema change must pass the live example first; this change is one; the tool's existing acceptance example is the live vehicle. Decided with its price stated.
 
 ## Complexity Tracking
 

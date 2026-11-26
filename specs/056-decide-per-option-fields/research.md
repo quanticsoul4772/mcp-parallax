@@ -39,7 +39,7 @@
 
 - **Decision**: reject more than 10 options before any model call with an error
   naming the limit; the tool description says "two to ten options".
-- **Rationale**: decided by the owner 2026-11-20; covers counts seen in recorded
+- **Rationale**: decided 2026-11-20; covers counts seen in recorded
   inputs (2 to 6) with room; bounds the schema at 20 per-option fields.
 - **Note**: option counts in other projects' use are not recorded, so the cap
   could reject a call that works today.

@@ -58,14 +58,14 @@ Each measurement is a subcommand of the harness `examples/jev_backtest.rs`. Resu
 | Noise | `cargo run --release --example jev_backtest -- noise` | 5 calls on each of 100 held-out items per question: within-item spread and decision flip rate |
 | Self-agreement | `cargo run --release --example jev_backtest -- self-agreement` | The turn review and the verify ensemble, each re-run twice on about 100 items (runs on the subscription backend) |
 | Option order | `cargo run --release --example jev_backtest -- order` | Each choice item under all 6 option orders: flip rate and McNemar's test |
-| Base rate | `cargo run --release --example jev_backtest -- base-rate` | Share of turn reviews that flagged or captured, from existing `checkpoint_records` (read-only; approved first) |
+| Base rate | `cargo run --release --example jev_backtest -- base-rate` | Share of turn reviews that flagged or captured, from existing `checkpoint_records` (read-only) |
 | Injection | `cargo run --release --example jev_backtest -- injection` | The `directs_ai` question on `jev-1.14.0` against InjecAgent, BIPIA and at least 300 real research pages (datasets downloaded into an isolated folder) |
 
 Re-running `cargo run --release --example jev_backtest -- report` reproduces every table from the saved inputs (SC-006).
 
-## 5. Turning it on in your setup (FR-010)
+## 5. Turning it on in the operator's setup (FR-010)
 
-After merge and rebuild, and with your approval of these exact changes:
+After merge and rebuild:
 
 1. **Back up** `~/.claude.json`.
 2. **Add two keys** to the `env` block of the Parallax entry, changing only these keys:
@@ -75,8 +75,8 @@ After merge and rebuild, and with your approval of these exact changes:
    "PARALLAX_JEV_MODE_RESEARCH_CLAIMS": "shadow"
    ```
 
-3. **Install the project's Stop hook**, which calls `checkpoint_turn` (from `integrations/claude-code/hooks.json`), in `.claude/settings.json`. The exact entry is shown for approval first.
-4. **Restart the session.** The Parallax startup log shows one line per enabled site, naming `api.typesafe.ai` and the data sent.
+3. **Install the project's Stop hook**, which calls `checkpoint_turn` (from `integrations/claude-code/hooks.json`), in `.claude/settings.json`.
+4. **Restart Claude Code.** The Parallax startup log shows one line per enabled site, naming `api.typesafe.ai` and the data sent.
 
 ## 6. Results
 

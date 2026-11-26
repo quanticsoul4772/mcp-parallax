@@ -10,7 +10,7 @@ These changes are made to the published contracts during implementation. The bin
 |---|---|---|
 | `jev_cost_usd` | number \| null, ≥ 0 | Sum of the Jev rows' `cost_usd` for this invocation; null when no Jev call was made. Calls abandoned or cut off at their deadline may still be billed but carry no cost here; their rows say `cost unknown` |
 
-The schema has already drifted from `InvocationRecord`: it lacks `models`, `usage_by_model`, `cost_estimated`, `depth`, `effort`, `passes` and `search_cost_usd` (`src/telemetry.rs:374-436`). Fixing that drift is a separate decision for the user. 064 adds only `jev_cost_usd`.
+The schema has already drifted from `InvocationRecord`: it lacks `models`, `usage_by_model`, `cost_estimated`, `depth`, `effort`, `passes` and `search_cost_usd` (`src/telemetry.rs:374-436`). Fixing that drift is a separate decision. 064 adds only `jev_cost_usd`.
 
 ## Checkpoint record
 

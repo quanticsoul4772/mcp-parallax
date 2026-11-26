@@ -73,6 +73,6 @@ differences), not small ones.
 
 `runner.py` speaks MCP stdio directly to `target\release\mcp-parallax.exe`
 (4 worker connections, each with a scratch `DATABASE_PATH` so the live DB is
-untouched; env taken from the user's parallax MCP config, never printed).
+untouched; env taken from the operator's parallax MCP config, never printed).
 Raw per-call rows in `results.jsonl`; `analysis.md` holds the computed
 metrics and verdict.

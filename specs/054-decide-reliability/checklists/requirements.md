@@ -36,5 +36,5 @@ boxes are ticked only by a reviewer of the current version, not by its author.
 
 ## Notes
 
-- Third version. After the first review the owner narrowed the scope to one pass only. After the second review showed the author had overstated the evidence, the owner chose to change words only and leave the confidence number unchanged; and to commit scores and scripts without input texts.
+- Third version. After the first review the scope narrowed to one pass only. After the second review showed the evidence had been overstated, the change became words only, leaving the confidence number unchanged and committing scores and scripts without input texts.
 - The specification names existing documents it must change (FR-006 to FR-009). That is scope: the feature exists because those documents state something the measurement contradicts.

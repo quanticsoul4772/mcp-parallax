@@ -356,12 +356,12 @@ arc.
   measured from one database and turn rows from another are both kept. Each
   site keeps its own self-agreement model note.
 
-* **The Jev injection back-test sends exa-mcp-server's question as written**
+* **The Jev injection back-test sends the earlier back-test's question as written**
   (064 recovery) — a yes/no Jev question that declares criteria now sends
   them (questions with none, which is all of the server's, are sent as
   before); `jev_backtest injection` reads `{"text", "label", "url"}` lines,
   sends each page as `{"page_url", "page_text"}` after redacting both (unlike
-  exa-mcp-server, which sent the URL as is), asks the server's own `directs_ai`
+  the earlier back-test, which sent the URL as is), asks the server's own `directs_ai`
   question (065; the question-file argument is gone), and counts and saves the dataset lines it
   skipped. A dataset with no usable line stops before any call, and a run in
   which no call produced an answer stops before saving; both leave the saved

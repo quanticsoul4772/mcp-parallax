@@ -25,8 +25,8 @@ linear-time, audited matcher. The translator is a small recursive-descent parser
 
 **Alternatives considered**:
 
-- **`globset` grammar, drop extglob operators** — explicitly offered at
-  `/speckit-plan` and rejected by the user in favor of true extglob.
+- **`globset` grammar, drop extglob operators** — considered at
+  `/speckit-plan` and rejected in favor of true extglob.
 - **Shell out to bash extglob** — rejected: a shell dependency, non-portable
   (Windows), and an injection surface.
 - **`globset` + a brace/extglob pre-expander** — extglob (`!()`, `+()`) is not

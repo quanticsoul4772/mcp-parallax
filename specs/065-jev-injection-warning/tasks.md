@@ -4,20 +4,18 @@
 
 **Rules for every task:**
 
-- Each code task writes its failing test first, shows it failing, then implements.
+- Each code task writes its test first, runs it to confirm it fails, then implements.
 - The full gate runs before every commit.
-- Every step (each read, edit, commit and push) is asked first.
-- Doc and contract text is shown as exact text before it is written.
 
 Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run in parallel: different files, no open dependency.
 
 ## Phase 1: Foundation (blocks all stories)
 
 - [x] T001 Test the new site and mode: `JevSite::ResearchInjection` (suffix `RESEARCH_INJECTION`, stored as `research_injection`) is in `JevSite::ALL`; `JevMode::On` is in `JevMode::ALL` and parses from `on`; the `jev_records` two-way binding test covers the new site value. Files: `src/traits/classifier.rs` tests, `src/storage/jev.rs` tests.
-- [x] T002 Implement the site and mode, and add `research_injection` to `specs/064-jev-first-pass/contracts/jev-record.schema.json` (exact text shown first). Files: `src/traits/classifier.rs`, the schema.
+- [x] T002 Implement the site and mode, and add `research_injection` to `specs/064-jev-first-pass/contracts/jev-record.schema.json`. Files: `src/traits/classifier.rs`, the schema.
 - [x] T003 [P] Test the pinned threshold table and decision: `injection_threshold("jev-1.14.0") == Some(0.35)`, any other model gives `None`; `injection_decision` warns at exactly 0.35 and not just below it (`next_down`), and a missing probability is never `Warned`; the 0.35 value is bound to the T038 (e) section of `claudedocs/jev-064-measurements-2026-11-24.md`. Files: `src/jev/policy.rs` tests.
 - [x] T004 Implement `INJECTION_THRESHOLDS`, `injection_threshold` and `injection_decision`. Files: `src/jev/policy.rs`.
-- [x] T005 [P] Test the `directs_ai` question: yes/no, version 1, exa-mcp-server's instructions and both criteria verbatim, criteria declared `true` then `false`; bound to the wording the back-test sent. Files: `src/jev/questions.rs` tests.
+- [x] T005 [P] Test the `directs_ai` question: yes/no, version 1, the earlier back-test's instructions and both criteria verbatim, criteria declared `true` then `false`; bound to the wording the back-test sent. Files: `src/jev/questions.rs` tests.
 - [x] T006 Implement `injection_question()` in `src/jev/questions.rs`; `jev_backtest injection` uses it and drops its question-file argument (usage text and CHANGELOG updated). Files: `src/jev/questions.rs`, `examples/jev_backtest/main.rs`, `examples/jev_backtest/live.rs`.
 - [x] T007 [P] Test config (research D2): `PARALLAX_JEV_MODE_RESEARCH_INJECTION` accepts `off`, `shadow` and `on`, defaults to `off`; non-off without the key is an error naming the variable; `on` with a model lacking a pinned threshold is an error naming both variables; `on` for `TURN_REVIEW` or `RESEARCH_CLAIMS` is still an error. Files: `src/config.rs` tests.
 - [x] T008 Implement the config, and the new field in the three Config fixtures (`src/config.rs` `test_config`, `tests/common/mod.rs`, `examples/common/mod.rs`). Files: `src/config.rs`.
@@ -34,7 +32,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T012 [US1] Implement `src/jev/shadow/injection.rs`: `InjectionJev` (classifier, redactor, model, mode, threshold, deadline), prepare, ask with on-site retries, the row, and the source screening result. Files: `src/jev/shadow/injection.rs`, `src/jev/shadow.rs`.
 - [x] T013 [P] [US1] Test the pipeline (SC-002, SC-003): with the site `on`, each kept page's call runs beside its extraction call (research D1) on the capped text 063 screens; high and low pages, an erroring, invalid and never-returning Jev; only `jev_injection`, `jev_warned_pages` and `jev_unscreened_pages` differ from the site-off result; a never-returning Jev never extends the run past its deadline. Files: `src/research/pipeline_tests.rs`.
 - [x] T014 [US1] Wire `ResearchDeps.jev_injection` and the call beside `extract_source`; add the optional fields to `src/research/contract.rs` and fill them in `src/research/outcome.rs`; update the research output schema and its binding test to `contracts/research-result-additions.md`. Files: `src/research/pipeline.rs`, `contract.rs`, `outcome.rs`, `src/server.rs`.
-- [x] T015 [US1] The research tool description and `docs/design/RESEARCH_PRIMITIVE.md` (research D8): the warning is advisory, "no warning" does not mean clean, and the measured rates; `docs/design/NEW_SERVER_DESIGN.md` §10 lists `PARALLAX_JEV_MODE_RESEARCH_INJECTION` as operator-owned (exact text shown first). Files: `src/server.rs`, the two design docs.
+- [x] T015 [US1] The research tool description and `docs/design/RESEARCH_PRIMITIVE.md` (research D8): the warning is advisory, "no warning" does not mean clean, and the measured rates; `docs/design/NEW_SERVER_DESIGN.md` §10 lists `PARALLAX_JEV_MODE_RESEARCH_INJECTION` as operator-owned. Files: `src/server.rs`, the two design docs.
 
 ## Phase 3: User Story 2 - Shadow first, separate from the pattern screen (P1)
 
@@ -58,26 +56,27 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
   - Done in T014 (2026-11-25).
 - [x] T020 [P] [US3] Test the startup line (host and data class) and `--help`, README and the `PARALLAX_JEV_MODE_` prefix help test listing the new site and `on`. Files: `src/jev/startup.rs` tests, `src/main.rs` tests.
   - The startup test was added with T002; the help-and-README test covers the new site and `on` through `JevSite::ALL` and `JevMode::ALL` (2026-11-25).
-- [x] T021 [US3] Implement the startup line and the help and README text (exact text shown first). Files: `src/jev/startup.rs`, `src/main.rs`, `README.md`.
+- [x] T021 [US3] Implement the startup line and the help and README text. Files: `src/jev/startup.rs`, `src/main.rs`, `README.md`.
   - The startup line, --help and README text were done early, with T002 (2026-11-25).
 
 ## Phase 5: Polish and cross-cutting
 
-- [x] T022 [P] Test, then add the telemetry counts (research D9) `parallax.jev.injection.warned` and `parallax.jev.injection.unscreened` on the research invocation span, with `telemetry.md` updated (exact text first). Files: `src/observability.rs`, `specs/007-observability-layer/contracts/telemetry.md`.
+- [x] T022 [P] Test, then add the telemetry counts (research D9) `parallax.jev.injection.warned` and `parallax.jev.injection.unscreened` on the research invocation span, with `telemetry.md` updated. Files: `src/observability.rs`, `specs/007-observability-layer/contracts/telemetry.md`.
 - [x] T023 [P] Test, then extend `jev_backtest report` with the injection site from stored records (FR-009): share warned, failures by outcome, agreement with 063 on the same pages. Files: `src/jev/report.rs`, `src/jev/report/tests.rs`.
 - [x] T024 Write the live example `examples/acceptance_jev_injection.rs` asserting SC-005, exiting non-zero on failure; register it in `Cargo.toml` with `test = true` for its helpers.
-- [x] T025 CHANGELOG `[Unreleased]` entry (exact text first). Files: `CHANGELOG.md`.
-- [ ] T026 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` (design corpus) and `code-reviewer` (Rust conventions) agents, each brief shown first; each finding asked.
-- [ ] T027 Account-name check, push and PR (text shown first); CI.
-- [ ] T028 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md` (exact text first).
-- [ ] T029 Turn it on in the user's setup (FR-010): back up `~/.claude.json`; add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key, exact key shown first; the user restarts.
-- [ ] T030 Update the CLAUDE.md active-feature block to the shipped state (exact text first).
+- [x] T025 CHANGELOG `[Unreleased]` entry. Files: `CHANGELOG.md`.
+- [x] T026 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` (design corpus) and `code-reviewer` (Rust conventions) agents.
+- [x] T027 Push and PR; CI.
+- [ ] T028 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
+- [ ] T028a Add a harness mode that asks `directs_ai` with its two criteria in both orders and reports the flip rate with McNemar's test (test first); rebuild the injection dataset; run it. T029 needs a flip rate of 5% or less (`docs/design/NEW_SERVER_DESIGN.md:304`); results go to the 064 measurements doc.
+- [ ] T029 Turn it on in the operator's setup (FR-010): back up `~/.claude.json`; add `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` to the Parallax `env` block, changing only that key; restart Claude Code.
+- [ ] T030 Update the CLAUDE.md active-feature block to the shipped state.
 
 ## Dependencies
 
 - Phase 1 blocks every story. T001 → T002; T003 → T004; T005 → T006; T007 → T008 (needs T002, T004); T009 → T010.
 - US1 (T011–T015) needs Phase 1. US2 (T016–T017) needs T014. US3 (T018–T021) needs T012 and T014.
-- Phase 5 needs all stories; T026 → T027 → merge → T028 → T029 → T030.
+- Phase 5 needs all stories; T026 → T027 → merge → T028 → T028a → T029 → T030.
 
 ## Parallel examples
 
@@ -87,4 +86,4 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Implementation strategy
 
-MVP is Phase 1 plus US1 (the warning with the site on). US2 confirms shadow and 063 are untouched; US3 hardens configuration and records; Phase 5 ships it and turns it on in the user's setup.
+MVP is Phase 1 plus US1 (the warning with the site on). US2 confirms shadow and 063 are untouched; US3 hardens configuration and records; Phase 5 ships it and turns it on in the operator's setup.

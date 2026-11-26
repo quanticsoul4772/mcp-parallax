@@ -7,14 +7,14 @@
 - **Rationale**: the deadline is resolved once per run in `settings.rs`, which
   already receives `deps`. One field, set where `ResearchDeps` is built.
 - **Alternatives**: a `deadline_scale` number on the deps (hides the per-depth
-  values the user chose); changing `Depth::tier()` to take a backend (touches
+  values); changing `Depth::tier()` to take a backend (touches
   every tier caller for one field).
 
 ## D2: The values
 
 - **Decision**: `claude_cli` quick 120 000 ms, standard 660 000 ms, deep
   1 980 000 ms; other backends keep 120 000 / 240 000 / 480 000 ms.
-- **Rationale**: the user chose fixed per-depth values (2026-11-23). Measured
+- **Rationale**: fixed per-depth values were chosen (2026-11-23). Measured
   on `claude_cli` at concurrency 4, full runs with no cutoff: quick 93 s,
   standard 538 s, deep 1632 s; the defaults are about 1.2x those. The first
   values (360 / 720 s) failed live: they were estimated from runs that had

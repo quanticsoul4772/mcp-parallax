@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Exa replaces Brave as the research tool's search and page-text provider. (1) Search: Exa POST /search behind the SearchProvider seam, gated on EXA_API_KEY; BRAVE_API_KEY and the Brave client are removed (breaking configuration change; how a still-set BRAVE_API_KEY is treated is a decision). (2) Page text: each source's text comes from Exa's contents (returned with search results or from POST /contents) instead of Parallax fetching and parsing HTML itself; the grounding gate and claim extraction are unchanged; whether the SSRF-guarded fetcher is deleted or kept is a decision. (3) Exa features used, mirroring the user's exa-mcp-server: search type mapped from research's depth, freshness (maxAgeHours), highlights or text with a character cap, a truncation marker; not used, each with a recorded reason: category and domain filters, outputSchema (Parallax's model writes the answer), summaries. (4) Read-only Exa requests retry on network errors, 429 and 5xx, honoring Retry-After, under MAX_RETRIES. (5) Exa's per-request cost is recorded in the invocation record and telemetry. (6) Out of scope, named follow-ups: Voyage rerank of sources and passages, a Jev prompt-injection screen (shadow/warn), research as an MCP Task. (7) Tests use HTTP doubles for Exa; a live research acceptance run passes before the PR."
+**Input**: User description: "Exa replaces Brave as the research tool's search and page-text provider. (1) Search: Exa POST /search behind the SearchProvider seam, gated on EXA_API_KEY; BRAVE_API_KEY and the Brave client are removed (breaking configuration change; how a still-set BRAVE_API_KEY is treated is a decision). (2) Page text: each source's text comes from Exa's contents (returned with search results or from POST /contents) instead of Parallax fetching and parsing HTML itself; the grounding gate and claim extraction are unchanged; whether the SSRF-guarded fetcher is deleted or kept is a decision. (3) Exa features used, mirroring an earlier Exa integration: search type mapped from research's depth, freshness (maxAgeHours), highlights or text with a character cap, a truncation marker; not used, each with a recorded reason: category and domain filters, outputSchema (Parallax's model writes the answer), summaries. (4) Read-only Exa requests retry on network errors, 429 and 5xx, honoring Retry-After, under MAX_RETRIES. (5) Exa's per-request cost is recorded in the invocation record and telemetry. (6) Out of scope, named follow-ups: Voyage rerank of sources and passages, a Jev prompt-injection screen (shadow/warn), research as an MCP Task. (7) Tests use HTTP doubles for Exa; a live research acceptance run passes before the PR."
 
 ## Clarifications
 
@@ -21,7 +21,7 @@
   kept as the local filter, which stays the authority.
 - Q (revised the same day): A set `BRAVE_API_KEY` when another tool shares
   it? → A: A startup error only when `EXA_API_KEY` is not set; with
-  `EXA_API_KEY` set, `BRAVE_API_KEY` is ignored. The user's own environment
+  `EXA_API_KEY` set, `BRAVE_API_KEY` is ignored. The operator's environment
   sets it for a separate Brave search tool.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -184,7 +184,7 @@ Exa cost.
 
 ## Assumptions
 
-- The user's own exa-mcp-server (`D:\Projects\exa-mcp-server`) is the
+- An earlier private Exa integration is the
   reference for which Exa features are used and how: authentication header,
   search types, contents options, retry rules.
 - Voyage reranking of sources and passages, a Jev prompt-injection screen

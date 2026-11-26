@@ -8,9 +8,9 @@
 
 A words-only change. `decide` computes and returns exactly what it does today.
 Its description stops saying the confidence is calibrated and gains three
-sentences the owner chose; the design document gets a dated amendment
+chosen sentences; the design document gets a dated amendment
 withdrawing the claim the measurement contradicts; the measurement's scores
-and one script are committed with the owner's other-project text removed.
+and one script are committed with other-project text removed.
 
 The work is four small groups, in this order, each ending with the full gate:
 
@@ -29,7 +29,7 @@ The work is four small groups, in this order, each ending with the full gate:
 
 **Testing**: `cargo test`. New tests: three unit tests in `src/modes/decide.rs`, one integration test in `tests/integration.rs`. All through existing seams; no model, network or disk.
 
-**Target Platform**: unchanged (stdio MCP server; CI on Linux, owner's machine Windows). Nothing here is platform-specific.
+**Target Platform**: unchanged (stdio MCP server; CI on Linux, development machine Windows). Nothing here is platform-specific.
 
 **Project Type**: single Rust crate.
 
@@ -79,7 +79,7 @@ src/memory/push.rs                          # one comment: drop "the stable band
 tests/integration.rs                        # 1 new test; one test renamed and its comment reworded (no assertion edited)
 examples/acceptance_decide.rs               # header comment only
 examples/probe_decide_sensitivity.rs        # removed from here (owner runs the delete)
-CLAUDE.md                                   # the decide sentence only (FR-007); the Active feature block is asked of the owner separately
+CLAUDE.md                                   # the decide sentence only (FR-007); the Active feature block is a separate task
 CHANGELOG.md                                # one entry under Unreleased / Changed
 docs/design/NEW_SERVER_DESIGN.md            # new dated amendment, appended
 specs/013-decide-methodology/spec.md                    # one dated line
@@ -101,8 +101,8 @@ claudedocs/experiments/decide-stability/    # new: README.md, results.jsonl, pla
 - **Every occurrence of the stem in `src/modes/decide.rs` is reworded**, including two comments inside its test module. No assertion is touched. Two hits remain after the work and are expected: the new test's own search string, and the `check` tool's description in `src/server.rs`, which is about another tool.
 - **"No behaviour change" has one new guard and otherwise rests on review.** Existing tests pin the confidence values and ranking. Nothing pins the prompt text, the model's output schema, or the request body. A new unit test pins the prompt as built for a fixed input, with and without the retry wording, and the sanitized schema the request carries; the rest of the request body is established by reading the diff, and the pull request says so.
 - **The contract file keeps its shape.** Only the confidence property's `description` text changes; a new unit test holds it equal to the derived schema's description and to FR-003.
-- **Redaction is a script, and its output is shown to the owner before commit.**
-- **`examples/probe_decide_sensitivity.rs` is deleted by the owner's command**, because deletion is blocked for the agent in this environment; its source is first copied to the evidence folder as `probe.rs.txt` with a corrected header.
+- **Redaction is a script, and its output is checked before commit.**
+- **`examples/probe_decide_sensitivity.rs` is deleted**; its source is first copied to the evidence folder as `probe.rs.txt` with a corrected header.
 
 ## Order of work and gates
 
@@ -112,13 +112,13 @@ claudedocs/experiments/decide-stability/    # new: README.md, results.jsonl, pla
 | 2 | Edit the registered constant first; record the served-equals-registered test failing; then edit the served literal, the field doc (on one source line), the contract file and the contract note's quoted block | all four tests pass; full gate |
 | 3 | Reword the remaining live-text locations, including the `decide` sentence in `CLAUDE.md`; rename the one integration test; run the one-time stem search | search output recorded, showing only the two expected hits; full gate |
 | 4 | Design amendment, five dated lines, change-log entry | the markdown check, run as its own command (the gate does not include it) |
-| 5 | Evidence folder: redaction script run (it stops on any non-billing failure and on any unexpected case id), output shown to the owner, table script run and compared with the specification's table | owner's go-ahead on the redacted files |
-| 0 | Before anything else: copy the probe's source into the evidence folder and have the owner delete it from `examples/`, so no gate run depends on it compiling | gate output as the starting state |
-| 7 | Independent review of the whole diff; then the owner's decision on a live call; then commit, push, pull request, each asked | — |
+| 5 | Evidence folder: redaction script run (it stops on any non-billing failure and on any unexpected case id), output checked, table script run and compared with the specification's table | the redacted files checked |
+| 0 | Before anything else: copy the probe's source into the evidence folder and delete it from `examples/`, so no gate run depends on it compiling | gate output as the starting state |
+| 7 | Independent review of the whole diff; then the decision on a live call; then commit, push, pull request | — |
 
 ## What this plan does not decide
 
-- Whether to make one live `decide` call before the pull request. The project's note says such changes must pass a live example and none exists for `decide`; the owner is asked with that stated and with the price.
+- Whether to make one live `decide` call before the pull request. The project's note says such changes must pass a live example and none exists for `decide`; the decision is made with that stated and with the price.
 - Whether to revisit the memory-feature choices made with `decide` (named open question in the specification).
 
 ## Complexity Tracking

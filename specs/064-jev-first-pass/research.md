@@ -4,7 +4,7 @@ Sources:
 
 - the seven research-agent reports of 2026-11-24, saved to `claudedocs/jev-research-2026-11-24-agents.md` in this feature;
 - `claudedocs/jev-research-2026-11-24.md`;
-- the two review rounds on the approved plan.
+- the two review rounds on the Jev roadmap.
 
 Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (security, calibration, test strategy, systems integration, architecture), plus design and accuracy re-reviews. Review findings are cited as reviewer plus finding number.
 
@@ -19,7 +19,7 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
   - A 401 disables Jev for the life of the process, with one log line.
   - Error bodies are never stored or logged; only status, error code and request id are kept.
 - **Why:**
-  - The rate limit is per organization and shared with the user's other Jev projects and with other sessions. Retrying in every process multiplies load exactly when the limit is hit, and could silently switch off exa-mcp-server's injection screen (Security M8; Integration I2–I3).
+  - The rate limit is per organization and shared with other Jev projects on the same account and with other sessions. Retrying in every process multiplies load exactly when the limit is hit, and could silently switch off another project's injection screen (Security M8; Integration I2–I3).
   - Shadow data doesn't need every answer.
   - A 422 `detail[]` can echo the input back (Security L13).
 - **Rejected:**
@@ -55,11 +55,11 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
   - `PARALLAX_JEV_MODEL` is optional; the default constant is `jev-1.14.0`.
   - `TYPESAFE_API_KEY` is read once; a blank value counts as absent.
   - `TYPESAFE_API_KEY` is added to the claude_cli child's `ENV_REMOVE`.
-  - The user's setup is switched to shadow as FR-010.
+  - The operator's setup is switched to shadow as FR-010.
 - **Why:**
   - The constitution requires outbound features to ship off and be enabled deliberately (`:92-94`).
-  - exa-mcp-server reads `JEV_MODEL` and other `JEV_*` names. A shared environment would override Parallax's pin or trip the closed namespace (Design-re B2; Architecture I6; Security M5).
-  - The user chose "code off, your setup on" (2026-11-24).
+  - Another Exa integration reads `JEV_MODEL` and other `JEV_*` names. A shared environment would override Parallax's pin or trip the closed namespace (Design-re B2; Architecture I6; Security M5).
+  - Decided: off in code, on in the operator's setup (2026-11-24).
 - **Rejected:**
   - "Shadow whenever the key is set": an upgrade would turn on data sending because of a key set for another project.
   - A base-URL environment variable: it could redirect the key (Security M6). Tests use constructor injection instead.
@@ -155,7 +155,7 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
 
 ## D12. Stop hook
 
-- **Chosen:** FR-010 installs the project's Stop-to-`checkpoint_turn` hook and sets both sites to shadow in the user's setup, with the user's approval of the exact keys.
+- **Chosen:** FR-010 installs the project's Stop-to-`checkpoint_turn` hook and sets both sites to shadow in the operator's setup.
 - **Why:** the project's `.claude/settings.json` has no Stop entry for `checkpoint_turn`, so turn-review shadow would collect nothing (Integration I7).
 
 ## D13. Measurement methods (FR-011)
@@ -165,10 +165,10 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
 | Noise | 5 calls on each of 100 held-out items per question; within-item spread on the logit scale; decision flip rate. Sets the middle-band width in 065/066. |
 | Self-agreement | Turn review and verify ensemble each re-run twice on about 100 items. This is the ceiling for any agreement figure. |
 | Option order | Each choice item under all 6 orders; paired decisions compared with McNemar's test; flip rate reported. |
-| Base rate | Share of turn reviews that flagged or captured, from existing `checkpoint_records`. A read-only query, approved first. Sizes the shadow period. |
-| Injection | exa-mcp-server's back-test method ported onto `metrics.rs`, run on `jev-1.14.0` with InjecAgent, BIPIA and at least 300 real research pages. Datasets downloaded into an isolated folder; Python run with `-I`. |
+| Base rate | Share of turn reviews that flagged or captured, from existing `checkpoint_records`. A read-only query. Sizes the shadow period. |
+| Injection | The earlier back-test's method ported onto `metrics.rs`, run on `jev-1.14.0` with InjecAgent, BIPIA and at least 300 real research pages. Datasets downloaded into an isolated folder; Python run with `-I`. |
 
-- **Why:** the calibration review (B2, I4, I8, I10, I11), and the user's choice of the measurements that need no labeling time.
+- **Why:** the calibration review (B2, I4, I8, I10, I11), and the choice of the measurements that need no labeling time.
 - **Deferred:** hand-labeled correctness moves to 065/066.
 
 ## D14. Statistics in `metrics.rs`
@@ -196,7 +196,7 @@ Round 1 had three reviewers: design, accuracy, gaps. Round 2 had five new ones (
 
 ## D16. Promotion rule (shadow to on)
 
-Copied verbatim from the approved plan's §7 (`~/.claude/plans/warm-kindling-shell.md`, revision 3), so FR-008, SC-005 and D14 cite text in the repository. Implemented per question in `metrics.rs`.
+Copied verbatim from the Jev roadmap's §7 (`~/.claude/plans/warm-kindling-shell.md`, revision 3), so FR-008, SC-005 and D14 cite text in the repository. Implemented per question in `metrics.rs`.
 
 1. **Positive means the class whose miss causes harm:**
    - for U2: the review flagged or captured;
