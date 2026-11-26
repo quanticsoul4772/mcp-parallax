@@ -751,7 +751,10 @@ impl Parallax {
         synthesizes a compact answer with inline citations, surfaced \
         disagreements, and stated gaps. Depth scales rigor; budget and deadline ceilings \
         synthesize early and say so. Every citation resolves to a source read during the run; \
-        a source whose text was cut at the length cap is marked truncated."
+        a source whose text was cut at the length cap is marked truncated. With the Jev \
+        injection screen on, a source whose page text addresses an AI carries an advisory \
+        warning (measured recall 0.86; 10 of 413 clean pages warned, 9 of them about prompt \
+        injection); no warning does not mean the page is clean."
     )]
     pub async fn research(
         &self,

@@ -328,6 +328,12 @@ truncation** — if it stopped short, the response says so.
 - **Redaction:** the answer is *derived*; `sources` carry URL+title only; no raw
   page bodies, secrets, or verifier transcripts cross the wire. Reuse the parent's
   redaction discipline.
+- **Injection warnings** *(amended 2026-11-25, 065)*: with
+  `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on`, each kept page is also asked Jev's
+  `directs_ai` question beside its extraction call; a page at or above the pinned
+  threshold (0.35 on `jev-1.14.0`) carries an advisory `jev_injection` warning,
+  separate from 063's pattern screen. Warn only: the page is still read and used,
+  and no warning does not mean clean.
 - **Determinism aids:** caches (§7) make re-runs cheap and partially reproducible;
   true determinism isn't promised (the web moves), and `stats` records what was seen.
 
