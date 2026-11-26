@@ -82,6 +82,21 @@ pub fn parse_turn(lines: &[String]) -> TurnData {
     turn
 }
 
+/// Index of the last assistant line (outside subagents) holding a text block:
+/// the turn's final message in the lines read.
+#[must_use]
+pub fn final_line(lines: &[String]) -> Option<usize> {
+    lines.iter().rposition(|line| {
+        serde_json::from_str::<Value>(line).is_ok_and(|v| {
+            v["type"] == "assistant"
+                && v["isSidechain"] != true
+                && v["message"]["content"]
+                    .as_array()
+                    .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "text"))
+        })
+    })
+}
+
 fn is_turn_start(raw: &str, value: &Value) -> bool {
     let holds_tool_result = value["message"]["content"]
         .as_array()

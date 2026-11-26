@@ -47,6 +47,8 @@ pub struct CheckpointDeps {
     pub gate_extra_patterns: Vec<String>,
     /// The Jev turn shadow (064); `None` when the site is off.
     pub jev: Option<crate::jev::shadow::TurnJev>,
+    /// The 066 turn signals; `None` when `CHECKPOINT_TURN_SIGNALS` is off.
+    pub turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -265,10 +267,20 @@ pub async fn run_turn(
     // 064: the evaluation id exists from the start, so the Jev row can name it.
     let eval_id = uuid::Uuid::new_v4().to_string();
     let mut jev_row: Option<TurnJevOutcome> = None;
+    // 066: the turn signals' row joins this evaluation's record.
+    let signals_eval_id = deps.turn_signals.as_ref().map(|_| eval_id.clone());
+    let has_final = !params.final_message.trim().is_empty();
 
     // FR-014: a turn end that follows a forced continuation never reviews
     // again — continuation cannot loop.
     if params.continuation {
+        // 066 FR-005: continuation turns write no row but still update the
+        // session's previous final message.
+        if let (Some(signals), true) = (&deps.turn_signals, has_final) {
+            signals
+                .previous_finals
+                .swap(&params.session_id, &params.final_message);
+        }
         let evaluation = Evaluated::pure(
             vec![],
             vec![],
@@ -299,6 +311,9 @@ pub async fn run_turn(
     } else {
         vec![SignalKind::SelfContradiction]
     };
+    // 066: the raw tail lines of the one transcript read; `None` after the
+    // evaluation means the read failed (or there was no final message).
+    let mut turn_lines: Option<Vec<String>> = None;
     let evaluation = async {
         if params.final_message.trim().is_empty() {
             return Ok(Evaluated::pure(
@@ -307,10 +322,11 @@ pub async fn run_turn(
                 CheckpointResult::silence(elapsed_ms(started)),
             ));
         }
-        let (window, _lines) = deps
+        let (window, lines) = deps
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
+        turn_lines = Some(lines);
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
         let preferences = preference::mine_preference_candidates(&recall);
@@ -392,6 +408,19 @@ pub async fn run_turn(
         jev_row,
     )
     .await?;
+    if let (Some(signals), Some(eval_id), true) =
+        (&deps.turn_signals, signals_eval_id.as_deref(), has_final)
+    {
+        crate::checkpoint::signals::record_turn(
+            signals,
+            deps.storage.as_ref(),
+            deps.clock.now(),
+            eval_id,
+            params,
+            turn_lines.as_deref(),
+        )
+        .await?;
+    }
     Ok((
         evaluation.result,
         evaluation.input_tokens,
@@ -829,6 +858,7 @@ mod tests {
         embedder: Option<Arc<dyn Embedder>>,
         patterns: Vec<String>,
         jev: Option<crate::jev::shadow::TurnJev>,
+        turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
     }
 
     impl DepsBuilder {
@@ -843,6 +873,7 @@ mod tests {
                 embedder: None,
                 patterns: vec![],
                 jev: None,
+                turn_signals: None,
             }
         }
 
@@ -857,6 +888,7 @@ mod tests {
                 embedder: self.embedder,
                 gate_extra_patterns: self.patterns,
                 jev: self.jev,
+                turn_signals: self.turn_signals,
             }
         }
     }
@@ -1894,6 +1926,8 @@ mod tests {
         .unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
     }
+
+    mod turn_signals;
 
     // ---- 064 T019: the turn shadow ------------------------------------------
 

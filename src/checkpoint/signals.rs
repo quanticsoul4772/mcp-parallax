@@ -4,15 +4,18 @@
 //! final message, independent of the review. No Jev call is made and nothing
 //! leaves the machine; the results go to `turn_signal_records` only.
 
+use crate::checkpoint::contract::CheckpointTurnParams;
 use crate::checkpoint::review::mine_candidates;
 use crate::checkpoint::trajectory::{TrajectoryEntry, TrajectoryWindow};
-use crate::checkpoint::turn_view::TurnData;
+use crate::checkpoint::turn_view::{final_line, parse_turn, TurnData};
+use crate::error::AppError;
 use crate::jev::entities::{unmatched, Unmatched};
 use crate::storage::turn_signals::TurnSignalRecord;
+use crate::traits::storage::Storage;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The turn start was not in the lines read.
 pub const TURN_START_NOT_FOUND: &str = "turn start not found";
@@ -44,6 +47,57 @@ impl SignalResult {
             Self::Excluded(reason) => reason,
         }
     }
+}
+
+/// What the turn signals need beside the checkpoint's own dependencies;
+/// present only with `CHECKPOINT_TURN_SIGNALS=on`.
+#[derive(Debug, Clone)]
+pub struct TurnSignalsDeps {
+    /// Shared across turn ends of the process.
+    pub previous_finals: Arc<PreviousFinals>,
+    /// Whether `grounded_verify` is in the catalog (FR-007).
+    pub grounded_verify: bool,
+    /// Whether `research` is in the catalog (FR-007).
+    pub research: bool,
+}
+
+/// Record one non-continuation turn end's signals (FR-003, FR-011).
+///
+/// `lines` is `None` when the transcript could not be read. Swaps in this
+/// turn's final message as the session's previous final.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when the row cannot be written.
+pub async fn record_turn(
+    signals: &TurnSignalsDeps,
+    storage: &dyn Storage,
+    created_at: DateTime<Utc>,
+    eval_id: &str,
+    params: &CheckpointTurnParams,
+    lines: Option<&[String]>,
+) -> Result<(), AppError> {
+    let previous = signals
+        .previous_finals
+        .swap(&params.session_id, &params.final_message);
+    let turn = lines.map(|l| (parse_turn(l), final_line(l)));
+    let row = build_row(&RowInput {
+        id: uuid::Uuid::new_v4().to_string(),
+        eval_id,
+        harness_session_id: &params.session_id,
+        transcript_ref: &params.transcript_path,
+        turn: turn.as_ref().map(|(t, _)| t),
+        final_line: turn
+            .as_ref()
+            .and_then(|(_, line)| *line)
+            .and_then(|line| u32::try_from(line).ok()),
+        previous_final: previous.as_deref(),
+        final_message: &params.final_message,
+        grounded_verify: signals.grounded_verify,
+        research: signals.research,
+        created_at,
+    });
+    storage.record_turn_signals(&row).await
 }
 
 /// The last final message per harness session, held in memory only

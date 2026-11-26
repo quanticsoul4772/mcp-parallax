@@ -158,6 +158,7 @@ async fn main() {
             server_session_id: "acceptance".into(),
             deadline: Duration::from_millis(JEV_TURN_DEADLINE_MS),
         }),
+        turn_signals: None,
     };
     let dir = tempfile::tempdir().unwrap();
     for (i, (earlier, final_message)) in REVERSALS.iter().enumerate() {
