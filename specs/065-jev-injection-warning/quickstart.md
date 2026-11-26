@@ -19,6 +19,8 @@ cargo run --release --example acceptance_jev_injection
 
 It exits non-zero unless every kept page has one joined row, answered rows carry `jev-1.14.0`, and every kept page shows screened or a reason.
 
+Run 2026-11-26 with `PARALLAX_BACKEND=claude_cli` and `DATABASE_PATH=./data/jev-acceptance.db`, one quick question: 5 pages kept, all 5 screened, 0 warned, 0 unscreened; Jev cost $0.000535. SC-005: pass.
+
 ## 4. Report from stored records (FR-009)
 
 ```bash
