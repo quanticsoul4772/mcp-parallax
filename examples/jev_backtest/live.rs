@@ -97,6 +97,7 @@ fn request(config: &Config, state: RedactedState, questions: Vec<JevQuestion>) -
         state,
         questions,
         timeout: TIMEOUT,
+        retry: false,
     }
 }
 

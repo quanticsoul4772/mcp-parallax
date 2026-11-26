@@ -155,6 +155,9 @@ pub struct JevRequest {
     pub questions: Vec<JevQuestion>,
     /// Time left for this request, body included. Zero means nothing is sent.
     pub timeout: Duration,
+    /// Retry 429, 529 and 5xx within `timeout` (065: `on` sites only). False
+    /// means exactly one attempt, as every shadow site makes.
+    pub retry: bool,
 }
 
 /// A Jev backend.
@@ -186,6 +189,7 @@ mod tests {
             state: Redactor::new(vec![]).redact("state").unwrap(),
             questions: crate::jev::questions::turn_review_questions(),
             timeout: Duration::from_millis(1000),
+            retry: false,
         }
     }
 

@@ -170,6 +170,7 @@ pub async fn shadow_turn(jev: &TurnJev, inputs: TurnInputs<'_>, ids: TurnIds<'_>
         state: built.state,
         questions,
         timeout: jev.deadline,
+        retry: false,
     };
     let started = Instant::now();
     let result = tokio::time::timeout(jev.deadline, jev.classifier.classify(&request)).await;

@@ -32,6 +32,7 @@ fn request(timeout: Duration) -> JevRequest {
         state: Redactor::new(vec![]).redact_json(&state).unwrap(),
         questions: research_claim_questions(1),
         timeout,
+        retry: false,
     }
 }
 
@@ -208,6 +209,83 @@ async fn rate_limit_overload_and_server_errors_are_classifier_provider_with_no_r
             matches!(err, AppError::ClassifierProvider(_)),
             "{status}: {err:?}"
         );
+    }
+}
+
+/// A server that answers `first` once, then `ok()`.
+async fn once_then_ok(first: ResponseTemplate) -> MockServer {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(first)
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ok())
+        .with_priority(2)
+        .mount(&mock)
+        .await;
+    mock
+}
+
+fn retrying(timeout: Duration) -> JevRequest {
+    let mut req = request(timeout);
+    req.retry = true;
+    req
+}
+
+#[tokio::test]
+async fn a_retrying_request_waits_retry_after_then_succeeds() {
+    let mock = once_then_ok(ResponseTemplate::new(429).insert_header("retry-after", "0")).await;
+    client(&mock).classify(&retrying(SECOND)).await.unwrap();
+    assert_eq!(mock.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_retrying_request_backs_off_without_retry_after() {
+    for status in [529, 500, 503] {
+        let mock = once_then_ok(ResponseTemplate::new(status)).await;
+        let started = Instant::now();
+        client(&mock).classify(&retrying(SECOND)).await.unwrap();
+        assert_eq!(mock.received_requests().await.unwrap().len(), 2, "{status}");
+        assert!(started.elapsed() >= Duration::from_millis(100), "{status}");
+    }
+}
+
+#[tokio::test]
+async fn retries_stop_at_the_deadline() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&mock)
+        .await;
+    let started = Instant::now();
+    let err = client(&mock)
+        .classify(&retrying(Duration::from_millis(350)))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ClassifierProvider(_)), "{err:?}");
+    // 100 ms then 200 ms fit in 350 ms; the 400 ms wait does not.
+    assert_eq!(mock.received_requests().await.unwrap().len(), 3);
+    assert!(started.elapsed() < Duration::from_millis(600));
+}
+
+#[tokio::test]
+async fn a_retry_after_past_the_deadline_is_not_waited_for() {
+    let mock = once_then_ok(ResponseTemplate::new(429).insert_header("retry-after", "30")).await;
+    let started = Instant::now();
+    client(&mock).classify(&retrying(SECOND)).await.unwrap_err();
+    assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn a_retrying_request_never_retries_a_401_or_other_4xx() {
+    for status in [400, 401, 422] {
+        let mock = once_then_ok(ResponseTemplate::new(status)).await;
+        client(&mock).classify(&retrying(SECOND)).await.unwrap_err();
+        assert_eq!(mock.received_requests().await.unwrap().len(), 1, "{status}");
     }
 }
 

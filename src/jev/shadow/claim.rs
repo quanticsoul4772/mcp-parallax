@@ -125,6 +125,7 @@ pub fn prepare_claim(
                 state: redacted,
                 questions,
                 timeout: jev.deadline,
+                retry: false,
             };
             PreparedClaim::Ask(Box::new(row), Box::new(request))
         }
