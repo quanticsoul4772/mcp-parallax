@@ -200,6 +200,37 @@ impl Signal {
     }
 }
 
+/// Why the end-of-turn review did not run as usual (066 FR-011).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewSkippedBy {
+    /// Jev's answers were confidently no and nothing blocked the skip.
+    Jev,
+    /// The skip would have applied, but the turn was in the audit share, so
+    /// the review ran anyway.
+    Audit,
+}
+
+impl ReviewSkippedBy {
+    /// The stored and exported value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Jev => "jev",
+            Self::Audit => "audit",
+        }
+    }
+
+    /// Parse a stored value.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "jev" => Some(Self::Jev),
+            "audit" => Some(Self::Audit),
+            _ => None,
+        }
+    }
+}
+
 /// One checkpoint evaluation's audit row (FR-006; data-model.md §6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckpointRecord {
@@ -234,6 +265,8 @@ pub struct CheckpointRecord {
     /// `None` when none was made. Separate from [`Self::cost_usd`]. A call cut
     /// off at its deadline may still be billed but carries no cost here.
     pub jev_cost_usd: Option<f64>,
+    /// Why the review was skipped or audited (066); `None` otherwise.
+    pub review_skipped_by: Option<ReviewSkippedBy>,
     /// Via `TimeProvider`.
     pub created_at: chrono::DateTime<chrono::Utc>,
 }

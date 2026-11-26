@@ -55,8 +55,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T019d [US2] Implement the swapped turn-review questions, the yes/no order result type, and the harness subcommand that runs both orders. Files: `src/jev/questions.rs`, `src/jev/measure.rs`, `examples/jev_backtest/`.
 - [x] T020 [P] [US2] Test the skip decision: pinned tables keyed by Jev model, big-model id and question versions (empty); memory required; any candidate blocks; truncated state blocks; the audit share from `fnv1a64(eval_id)`. Files: `src/jev/policy.rs` tests.
 - [x] T021 [US2] Implement the tables and the decision. Files: `src/jev/policy.rs`.
-- [ ] T022 [US2] Test `run_turn` with injected thresholds and evaluation ids: a skipped turn sets `review_skipped_by = jev` and the 064 row's `applied = 1`; an audited turn runs the review and sets `audit`; any failed condition runs the review; Jev's added time is at most the turn deadline (SC-005); with the skip off, today's concurrent order is unchanged. Files: `src/checkpoint/run.rs` tests.
-- [ ] T023 [US2] Implement the skip path, the injection points in `CheckpointDeps`, `review_skipped_by` on the record, and its OTLP mirror. Files: `src/checkpoint/run.rs`, `src/checkpoint/mod.rs`, `src/observability.rs`.
+- [x] T022 [US2] Test `run_turn` with injected thresholds and evaluation ids: a skipped turn sets `review_skipped_by = jev` and the 064 row's `applied = 1`; an audited turn runs the review and sets `audit`; any failed condition runs the review; Jev's added time is at most the turn deadline (SC-005); with the skip off, today's concurrent order is unchanged. Files: `src/checkpoint/run.rs` tests.
+- [x] T023 [US2] Implement the skip path, the injection points in `CheckpointDeps`, `review_skipped_by` on the record, and its OTLP mirror. Files: `src/checkpoint/run.rs`, `src/checkpoint/mod.rs`, `src/observability.rs`.
 
 ## Phase 5: User Story 3 - Configuration and records (P3)
 

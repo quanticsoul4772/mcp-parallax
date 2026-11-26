@@ -5,7 +5,7 @@
 //! path fails boot, not the first call. (The sqlite-vec extension caveat does
 //! not apply here — no extensions are loaded in this feature.)
 
-use crate::checkpoint::{Boundary, CheckpointRecord, Signal, SignalKind, Verdict};
+use crate::checkpoint::{Boundary, CheckpointRecord, ReviewSkippedBy, Signal, SignalKind, Verdict};
 use crate::error::{AppError, Outcome};
 use crate::memory::consolidate::{ConsolidationAction, ConsolidationRecord};
 use crate::memory::push::PushRecord;
@@ -515,7 +515,7 @@ impl SqliteStorage {
         let rows = sqlx::query(
             "SELECT id, session_id, boundary, signals_evaluated, signals_fired,
                     delivered_keys, review_ran, verdict, suppressed, fail_open,
-                    latency_ms, cost_usd, created_at, jev_cost_usd
+                    latency_ms, cost_usd, created_at, jev_cost_usd, review_skipped_by
              FROM checkpoint_records ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -584,6 +584,14 @@ impl SqliteStorage {
                     latency_ms,
                     cost_usd: row.get("cost_usd"),
                     jev_cost_usd: row.get::<Option<f64>, _>("jev_cost_usd"),
+                    review_skipped_by: row
+                        .get::<Option<String>, _>("review_skipped_by")
+                        .map(|v| {
+                            ReviewSkippedBy::parse(&v).ok_or_else(|| {
+                                AppError::Storage(format!("unknown review_skipped_by '{v}'"))
+                            })
+                        })
+                        .transpose()?,
                     created_at,
                 })
             })
@@ -747,8 +755,8 @@ impl Storage for SqliteStorage {
             "INSERT INTO checkpoint_records
                 (id, session_id, boundary, signals_evaluated, signals_fired,
                  delivered_keys, review_ran, verdict, suppressed, fail_open,
-                 latency_ms, cost_usd, created_at, jev_cost_usd)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 latency_ms, cost_usd, created_at, jev_cost_usd, review_skipped_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(&record.session_id)
@@ -767,6 +775,7 @@ impl Storage for SqliteStorage {
         .bind(record.cost_usd)
         .bind(record.created_at.to_rfc3339())
         .bind(record.jev_cost_usd)
+        .bind(record.review_skipped_by.map(ReviewSkippedBy::as_str))
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Storage(format!("checkpoint record write failed: {e}")))?;
@@ -1620,6 +1629,7 @@ mod tests {
             latency_ms: 12,
             cost_usd: 0.0,
             jev_cost_usd: None,
+            review_skipped_by: None,
             created_at: DateTime::parse_from_rfc3339(at)
                 .unwrap()
                 .with_timezone(&Utc),

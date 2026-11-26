@@ -159,6 +159,8 @@ async fn main() {
             deadline: Duration::from_millis(JEV_TURN_DEADLINE_MS),
         }),
         turn_signals: None,
+        skip_thresholds: None,
+        fixed_eval_id: None,
     };
     let dir = tempfile::tempdir().unwrap();
     for (i, (earlier, final_message)) in REVERSALS.iter().enumerate() {

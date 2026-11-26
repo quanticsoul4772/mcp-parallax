@@ -718,6 +718,13 @@ pub fn emit_checkpoint(
         KeyValue::new("parallax.checkpoint.cost_usd", record.cost_usd),
         KeyValue::new("parallax.session_id", record.session_id.clone()),
     ];
+    // 066: why the review was skipped or audited, when it was.
+    if let Some(by) = record.review_skipped_by {
+        attributes.push(KeyValue::new(
+            "parallax.checkpoint.review_skipped_by",
+            by.as_str(),
+        ));
+    }
     // 064: what Jev did, from the row written for this evaluation.
     if let Some(jev) = jev {
         attributes.extend(jev.attributes(true));
@@ -978,6 +985,7 @@ mod tests {
             latency_ms: 12,
             cost_usd: 0.0,
             jev_cost_usd: None,
+            review_skipped_by: None,
             created_at: DateTime::parse_from_rfc3339("2026-06-12T12:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),

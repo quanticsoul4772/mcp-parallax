@@ -10,10 +10,11 @@ use crate::checkpoint::contract::{
     CheckpointActionParams, CheckpointBatchParams, CheckpointResult, CheckpointTurnParams,
 };
 use crate::checkpoint::{
-    gate, preference, review, screen, Boundary, CheckpointRecord, Signal, SignalKind,
-    COOLDOWN_WINDOW_MS, GATE_BUDGET_MS,
+    gate, preference, review, screen, Boundary, CheckpointRecord, ReviewSkippedBy, Signal,
+    SignalKind, COOLDOWN_WINDOW_MS, GATE_BUDGET_MS,
 };
 use crate::error::AppError;
+use crate::jev::policy::skip::{skip_decision, SkipDecision, SkipInput};
 use crate::modes::CorrectiveMode;
 use crate::observability::CallerTrace;
 use crate::telemetry;
@@ -49,6 +50,12 @@ pub struct CheckpointDeps {
     pub jev: Option<crate::jev::shadow::TurnJev>,
     /// The 066 turn signals; `None` when `CHECKPOINT_TURN_SIGNALS` is off.
     pub turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
+    /// The 066 review skip's pinned thresholds; `None` keeps today's
+    /// concurrent review and Jev (always `None` in production in 066).
+    pub skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
+    /// A fixed evaluation id, for tests of the audit share; `None` draws a
+    /// fresh UUID per evaluation.
+    pub fixed_eval_id: Option<String>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -63,6 +70,8 @@ struct Evaluated {
     cost_usd: f64,
     input_tokens: u64,
     output_tokens: u64,
+    /// Why the review was skipped or audited (066); `None` otherwise.
+    review_skipped_by: Option<ReviewSkippedBy>,
 }
 
 impl Evaluated {
@@ -76,6 +85,7 @@ impl Evaluated {
             cost_usd: 0.0,
             input_tokens: 0,
             output_tokens: 0,
+            review_skipped_by: None,
         }
     }
 }
@@ -265,7 +275,10 @@ pub async fn run_turn(
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
     // 064: the evaluation id exists from the start, so the Jev row can name it.
-    let eval_id = uuid::Uuid::new_v4().to_string();
+    let eval_id = deps
+        .fixed_eval_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mut jev_row: Option<TurnJevOutcome> = None;
     // 066: the turn signals' row joins this evaluation's record.
     let signals_eval_id = deps.turn_signals.as_ref().map(|_| eval_id.clone());
@@ -345,18 +358,43 @@ pub async fn run_turn(
             return Ok(evaluation);
         }
 
-        // One hop, three judgments (015 FR-010 · 017 research D6).
-        let (review, row) = review_beside_jev(
-            deps,
-            params,
-            &eval_id,
-            &candidates,
-            &preferences,
-            &window,
-            capture_enabled,
-        )
-        .await;
+        // One hop, three judgments (015 FR-010 · 017 research D6). With pinned
+        // thresholds (066), Jev answers first and may skip the hop.
+        let (review, row, by) = if deps.skip_thresholds.is_some() {
+            review_after_jev(
+                deps,
+                params,
+                &eval_id,
+                &candidates,
+                &preferences,
+                &window,
+                capture_enabled,
+            )
+            .await
+        } else {
+            let (review, row) = review_beside_jev(
+                deps,
+                params,
+                &eval_id,
+                &candidates,
+                &preferences,
+                &window,
+                capture_enabled,
+            )
+            .await;
+            (Some(review), row, None)
+        };
         jev_row = row;
+        let Some(review) = review else {
+            let mut evaluation = Evaluated::pure(
+                evaluated_kinds.clone(),
+                vec![],
+                CheckpointResult::silence(elapsed_ms(started)),
+            );
+            evaluation.input_tokens = input_tokens;
+            evaluation.review_skipped_by = by;
+            return Ok(evaluation);
+        };
         let (flagged, proposal, inp, out, _raw) = review
             // The recall hop above already ran and was billed; fold it in so
             // the whole boundary's spend survives a review failure (020).
@@ -393,6 +431,7 @@ pub async fn run_turn(
             cost_usd,
             input_tokens,
             output_tokens: out,
+            review_skipped_by: by,
         })
     }
     .await;
@@ -491,25 +530,7 @@ async fn review_beside_jev(
     let ((review, review_done), (mut row, jev_done)) = tokio::join!(review, shadow);
     let wait_ms = u64::try_from(jev_done.saturating_duration_since(review_done).as_millis())
         .unwrap_or(u64::MAX);
-    if let Ok((flags, _, _, _, raw)) = &review {
-        let memory_pairs = candidates
-            .iter()
-            .any(|c| c.origin == review::CandidateOrigin::Memory);
-        let flagged = |kind: SignalKind| flags.iter().any(|(signal, _)| signal.kind == kind);
-        row.label_json = Some(crate::jev::shadow::turn_label(
-            raw,
-            memory_pairs,
-            capture_enabled,
-            crate::jev::shadow::ReviewOutcome {
-                contradiction_flagged: flagged(SignalKind::SelfContradiction),
-                violation_flagged: flagged(SignalKind::PreferenceViolation),
-                // Whether a capture was stored is known only after the store
-                // step in `run_turn`, which sets it there.
-                captured: false,
-            },
-        ));
-        row.label_source = Some(format!("{}/{}", deps.model, review::REVIEW_MODE_ID));
-    }
+    label_turn_row(deps, &mut row, &review, candidates, capture_enabled);
     (
         review,
         Some(TurnJevOutcome {
@@ -517,6 +538,120 @@ async fn review_beside_jev(
             wait_ms,
         }),
     )
+}
+
+/// The stored P(yes) for question `id` in a Jev row's questions.
+fn stored_answer(questions: &serde_json::Value, id: &str) -> Option<f64> {
+    questions.as_array()?.iter().find(|q| q["id"] == id)?["answer"].as_f64()
+}
+
+/// The 066 skip path, used only when thresholds are pinned.
+///
+/// Jev answers first, under its own deadline; then the review runs unless
+/// the skip decision says skip. The review future is built once and only
+/// awaited when it runs, so a skipped turn sends no review request.
+async fn review_after_jev(
+    deps: &CheckpointDeps,
+    params: &CheckpointTurnParams,
+    eval_id: &str,
+    candidates: &[review::Candidate],
+    preferences: &[preference::PreferenceCandidate],
+    window: &crate::checkpoint::trajectory::TrajectoryWindow,
+    capture_enabled: bool,
+) -> (
+    Option<Result<ReviewOutput, AppError>>,
+    Option<TurnJevOutcome>,
+    Option<ReviewSkippedBy>,
+) {
+    let activity = review::turn_activity(window);
+    let review = review::review_once(
+        deps.model_client.as_ref(),
+        &deps.review_mode,
+        candidates,
+        preferences,
+        &params.final_message,
+        &activity,
+        capture_enabled,
+    );
+    let Some(jev) = &deps.jev else {
+        return (Some(review.await), None, None);
+    };
+    let asked = Instant::now();
+    let mut row = Box::pin(crate::jev::shadow::shadow_turn(
+        jev,
+        crate::jev::shadow::TurnInputs {
+            window,
+            activity: &activity,
+            final_message: &params.final_message,
+            capture_enabled,
+        },
+        crate::jev::shadow::TurnIds {
+            eval_id,
+            harness_session_id: &params.session_id,
+            transcript_path: &params.transcript_path,
+            now: deps.clock.now(),
+        },
+    ))
+    .await;
+    let wait_ms = u64::try_from(asked.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let decision = skip_decision(&SkipInput {
+        thresholds: deps.skip_thresholds,
+        memory_configured: deps.embedder.is_some(),
+        contradiction: stored_answer(&row.questions_json, "contradiction"),
+        capture_worthy: stored_answer(&row.questions_json, "capture_worthy"),
+        candidates: candidates.len() + preferences.len(),
+        truncated: row.truncated,
+        eval_id,
+    });
+    if decision == SkipDecision::Skip {
+        row.applied = true;
+        let outcome = TurnJevOutcome {
+            row: Box::new(row),
+            wait_ms,
+        };
+        return (None, Some(outcome), Some(ReviewSkippedBy::Jev));
+    }
+    let review = review.await;
+    label_turn_row(deps, &mut row, &review, candidates, capture_enabled);
+    let by = (decision == SkipDecision::Audit).then_some(ReviewSkippedBy::Audit);
+    (
+        Some(review),
+        Some(TurnJevOutcome {
+            row: Box::new(row),
+            wait_ms,
+        }),
+        by,
+    )
+}
+
+/// The big model's label on the turn's Jev row, from the review's answers.
+fn label_turn_row(
+    deps: &CheckpointDeps,
+    row: &mut crate::storage::jev::JevRecord,
+    review: &Result<ReviewOutput, AppError>,
+    candidates: &[review::Candidate],
+    capture_enabled: bool,
+) {
+    let Ok((flags, _, _, _, raw)) = review else {
+        return;
+    };
+    let memory_pairs = candidates
+        .iter()
+        .any(|c| c.origin == review::CandidateOrigin::Memory);
+    let flagged = |kind: SignalKind| flags.iter().any(|(signal, _)| signal.kind == kind);
+    row.label_json = Some(crate::jev::shadow::turn_label(
+        raw,
+        memory_pairs,
+        capture_enabled,
+        crate::jev::shadow::ReviewOutcome {
+            contradiction_flagged: flagged(SignalKind::SelfContradiction),
+            violation_flagged: flagged(SignalKind::PreferenceViolation),
+            // Whether a capture was stored is known only after the store
+            // step in `run_turn`, which sets it there.
+            captured: false,
+        },
+    ));
+    row.label_source = Some(format!("{}/{}", deps.model, review::REVIEW_MODE_ID));
 }
 
 /// The turn's Jev row and how long the turn waited on Jev after the review
@@ -752,6 +887,7 @@ async fn record_with_jev(
         latency_ms: evaluation.result.latency_ms,
         cost_usd: evaluation.cost_usd,
         jev_cost_usd: jev_row.as_ref().and_then(|r| r.cost_usd),
+        review_skipped_by: evaluation.review_skipped_by,
         created_at: deps.clock.now(),
     };
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
@@ -859,6 +995,8 @@ mod tests {
         patterns: Vec<String>,
         jev: Option<crate::jev::shadow::TurnJev>,
         turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
+        skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
+        fixed_eval_id: Option<String>,
     }
 
     impl DepsBuilder {
@@ -874,6 +1012,8 @@ mod tests {
                 patterns: vec![],
                 jev: None,
                 turn_signals: None,
+                skip_thresholds: None,
+                fixed_eval_id: None,
             }
         }
 
@@ -889,6 +1029,8 @@ mod tests {
                 gate_extra_patterns: self.patterns,
                 jev: self.jev,
                 turn_signals: self.turn_signals,
+                skip_thresholds: self.skip_thresholds,
+                fixed_eval_id: self.fixed_eval_id,
             }
         }
     }
@@ -1927,6 +2069,7 @@ mod tests {
         assert_eq!(result.verdict, Verdict::Silence);
     }
 
+    mod review_skip;
     mod turn_signals;
 
     // ---- 064 T019: the turn shadow ------------------------------------------

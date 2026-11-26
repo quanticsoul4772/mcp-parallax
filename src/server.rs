@@ -466,6 +466,19 @@ impl Parallax {
             jev: turn_jev,
             // 066: the turn signals record which correctives they would name,
             // so they need to know what is in the catalog.
+            // 066: only an `on` turn-review site looks up pinned skip
+            // thresholds; 066 refuses `on`, so this stays None.
+            skip_thresholds: if config.jev.turn_review == crate::traits::classifier::JevMode::On {
+                crate::jev::policy::skip::thresholds_for(
+                    crate::jev::policy::skip::TURN_REVIEW_THRESHOLDS,
+                    &config.jev.model,
+                    config.routing.model_for(CallSite::CheckpointReview),
+                    u32::try_from(crate::jev::report::TURN_REVIEW_VERSION).unwrap_or(u32::MAX),
+                )
+            } else {
+                None
+            },
+            fixed_eval_id: None,
             turn_signals: config.checkpoint_turn_signals.then(|| {
                 crate::checkpoint::signals::TurnSignalsDeps {
                     previous_finals: Arc::default(),
