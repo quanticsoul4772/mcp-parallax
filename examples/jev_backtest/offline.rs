@@ -118,6 +118,46 @@ pub async fn report(storage: &SqliteStorage) {
         );
         print_tables(&t);
     }
+    print_injection(&rows);
+}
+
+/// The injection site (065): share warned, failures, agreement with 063, on
+/// the tune split; the confirm split is counted, never read.
+fn print_injection(rows: &[JevRecord]) {
+    let site_rows: Vec<&JevRecord> = rows
+        .iter()
+        .filter(|r| r.site == JevSite::ResearchInjection)
+        .collect();
+    if site_rows.is_empty() {
+        return;
+    }
+    let tune: Vec<&JevRecord> = site_rows
+        .iter()
+        .copied()
+        .filter(|r| split(&r.id, tables::CONFIRM_PERCENT) == Split::Tune)
+        .collect();
+    let t = mcp_parallax::jev::report::injection::injection_table(&tune);
+    println!(
+        "== {} ({} rows; confirm set {} rows, sealed)",
+        JevSite::ResearchInjection.as_str(),
+        site_rows.len(),
+        site_rows.len() - tune.len()
+    );
+    println!(
+        "  tune rows: {}; screened {}; warned {} ({})",
+        t.rows,
+        t.screened,
+        t.warned,
+        fmt((t.screened > 0).then(|| f64::from(t.warned) / f64::from(t.screened)))
+    );
+    for (outcome, count) in &t.failures {
+        println!("  not screened, {outcome}: {count}");
+    }
+    let a = &t.agreement;
+    println!(
+        "  against 063 on screened pages: both {}, Jev only {}, 063 only {}, neither {}          (agreement, not correctness)",
+        a.both, a.jev_only, a.only_063, a.neither
+    );
 }
 
 fn fmt(value: Option<f64>) -> String {
