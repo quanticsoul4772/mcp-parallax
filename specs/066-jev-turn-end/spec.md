@@ -19,21 +19,21 @@
 
 ### User Story 1 - Turn signals in shadow (Priority: P1)
 
-At each turn end, Jev is asked about two turn-level failures the calling model cannot see in itself (`WATCHDOG_LAYER.md:151,153`). Code settles what it can first, and Jev is asked only when code finds the precondition. The answers are recorded; nothing is flagged and the turn's result does not change.
+At each turn end, two turn-level failures the calling model cannot see in itself (`WATCHDOG_LAYER.md:151,153`) are checked. Code runs the cheap detector the design corpus names for each signal first, and Jev is asked only about what the detector leaves open. Nothing the user wrote and nothing a tool returned is sent off the machine. The results are recorded; nothing is flagged and the turn's result does not change.
 
-- `pushback_reversal`: the final message reverses a position the previous final message stated, after a user message that pushed back, with no tool call between the pushback and the reversal. Code checks that a user entry sits between two final messages and that no tool call follows it; Jev is asked whether the later message reverses the earlier one without new evidence.
-- `unverified_fact`: the final message states a fact that the turn's tool output does not support. Code checks that the final message has content and collects the turn's tool-output excerpts; Jev is asked whether the message states a fact those excerpts do not support.
+- `pushback_reversal`: code finds the structure (a real user prompt between the previous final message and this one, with no tool call after it) and runs the existing pair miner over the previous and final assistant messages. Only when it finds a candidate pair is Jev asked whether the final message reverses the earlier one. Jev sees only the two assistant messages, never the user's text (`NEW_SERVER_DESIGN.md:81,193,198-200`). This differs from 064's `contradiction` question: it is gated on the pushback structure and compares only the previous and final positions.
+- `unverified_fact`: code pulls the entities in the final message (numbers, dates, paths, identifiers, names) and looks each one up verbatim in the turn's tool inputs, full tool outputs and the turn's user prompt, all on the machine. Entities found there are supported. Only claims with unmatched entities are sent to Jev, and only the claim text from the final message.
 
 **Why this priority**: recording these is the measurement any later promotion needs.
 
-**Independent Test**: with the signals in shadow, a stand-in Jev answering yes to both leaves the checkpoint result and record unchanged (cost set aside), and writes one `turn_signals` row holding both answers.
+**Independent Test**: with the signals in shadow, a stand-in Jev answering yes leaves the checkpoint result and record unchanged (cost set aside) and writes one `turn_signals` row recording the detector results and Jev's answers.
 
 **Acceptance Scenarios**:
 
-1. **Given** the signals site is `shadow`, **When** a non-continuation turn with a final message ends, **Then** one `turn_signals` row is written listing the questions asked and their answers, whether or not the review ran.
-2. **Given** a continuation turn, **When** the turn ends, **Then** no signal question is asked and no row is written.
-3. **Given** `PARALLAX_JEV_SEND_USER_TEXT` is unset, **When** the turn ends, **Then** `pushback_reversal` is not asked and no user text is in any request.
-4. **Given** no question's precondition holds, **When** the turn ends, **Then** the row is an `excluded` row and no request is sent.
+1. **Given** the signals site is `shadow`, **When** a non-continuation turn with a final message ends, **Then** one `turn_signals` row records the detector results and any Jev answers, whether or not the review ran.
+2. **Given** a continuation turn, **When** the turn ends, **Then** no row is written.
+3. **Given** every entity in the final message is found in the turn's evidence and the pair miner finds no candidate, **When** the turn ends, **Then** the row is `excluded`, no request is sent, and the row records the detector results.
+4. **Given** any turn, **When** a request is sent, **Then** its body contains no user text and no tool output.
 
 ---
 
@@ -56,9 +56,9 @@ When the 064 turn-review questions are confidently "no" and no cheap signal fire
 
 ### User Story 3 - Configuration and records (Priority: P3)
 
-The new site is off unless set, user text leaves the machine only with its own opt-in, and every turn end the site covers leaves a record.
+The new site is off unless set, and every turn end the site covers leaves a record.
 
-**Why this priority**: off by default and explicit egress are constitution requirements; records are how the shadow data is read later.
+**Why this priority**: off by default is a constitution requirement; records are how the shadow data is read later.
 
 **Independent Test**: configuration error tests, and a records test joining every signal row to its checkpoint record.
 
@@ -66,38 +66,40 @@ The new site is off unless set, user text leaves the machine only with its own o
 
 1. **Given** `PARALLAX_JEV_MODE_TURN_SIGNALS` is unset, **When** the server starts, **Then** the site is off and no signal call is made.
 2. **Given** the site is `shadow` without `TYPESAFE_API_KEY`, **When** the server starts, **Then** startup fails naming the variable.
-3. **Given** `PARALLAX_JEV_SEND_USER_TEXT=true` with the signals site off, or an unparseable value, or an unknown `PARALLAX_JEV_*` name, **When** the server starts, **Then** startup fails naming the variable.
+3. **Given** an unparseable value or an unknown `PARALLAX_JEV_*` name, **When** the server starts, **Then** startup fails naming the variable.
 
 ### Edge Cases
 
 - Continuation turns never ask the signal questions.
-- Tool results, meta lines, compaction summaries, hook-injected context (including memory text from `surface`) and Parallax's own flag text never count as user text.
+- The turn start is the last line the transcript spike identifies as a real user prompt; subagent lines, hook-injected context (including memory text from `surface`), interruption markers, meta lines, compaction summaries and lines carrying Parallax's flag text are skipped. When none is found inside the transcript read (the last 2 MiB), the row is `excluded` with the reason `turn start not found`.
+- The previous final message is the last final message the server received for the session; with none held (the first turn, or after a restart), `pushback_reversal` is excluded for that turn.
 - A signal that fires on several turns of one session is recorded each time (no cooldown in shadow).
-- User entries are kept outside the 200-entry trajectory window, so every existing signal, review candidate and 064 replay fingerprint is unchanged.
 - A Jev error, timeout or rejected answer records the failure and changes nothing.
-- With memory off, the skip never applies; the signals are still asked.
+- With memory off, the skip never applies; the signals are still checked.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001 Transcript spike**: before parser work, a spike records the shapes in Claude Code transcripts that 066 reads: user string content and text blocks, meta lines, compaction summaries, hook-injected context, tool results, and Stop-hook block reasons, with a fixture for each.
-- **FR-002 Parser**: the trajectory parser gains a `User { text }` entry (string content and user text blocks) and keeps a redacted, capped excerpt of each tool result's text. User entries are held outside the 200-entry window. A turn starts at the last user entry. Excluded from user text: tool results, meta lines, compaction summaries, hook-injected context and Parallax's own flag text, matched by fixed prefixes the flag templates export.
-- **FR-003 Questions**: `pushback_reversal` and `unverified_fact` are yes/no questions, versioned, each asked only when its code precondition holds (User Story 1), in one request under the turn deadline, at every non-continuation turn end with a final message, independent of whether the review runs and of the turn-review mode. Requests share the existing limit of 4 in flight.
-- **FR-004 What is sent**: for `unverified_fact`, the final message and the turn's tool-output excerpts; for `pushback_reversal`, the previous final message, the final message and the pushback user text. Everything is redacted. User text is sent only with `PARALLAX_JEV_SEND_USER_TEXT=true`. Stored memories are never sent.
-- **FR-005 Stance exception**: `pushback_reversal` sees the user's pushback. This departs from two design rules: judges stay blind to the user's stance (`NEW_SERVER_DESIGN.md:193`) and the critic stays out of the pressured conversation (`NEW_SERVER_DESIGN.md:198-200`). Both departures are named and justified in a design amendment and limited to user text from the same turn. User text is a new data class sent to TypeSafe, only under the opt-in, and the startup line names it when the opt-in is on.
-- **FR-006 Dates and numbers**: no exclusion. The roadmap §6.2 kept claims with dates or numbers out of `unverified_fact`; 066 drops that exclusion, because the question now checks against the turn's tool output and dates and numbers are the class most prone to ungrounded claims (`WATCHDOG_LAYER.md:153`).
+- **FR-001 Transcript spike**: before parser work, a spike records the shapes in Claude Code transcripts that 066 reads: user prompts (string content and text blocks), subagent lines, hook-injected context, interruption markers, meta lines, compaction summaries, tool inputs, tool results, and Stop-hook block reasons, with a fixture for each.
+- **FR-002 Turn data**: a separate function, `parse_turn` in `src/checkpoint/turn_view.rs`, reads the same transcript lines at turn end only (never on the batch path) and returns the turn's start, its user prompt, its tool inputs and full tool outputs, raw and kept on the machine, with "turn start not found" as a possible result. `parse_lines`, `TrajectoryEntry` and `TrajectoryWindow` are unchanged, so every existing signal, review candidate and 064 replay fingerprint is unchanged.
+- **FR-003 Detectors and questions**: `pushback_reversal` and `unverified_fact` are yes/no questions, versioned, each asked only when its cheap detector leaves something open (User Story 1), in one request under the turn deadline, at every non-continuation turn end with a final message, independent of whether the review runs and of the turn-review mode. Requests share the existing limit of 4 in flight.
+- **FR-004 What is sent**: for `pushback_reversal`, the previous and final assistant messages; for `unverified_fact`, the unmatched claims from the final message. Assistant text is redacted whole, then cut to fixed per-item and total caps, and truncation is recorded on the row. User text, tool inputs, tool outputs and stored memories are never sent.
+- **FR-005 Previous final message**: the server holds, in memory, the last final message it received for each harness session; nothing about it is written to disk.
+- **FR-006 Dates and numbers**: no exclusion. The roadmap §6.2 kept claims with dates or numbers out of `unverified_fact`; 066 drops that exclusion because code now settles them by verbatim match against the turn's evidence (`WATCHDOG_LAYER.md:153` names entity diffs for exactly this class).
 - **FR-007 Recommendations**: each recorded signal names a corrective in its row's label: `pushback_reversal` → `verify` (always in the catalog); `unverified_fact` → `grounded_verify` when configured, else `research` when configured, else none. In shadow nothing is shown.
 - **FR-008 Cooldown**: none while the signals are shadow only; every occurrence is recorded. The cooldown (identity: session plus signal kind) and its length come with promotion to `on`.
 - **FR-009 Review skip**: per User Story 2. Thresholds come from a per-model pinned table of no-band values for the two turn-review questions, empty until the promotion rule passes. The skip applies only with memory configured. Any memory, preference or transcript candidate blocks it. While the skip is off, Jev and the review run concurrently as today; when on, Jev answers first under the turn deadline, and the review starts only if the turn is not skipped. The audit share is decided from the evaluation id: a turn whose id hash falls in the bottom 10% gets the review anyway.
-- **FR-010 Configuration**: `PARALLAX_JEV_MODE_TURN_SIGNALS` (`off` | `shadow`, unset is `off`); `PARALLAX_JEV_SEND_USER_TEXT` (`true` | `false`, unset is `false`; `true` with the signals site off is a startup error); unparseable values and unknown `PARALLAX_JEV_*` names are startup errors; `PARALLAX_JEV_MODE_TURN_REVIEW` accepts `on` only with a pinned threshold entry and a recorded order check (both criteria orders, at most 5% flips, `NEW_SERVER_DESIGN.md:304`) for the configured model. The two turn-review questions gain declared criteria for that check.
-- **FR-011 Records**: one `jev_records` row per covered turn end, site `turn_signals`, joined to the checkpoint record, holding the questions asked; an `excluded` row with no request when none is asked. The checkpoint record gains `review_skipped_by` (null, `jev` or `audit`), with a migration and a record-contract update, mirrored in the OTLP export. The checkpoint record's `jev_cost_usd` sums every Jev row of the evaluation.
+- **FR-010 Configuration**: `PARALLAX_JEV_MODE_TURN_SIGNALS` (`off` | `shadow`, unset is `off`); unparseable values and unknown `PARALLAX_JEV_*` names are startup errors; `PARALLAX_JEV_MODE_TURN_REVIEW` accepts `on` only with a pinned threshold entry and a recorded order check (both criteria orders, at most 5% flips, `NEW_SERVER_DESIGN.md:304`) for the configured model. The two turn-review questions gain declared criteria for that check. The startup line names the signals site's destination and data class (assistant text and claims only).
+- **FR-011 Records**: one `jev_records` row per covered turn end, site `turn_signals`, joined to the checkpoint record, holding the detector results (entities matched and unmatched, whether a candidate pair was found), the questions asked and their answers, and a hash of what was sent, never the text; an `excluded` row with no request when nothing is asked. The checkpoint record gains `review_skipped_by` (null, `jev` or `audit`), with a migration and a record-contract update, mirrored in the OTLP export. The checkpoint record's `jev_cost_usd` sums every Jev row of the evaluation.
 - **FR-012 Contracts**: the `checkpoint_turn` signal enum is bound by test to its contract; `specs/007-observability-layer/contracts/telemetry.md` line 97 changes `parallax.jev.requests` to a count (0-2) and the cost to the sum of the evaluation's Jev rows, and gains `review_skipped_by`.
-- **FR-013 Amendments**: `MEMORY_LAYER.md` (017 rails) and a 017 spec note, because 017 decided the review runs at every turn end; `WATCHDOG_LAYER.md:59`, because the skip lets a Jev answer stop the review; `CORRECTIVE_SELECTION.md:89`, adding 066's uses; and the FR-005 exception.
+- **FR-013 Amendments**: `MEMORY_LAYER.md` (017 rails) and a 017 spec note, because 017 decided the review runs at every turn end; `WATCHDOG_LAYER.md:59`, because the skip lets a Jev answer stop the review and the signals run at every turn end behind their own cheap detectors rather than the review's gate; `CORRECTIVE_SELECTION.md:89`, adding 066's uses; `NEW_SERVER_DESIGN.md` §10's configuration table, adding `PARALLAX_JEV_MODE_TURN_SIGNALS` as operator-owned.
+- **FR-014 Flag text**: the flag templates export fixed prefixes; the turn-start finder skips any line containing one of them anywhere in the line.
 
 ### Key Entities
 
-- **Turn signal row**: a `jev_records` row with site `turn_signals`: the questions asked and their answers, each signal's corrective in the label, model, outcome, cost, and the checkpoint record id.
+- **Turn data**: what `parse_turn` returns: the turn start (or not found), the user prompt, and the turn's tool inputs and outputs, raw, never sent or stored.
+- **Turn signal row**: a `jev_records` row with site `turn_signals`: detector results, the questions asked and their answers, each signal's corrective in the label, a hash of what was sent, model, outcome, cost, and the checkpoint record id.
 - **Skip reason**: `review_skipped_by` on the checkpoint record: null when the review ran normally, `jev` when Jev skipped it, `audit` when the audit share kept it.
 - **No-band table**: per model, the pinned no-band threshold for each turn-review question; empty until the promotion rule passes.
 
@@ -130,11 +132,12 @@ Quoted verbatim from the Jev roadmap §7 (shadow → on, per question):
 ### Measurable Outcomes
 
 - **SC-001**: with the signals site in shadow and off, the checkpoint result and record are identical except latency and `jev_cost_usd`, for confident, failing, rejected and never-returning Jev answers.
-- **SC-002**: with `PARALLAX_JEV_SEND_USER_TEXT` unset, no request body contains user text; and in every mode, no request body contains recalled memory text, checked on the whole serialized body.
+- **SC-002**: no request body contains user text, tool inputs, tool outputs or recalled memory text, checked on the whole serialized body, in every mode.
 - **SC-003**: `PARALLAX_JEV_MODE_TURN_REVIEW=on` without a pinned threshold entry and recorded order check fails startup.
 - **SC-004**: a live example asserts one joined `turn_signals` row per covered turn end and exits non-zero on failure.
 - **SC-005**: with the skip on in a test, the time Jev adds before a non-skipped review is at most the turn deadline (1000 ms), and the median added time is reported.
-- **SC-006**: every flag the templates build is dropped by the user-text parser, checked by building each flag through its template.
+- **SC-006**: every flag the templates build is skipped by the turn-start finder, checked by building each flag through its template.
+- **SC-007**: existing checkpoint behavior is unchanged: every existing test of the screens, review mining and 064's turn rows passes without modification.
 
 ## Assumptions
 
