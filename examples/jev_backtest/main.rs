@@ -10,6 +10,7 @@
 //! cargo run --release --example jev_backtest -- order [rows]            (live, Jev)
 //! cargo run --release --example jev_backtest -- self-agreement [rows]   (live, big model)
 //! cargo run --release --example jev_backtest -- injection <folder> [threshold]
+//! cargo run --release --example jev_backtest -- injection-order <folder> [threshold]
 //! cargo run --release --example jev_backtest -- reproduce [file]
 //! ```
 //!
@@ -29,7 +30,9 @@
 //! counted as skipped, and a dataset with no usable line stops the run before
 //! any call, leaving the saved result as it was; so does a run in which no
 //! call produced an answer. The question is the server's own `directs_ai`
-//! (`jev::questions::injection_question`).
+//! (`jev::questions::injection_question`). `injection-order` asks every line
+//! with the criteria in both orders and once more in the first, and prints
+//! order flips beside repeat flips (065 T028a); it saves nothing.
 
 // Manual tooling: stdout is fine here (no MCP transport involved).
 #![allow(clippy::print_stdout)]
@@ -37,6 +40,7 @@
 
 mod live;
 mod offline;
+mod order_check;
 mod rebuild;
 
 use mcp_parallax::config::Config;
@@ -46,7 +50,7 @@ fn usage() {
     println!(
         "usage: jev_backtest <base-rate | report | noise [rows] | order [rows] | \
          self-agreement [rows] | injection <folder> [threshold] | \
-         reproduce [file]>"
+         injection-order <folder> [threshold] | reproduce [file]>"
     );
 }
 
@@ -88,6 +92,13 @@ async fn main() {
                 .get(2)
                 .map_or(0.35, |t| t.parse().expect("a threshold"));
             live::injection(&config, folder, threshold).await;
+        }
+        "injection-order" => {
+            let folder = args.get(1).expect("the dataset folder");
+            let threshold = args
+                .get(2)
+                .map_or(0.35, |t| t.parse().expect("a threshold"));
+            order_check::injection_order(&config, folder, threshold).await;
         }
         _ => {
             usage();

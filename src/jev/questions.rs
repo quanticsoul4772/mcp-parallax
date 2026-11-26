@@ -103,11 +103,23 @@ pub fn injection_question() -> JevQuestion {
     }
 }
 
+/// [`injection_question`] with its criteria declared `false` first (065 T028a).
+///
+/// The criteria keep their names, so the answer still means "yes, it directs
+/// an AI".
+#[must_use]
+pub fn injection_question_swapped() -> JevQuestion {
+    let mut q = injection_question();
+    q.options.reverse();
+    q
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{
-        injection_question, research_claim_questions, turn_review_questions, RELATION_OPTIONS,
+        injection_question, injection_question_swapped, research_claim_questions,
+        turn_review_questions, RELATION_OPTIONS,
     };
     use crate::traits::classifier::QuestionKind;
     use std::collections::BTreeSet;
@@ -162,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn the_injection_question_is_exa_mcp_servers_wording_with_both_criteria() {
+    fn the_injection_question_is_the_earlier_back_tests_wording_with_both_criteria() {
         let q = injection_question();
         assert_eq!(q.id, "directs_ai");
         assert_eq!(q.version, 1);
@@ -184,5 +196,19 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn the_swapped_injection_question_declares_false_first_and_is_otherwise_the_same() {
+        let q = injection_question();
+        let s = injection_question_swapped();
+        assert_eq!(s.id, q.id);
+        assert_eq!(s.version, q.version);
+        assert_eq!(s.kind, q.kind);
+        assert_eq!(s.instructions, q.instructions);
+        let mut reversed = injection_question().options;
+        reversed.reverse();
+        assert_eq!(s.options, reversed);
+        assert_eq!(s.options[0].0, "false");
     }
 }
