@@ -161,6 +161,28 @@ async fn the_swapped_injection_question_sends_false_before_true() {
     assert!(falses < trues, "criteria not swapped on the wire: {raw}");
 }
 
+// 066 T019c: the swapped turn-review questions send each `false` criterion
+// before its `true` one.
+#[tokio::test]
+async fn the_swapped_turn_review_questions_send_false_before_true() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ok())
+        .mount(&mock)
+        .await;
+    let mut req = request(SECOND);
+    req.questions = crate::jev::questions::turn_review_questions_swapped();
+    let _ = client(&mock).classify(&req).await;
+
+    let received = mock.received_requests().await.unwrap();
+    let raw = String::from_utf8(received[0].body.clone()).unwrap();
+    let falses: Vec<usize> = raw.match_indices("\"false\":").map(|(i, _)| i).collect();
+    let trues: Vec<usize> = raw.match_indices("\"true\":").map(|(i, _)| i).collect();
+    assert_eq!((falses.len(), trues.len()), (2, 2), "{raw}");
+    assert!(falses[0] < trues[0] && falses[1] < trues[1], "{raw}");
+}
+
 #[tokio::test]
 async fn the_answering_model_answers_tokens_and_request_id_are_captured() {
     let mock = MockServer::start().await;

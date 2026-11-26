@@ -28,7 +28,7 @@ use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 const RESEARCH: &str = "research_claims";
-const TURN: &str = "turn_review";
+pub const TURN: &str = "turn_review";
 
 type Counts = BTreeMap<String, u32>;
 
@@ -64,7 +64,7 @@ async fn research_rows(storage: &SqliteStorage, limit: usize) -> (Vec<JevRecord>
 
 /// Up to `limit` tune-split turns rebuilt from their transcripts that pass
 /// `keep`, with the count of every reason a turn was left out.
-async fn turn_rows(
+pub async fn turn_rows(
     storage: &SqliteStorage,
     limit: usize,
     keep: impl Fn(&JevRecord) -> Result<(), &'static str>,
@@ -113,7 +113,7 @@ fn research_questions(row: &JevRecord) -> Vec<JevQuestion> {
     research_claim_questions(row.source_ids.as_ref().map_or(0, Vec::len))
 }
 
-fn turn_questions(row: &JevRecord) -> Vec<JevQuestion> {
+pub fn turn_questions(row: &JevRecord) -> Vec<JevQuestion> {
     let ids = asked(row);
     turn_review_questions()
         .into_iter()
@@ -141,7 +141,7 @@ pub fn values(response: &JevResponse) -> Vec<(String, f64, Option<String>)> {
 }
 
 /// The turn-review questions' version (066: version 2).
-fn turn_version() -> u32 {
+pub fn turn_version() -> u32 {
     turn_review_questions().first().map_or(1, |q| q.version)
 }
 

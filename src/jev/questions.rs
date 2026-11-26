@@ -79,6 +79,20 @@ pub fn turn_review_questions() -> Vec<JevQuestion> {
     ]
 }
 
+/// [`turn_review_questions`] with each question's criteria declared `false`
+/// first (066 T019c), for the order check. Ids, versions and criteria texts
+/// are unchanged, so an answer still means "yes".
+#[must_use]
+pub fn turn_review_questions_swapped() -> Vec<JevQuestion> {
+    turn_review_questions()
+        .into_iter()
+        .map(|mut q| {
+            q.options.reverse();
+            q
+        })
+        .collect()
+}
+
 /// The research claim questions (064 U4): a relation and a same-subject
 /// question per source, numbered from 1.
 #[must_use]
@@ -219,6 +233,25 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    // 066 T019c: the order check asks the same questions with the criteria
+    // declared `false` first; ids, versions and criteria texts are unchanged.
+    #[test]
+    fn the_swapped_turn_review_questions_reverse_only_the_criteria_order() {
+        let base = turn_review_questions();
+        let swapped = super::turn_review_questions_swapped();
+        assert_eq!(base.len(), swapped.len());
+        for (b, s) in base.iter().zip(&swapped) {
+            assert_eq!(
+                (&b.id, b.version, &b.instructions),
+                (&s.id, s.version, &s.instructions)
+            );
+            let mut reversed = b.options.clone();
+            reversed.reverse();
+            assert_eq!(s.options, reversed, "{}", b.id);
+            assert_eq!(s.options[0].0, "false");
+        }
     }
 
     #[test]

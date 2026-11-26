@@ -163,6 +163,24 @@ pub struct OrderItem {
     pub version: u32,
 }
 
+/// One yes/no question asked with its criteria in both orders (066 T019c).
+/// Both probabilities are kept, so flips can be recounted at any cut.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct YesNoOrderItem {
+    /// The site, as recorded.
+    pub site: String,
+    /// The stored row.
+    pub row_id: String,
+    /// The question id.
+    pub question: String,
+    /// The question version asked.
+    pub version: u32,
+    /// P(yes) with the criteria declared `true` first.
+    pub true_first: f64,
+    /// P(yes) with the criteria declared `false` first.
+    pub false_first: f64,
+}
+
 /// One item judged twice by the big model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgreementItem {
@@ -229,6 +247,9 @@ pub struct Results {
     pub order: Vec<OrderItem>,
     /// Self-agreement items.
     pub self_agreement: Vec<AgreementItem>,
+    /// Yes/no criteria-order items (066); empty in files saved before.
+    #[serde(default)]
+    pub yes_no_order: Vec<YesNoOrderItem>,
     /// Rows left out and calls lost: (site, reason, count).
     pub skipped: Vec<(String, String, u32)>,
     /// The base rate.
@@ -256,6 +277,14 @@ impl Results {
         self.self_agreement
             .retain(|i| i.site != site || i.version != version);
         self.self_agreement.extend(items);
+    }
+
+    /// Replace the yes/no order items of `site` at `version` only; other
+    /// sites' items, and other versions', stay.
+    pub fn replace_yes_no_order(&mut self, site: &str, version: u32, items: Vec<YesNoOrderItem>) {
+        self.yes_no_order
+            .retain(|i| i.site != site || i.version != version);
+        self.yes_no_order.extend(items);
     }
 
     /// Replace the skip and loss counts a measurement recorded for `site`
@@ -432,6 +461,54 @@ fn order_table(out: &mut String, order: &[OrderItem]) {
     }
 }
 
+/// Flips at 0.5 (P(yes) at or above it is yes), McNemar on the flips, and the
+/// mean absolute shift in P(yes), per site, question and version.
+fn yes_no_order_table(out: &mut String, items: &[YesNoOrderItem]) {
+    const CUT: f64 = 0.5;
+    let mut groups: BTreeMap<(&str, String), Vec<&YesNoOrderItem>> = BTreeMap::new();
+    for item in items {
+        groups
+            .entry((
+                item.site.as_str(),
+                versioned(question_family(&item.question), item.version),
+            ))
+            .or_default()
+            .push(item);
+    }
+    for ((site, label), group) in groups {
+        let yes_to_no = group
+            .iter()
+            .filter(|i| i.true_first >= CUT && i.false_first < CUT)
+            .count();
+        let no_to_yes = group
+            .iter()
+            .filter(|i| i.true_first < CUT && i.false_first >= CUT)
+            .count();
+        let (b, c) = (
+            u32::try_from(yes_to_no).unwrap_or(u32::MAX),
+            u32::try_from(no_to_yes).unwrap_or(u32::MAX),
+        );
+        let statistic = if b + c == 0 {
+            0.0
+        } else {
+            (f64::from(b.abs_diff(c)) - 1.0).max(0.0).powi(2) / f64::from(b + c)
+        };
+        #[allow(clippy::cast_precision_loss)] // item counts
+        let shift = group
+            .iter()
+            .map(|i| (i.true_first - i.false_first).abs())
+            .sum::<f64>()
+            / group.len().max(1) as f64;
+        let _ = writeln!(
+            out,
+            "yes/no order {site} {label}: {} items, {} flips at {CUT} ({yes_to_no} yes to no, \
+             {no_to_yes} no to yes), McNemar {statistic:.3}, mean absolute shift {shift:.4}",
+            group.len(),
+            yes_to_no + no_to_yes
+        );
+    }
+}
+
 fn agreement_table(out: &mut String, items: &[AgreementItem]) {
     let mut by_site: BTreeMap<String, (u32, u32)> = BTreeMap::new();
     for item in items {
@@ -523,6 +600,7 @@ pub fn tables(results: &Results) -> String {
         let _ = writeln!(out, "skipped {site}, {reason}: {count}");
     }
     order_table(&mut out, &results.order);
+    yes_no_order_table(&mut out, &results.yes_no_order);
     agreement_table(&mut out, &results.self_agreement);
     if let Some(base) = &results.base_rate {
         let _ = writeln!(

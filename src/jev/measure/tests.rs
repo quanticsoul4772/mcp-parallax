@@ -165,6 +165,7 @@ fn sample_results() -> Results {
             second: "supported".into(),
             version: 1,
         }],
+        yes_no_order: vec![],
         skipped: vec![
             ("turn_review".into(), "noise: transcript missing".into(), 3),
             ("research_claims".into(), "noise: failed calls".into(), 2),
@@ -562,4 +563,66 @@ fn the_tables_name_a_question_version_other_than_1() {
         "{printed}"
     );
     assert!(printed.contains("turn_review contradiction:"), "{printed}");
+}
+
+// 066 T019c: the yes/no order result keeps P(yes) under both criteria orders,
+// so flips can be recounted at any cut; the table reports flips at 0.5 and
+// the mean absolute shift.
+
+fn yes_no(question: &str, true_first: f64, false_first: f64) -> YesNoOrderItem {
+    YesNoOrderItem {
+        site: "turn_review".into(),
+        row_id: "r".into(),
+        question: question.into(),
+        version: 2,
+        true_first,
+        false_first,
+    }
+}
+
+#[test]
+fn a_results_file_saved_before_the_yes_no_order_result_reads_back_empty() {
+    let results: Results = serde_json::from_value(serde_json::json!({
+        "noise": [], "order": [], "self_agreement": [], "skipped": [],
+        "base_rate": null, "injection": null
+    }))
+    .unwrap();
+    assert!(results.yes_no_order.is_empty());
+}
+
+#[test]
+fn the_yes_no_order_table_counts_flips_at_one_half_and_the_mean_shift() {
+    let results = Results {
+        yes_no_order: vec![
+            yes_no("contradiction", 0.6, 0.4), // yes to no
+            yes_no("contradiction", 0.3, 0.7), // no to yes
+            yes_no("contradiction", 0.2, 0.3), // no flip
+            yes_no("contradiction", 0.9, 0.9), // no flip
+        ],
+        ..Results::default()
+    };
+    let printed = tables(&results);
+    assert!(
+        printed.contains(
+            "yes/no order turn_review contradiction v2: 4 items, 2 flips at 0.5 \
+             (1 yes to no, 1 no to yes), McNemar 0.000, mean absolute shift 0.1750"
+        ),
+        "{printed}"
+    );
+}
+
+#[test]
+fn replacing_the_yes_no_order_items_keeps_other_versions() {
+    let mut results = Results::default();
+    let mut v3 = yes_no("contradiction", 0.1, 0.2);
+    v3.version = 3;
+    results.replace_yes_no_order("turn_review", 3, vec![v3.clone()]);
+    results.replace_yes_no_order("turn_review", 2, vec![yes_no("contradiction", 0.5, 0.5)]);
+    results.replace_yes_no_order("turn_review", 2, vec![yes_no("capture_worthy", 0.4, 0.4)]);
+    assert_eq!(results.yes_no_order.len(), 2);
+    assert!(results.yes_no_order.contains(&v3));
+    assert!(results
+        .yes_no_order
+        .iter()
+        .any(|i| i.question == "capture_worthy" && i.version == 2));
 }
