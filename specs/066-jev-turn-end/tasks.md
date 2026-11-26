@@ -12,7 +12,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 ## Phase 1: Setup
 
 - [x] T001 Transcript spike (research D1): read real Claude Code transcripts on the operator's machine for shape only, and write scrubbed fixtures for each line kind: user prompt (string and text blocks), subagent line, hook-injected context, interruption marker, meta line, compaction summary, tool input, tool result (string and block content). Record the field names that tell them apart in `research.md` D1. Not covered, recorded in D1: a Stop-hook block reason (not observed in any local transcript) and a `surface` block (hook output, carried by `attachment` lines; no surface fixture). Files: `tests/fixtures/transcripts/`.
-- [ ] T002 [P] Test that the committed fixtures contain no user names, no paths with an account name, no session ids and no real prompt text, and that each fixture's user prompt and tool results carry a sentinel string. Files: `tests/fixtures/transcripts/` test, `tests/integration.rs` or a new test module.
+- [x] T002 [P] Test that the committed fixtures contain no user names, no paths with an account name, no session ids and no real prompt text, and that each fixture's user prompt and tool results carry a sentinel string. Files: `tests/fixtures/transcripts/` test, `tests/integration.rs` or a new test module.
 
 ## Phase 2: Foundation (blocks all stories)
 
