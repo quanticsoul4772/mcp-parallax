@@ -491,3 +491,46 @@ async fn a_warned_page_whose_extraction_fails_is_still_listed() {
     .await;
     assert!(shadow["stats"].get("jev_warned_list").is_none());
 }
+
+// ---- 065 re-check item D: in-flight calls leave an abandoned row ----------
+
+#[tokio::test]
+async fn a_run_cancelled_mid_call_leaves_an_abandoned_row_per_page() {
+    let search = search_returning(&["https://example.com/a", "https://example.com/b"]);
+    let mut deps = deps_with_client(
+        Arc::new(SlowExtract(happy_client())),
+        search,
+        Arc::new(SystemClock),
+    );
+    // Jev never answers, so both calls are still in flight at the cancel.
+    deps.jev_injection = Some(injection_jev(Arc::new(Never), JevMode::On, 2000));
+    let rows = JevShadow::default();
+    let (cost, pages, non_model) = (
+        SearchCost::default(),
+        PageCounts::default(),
+        NonModelUsage::default(),
+    );
+    let question = params("does it hold?", Some(Depth::Quick));
+    let run = run_at(
+        &deps,
+        &question,
+        deps.concurrency,
+        &cost,
+        &pages,
+        &non_model,
+        &rows,
+    );
+    assert!(tokio::time::timeout(StdDuration::from_millis(300), run)
+        .await
+        .is_err());
+    let kept = rows.take();
+    assert_eq!(kept.len(), 2, "one abandoned row per page in flight");
+    for row in &kept {
+        assert_eq!(
+            row.outcome,
+            crate::storage::jev::JevOutcome::Call(crate::error::Outcome::Timeout)
+        );
+        assert_eq!(row.error_class.as_deref(), Some("cancelled; cost unknown"));
+        assert!(!row.applied);
+    }
+}

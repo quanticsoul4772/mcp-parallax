@@ -121,6 +121,24 @@ fn reason(row: &JevRecord) -> &'static str {
     }
 }
 
+/// The error class of a call abandoned because its research run was dropped
+/// while the request was in flight; it may still be billed.
+pub const CANCELLED_ERROR: &str = "cancelled; cost unknown";
+
+/// The row for a page whose Jev call was in flight when the run was dropped.
+#[must_use]
+pub fn abandoned_row(
+    jev: &InjectionJev,
+    source_id: &str,
+    patterns063: &[&str],
+    now: DateTime<Utc>,
+) -> JevRecord {
+    let mut row = row(jev, source_id, patterns063, now);
+    row.outcome = JevOutcome::Call(Outcome::Timeout);
+    row.error_class = Some(CANCELLED_ERROR.into());
+    row
+}
+
 fn not_screened(reason: &'static str) -> Screening {
     Screening {
         screened: false,
@@ -170,7 +188,8 @@ pub async fn screen_page(
     let result = tokio::time::timeout(timeout, jev.classifier.classify(&request)).await;
     row.latency_ms = Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
     record_result(&mut row, result, &request, &jev.model);
-    let probability = (row.outcome == JevOutcome::Call(Outcome::Success))
+    // The one screened rule the span and the report use too.
+    let probability = crate::jev::report::injection::is_screened(&row)
         .then(|| row.questions_json[0]["answer"].as_f64())
         .flatten();
     let Some(p) = probability else {

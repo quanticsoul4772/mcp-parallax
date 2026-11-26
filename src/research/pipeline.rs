@@ -941,8 +941,24 @@ struct PageToScreen {
     patterns: Vec<&'static str>,
 }
 
+/// Records an abandoned row if dropped while its Jev call is in flight
+/// (065): a research run cancelled mid-call still accounts for the request.
+struct InFlight<'a> {
+    rows: &'a crate::telemetry::JevShadow,
+    abandoned: Option<crate::storage::jev::JevRecord>,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        if let Some(row) = self.abandoned.take() {
+            self.rows.push(row);
+        }
+    }
+}
+
 /// 065: one kept page's Jev injection screen. The row goes to `rows` as soon
-/// as the call ends, so a run cancelled during extraction still records it.
+/// as the call ends, so a run cancelled during extraction still records it;
+/// a run dropped while the call is in flight records an abandoned row.
 async fn screen_beside(
     jev: &crate::jev::shadow::InjectionJev,
     rows: &crate::telemetry::JevShadow,
@@ -950,6 +966,15 @@ async fn screen_beside(
     time_left: std::time::Duration,
     now: DateTime<Utc>,
 ) -> (PageToScreen, crate::jev::shadow::Screening) {
+    let mut in_flight = InFlight {
+        rows,
+        abandoned: Some(crate::jev::shadow::abandoned_row(
+            jev,
+            &page.id,
+            &page.patterns,
+            now,
+        )),
+    };
     let (row, screening) = crate::jev::shadow::screen_page(
         jev,
         &page.id,
@@ -960,6 +985,7 @@ async fn screen_beside(
         now,
     )
     .await;
+    in_flight.abandoned = None;
     rows.push(row);
     (page, screening)
 }

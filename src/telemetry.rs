@@ -719,8 +719,6 @@ mod tests {
     use super::*;
     use crate::traits::clock::MockTimeProvider;
 
-    /// 060 review finding 5: the CLI figure replaces only the Claude models'
-    /// share; an embedding model's price-table cost stays in the total.
     #[test]
     fn the_jev_row_collector_carries_the_configured_mode() {
         use crate::traits::classifier::JevMode;
@@ -730,6 +728,8 @@ mod tests {
         assert_eq!(rows.mode(), JevMode::On);
     }
 
+    /// 060 review finding 5: the CLI figure replaces only the Claude models'
+    /// share; an embedding model's price-table cost stays in the total.
     #[test]
     fn the_cli_figure_keeps_the_embedding_cost() {
         let clock = fixed_clock();

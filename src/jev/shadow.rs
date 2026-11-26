@@ -10,7 +10,7 @@ pub use claim::{
     abandoned, ask_claim, claim_label, prepare_claim, shadow_claim, ClaimJev, ClaimSource,
     PreparedClaim, ABANDONED_ERROR,
 };
-pub use injection::{screen_page, InjectionJev, Screening};
+pub use injection::{abandoned_row, screen_page, InjectionJev, Screening, CANCELLED_ERROR};
 pub use turn::{
     no_memory_candidates, shadow_turn, turn_label, turn_state, ReviewOutcome, TurnIds, TurnInputs,
     TurnJev, TurnState, TurnStateError,
