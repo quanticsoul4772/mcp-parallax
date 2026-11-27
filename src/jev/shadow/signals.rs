@@ -673,4 +673,38 @@ mod wire_tests {
         assert!(unverified.get("number_diff").is_none(), "{unverified}");
         assert!(rows.iter().all(|r| r.label_json.is_none()));
     }
+
+    // 068 T015b (FR-006, §11, roadmap check items 30 and 39): recommends names
+    // only correctives in the catalog: verify for pushback_reversal; for
+    // unverified_fact, grounded_verify when configured, else research when
+    // configured, else none.
+    #[tokio::test]
+    async fn recommends_names_only_correctives_in_the_catalog() {
+        let cases = [
+            (false, false, Value::Null),
+            (true, false, Value::from("grounded_verify")),
+            (false, true, Value::from("research")),
+            (true, true, Value::from("grounded_verify")),
+        ];
+        for (grounded_verify, research, expected) in cases {
+            let mut jev = jev(recording(Arc::default()), false);
+            jev.grounded_verify = grounded_verify;
+            jev.research = research;
+            let window = window();
+            let rows = shadow_signals(
+                &jev,
+                SignalInputs {
+                    window: &window,
+                    activity: "ran cargo test",
+                    final_message: FINAL,
+                    user_text: USER_TEXT,
+                },
+                ids(),
+            )
+            .await;
+            let case = format!("grounded_verify={grounded_verify} research={research}");
+            assert_eq!(rows[0].questions_json[0]["recommends"], "verify", "{case}");
+            assert_eq!(rows[1].questions_json[0]["recommends"], expected, "{case}");
+        }
+    }
 }
