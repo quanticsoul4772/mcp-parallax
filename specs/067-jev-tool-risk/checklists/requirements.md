@@ -32,4 +32,4 @@
 ## Notes
 
 - Implementation details (variable names, file paths, the 500 ms budget, the 5 s hook timeout) are kept on purpose: this repository's specs name them, as 064–066 did, because the requirements are about those exact surfaces.
-- The one [NEEDS CLARIFICATION] marker (the class recorded for allowlisted build and test commands) was resolved by the owner on 2026-11-26: `state_changing`.
+- 2026-11-27: the spec was rewritten from the roadmap's §6.3, §11 067 list and §5.5 as written, replacing an earlier draft that departed from it. The roadmap's contradictions and gaps are settled by the owner's answers in the spec's Clarifications (O, P, M, R). Open items: where harness-bridge is on the owner's machine (§6.3.4 wording source), and the roadmap's lack of a U3 label source (§7) against §5.5's `label_json` share.

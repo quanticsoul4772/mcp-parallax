@@ -2,139 +2,109 @@
 
 **Feature Branch**: `067-jev-tool-risk`
 
-**Created**: 2026-11-26
+**Created**: 2026-11-26 (rewritten 2026-11-27 from the roadmap)
 
 **Status**: Draft
 
-**Input**: the Jev roadmap §6.3 (U3 risk classification, shadow only, after a hooks spike) and §4.1 (turn the site on in the owner's setup as the last task). The feature description given to `/speckit-specify` is reproduced under Source below.
+**Input**: the Jev roadmap (`warm-kindling-shell.md`): §4 line 170 ("U3 risk classification, shadow only, after a hooks spike"), §6.3 items 1-9, §11's 067 test list, §5.5 acceptance, §4.1 line 186, with the shared rules in §3, §5.1 (config, client, records), §7 and §8. This spec carries that text as written. Where the roadmap contradicts itself or is silent, the owner's answers are recorded under Clarifications. Nothing else is added.
 
 ## Clarifications
 
-### Session 2026-11-26
+### Session 2026-11-27
 
-- Q: With the widened matcher, what does the gate do for MCP tool calls? → A: The full gate: risk patterns and the memory hold apply to MCP calls as they do to `Bash`, `Write` and `Edit`, plus classification.
-- Q: What deadline does the Jev request get? → A: 300 ms; a later answer is abandoned and recorded, never retried.
-- Q: Are `Write` and `Edit` calls classed in code or asked of Jev? → A: In code, as `state_changing` (a risk-pattern match still wins); no Jev request, so no file path is sent.
+- **O.** Q: §6.3.1 widens the matcher, which would put newly matched tools through the memory hold; §6.3.8 says U3 changes no behavior in 067. Which governs? → A: §6.3.8. Tools newly reached by the widened matcher are classified only; the memory hold stays on risk-matched `Bash`, `Write` and `Edit` calls as today. No new permission prompts.
+- **P.** Q: §6.3.5 runs Jev alongside the gate; §11 tests "gate latency unchanged with a never-returning classifier". Should a tool call wait for Jev? → A: No. The gate returns its verdict without waiting; Jev's answer is recorded when it arrives. Consequence accepted with the answer: a request still running when the process exits leaves no row (the roadmap's Appendix A rejected detached work for this reason).
+- **M.** Q: The roadmap names no projection for Claude's built-in tools other than `Bash`, `Write` and `Edit`. What does Jev see for them? → A: The same as MCP tools: the tool name plus argument key names.
+- **R.** Q: The allowlist's excluded operators (§6.3.3: `&&`, `;`, `|`, `$(`, backticks) miss `&`, `>`, `>>`, `<`, `<(` and `>(`. → A: Those are excluded too; only a plain command with plain arguments matches the allowlist.
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - The gate sees every tool call, without seeing itself (Priority: P1)
+### User Story 1 - The hook reaches every tool except Parallax's own (Priority: P1)
 
-Today the pre-action hook fires only for `Bash`, `Write` and `Edit`. A widened matcher makes it fire for every tool call, MCP tools included, except Parallax's own tools, so the gate never evaluates its own checkpoint calls. A spike verifies this against the live harness before anything depends on it.
+A widened `PreToolUse` matcher includes MCP tools and excludes `mcp__parallax__*`, verified with no self-trigger by a spike before anything depends on it (§6.3.1).
 
-**Why this priority**: every later story needs the hook to fire on the calls it classifies, and a gate that triggers itself would loop.
-
-**Independent Test**: with the widened matcher installed, calling a non-Parallax MCP tool produces one pre-action evaluation, and calling a Parallax tool produces none.
+**Independent Test**: a test parses `hooks.json` and checks the matcher; the spike shows the hook firing for a non-Parallax tool and not for a Parallax tool.
 
 **Acceptance Scenarios**:
 
-1. **Given** the widened matcher, **When** the model calls `Bash`, `Write`, `Edit` or any non-Parallax MCP tool, **Then** the pre-action hook fires once for that call.
-2. **Given** the widened matcher, **When** the model calls any `mcp__parallax__*` tool, **Then** the pre-action hook does not fire.
-3. **Given** the repository's hook config and the project settings, **When** the test suite runs, **Then** a test parses the shipped matcher and fails if it would match a Parallax tool or miss a tool the spike verified.
+1. **Given** the widened matcher, **When** a non-Parallax tool is called, **Then** `checkpoint_action` runs for it.
+2. **Given** the widened matcher, **When** an `mcp__parallax__*` tool is called, **Then** `checkpoint_action` does not run.
+3. **Given** the hook's own call to `checkpoint_action`, **When** it runs, **Then** it does not trigger the hook again.
 
----
+### User Story 2 - Every matched call is classified, recorded only (Priority: P1)
 
-### User Story 2 - Every matched call gets a risk class, recorded only (Priority: P1)
+`run_action` is restructured so every matched call is classified, including with memory off (§6.3.2). Risk patterns come first, then an allowlist of whole commands, and Jev sees only the remainder (§6.3.3), with one choice question, `action_class` (§6.3.4). Shadow only: nothing the user sees changes (§6.3.8).
 
-Each tool call the gate evaluates is given one of three classes: `spend_or_destructive`, `state_changing` or `read_only`. Code decides first: calls matching the existing risk patterns, and whole commands on a fixed allowlist, are classed in code without asking Jev. Jev answers one choice question, `action_class`, only for the remainder, with the options in that fixed order. The class is recorded; the gate's verdict, its message and its hold behavior do not change.
-
-**Why this priority**: the recorded classes are what a later feature needs to measure Jev against the risk patterns and to decide whether a class should ever change what the gate does.
-
-**Independent Test**: with `PARALLAX_JEV_MODE_TOOL_RISK=shadow`, a fixture set of calls produces one record per evaluated call with the expected class source (code or Jev), and every checkpoint result and record is byte-identical to the same run with the mode off, apart from timing and the new records.
+**Independent Test**: with `PARALLAX_JEV_MODE_TOOL_RISK=shadow`, fixture calls leave the expected records, risk-pattern and allowlisted calls make no Jev request, and every gate verdict and message equals the run with the site off.
 
 **Acceptance Scenarios**:
 
-1. **Given** shadow mode, **When** a call matches a risk pattern, **Then** no Jev request is made and the record shows a code-assigned class.
-2. **Given** shadow mode, **When** a `Bash` call is a single whole command on the allowlist, **Then** no Jev request is made and the record shows a code-assigned class.
-3. **Given** shadow mode, **When** a `Bash` command chains commands (`&&`, `;`, `|`, `$(` or backticks), **Then** the allowlist does not apply to it.
-4. **Given** shadow mode, **When** any other call is evaluated, **Then** one Jev request asks `action_class` and the answer is recorded.
-5. **Given** shadow mode and memory off, **When** a call is evaluated, **Then** it is still classified and recorded.
-6. **Given** a stored memory that holds the action, **When** Jev answers `read_only` with probability 1.0, errors, or never returns, **Then** the hold still happens, unchanged.
+1. **Given** shadow mode, **When** a call matches a risk pattern, **Then** no Jev request is made and an excluded record is written.
+2. **Given** shadow mode, **When** a `Bash` command is a plain command on the allowlist, **Then** no Jev request is made and an excluded record is written.
+3. **Given** shadow mode, **When** a command chains or redirects (any excluded operator), **Then** the allowlist does not apply.
+4. **Given** shadow mode, **When** any other call is evaluated, **Then** Jev is asked `action_class` and the answer is recorded.
+5. **Given** memory off, **When** a call is evaluated, **Then** it is still classified.
+6. **Given** a stored memory that holds a risk-matched `Bash`, `Write` or `Edit` action, **When** Jev hangs, errors, or answers `read_only` at 1.0, **Then** the hold happens unchanged (§6.3.5).
+7. **Given** a tool newly reached by the widened matcher, **When** it is evaluated, **Then** no hold is evaluated for it.
 
----
+### User Story 3 - Only projections leave the machine (Priority: P1)
 
-### User Story 3 - Only a projection of the call leaves the machine (Priority: P1)
+Jev receives projections only (§6.3.6): the `Bash` command, redacted, with heredoc bodies dropped; `file_path` only for `Write` and `Edit`; for MCP tools and the other built-in tools, the tool name plus argument key names, with values only for fields on a per-tool allowlist. If redaction fails, nothing is sent.
 
-Jev never receives a whole tool input. It receives a projection, after the mandatory redactor: for `Bash`, the command with heredoc bodies removed; for an MCP tool, the tool name and the names of its arguments, with argument values only for fields on a per-tool allowlist. `Write` and `Edit` are classed in code and never reach Jev. If redaction fails, nothing is sent.
+**Independent Test**: wire-level tests assert on the whole serialized request body.
 
-**Why this priority**: tool inputs carry file contents, credentials and private text; the classification must not become a new path for them to leave.
+### User Story 4 - On in the owner's setup (Priority: P2)
 
-**Independent Test**: captured request bodies for a fixture set (a heredoc with a secret, a `Write` with file contents, an MCP call with a token argument) contain none of the sentinel strings planted in the parts that must not be sent.
-
-**Acceptance Scenarios**:
-
-1. **Given** a `Write` or `Edit` call, **When** it is classified, **Then** no Jev request is made.
-2. **Given** a `Bash` command with a heredoc, **When** it is classified, **Then** the heredoc body is absent from the request.
-3. **Given** an MCP call, **When** it is classified, **Then** only allowlisted argument values appear; every other argument appears by name only.
-4. **Given** the redactor fails on a projection, **When** the call is evaluated, **Then** no request is made and the failure is recorded.
-
----
-
-### User Story 4 - Turned on in the owner's setup (Priority: P2)
-
-After merge and rebuild, the owner's Parallax entry gets `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the owner's hook config gets the widened matcher, so classes start being recorded on real work.
-
-**Why this priority**: shadow records only build up while the site runs.
-
-**Independent Test**: after the setup change and a restart, a tool call in a real session leaves a tool-risk record in the server's database.
-
-**Acceptance Scenarios**:
-
-1. **Given** the setup change and a restart, **When** the owner's session calls a matched tool, **Then** a tool-risk record is written.
+After merge and rebuild, `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the widened hook matcher are set in the owner's setup (§4.1 line 186), with a backup taken and the exact keys shown first; then the user restarts the session (§4.1).
 
 ### Edge Cases
 
-- Jev is slow or down: the gate's verdict is returned within its existing budget; the Jev request is abandoned at its deadline and the outcome recorded; no retry.
-- The key is missing: setting the mode to `shadow` without `TYPESAFE_API_KEY` is a startup error, as for the other Jev sites.
-- A tool input too large for the projection rules (for example a very long command): the projection is truncated to a fixed limit, the truncation is recorded, and no decision depends on it.
-- The hook fires for a tool the per-tool allowlist does not know: its arguments are sent by name only.
-- A risk-pattern match and an allowlist match on the same command: the risk pattern wins.
+- Jev is slow or down: the gate's verdict does not wait; the request ends at its deadline with no retry, and the outcome is recorded.
+- `shadow` without `TYPESAFE_API_KEY`: a startup error (§5.1 config).
+- Redaction fails on a projection: nothing is sent; the failure is recorded.
+- The process exits while a Jev request is running: no row for that call (Clarifications).
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: The shipped hook config and the project settings MUST use a pre-action matcher that fires for every tool call except `mcp__parallax__*`, as verified by the spike (task 1). A test MUST parse the shipped matcher and check it against the verified tool list.
-- **FR-002**: The gate MUST evaluate every call the hook sends it, with or without memory configured. MCP tool calls get the same evaluation as `Bash`, `Write` and `Edit`: risk patterns, and the memory hold when memory is configured. Calls that match no risk pattern keep today's silence verdict; only the classification is new for them.
-- **FR-003**: Classification MUST run in this order: risk patterns (code, `spend_or_destructive`), then `Write` and `Edit` (code, `state_changing`), then the whole-command allowlist (code, `state_changing`, `Bash` only, never for chained commands), then Jev for the remainder.
-- **FR-004**: The Jev question MUST be one choice question, `action_class`, with options `spend_or_destructive`, `state_changing`, `read_only` in that order, each with fixed criteria, versioned, and the model pinned to `jev-1.14.0`.
-- **FR-005**: The Jev request MUST run beside the gate's own work, with a 300 ms deadline, inside the gate's existing budget (`GATE_BUDGET_MS`, 500 ms), and no retries. A contract test MUST keep the Jev deadline plus `GATE_BUDGET_MS` well under the 5 s pre-action hook timeout.
-- **FR-006**: The memory constraint hold MUST be unaffected by any Jev answer, error, timeout or missing key.
-- **FR-007**: Requests MUST carry only the projection in User Story 3, after the mandatory redactor; a redaction failure MUST send nothing and be recorded.
-- **FR-008**: Every evaluated call in shadow mode MUST leave one record: the class, its source (risk pattern, allowlist or Jev), the Jev outcome when asked, and the projection's truncation flag. Code-classed calls MUST leave a record with no request.
-- **FR-009**: The gate MUST NOT flag, and its results and checkpoint records MUST NOT change, because of the classification (the gate's contract, `src/checkpoint/contract.rs:5-6`).
-- **FR-010**: The site MUST be controlled by `PARALLAX_JEV_MODE_TOOL_RISK` (`off` | `shadow`), `off` in code. `on` MUST be rejected at startup in 067. Any other value, or `shadow` without the key, MUST be a startup error.
-- **FR-011**: The design corpus MUST be amended where it says the gate has no model pass: `WATCHDOG_LAYER.md` :56 and :84-86, the 006 spec FR-013 and research D4, and the "No model" comment at `src/checkpoint/gate.rs:5`.
-- **FR-012**: The last task MUST set `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the widened matcher in the owner's setup, with the exact keys shown first and a backup taken.
+- **FR-001** (§6.3.1): `integrations/claude-code/hooks.json`, its README and `.claude/settings.json` use a `PreToolUse` matcher that includes MCP tools and excludes `mcp__parallax__*`, verified by the spike with no self-trigger. A test parses `hooks.json` and checks the matcher.
+- **FR-002** (§6.3.2, Clarifications): `run_action` classifies every matched call, including with memory off. The memory hold applies only to risk-matched `Bash`, `Write` and `Edit` calls, as today.
+- **FR-003** (§6.3.3, Clarifications R): Risk patterns first; then an allowlist of whole commands only, such as test and build commands, which never matches a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(` or `>(`; Jev sees only the remainder.
+- **FR-004** (§6.3.4): One choice question, `action_class`, options ordered `spend_or_destructive`, `state_changing`, `read_only`, wording adapted from harness-bridge's fixed criteria, versioned, model pinned (§5.1).
+- **FR-005** (§6.3.5, Clarifications): The Jev request runs beside the gate without the gate waiting for it, with a deadline sized to `GATE_BUDGET_MS` and no retries. The memory hold stands whatever Jev does. A contract test asserts the Jev budget plus `GATE_BUDGET_MS` stays well under the 5 s hook timeout (`hooks.json:18`).
+- **FR-006** (§6.3.6, Clarifications): Requests carry only the projections in User Story 3, after the mandatory redactor (§8). If redaction fails, nothing is sent.
+- **FR-007** (§6.3.7): The §8 "what leaves the machine" table lists that Voyage already receives `Write` file contents through the existing gate embed.
+- **FR-008** (§6.3.8): U3 changes no behavior in 067, because it is shadow only. Before any later promotion, a decision is needed on whether a result becomes a non-blocking note or a flag, and what it recommends. The gate contract currently says it never flags (`src/checkpoint/contract.rs:5-6`).
+- **FR-009** (§3.11, §5.1 records, §5.3): Every Jev request leaves one `jev_records` row at site `tool_risk`; every call excluded in code leaves an `excluded` row with no request (§5.3: "leaves an excluded row with no call"); a redaction failure is recorded (§3.11: "every attempted call and every exclusion leaves a record or a count").
+- **FR-010** (§5.1 config): `PARALLAX_JEV_MODE_TOOL_RISK` is `off` | `shadow`, default `off`; `on` is a startup error; `shadow` without the key is a startup error.
+- **FR-011** (§6.3.9): Amend `WATCHDOG_LAYER.md:56` and `:84-86` (the roadmap's `:80-82`; the 064 and 066 amendments added 2 lines each), the 006 D4/FR-013 text, and the "No model pass" comment at `src/checkpoint/gate.rs:5-7`.
+- **FR-012** (§4.1 line 186): The last task sets `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the widened hook matcher in the owner's setup.
+
+### Tests required (§11's 067 list)
+
+1. `hooks.json` matcher binding.
+2. Pre-filter table, including chained-command rejection, with `times(0)` at the classifier.
+3. Wire-level projection and redaction.
+4. Hold independent of Jev: hang, error, or `read_only` at 1.0.
+5. Gate latency unchanged with a never-returning classifier.
+6. Budget-under-hook-timeout contract.
+7. Memory questions off without the opt-in.
+8. Live no-self-trigger assertion.
 
 ### Key Entities
 
-- **Tool-risk record**: one Jev record per evaluated call at the new tool-risk site: class, class source, Jev answer and probabilities when asked, outcome, truncation flag, and the link to the checkpoint record.
-- **Projection**: the redacted, reduced view of a tool call that Jev may see (User Story 3).
-- **Allowlists**: the whole-command allowlist for `Bash`, and the per-tool argument-value allowlist for MCP tools.
+- **`jev_records` row, site `tool_risk`** (§5.1 records): one per Jev request or code exclusion.
+- **Projection** (§6.3.6): what Jev may see of a call.
+- **Allowlists**: the whole-command allowlist (§6.3.3); the per-tool argument-value allowlist (§6.3.6).
 
 ## Success Criteria *(mandatory)*
 
-### Measurable Outcomes
+### Measurable Outcomes (§5.5, applied to 067)
 
-- **SC-001**: In the spike, the widened matcher fires on 100% of the non-Parallax tool calls tried and on 0 Parallax tool calls.
-- **SC-002**: With shadow on, the gate's verdicts and checkpoint records for a fixture set are identical to the mode-off run on every call, apart from timing and the new records.
-- **SC-003**: With a Jev stand-in that never answers, every gate evaluation still returns within its existing budget.
-- **SC-004**: No planted sentinel from a file body, heredoc body or non-allowlisted argument appears in any captured request body.
-- **SC-005**: Every evaluated call in a live run leaves exactly one tool-risk record joined to its checkpoint record.
-- **SC-006**: The memory hold fires on the same fixture calls with Jev answering `read_only` at 1.0, erroring, or never returning.
-
-## Assumptions
-
-- The per-tool argument-value allowlist starts empty: in 067 every MCP argument is sent by name only. Adding a field is a later, reviewed change.
-- The whole-command allowlist covers test and build commands of the repository's own toolchain; its exact entries are set in planning.
-- Code-classed calls record the class code assigns: risk-pattern matches as `spend_or_destructive`, allowlisted commands as `state_changing`, since test and build commands write build output.
-- The Voyage embedding the gate already makes for memory recall (`Write` file contents included) is unchanged and is listed in the plan's "what leaves the machine" table.
-- Turning the class into a flag, a note or a hold, and any promotion to `on`, are out of scope; they need a later decision because the gate's contract says it never flags.
-- Memory questions to Jev are out of scope.
-
-## Source
-
-The feature description given to `/speckit-specify` (2026-11-26):
-
-> Jev on tool calls (067, U3), shadow only. The checkpoint gate (checkpoint_action) classifies every matched tool call with one Jev choice question, action_class, options in order spend_or_destructive, state_changing, read_only, model pinned to jev-1.14.0. First task: a hooks spike. A widened PreToolUse matcher includes MCP tools and excludes mcp__parallax__*, verified with no self-trigger; a test parses hooks.json and checks the matcher; integrations/claude-code/hooks.json, its README and .claude/settings.json are updated. run_action (src/checkpoint/run.rs:165) is restructured so every matched call is classified, including with memory off. Deterministic order: risk patterns first, then an allowlist of whole commands only (no &&, ;, |, $( or backticks); Jev sees only the remainder. Jev runs alongside the gate with a deadline sized to GATE_BUDGET_MS (500, src/checkpoint/mod.rs:40) and no retries; the memory constraint hold stands whatever Jev answers; a contract test keeps the Jev budget plus GATE_BUDGET_MS well under the 5 s hook timeout (hooks.json:18). Only projections are sent, after the mandatory redactor: the Bash command with heredoc bodies dropped; file_path only for Write and Edit; for MCP tools the tool name plus argument key names, with values only for fields on a per-tool allowlist. If redaction fails, nothing is sent. Shadow only: answers are recorded in jev_records and nothing changes; the gate still never flags (contract.rs:5-6). Mode PARALLAX_JEV_MODE_TOOL_RISK (off | shadow), off in code; the last task sets shadow and the widened matcher in the owner's setup. Amendments: WATCHDOG_LAYER.md :56 and :84-86, the 006 spec FR-013 and research D4 text, gate.rs:5's "No model" comment. Out of scope: turning it on, any flag or note from the result, memory questions.
+- **SC-001**: The spike shows the hook firing for every non-Parallax tool tried and for no Parallax tool, with no self-trigger.
+- **SC-002**: The live example asserts and exits non-zero on failure: at least N rows at site `tool_risk`; every outcome in the bound set; every row joins to its checkpoint record; `model_answered` equals the pinned version on every row; no row has `applied=true`; every redaction fixture is absent from captured request bodies; no Jev request row exists for a call excluded in code (§5.5's "no row exists for an excluded claim", read with §5.3's `excluded` rows; owner's answer, 2026-11-27). §5.5's "at least X% of rows carry `label_json`" does not apply in 067: the roadmap gives U3 no label source (§7), so rows carry no label until one is set for promotion (owner's answer, 2026-11-27).
+- **SC-003**: With a classifier that never returns, the gate's latency is unchanged.
+- **SC-004**: A live figure: Jev time on the critical path, summed per run, below a stated limit.
+- **SC-005**: Load: acceptance runs with at least two sessions plus a research run at once, and measures hook p99 latency.
+- **SC-006**: The full gate exactly as CLAUDE.md states it.
