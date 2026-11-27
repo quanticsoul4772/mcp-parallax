@@ -15,7 +15,7 @@ Test-first throughout: each test task is written and run to fail before its impl
 
 ## Phase 2: User Story 3 - 066's detectors are removed (P1)
 
-- [ ] T007 Remove the plan D5 list: code, migration, report code, example, `Cargo.toml` entry, fixtures' fields, and the documents that name them (066's own spec files stay). Check: a repository search finds no `CHECKPOINT_TURN_SIGNALS`, `turn_signal_records` or `TurnSignalsDeps` outside `specs/066-*`, and the full gate passes, including 066's U2 review-skip tests (`src/checkpoint/run/tests/review_skip.rs`), which must still pass unchanged (roadmap check items 20, 32, 38). Files: plan D5.
+- [x] T007 Remove the plan D5 list: code, migration, report code, example, `Cargo.toml` entry, fixtures' fields, and the documents that name them (066's own spec files stay). Check: a repository search finds no `CHECKPOINT_TURN_SIGNALS`, `turn_signal_records` or `TurnSignalsDeps` outside `specs/066-*` and `specs/068-*`, and the full gate passes, including 066's U2 review-skip tests (`src/checkpoint/run/tests/review_skip.rs`), which must still pass unchanged (roadmap check items 20, 32, 38). Files: plan D5.
 
 ## Phase 3: User Story 1 - The two turn signals are asked of Jev, recorded only (P1)
 

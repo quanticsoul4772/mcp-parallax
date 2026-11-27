@@ -120,16 +120,6 @@ pub async fn report(storage: &SqliteStorage) {
         print_tables(&t);
     }
     print_injection(&rows);
-    // 066 T028: the turn signals, recorded in code with no Jev call.
-    let signals = storage
-        .load_turn_signal_records()
-        .await
-        .expect("turn signal records");
-    for line in mcp_parallax::jev::report::signals::summary_lines(
-        &mcp_parallax::jev::report::signals::turn_signal_summary(&signals),
-    ) {
-        println!("{line}");
-    }
 }
 
 /// The injection site (065): share warned, failures, agreement with 063, on

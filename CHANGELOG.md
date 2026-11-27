@@ -25,12 +25,8 @@ arc.
   risk-matched `Bash`, `Write` and `Edit` calls.
   `integrations/claude-code/hooks.json` ships the widened matcher.
 
-* **Turn signals at turn end** (066) — with `CHECKPOINT_TURN_SIGNALS=on` (off by
-  default), each non-continuation turn end runs two detectors in code,
-  `pushback_reversal` and `unverified_fact`, and writes one row to the new
-  `turn_signal_records` table with anchors back to the transcript; nothing is sent
-  and nothing is flagged. The 064 turn-review questions move to version 2 with
-  declared criteria, and the report keeps version-1 rows out of promotion. The
+* **Turn-review questions, version 2** (066) — the 064 turn-review questions
+  move to version 2 with declared criteria, and the report keeps version-1 rows out of promotion. The
   end-of-turn review skip and its pinned tables are built and tested;
   `PARALLAX_JEV_MODE_TURN_REVIEW=on` stays refused. Checkpoint records gain
   `review_skipped_by`.

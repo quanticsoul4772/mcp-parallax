@@ -302,7 +302,6 @@ async fn main() {
         embedder: None,
         gate_extra_patterns: vec![],
         jev: None,
-        turn_signals: None,
         skip_thresholds: None,
         fixed_eval_id: None,
         tool_jev: Some(Arc::new(ToolJev {

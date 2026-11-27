@@ -25,8 +25,8 @@ pub struct TurnData {
     /// Index in the tail lines of the turn's real user prompt; `None` when
     /// it is not in the lines read.
     pub start: Option<usize>,
-    /// The `uuid` of that line, the anchor stored in `turn_signal_records`
-    /// (066 review finding 2); `None` when not found.
+    /// The `uuid` of that line, the turn's transcript anchor (066 review
+    /// finding 2); `None` when not found.
     pub start_uuid: Option<String>,
     /// The prompt's text (string content, or its text blocks joined).
     pub user_prompt: String,
@@ -279,8 +279,6 @@ mod tests {
         assert!(input.contains("first line\n4096 more"), "{input}");
         assert!(input.contains("200"), "{input}");
         assert!(!input.contains("\\n"), "{input}");
-        let evidence = [input.as_str()];
-        assert!(crate::jev::entities::unmatched("It now has 4096 more.", &evidence).is_empty());
     }
 
     #[test]

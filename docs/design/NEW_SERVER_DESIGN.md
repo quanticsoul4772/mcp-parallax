@@ -624,7 +624,6 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
   | `DATABASE_PATH` `LOG_LEVEL` | operator | deployment identity |
   | `GROUNDED_VERIFY_ROOT` | operator | **security boundary.** A caller-settable confinement root is the hole it exists to close |
   | `CHECKPOINT_GATE_PATTERNS` | operator | the watchdog fires what the model *cannot* self-diagnose; letting the caller tune its triggers inverts the layer |
-  | `CHECKPOINT_TURN_SIGNALS` | operator | like `CHECKPOINT_GATE_PATTERNS`, it sets what the watchdog records at turn end, which is not the caller's to tune (066) |
   | `INPUT_MAX_CHARS` (`VERIFY_MAX_CLAIM_CHARS`) `GROUNDED_VERIFY_MAX_LOCATORS` | operator | server-protection guards. A caller may not raise one, and lowering buys the caller nothing it cannot get by sending less |
   | `MAX_RETRIES` `FETCH_TIMEOUT_MS` | operator | resilience against transport failure, about which the caller has no information |
   | `VERIFY_ENSEMBLE_K` | **caller** | per-call `passes` (028), lowering-only |

@@ -6,7 +6,6 @@ use crate::memory::consolidate::ConsolidationRecord;
 use crate::memory::push::PushRecord;
 use crate::memory::{Memory, Status};
 use crate::storage::jev::JevRecord;
-use crate::storage::turn_signals::TurnSignalRecord;
 use crate::telemetry::InvocationRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -96,13 +95,6 @@ pub trait Storage: Send + Sync {
         eval_id: &str,
         jev_cost_usd: f64,
     ) -> Result<(), AppError>;
-
-    /// Persist one turn-signal record (066 FR-011): one per covered turn end.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError`] if the write fails.
-    async fn record_turn_signals(&self, record: &TurnSignalRecord) -> Result<(), AppError>;
 
     /// Signal keys delivered (verdict ≠ silence, not suppressed) in this
     /// session since `since` — the FR-010 cooldown lookup.

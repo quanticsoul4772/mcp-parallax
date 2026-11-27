@@ -158,7 +158,6 @@ async fn main() {
             server_session_id: "acceptance".into(),
             deadline: Duration::from_millis(JEV_TURN_DEADLINE_MS),
         }),
-        turn_signals: None,
         skip_thresholds: None,
         fixed_eval_id: None,
         tool_jev: None,

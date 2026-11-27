@@ -4,7 +4,6 @@
 //! questions, the answer validator and band functions. Shadow only in 064:
 //! no Jev answer changes any decision.
 
-pub mod entities;
 pub mod exclusion;
 pub mod injection;
 pub mod measure;

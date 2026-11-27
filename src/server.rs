@@ -498,13 +498,6 @@ impl Parallax {
                 None
             },
             fixed_eval_id: None,
-            turn_signals: config.checkpoint_turn_signals.then(|| {
-                crate::checkpoint::signals::TurnSignalsDeps {
-                    previous_finals: Arc::default(),
-                    grounded_verify: grounded.is_some(),
-                    research: search.is_some(),
-                }
-            }),
         });
 
         let memory = embedder.map(|embedder| {

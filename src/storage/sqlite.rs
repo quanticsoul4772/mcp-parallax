@@ -128,10 +128,6 @@ impl SqliteStorage {
             .execute(&pool)
             .await
             .map_err(|e| AppError::Storage(format!("jev_records migration failed: {e}")))?;
-        sqlx::raw_sql(super::turn_signals::TURN_SIGNALS_MIGRATION)
-            .execute(&pool)
-            .await
-            .map_err(|e| AppError::Storage(format!("turn_signal_records migration failed: {e}")))?;
         Self::migrate_review_skipped_by(&pool).await?;
         Self::migrate_label_cost_column(&pool).await?;
         Self::migrate_cooldown_column(&pool).await?;
@@ -192,18 +188,6 @@ impl SqliteStorage {
                 })?;
         }
         Ok(())
-    }
-
-    /// Read back every turn-signal record, oldest first (066; the report
-    /// reads these). Not part of the [`Storage`] seam.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Storage`] when the read fails.
-    pub async fn load_turn_signal_records(
-        &self,
-    ) -> Result<Vec<super::turn_signals::TurnSignalRecord>, AppError> {
-        super::turn_signals::load(&self.pool).await
     }
 
     /// Read back every Jev record, oldest first (064; the back-test harness
@@ -793,13 +777,6 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
-    async fn record_turn_signals(
-        &self,
-        record: &super::turn_signals::TurnSignalRecord,
-    ) -> Result<(), AppError> {
-        super::turn_signals::insert(&self.pool, record).await
-    }
-
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
         let signals_evaluated: Vec<&str> = record
             .signals_evaluated
@@ -1212,9 +1189,9 @@ mod tests {
     }
 
     // 066 T011: a database from before 066 gains review_skipped_by on
-    // checkpoint_records, and the turn_signal_records table, on open.
+    // checkpoint_records on open.
     #[tokio::test]
-    async fn a_pre_066_database_gains_review_skipped_by_and_the_turn_signal_table() {
+    async fn a_pre_066_database_gains_review_skipped_by() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pre066.db").to_string_lossy().to_string();
         {
@@ -1254,11 +1231,6 @@ mod tests {
             .await
             .unwrap();
         assert!(names(checkpoint).contains(&"review_skipped_by".to_string()));
-        let turn_signals = sqlx::query("PRAGMA table_info(turn_signal_records)")
-            .fetch_all(&storage.pool)
-            .await
-            .unwrap();
-        assert!(names(turn_signals).contains(&"eval_id".to_string()));
         // Reopening runs the migration again without error.
         drop(storage);
         SqliteStorage::connect(&path).await.unwrap();
