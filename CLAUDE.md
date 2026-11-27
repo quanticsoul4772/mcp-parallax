@@ -168,7 +168,7 @@ secret folder (055) or is a drive root or the home folder; absent, the tool is n
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
 `REQUEST_TIMEOUT_MS` (default `120000` — raised from 30 s by 018 D7 in step with
-the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW` and `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error), `PARALLAX_JEV_MODE_RESEARCH_INJECTION` (`off`|`shadow`|`on`; `on` needs a pinned threshold for the configured model) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
+the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW`, `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` and `PARALLAX_JEV_MODE_TOOL_RISK` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error), `PARALLAX_JEV_MODE_RESEARCH_INJECTION` (`off`|`shadow`|`on`; `on` needs a pinned threshold for the configured model) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
 A present-but-unparseable value is an error, never a silent fallback to the
 default. Telemetry is enabled solely by the standard OTel variables
 (`OTEL_EXPORTER_OTLP_ENDPOINT` et al.; `OTEL_SDK_DISABLED=true` honored
@@ -295,6 +295,8 @@ code-exec stays deferred, off) →
 not a mandate — confirm priorities before building.
 
 ## Active feature (Spec Kit)
+
+**067 (`067-jev-tool-risk`); shipped** ([plan](specs/067-jev-tool-risk/plan.md)) - with `PARALLAX_JEV_MODE_TOOL_RISK=shadow`, every tool call the widened `PreToolUse` matcher catches (every tool except Parallax's own) gets a code exclusion or one Jev `action_class` answer on its redacted projection, plus a label from the checkpoint review's routed model, off the gate's response path; recorded only, the verdict never changes. The memory hold stays on risk-matched `Bash`, `Write` and `Edit`. Off in code. Live example on claude_cli: 28 of 28 rows, every Jev answer labeled, no gate response waited; gate p99 under load: 75 ms (56 calls, two runs beside a research question).
 
 <!-- SPECKIT START -->
 **066 (`066-jev-turn-end`); shipped** ([plan](specs/066-jev-turn-end/plan.md)) - with `CHECKPOINT_TURN_SIGNALS=on`, each turn end runs the pushback-reversal and unverified-fact detectors in code and writes one `turn_signal_records` row; nothing is sent. The turn-review Jev questions moved to version 2; the review skip is built but `on` is refused until thresholds are pinned (the tables are empty). Unknown `PARALLAX_JEV_*` names are now startup errors. Off in code; on in the operator's setup since 2026-11-26. Live example: 5 of 5 turn ends joined, no sentinel sent. Version-2 measurements: self-agreement 100 of 100; order flips 1 and 0 in 100 at a 0.5 cutoff, repeated once a threshold is pinned.

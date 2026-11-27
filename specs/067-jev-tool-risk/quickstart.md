@@ -25,3 +25,5 @@ Exits non-zero unless: at least 25 `tool_risk` rows; every outcome in the bound 
 ## 5. Load (§5.5)
 
 Run the live example with at least two sessions plus a research run at once, and record hook p99 latency.
+
+Result (2026-11-27, `PARALLAX_BACKEND=claude_cli`): two tool-risk runs started at once during `acceptance_jev`'s research question; both passed SC-002 and SC-004. Gate response over 56 calls: p50 4 ms, p99 75 ms, max 75 ms.
