@@ -65,15 +65,21 @@ src/checkpoint/run.rs                # run_action restructure (§6.3.2, §6.3.5)
 src/checkpoint/tool_risk.rs          # new: order, allowlist, projections (§6.3.3, §6.3.6)
 src/jev/questions.rs                 # action_class (§6.3.4)
 src/jev/shadow/tool.rs               # new: the request and its row (§6.3.5, §5.1 records)
+src/server.rs                        # wiring the site into CheckpointDeps
+CHANGELOG.md, CLAUDE.md              # touch-points (roadmap §10)
 src/traits/classifier.rs             # JevSite::ToolRisk
 src/config.rs, src/main.rs, README.md  # PARALLAX_JEV_MODE_TOOL_RISK
 examples/acceptance_tool_risk.rs     # §5.5 live example
 docs/design/WATCHDOG_LAYER.md, specs/006-checkpoint-layer/, src/checkpoint/gate.rs   # §6.3.9
 ```
 
+## Process (roadmap line 163)
+
+Test-first implementation, the full gate, an independent review, live acceptance, then the PR.
+
 ## Open items
 
-None.
+- §11 test 7, "memory questions off without the opt-in": 067 asks Jev no memory question, so what the test checks is to be settled with the owner (tasks.md T015).
 
 ## Complexity Tracking
 
