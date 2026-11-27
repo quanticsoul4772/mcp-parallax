@@ -48,7 +48,7 @@ A new nullable `jev_records` column, `cooldown_suppressed`: the signal kinds who
 
 ### D4. Downstream-cost estimate
 
-The back-test report computes, for each signal, the cost of the continuations and correctives its yes answers would have triggered, from the rows and the per-corrective costs in existing invocation records; no new column (spec Clarification D).
+The back-test report computes, for each signal, the cost of the continuations and correctives its yes answers would have triggered, from the rows and the per-corrective costs in existing invocation records; no new column (spec Clarification D). The estimate is reported at three cutoffs, p ≥ 0.5, 0.7 and 0.9, so no yes is fixed before promotion. At each cutoff, a yes is left out when the same session had a yes for the same kind at that cutoff within `COOLDOWN_WINDOW_MS` before it, recomputed from the rows rather than read from `cooldown_suppressed`. Correctives are priced at the mean `cost_usd` of that tool's invocation records; continuations are counted with no dollar figure, because Parallax records no cost for the harness model's turn (decide-scored options; chosen 2026-11-27).
 
 ### D5. Removal list
 

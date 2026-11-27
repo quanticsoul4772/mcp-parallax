@@ -296,6 +296,7 @@ pub fn site_tables(items: &[Item]) -> SiteTables {
     }
 }
 
+pub mod cost;
 pub mod injection;
 
 #[cfg(test)]

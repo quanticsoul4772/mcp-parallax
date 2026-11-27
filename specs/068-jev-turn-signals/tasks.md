@@ -31,8 +31,9 @@ Test-first throughout: each test task is written and run to fail before its impl
 - [x] T015a Test (§6.2, plan D10, roadmap check item 24): window eviction (`WINDOW_ENTRIES` = 200) doesn't change existing signals: a transcript longer than the window yields the same batch-screen signals and turn-review candidates as its last 200 entries alone. Files: `src/checkpoint/run/tests/` or `src/traits/trajectory.rs` tests.
 - [x] T015b Catalog check (FR-006, §11, roadmap check items 30 and 39), test-first: the `recommends` field names `verify` for `pushback_reversal`; for `unverified_fact` it names `grounded_verify` only when configured, else `research` only when configured, else none. Files: `src/jev/shadow/signals.rs` tests.
 - [x] T015c After T007, confirm the signal-enum binding test (`src/checkpoint/contract.rs`, `the_turn_contract_lists_exactly_the_kinds_a_turn_can_fire`) still passes; check the `parallax.checkpoint.signals` list in `specs/007-observability-layer/contracts/telemetry.md` against the fired-signal kinds and correct it if it differs (FR-010).
-- [ ] T016 Test the back-test report's downstream-cost estimate (FR-008, plan D4) from fixture rows and invocation records. Files: `src/jev/report/` tests.
-- [ ] T017 Implement T016. Files: `src/jev/report/`.
+- [x] T016 Test the back-test report's downstream-cost estimate (FR-008, plan D4) from fixture rows and invocation records. Files: `src/jev/report/` tests.
+- [x] T017 Implement T016. Files: `src/jev/report/`.
+- [ ] T017a Print the downstream-cost estimate in the back-test report (plan D4): the `report` subcommand in `examples/jev_backtest/offline.rs` loads each invocation record's tool and `cost_usd` and prints `jev::report::cost::summary_lines` after the existing tables. Files: `examples/jev_backtest/offline.rs`, plus a storage reader for invocation records if none exists.
 
 ## Phase 4: Polish and acceptance
 
