@@ -619,7 +619,7 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
   | Setting | Owner | Why |
   | --- | --- | --- |
   | `ANTHROPIC_API_KEY` `VOYAGE_API_KEY` `EXA_API_KEY` `TYPESAFE_API_KEY` | operator | credentials |
-  | `PARALLAX_JEV_MODE_*` `PARALLAX_JEV_MODEL` | operator | decide what leaves the machine for a third party, and the model billed (064; 065 adds `RESEARCH_INJECTION`, the first site that takes `on`) |
+  | `PARALLAX_JEV_MODE_*` `PARALLAX_JEV_MODEL` | operator | decide what leaves the machine for a third party, and the model billed (064; 065 adds `RESEARCH_INJECTION`, the first site that takes `on`; 067 adds `TOOL_RISK`, `off` or `shadow` only) |
   | `ANTHROPIC_MODEL` `ANTHROPIC_API_BASE` `VOYAGE_MODEL` | operator | set the rate billed and the endpoint reached; `VOYAGE_MODEL` additionally fixes the embedding space, so changing it per call would make stored vectors incomparable |
   | `DATABASE_PATH` `LOG_LEVEL` | operator | deployment identity |
   | `GROUNDED_VERIFY_ROOT` | operator | **security boundary.** A caller-settable confinement root is the hole it exists to close |

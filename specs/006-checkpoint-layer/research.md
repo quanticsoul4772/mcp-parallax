@@ -98,6 +98,10 @@ supervision patterns) and are recorded in the corpus amendment
 - **Rationale**: FR-003 forbids model passes at this boundary; relevance
   thresholding over verified constraint memories is checkable, fast, and its
   false-hold risk is bounded by FR-013's narrow risk matching + τ.
+- **Amendment 2026-11-27 (067)**: "No model hop" holds for the gate's
+  decision. A shadow-only Jev request and a big-model label may run per
+  matched call off the response path, recorded only; neither can change the
+  verdict.
 - **Spike S2** (gates SC-003): measure Voyage query-embed p95 from the dev
   machine. If > ~100 ms (leaving no margin in a 150 ms p95), the recorded
   options are: (a) local lexical matching (token overlap) over the small set

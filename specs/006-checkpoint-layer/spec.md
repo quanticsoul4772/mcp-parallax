@@ -225,6 +225,10 @@ runs when screening finds no candidates.
   a configurable risk-pattern set (default: consequential shell commands and
   writes — deploys, pushes, deletes, configuration changes). Non-matching
   actions MUST pass through with no evaluation and no added latency.
+  *Amended 2026-11-27 (067):* the hook matches every tool except Parallax's
+  own; only risk-matched `Bash`, `Write` and `Edit` calls can hold. With the
+  tool-risk site in shadow, every matched call not settled in code is also
+  sent to Jev off the response path, adding no latency to the gate's response.
 - **FR-010**: A delivered flag MUST NOT be re-delivered for the same unresolved
   signal within its cooldown window; holds are never rate-limited.
 - **FR-014**: An end-of-turn flag MUST be delivered by forced continuation:

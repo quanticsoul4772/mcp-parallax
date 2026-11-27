@@ -74,6 +74,29 @@ pub trait Storage: Send + Sync {
     /// Returns [`AppError`] if any write fails; nothing is kept.
     async fn record_jev(&self, records: &[JevRecord]) -> Result<(), AppError>;
 
+    /// Fill a tool-risk row's label fields once its label call ends (067).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails or no row has `id`.
+    async fn update_jev_label(
+        &self,
+        id: &str,
+        update: &crate::storage::jev::JevLabelUpdate,
+    ) -> Result<(), AppError>;
+
+    /// Set a checkpoint record's Jev cost once its off-path tool-risk row is
+    /// written (067).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn set_checkpoint_jev_cost(
+        &self,
+        eval_id: &str,
+        jev_cost_usd: f64,
+    ) -> Result<(), AppError>;
+
     /// Persist one turn-signal record (066 FR-011): one per covered turn end.
     ///
     /// # Errors

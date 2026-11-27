@@ -82,9 +82,26 @@ pub struct JevSettings {
     /// `PARALLAX_JEV_MODE_RESEARCH_INJECTION`, default off; the only site
     /// that accepts `on`, and only with a pinned threshold (065).
     pub research_injection: crate::traits::classifier::JevMode,
+    /// `PARALLAX_JEV_MODE_TOOL_RISK`, default off; `off` or `shadow` (067).
+    pub tool_risk: crate::traits::classifier::JevMode,
 }
 
 impl JevSettings {
+    /// The configured mode of one site.
+    #[must_use]
+    pub const fn mode(
+        &self,
+        site: crate::traits::classifier::JevSite,
+    ) -> crate::traits::classifier::JevMode {
+        use crate::traits::classifier::JevSite;
+        match site {
+            JevSite::TurnReview => self.turn_review,
+            JevSite::ResearchClaims => self.research_claims,
+            JevSite::ResearchInjection => self.research_injection,
+            JevSite::ToolRisk => self.tool_risk,
+        }
+    }
+
     /// Read the Jev settings from the process environment.
     ///
     /// # Errors
@@ -143,6 +160,7 @@ impl JevSettings {
             turn_review: JevMode::Off,
             research_claims: JevMode::Off,
             research_injection: JevMode::Off,
+            tool_risk: JevMode::Off,
         };
         for (name, value) in vars
             .iter()
@@ -153,9 +171,11 @@ impl JevSettings {
                 .into_iter()
                 .find(|site| site.suffix() == suffix)
                 .ok_or_else(|| {
+                    let sites: Vec<&str> = JevSite::ALL.iter().map(|s| s.suffix()).collect();
                     ConfigError::Jev(format!(
                         "unknown variable `{name}` in the reserved `{JEV_MODE_PREFIX}*` \
-                         namespace — the sites are TURN_REVIEW, RESEARCH_CLAIMS and RESEARCH_INJECTION"
+                         namespace — the sites are {}",
+                        sites.join(", ")
                     ))
                 })?;
             let mode = JevMode::parse(value).ok_or_else(|| {
@@ -188,6 +208,7 @@ impl JevSettings {
                 JevSite::TurnReview => settings.turn_review = mode,
                 JevSite::ResearchClaims => settings.research_claims = mode,
                 JevSite::ResearchInjection => settings.research_injection = mode,
+                JevSite::ToolRisk => settings.tool_risk = mode,
             }
         }
         if settings.research_injection == JevMode::On
@@ -202,9 +223,10 @@ impl JevSettings {
         }
         // 064 review D: a site in shadow is costed per request, so its model
         // must have a price row; the fallback rate would overstate it ~120x.
-        let shadowed = settings.turn_review != JevMode::Off
-            || settings.research_claims != JevMode::Off
-            || settings.research_injection != JevMode::Off;
+        // 067: every site in `JevSite::ALL`, so a new site cannot skip it.
+        let shadowed = JevSite::ALL
+            .into_iter()
+            .any(|site| settings.mode(site) != JevMode::Off);
         if shadowed && !crate::telemetry::pricing_known(&settings.model) {
             return Err(ConfigError::Jev(format!(
                 "`PARALLAX_JEV_MODEL` is `{}`, which has no price row; Jev costs would be \
@@ -1320,6 +1342,54 @@ mod tests {
                     "{err}"
                 );
             }
+        }
+
+        // 067 T002 (FR-010): the tool-risk site is off by default, takes
+        // `shadow`, refuses `on`, needs the key, rejects other values, and
+        // its model needs a price row like every other site.
+        #[test]
+        fn the_tool_risk_site_defaults_off_and_takes_shadow() {
+            let off = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(off.tool_risk, JevMode::Off);
+            let s = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TOOL_RISK", "shadow")]))
+                .unwrap();
+            assert_eq!(s.tool_risk, JevMode::Shadow);
+        }
+
+        #[test]
+        fn tool_risk_on_is_a_startup_error_naming_the_variable() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TOOL_RISK", "on")]))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("PARALLAX_JEV_MODE_TOOL_RISK"), "{err}");
+        }
+
+        #[test]
+        fn tool_risk_shadow_without_a_key_is_an_error_naming_the_variable() {
+            let err = JevSettings::resolve(vars(&[("PARALLAX_JEV_MODE_TOOL_RISK", "shadow")]))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("PARALLAX_JEV_MODE_TOOL_RISK"), "{err}");
+        }
+
+        #[test]
+        fn tool_risk_with_an_unknown_value_is_an_error_naming_the_variable() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TOOL_RISK", "maybe")]))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("PARALLAX_JEV_MODE_TOOL_RISK"), "{err}");
+        }
+
+        #[test]
+        fn tool_risk_shadow_with_an_unpriced_model_is_an_error() {
+            let err = JevSettings::resolve(vars(&[
+                KEY,
+                ("PARALLAX_JEV_MODE_TOOL_RISK", "shadow"),
+                ("PARALLAX_JEV_MODEL", "jev-0.0.1"),
+            ]))
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("PARALLAX_JEV_MODEL"), "{err}");
         }
 
         // 066 T024: a name in the reserved PARALLAX_JEV_* namespace that is

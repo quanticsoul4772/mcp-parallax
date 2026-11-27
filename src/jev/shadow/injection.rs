@@ -96,6 +96,7 @@ fn row(jev: &InjectionJev, source_id: &str, patterns063: &[&str], now: DateTime<
         source_ids: Some(vec![source_id.to_string()]),
         label_json: Some(json!({ "patterns063": patterns063 })),
         label_source: Some("063 pattern screen".into()),
+        label_cost_usd: None,
         state_json: None,
         state_hash: None,
         transcript_ref: None,

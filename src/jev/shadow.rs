@@ -4,6 +4,7 @@
 
 mod claim;
 mod injection;
+mod tool;
 mod turn;
 
 pub use claim::{
@@ -11,6 +12,10 @@ pub use claim::{
     PreparedClaim, ABANDONED_ERROR,
 };
 pub use injection::{abandoned_row, screen_page, InjectionJev, Screening, CANCELLED_ERROR};
+pub use tool::{
+    excluded_tool_row, label_tool, shadow_tool, tool_questions, ToolIds, ToolJev, LABEL_BUSY,
+    LABEL_IN_FLIGHT, LABEL_PROMPT_VERSION, TOOL_JEV_IN_FLIGHT,
+};
 pub use turn::{
     no_memory_candidates, shadow_turn, turn_label, turn_state, ReviewOutcome, TurnIds, TurnInputs,
     TurnJev, TurnState, TurnStateError,
@@ -164,6 +169,7 @@ pub(crate) mod tests_support {
             source_ids: None,
             label_json: None,
             label_source: None,
+            label_cost_usd: None,
             state_json: None,
             state_hash: None,
             transcript_ref: None,

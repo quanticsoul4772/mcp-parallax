@@ -53,7 +53,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit",
+        "matcher": "^(?!mcp__parallax__).*",
         "hooks": [
           {
             "type": "mcp_tool",

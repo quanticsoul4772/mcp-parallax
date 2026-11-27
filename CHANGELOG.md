@@ -13,6 +13,18 @@ arc.
 
 ### Added
 
+* **Jev on tool calls** (067) — with `PARALLAX_JEV_MODE_TOOL_RISK=shadow` (off
+  by default; `on` is refused; needs `TYPESAFE_API_KEY`), every tool call the
+  widened `PreToolUse` matcher catches (every tool except Parallax's own) is
+  settled in code (a risk pattern, or the `cargo test`/`cargo build`
+  whole-command allowlist) or sent to Jev's `action_class` question as a
+  redacted projection, and the checkpoint review's routed model answers the
+  same question for the row's label. Both run off the gate's response path and
+  record to `jev_records` (site `tool_risk`; new `label_cost_usd` column); the
+  gate's verdict never changes. The memory hold now applies only to
+  risk-matched `Bash`, `Write` and `Edit` calls.
+  `integrations/claude-code/hooks.json` ships the widened matcher.
+
 * **Turn signals at turn end** (066) — with `CHECKPOINT_TURN_SIGNALS=on` (off by
   default), each non-continuation turn end runs two detectors in code,
   `pushback_reversal` and `unverified_fact`, and writes one row to the new

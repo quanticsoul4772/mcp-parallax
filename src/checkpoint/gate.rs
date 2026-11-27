@@ -3,8 +3,10 @@
 //! Risk matching selects which actions get evaluated at all (FR-013);
 //! constraint relevance decides the hold: a verified, constraint-kind
 //! stored memory whose relevance to the pending action clears τ. No model
-//! pass — the user judges actual contradiction at the hold (FR-011 makes
-//! that honest).
+//! pass in the decision — the user judges actual contradiction at the hold
+//! (FR-011 makes that honest). 067's tool-risk shadow asks Jev and a big
+//! model about matched calls not settled in code, off the response path,
+//! recorded only; it never reaches this decision.
 
 use crate::checkpoint::{Signal, SignalKind, GATE_RELEVANCE_TAU, GATE_RISK_PATTERNS};
 use crate::memory::ranking::cosine;

@@ -367,6 +367,56 @@ mod tests {
         assert_eq!(listed, fired);
     }
 
+    /// 067 T008 (FR-001, §11 test 1): the shipped `PreToolUse` matcher is the
+    /// pattern the T001 spike verified: every tool except Parallax's own.
+    #[test]
+    fn the_pre_tool_use_matcher_is_the_spike_verified_pattern() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/integrations/claude-code/hooks.json"
+        );
+        let hooks: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let entries = hooks["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["matcher"], "^(?!mcp__parallax__).*");
+        assert_eq!(entries[0]["hooks"][0]["tool"], "checkpoint_action");
+
+        // 067 review finding 12: the project's own settings carry the same
+        // matcher for the same tool (FR-001 names both files).
+        let settings_path = concat!(env!("CARGO_MANIFEST_DIR"), "/.claude/settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(settings_path).unwrap()).unwrap();
+        let gate = settings["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["hooks"][0]["tool"] == "checkpoint_action")
+            .expect("a checkpoint_action PreToolUse entry in .claude/settings.json");
+        assert_eq!(gate["matcher"], entries[0]["matcher"]);
+    }
+
+    /// 067 T014 (FR-005, §11 test 6): the Jev deadline plus the gate budget
+    /// stays within a quarter of the `checkpoint_action` hook timeout.
+    #[test]
+    fn the_tool_risk_deadline_and_gate_budget_fit_a_quarter_of_the_hook_timeout() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/integrations/claude-code/hooks.json"
+        );
+        let hooks: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let timeout_s = hooks["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"]
+            .as_u64()
+            .unwrap();
+        let quarter_ms = timeout_s * 1000 / 4;
+        assert!(
+            crate::client::typesafe::JEV_TOOL_DEADLINE_MS + crate::checkpoint::GATE_BUDGET_MS
+                <= quarter_ms,
+            "Jev deadline + gate budget exceeds {quarter_ms} ms"
+        );
+    }
+
     /// Contract sync (the 005 pattern): wire shapes match the three contract
     /// JSONs — params property names + required lists, and the result's
     /// field set.

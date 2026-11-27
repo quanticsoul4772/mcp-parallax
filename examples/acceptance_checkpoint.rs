@@ -126,6 +126,7 @@ async fn main() {
         turn_signals: None,
         skip_thresholds: None,
         fixed_eval_id: None,
+        tool_jev: None,
     };
     let dir = tempfile::tempdir().unwrap();
 

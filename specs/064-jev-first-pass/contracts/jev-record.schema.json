@@ -23,7 +23,7 @@
     "created_at": { "type": "string", "format": "date-time" },
     "server_session_id": { "type": "string" },
     "harness_session_id": { "type": ["string", "null"] },
-    "site": { "enum": ["turn_review", "research_claims", "research_injection"] },
+    "site": { "enum": ["turn_review", "research_claims", "research_injection", "tool_risk"] },
     "mode": { "enum": ["shadow", "on"] },
     "questions_json": {
       "type": "array",
@@ -88,10 +88,20 @@
             "votes_completed": { "type": "integer", "minimum": 0 },
             "sources": { "type": "integer", "minimum": 0 }
           }
+        },
+        {
+          "description": "Tool risk (067): the big model's action_class answer for the same redacted projection Jev saw; label_source names the model and prompt version. Null on excluded rows.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class"],
+          "properties": {
+            "class": { "enum": ["spend_or_destructive", "state_changing", "read_only"] }
+          }
         }
       ]
     },
     "label_source": { "type": ["string", "null"] },
+    "label_cost_usd": { "description": "Tool risk (067): the label call's cost; null where no label call was made.", "type": ["number", "null"], "minimum": 0 },
     "state_json": { "description": "Research only: the redacted state sent, for replay.", "type": ["object", "null"] },
     "state_hash": { "type": ["string", "null"] },
     "transcript_ref": { "type": ["string", "null"] },

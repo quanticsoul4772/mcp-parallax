@@ -20,6 +20,11 @@ const fn data_sent(site: JevSite) -> &'static str {
              numbers, dates or flagged sources are never sent)"
         }
         JevSite::ResearchInjection => "kept research pages (URL and capped text, redacted)",
+        JevSite::ToolRisk => {
+            "pending tool calls as redacted projections (the Bash command with heredoc bodies \
+             dropped; Write and Edit file paths; Read, Grep and Glob file_path, path and pattern \
+             values; other tools' names and argument names)"
+        }
     }
 }
 
@@ -28,6 +33,7 @@ const fn mode(settings: &JevSettings, site: JevSite) -> JevMode {
         JevSite::TurnReview => settings.turn_review,
         JevSite::ResearchClaims => settings.research_claims,
         JevSite::ResearchInjection => settings.research_injection,
+        JevSite::ToolRisk => settings.tool_risk,
     }
 }
 
@@ -44,6 +50,11 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
         .filter_map(|site| {
             let effect = match mode(settings, site) {
                 JevMode::Off => return None,
+                // 067: the tool-risk projection also goes to the label model.
+                JevMode::Shadow if site == JevSite::ToolRisk => {
+                    "answers are recorded only, and the same projection goes to the configured \
+                     model backend for the label"
+                }
                 JevMode::Shadow => "answers are recorded only",
                 JevMode::On => match site {
                     JevSite::TurnReview => {
@@ -53,7 +64,9 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
                     JevSite::ResearchInjection => {
                         "pages at or above the pinned threshold carry an advisory warning"
                     }
-                    JevSite::ResearchClaims => {
+                    // Config refuses `on` for tool risk (067); the wording
+                    // is the generic one should that change.
+                    JevSite::ResearchClaims | JevSite::ToolRisk => {
                         "answers are used against the site's pinned thresholds"
                     }
                 },
@@ -97,7 +110,37 @@ mod tests {
             turn_review: turn,
             research_claims: research,
             research_injection: JevMode::Off,
+            tool_risk: JevMode::Off,
         }
+    }
+
+    // 067 review finding 11: the tool-risk line appears in shadow, names the
+    // host, and is absent when the site is off.
+    #[test]
+    fn the_tool_risk_line_appears_in_shadow_and_not_when_off() {
+        let mut s = settings(Some("k"), JevMode::Off, JevMode::Off);
+        s.tool_risk = JevMode::Shadow;
+        let lines = startup_lines(&s);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("Jev shadow on for tool_risk:"),
+            "{lines:?}"
+        );
+        assert!(lines[0].contains("api.typesafe.ai"), "{lines:?}");
+        assert!(wants_client(&s));
+        // 067 review finding 4: the line names every value sent and both
+        // destinations.
+        assert_eq!(
+            lines[0],
+            "Jev shadow on for tool_risk: sends pending tool calls as redacted projections \
+             (the Bash command with heredoc bodies dropped; Write and Edit file paths; Read, \
+             Grep and Glob file_path, path and pattern values; other tools' names and argument \
+             names) to api.typesafe.ai; answers are recorded only, and the same projection goes \
+             to the configured model backend for the label"
+        );
+        s.tool_risk = JevMode::Off;
+        assert!(startup_lines(&s).is_empty());
+        assert!(!wants_client(&s));
     }
 
     #[test]

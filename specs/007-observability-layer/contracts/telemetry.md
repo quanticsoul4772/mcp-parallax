@@ -99,6 +99,10 @@ data).
 
 > **Amendment (2026-11-24, feature 064).** The `parallax.jev.*` attributes come from the call's `jev_records` rows, not the invocation or checkpoint record. They are computed at the same exit point from the rows being written, so they agree with `jev_records`; `parallax.jev.cost_usd` equals the record's `jev_cost_usd`.
 
+### `parallax.jev.tool_risk` — one per tool-risk row (kind INTERNAL)
+
+**Added 067.** Exported when the row is written, off the gate's response path and after the checkpoint record, so it is its own trace root with no caller trace. Attributes: `parallax.jev.mode` (`shadow`), `parallax.jev.requests` (0 or 1), `parallax.jev.failures`, `parallax.jev.cost_usd` (when known; equal to the row's `cost_usd`), `parallax.jev.latency_ms` (when a request ran), `parallax.jev.critical_path_ms` (0 by design), `parallax.session_id` (the harness session). Never the projection, the answer or the label.
+
 ## Metrics
 
 | Name | Instrument | Unit | Attributes |
