@@ -71,8 +71,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T029 Live example `examples/acceptance_turn_signals.rs` (SC-004): fixtures through `run_turn` with the signals on and a scratch database; one joined row per covered turn end with the expected results; no sentinel string in any request body; exits non-zero on failure. Register it in `Cargo.toml`.
 - [x] T030 Amendments (FR-013): `docs/design/MEMORY_LAYER.md`, `docs/design/WATCHDOG_LAYER.md:59`, `docs/design/CORRECTIVE_SELECTION.md:89`, `docs/design/NEW_SERVER_DESIGN.md` §10, `specs/017-memory-consolidation/spec.md`, and the CHANGELOG.
 - [x] T031 Analyze (Spec Kit) across spec, plan and tasks, with the three reviewers on the version-2 criteria in `contracts/questions.md`.
-- [ ] T032 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` and `code-reviewer` agents.
-- [ ] T032a Before the PR, run `examples/acceptance_jev.rs` on the branch, so the version-2 turn-review wording passes the live example before its PR (real redacted test requests to TypeSafe); results go to `quickstart.md`.
+- [x] T032 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` and `code-reviewer` agents.
+- [x] T032a Before the PR, run `examples/acceptance_jev.rs` on the branch, so the version-2 turn-review wording passes the live example before its PR (real redacted test requests to TypeSafe); results go to `quickstart.md`.
 - [ ] T033 Push and PR; CI.
 - [ ] T034 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
 - [ ] T034a After merge and rebuild, re-run the noise and self-agreement measurements, and run the order check in both criteria orders (research D9, FR-010), on the version-2 turn-review questions with `jev_backtest`; results go to the 064 measurements doc under a 066 section.
