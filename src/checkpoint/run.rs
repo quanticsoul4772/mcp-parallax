@@ -219,6 +219,15 @@ fn spawn_tool_risk(deps: &CheckpointDeps, params: &CheckpointActionParams, eval_
     });
 }
 
+/// The turn-signal rows' costs, added to the checkpoint record by whichever
+/// of `run_turn` and the spawned task finishes second: the rows can land
+/// before the record exists, and a cancelled call never writes one.
+#[derive(Default)]
+struct SignalCosts {
+    record_written: bool,
+    pending: Vec<f64>,
+}
+
 /// What the turn-signal shadow needs from the turn's one transcript read.
 struct SignalState {
     window: crate::checkpoint::trajectory::TrajectoryWindow,
@@ -227,15 +236,17 @@ struct SignalState {
 }
 
 /// 068: ask Jev both turn-signal questions off the Stop hook's response path,
-/// after the checkpoint record is written; never awaited (plan D1a). Both
-/// rows are written together, then each row's span is exported and its cost
-/// added to the checkpoint record (plan D7a).
+/// right after the transcript read, so a turn call cancelled during the slow
+/// review still leaves the rows; never awaited (plan D1a). Both rows are
+/// written together, then each row's span is exported; their costs go to the
+/// checkpoint record through `costs` (plan D7a).
 fn spawn_turn_signals(
     deps: &CheckpointDeps,
     jev: Arc<crate::jev::shadow::SignalsJev>,
     params: &CheckpointTurnParams,
     eval_id: String,
     state: SignalState,
+    costs: Arc<std::sync::Mutex<SignalCosts>>,
 ) {
     use crate::jev::shadow::{shadow_signals, SignalInputs, TurnIds};
     let storage = Arc::clone(&deps.storage);
@@ -279,10 +290,26 @@ fn spawn_turn_signals(
         }
         for row in &rows {
             crate::observability::emit_turn_signals(row);
-            if let Some(cost) = row.cost_usd {
-                if let Err(error) = storage.add_checkpoint_jev_cost(&eval_id, cost).await {
-                    tracing::warn!(%error, "checkpoint jev cost addition failed; the turn is unaffected");
-                }
+        }
+        // Add the costs now if the record is written; otherwise leave them
+        // for run_turn to add once it writes the record.
+        let row_costs: Vec<f64> = rows.iter().filter_map(|r| r.cost_usd).collect();
+        let to_add: Vec<f64> = {
+            let mut handoff = costs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if handoff.record_written {
+                drop(handoff);
+                row_costs
+            } else {
+                handoff.pending.extend(row_costs);
+                drop(handoff);
+                Vec::new()
+            }
+        };
+        for cost in to_add {
+            if let Err(error) = storage.add_checkpoint_jev_cost(&eval_id, cost).await {
+                tracing::warn!(%error, "checkpoint jev cost addition failed; the turn is unaffected");
             }
         }
     });
@@ -461,9 +488,9 @@ pub async fn run_turn(
     // 066: kept outside the block, so a failed audited review still records
     // its audit marker after the fail-open recovery below.
     let mut skipped_by: Option<ReviewSkippedBy> = None;
-    // 068: what the turn-signal shadow needs, kept from the one transcript
-    // read; `None` when the site is off or nothing was read.
-    let mut signal_state: Option<SignalState> = None;
+    // 068: the turn-signal rows' costs, handed between this call and the
+    // task it spawns (see `SignalCosts`).
+    let signal_costs = Arc::new(std::sync::Mutex::new(SignalCosts::default()));
     let evaluation = async {
         if params.final_message.trim().is_empty() {
             return Ok(Evaluated::pure(
@@ -476,12 +503,20 @@ pub async fn run_turn(
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
-        if deps.signals_jev.is_some() {
-            signal_state = Some(SignalState {
+        if let Some(jev) = deps.signals_jev.clone() {
+            let state = SignalState {
                 activity: review::turn_activity(&window),
                 user_text: crate::checkpoint::turn_view::parse_turn(&lines).user_prompt,
                 window: window.clone(),
-            });
+            };
+            spawn_turn_signals(
+                deps,
+                jev,
+                params,
+                eval_id.clone(),
+                state,
+                Arc::clone(&signal_costs),
+            );
         }
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
@@ -592,8 +627,18 @@ pub async fn run_turn(
         jev_row,
     )
     .await?;
-    if let (Some(jev), Some(state)) = (deps.signals_jev.clone(), signal_state) {
-        spawn_turn_signals(deps, jev, params, eval_id, state);
+    // The record exists now: add the turn-signal costs the task left here.
+    let pending = {
+        let mut handoff = signal_costs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        handoff.record_written = true;
+        std::mem::take(&mut handoff.pending)
+    };
+    for cost in pending {
+        if let Err(error) = deps.storage.add_checkpoint_jev_cost(&eval_id, cost).await {
+            tracing::warn!(%error, "checkpoint jev cost addition failed; the turn is unaffected");
+        }
     }
     Ok((
         evaluation.result,

@@ -379,6 +379,12 @@ arc.
 
 ### Fixed
 
+* **Turn-signal rows survive a cancelled end-of-turn call** (068) — the two Jev
+  requests now start right after the transcript is read instead of after the
+  end-of-turn review, so a call Claude Code cancels during the review still
+  records both rows; their cost reaches the checkpoint record whichever finishes
+  first.
+
 * **The Jev back-test `report` prints the plan §7 tables** (064 FR-008,
   SC-005) — it printed only tune-set agreement at a fixed 0.5 cut, with turn
   positives from contradictions alone and research positives pointing the
