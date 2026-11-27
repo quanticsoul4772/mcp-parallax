@@ -155,10 +155,6 @@ text), `RESEARCH_CONCURRENCY` (default `8`, 1..=32), `BRAVE_API_KEY`,
 `FETCH_*` are startup errors if set, `BRAVE_API_KEY` only when `EXA_API_KEY` is
 unset), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
 substrings extending the gate's built-in risk patterns),
-`CHECKPOINT_TURN_SIGNALS` (`off`|`on`, default `off` — `on` runs the
-pushback-reversal and unverified-fact detectors in code at each turn end and
-writes one `turn_signal_records` row; nothing is sent; any other value is a
-startup error),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
 tool; the single root that locators resolve within (`.` means the folder the
 server was started in, so each session gets its own project folder), confined at startup,
@@ -168,7 +164,7 @@ secret folder (055) or is a drive root or the home folder; absent, the tool is n
 `DATABASE_PATH`
 (default `./data/parallax.db`), `LOG_LEVEL` (default `info`),
 `REQUEST_TIMEOUT_MS` (default `120000` — raised from 30 s by 018 D7 in step with
-the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW`, `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` and `PARALLAX_JEV_MODE_TOOL_RISK` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error), `PARALLAX_JEV_MODE_RESEARCH_INJECTION` (`off`|`shadow`|`on`; `on` needs a pinned threshold for the configured model) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
+the output budget), `MAX_RETRIES` (default `3`), and 064's Jev variables: `TYPESAFE_API_KEY` (optional; enables nothing by itself, never logged, removed from `claude -p` children), `PARALLAX_JEV_MODE_TURN_REVIEW`, `PARALLAX_JEV_MODE_RESEARCH_CLAIMS`, `PARALLAX_JEV_MODE_TOOL_RISK` and `PARALLAX_JEV_MODE_TURN_SIGNALS` (`off`|`shadow`; unset is `off`; `shadow` needs the key; an unknown suffix is a startup error), `PARALLAX_JEV_MODE_RESEARCH_INJECTION` (`off`|`shadow`|`on`; `on` needs a pinned threshold for the configured model), `PARALLAX_JEV_SEND_USER_TEXT` (`true`|`false`; unset is `false`; `true` sends that turn's user text, redacted, to `pushback_reversal` only; any other value is a startup error) and `PARALLAX_JEV_MODEL` (`jev-1.14.0` unless set).
 A present-but-unparseable value is an error, never a silent fallback to the
 default. Telemetry is enabled solely by the standard OTel variables
 (`OTEL_EXPORTER_OTLP_ENDPOINT` et al.; `OTEL_SDK_DISABLED=true` honored
@@ -296,10 +292,12 @@ not a mandate — confirm priorities before building.
 
 ## Active feature (Spec Kit)
 
+**068 (`068-jev-turn-signals`); in progress** ([plan](specs/068-jev-turn-signals/plan.md)) - 066's code detectors, their switch and their table are removed. With `PARALLAX_JEV_MODE_TURN_SIGNALS=shadow`, each non-continuation turn end asks Jev `pushback_reversal` and `unverified_fact`, one request each, off the Stop hook's path, and records the answers only (`jev_records`, site `turn_signals`), with `recommends`, `number_diff`, `excluded_claims` and the would-be cooldown in `cooldown_suppressed`. `PARALLAX_JEV_SEND_USER_TEXT=true` sends that turn's user text, redacted, to `pushback_reversal` only. Off in code.
+
 **067 (`067-jev-tool-risk`); shipped** ([plan](specs/067-jev-tool-risk/plan.md)) - with `PARALLAX_JEV_MODE_TOOL_RISK=shadow`, every tool call the widened `PreToolUse` matcher catches (every tool except Parallax's own) gets a code exclusion or one Jev `action_class` answer on its redacted projection, plus a label from the checkpoint review's routed model, off the gate's response path; recorded only, the verdict never changes. The memory hold stays on risk-matched `Bash`, `Write` and `Edit`. Off in code. Live example on claude_cli: 28 of 28 rows, every Jev answer labeled, no gate response waited; gate p99 under load: 75 ms (56 calls, two runs beside a research question).
 
 <!-- SPECKIT START -->
-**066 (`066-jev-turn-end`); shipped** ([plan](specs/066-jev-turn-end/plan.md)) - with `CHECKPOINT_TURN_SIGNALS=on`, each turn end runs the pushback-reversal and unverified-fact detectors in code and writes one `turn_signal_records` row; nothing is sent. The turn-review Jev questions moved to version 2; the review skip is built but `on` is refused until thresholds are pinned (the tables are empty). Unknown `PARALLAX_JEV_*` names are now startup errors. Off in code; on in the operator's setup since 2026-11-26. Live example: 5 of 5 turn ends joined, no sentinel sent. Version-2 measurements: self-agreement 100 of 100; order flips 1 and 0 in 100 at a 0.5 cutoff, repeated once a threshold is pinned.
+**066 (`066-jev-turn-end`); shipped** ([plan](specs/066-jev-turn-end/plan.md)) - each turn end ran the pushback-reversal and unverified-fact detectors in code and recorded one row; nothing was sent. 068 removes these detectors, their switch and their table. The turn-review Jev questions moved to version 2; the review skip is built but `on` is refused until thresholds are pinned (the tables are empty). Unknown `PARALLAX_JEV_*` names are now startup errors. Off in code; on in the operator's setup since 2026-11-26. Live example: 5 of 5 turn ends joined, no sentinel sent. Version-2 measurements: self-agreement 100 of 100; order flips 1 and 0 in 100 at a 0.5 cutoff, repeated once a threshold is pinned.
 
 **065 (`065-jev-injection-warning`); shipped** ([plan](specs/065-jev-injection-warning/plan.md)) - Jev's `directs_ai` question on each page research keeps, asked beside that page's extraction call; with `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on`, pages at or above the pinned threshold (0.35 on `jev-1.14.0`) carry an advisory warning, separate from 063's pattern screen. Off in code; on in the operator's setup since 2026-11-26. Live run: 5 pages kept, all screened (SC-005 pass). Option order: 4 flips in 612 pages (0.65%), under the 5% gate. Claim settling moved to a later feature.
 

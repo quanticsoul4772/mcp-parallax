@@ -13,6 +13,18 @@ arc.
 
 ### Added
 
+* **Turn signals asked of Jev** (068) — with `PARALLAX_JEV_MODE_TURN_SIGNALS=shadow`
+  (off by default; needs `TYPESAFE_API_KEY`), each non-continuation turn end asks
+  Jev two yes/no questions, `pushback_reversal` and `unverified_fact`, one request
+  each, off the Stop hook's response path, and records the answers in
+  `jev_records` (site `turn_signals`); nothing is flagged. Claims with numbers or
+  dates are kept out of `unverified_fact`'s text; `PARALLAX_JEV_SEND_USER_TEXT=true`
+  sends that turn's user text, redacted, to `pushback_reversal` only. Rows record
+  the corrective each signal would recommend, a number and date difference check,
+  the count of excluded claims, and the would-be cooldown (new
+  `cooldown_suppressed` column). The back-test report adds a downstream-cost
+  estimate.
+
 * **Jev on tool calls** (067) — with `PARALLAX_JEV_MODE_TOOL_RISK=shadow` (off
   by default; `on` is refused; needs `TYPESAFE_API_KEY`), every tool call the
   widened `PreToolUse` matcher catches (every tool except Parallax's own) is
@@ -25,12 +37,8 @@ arc.
   risk-matched `Bash`, `Write` and `Edit` calls.
   `integrations/claude-code/hooks.json` ships the widened matcher.
 
-* **Turn signals at turn end** (066) — with `CHECKPOINT_TURN_SIGNALS=on` (off by
-  default), each non-continuation turn end runs two detectors in code,
-  `pushback_reversal` and `unverified_fact`, and writes one row to the new
-  `turn_signal_records` table with anchors back to the transcript; nothing is sent
-  and nothing is flagged. The 064 turn-review questions move to version 2 with
-  declared criteria, and the report keeps version-1 rows out of promotion. The
+* **Turn-review questions, version 2** (066) — the 064 turn-review questions
+  move to version 2 with declared criteria, and the report keeps version-1 rows out of promotion. The
   end-of-turn review skip and its pinned tables are built and tested;
   `PARALLAX_JEV_MODE_TURN_REVIEW=on` stays refused. Checkpoint records gain
   `review_skipped_by`.
@@ -351,6 +359,9 @@ arc.
   its removal condition: a sqlx release that accepts `libsqlite3-sys >= 0.39`.
 
 ### Removed
+
+* **066's turn-signal detectors** (068) — the two code detectors, their switch and
+  their table are removed; databases that already hold the table keep it.
 
 * **Brave and the page fetcher (059)** — `BRAVE_API_KEY`, `FETCH_TIMEOUT_MS`
   and `FETCH_ALLOW_PRIVATE` no longer configure anything. Breaking:

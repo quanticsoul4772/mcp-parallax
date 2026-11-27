@@ -273,6 +273,13 @@ diversity critical ([multiagent debate](https://www.emergentmind.com/papers/2305
 > more than one pass, and any change to the confidence number, are deferred
 > to their own specification and a larger measurement
 > (`specs/054-decide-reliability/spec.md`).
+>
+> **2026-11-27 amendment (068).** Stance exception: the turn-signal question
+> `pushback_reversal` sees the user's prompt from that turn, which breaks the
+> rule that judges stay blind to the user's stance. A reversal after pushback
+> cannot be judged without the pushback. The exception covers that one
+> question and that turn's user text only, redacted, and sent only with
+> `PARALLAX_JEV_SEND_USER_TEXT=true`; no other Jev question sees user text.
 
 ---
 
@@ -619,12 +626,11 @@ Full: [`RESEARCH_PRIMITIVE.md`](RESEARCH_PRIMITIVE.md).
   | Setting | Owner | Why |
   | --- | --- | --- |
   | `ANTHROPIC_API_KEY` `VOYAGE_API_KEY` `EXA_API_KEY` `TYPESAFE_API_KEY` | operator | credentials |
-  | `PARALLAX_JEV_MODE_*` `PARALLAX_JEV_MODEL` | operator | decide what leaves the machine for a third party, and the model billed (064; 065 adds `RESEARCH_INJECTION`, the first site that takes `on`; 067 adds `TOOL_RISK`, `off` or `shadow` only) |
+  | `PARALLAX_JEV_MODE_*` `PARALLAX_JEV_MODEL` | operator | decide what leaves the machine for a third party, and the model billed (064; 065 adds `RESEARCH_INJECTION`, the first site that takes `on`; 067 adds `TOOL_RISK`, `off` or `shadow` only; 068 adds `TURN_SIGNALS`, `off` or `shadow`, and `PARALLAX_JEV_SEND_USER_TEXT`) |
   | `ANTHROPIC_MODEL` `ANTHROPIC_API_BASE` `VOYAGE_MODEL` | operator | set the rate billed and the endpoint reached; `VOYAGE_MODEL` additionally fixes the embedding space, so changing it per call would make stored vectors incomparable |
   | `DATABASE_PATH` `LOG_LEVEL` | operator | deployment identity |
   | `GROUNDED_VERIFY_ROOT` | operator | **security boundary.** A caller-settable confinement root is the hole it exists to close |
   | `CHECKPOINT_GATE_PATTERNS` | operator | the watchdog fires what the model *cannot* self-diagnose; letting the caller tune its triggers inverts the layer |
-  | `CHECKPOINT_TURN_SIGNALS` | operator | like `CHECKPOINT_GATE_PATTERNS`, it sets what the watchdog records at turn end, which is not the caller's to tune (066) |
   | `INPUT_MAX_CHARS` (`VERIFY_MAX_CLAIM_CHARS`) `GROUNDED_VERIFY_MAX_LOCATORS` | operator | server-protection guards. A caller may not raise one, and lowering buys the caller nothing it cannot get by sending less |
   | `MAX_RETRIES` `FETCH_TIMEOUT_MS` | operator | resilience against transport failure, about which the caller has no information |
   | `VERIFY_ENSEMBLE_K` | **caller** | per-call `passes` (028), lowering-only |

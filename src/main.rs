@@ -267,9 +267,6 @@ CHECKPOINTS:
     CHECKPOINT_GATE_PATTERNS      Comma-separated substrings extending the pre-action
                                   gate's built-in risk patterns (default: empty).
                                   An empty entry (\"a,,b\") is an error, not a skip
-    CHECKPOINT_TURN_SIGNALS       off | on (default: off). on: at each turn end the
-                                  pushback and unverified-fact detectors run in
-                                  code and record one row; nothing is sent
 
 JEV (TypeSafe; every site off by default; shadow records answers only):
     TYPESAFE_API_KEY              TypeSafe key; enables nothing by itself;
@@ -279,8 +276,10 @@ JEV (TypeSafe; every site off by default; shadow records answers only):
                                   nothing changes. on (RESEARCH_INJECTION only,
                                   pinned threshold) warns on kept research pages.
                                   Needs TYPESAFE_API_KEY
-    SITES:  TURN_REVIEW RESEARCH_CLAIMS RESEARCH_INJECTION TOOL_RISK
+    SITES:  TURN_REVIEW RESEARCH_CLAIMS RESEARCH_INJECTION TOOL_RISK TURN_SIGNALS
     PARALLAX_JEV_MODEL            Pinned Jev model; jev-1.14.0 unless set
+    PARALLAX_JEV_SEND_USER_TEXT   true | false, false unless set; true sends that
+                                  turn's user text to pushback_reversal only
 
 PER-CALL-SITE ROUTING (both off by default; unset changes nothing):
     PARALLAX_MODEL_<SITE>         Route one call site to a model

@@ -120,13 +120,17 @@ pub async fn report(storage: &SqliteStorage) {
         print_tables(&t);
     }
     print_injection(&rows);
-    // 066 T028: the turn signals, recorded in code with no Jev call.
-    let signals = storage
-        .load_turn_signal_records()
+    // 068 T017a (plan D4): the turn signals' downstream-cost estimate.
+    let invocations = storage
+        .list_invocations()
         .await
-        .expect("turn signal records");
-    for line in mcp_parallax::jev::report::signals::summary_lines(
-        &mcp_parallax::jev::report::signals::turn_signal_summary(&signals),
+        .expect("invocation records");
+    let tool_costs: Vec<(&str, f64)> = invocations
+        .iter()
+        .map(|r| (r.tool.as_str(), r.cost_usd))
+        .collect();
+    for line in mcp_parallax::jev::report::cost::summary_lines(
+        &mcp_parallax::jev::report::cost::signal_costs(&rows, &tool_costs),
     ) {
         println!("{line}");
     }

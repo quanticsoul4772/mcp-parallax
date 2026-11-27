@@ -25,7 +25,7 @@ impl Exclusion {
     }
 }
 
-const NUMBER_WORDS: [&str; 26] = [
+pub(crate) const NUMBER_WORDS: [&str; 26] = [
     "one",
     "two",
     "three",
@@ -56,7 +56,7 @@ const NUMBER_WORDS: [&str; 26] = [
 
 /// Months (full and short; "may" and "mar" are left out because "may" is an
 /// ordinary verb), weekdays, and single relative date words.
-const DATE_WORDS: [&str; 32] = [
+pub(crate) const DATE_WORDS: [&str; 32] = [
     "january",
     "february",
     "march",

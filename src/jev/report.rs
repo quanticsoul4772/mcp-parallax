@@ -14,8 +14,6 @@ use crate::jev::metrics::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub mod signals;
-
 /// Share of rows (by id) in the sealed confirm split.
 pub const CONFIRM_PERCENT: u64 = 30;
 /// The skip-gate recall target (plan §7.4).
@@ -298,6 +296,7 @@ pub fn site_tables(items: &[Item]) -> SiteTables {
     }
 }
 
+pub mod cost;
 pub mod injection;
 
 #[cfg(test)]

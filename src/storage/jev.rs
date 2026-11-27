@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS jev_records (
     label_json        TEXT,
     label_source      TEXT,
     label_cost_usd    REAL,
+    cooldown_suppressed TEXT,
     state_json        TEXT,
     state_hash        TEXT,
     transcript_ref    TEXT,
@@ -106,6 +107,9 @@ pub struct JevRecord {
     pub label_source: Option<String>,
     /// The label call's cost (067 tool risk); `None` where none was made.
     pub label_cost_usd: Option<f64>,
+    /// Turn signals (068): the signal kinds whose yes answer would have been
+    /// suppressed by the cooldown; `None` on other sites.
+    pub cooldown_suppressed: Option<Vec<String>>,
     pub state_json: Option<Value>,
     pub state_hash: Option<String>,
     pub transcript_ref: Option<String>,
@@ -147,9 +151,9 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
                 site, mode, questions_json, model_requested, model_answered, outcome,
                 error_class, request_id, latency_ms, input_tokens, cost_usd, applied,
                 eval_id, invocation_id, claim_key, source_ids, label_json, label_source,
-                label_cost_usd, state_json, state_hash, transcript_ref, redaction_count,
-                truncated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                label_cost_usd, cooldown_suppressed, state_json, state_hash, transcript_ref,
+                redaction_count, truncated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&r.id)
         .bind(r.created_at.to_rfc3339())
@@ -174,6 +178,7 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
         .bind(json_text(r.label_json.as_ref())?)
         .bind(&r.label_source)
         .bind(r.label_cost_usd)
+        .bind(json_text(r.cooldown_suppressed.as_ref())?)
         .bind(json_text(r.state_json.as_ref())?)
         .bind(&r.state_hash)
         .bind(&r.transcript_ref)
@@ -263,6 +268,50 @@ pub async fn load(pool: &SqlitePool) -> Result<Vec<JevRecord>, AppError> {
     rows.iter().map(from_row).collect()
 }
 
+/// The turn-signal kinds a session's Jev answered yes (0.5 or more) at or
+/// after `since` (068 plan D3).
+///
+/// # Errors
+///
+/// [`AppError::Storage`] when the read fails or a value is unreadable.
+pub async fn turn_signal_yes_kinds_since(
+    pool: &SqlitePool,
+    session_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query("SELECT * FROM jev_records WHERE site = ? AND harness_session_id = ?")
+        .bind(JevSite::TurnSignals.as_str())
+        .bind(session_id)
+        .fetch_all(pool)
+        .await
+        .map_err(storage_err("read"))?;
+    let mut kinds = Vec::new();
+    for row in &rows {
+        let record = from_row(row)?;
+        if record.created_at < since {
+            continue;
+        }
+        for entry in record.questions_json.as_array().into_iter().flatten() {
+            let yes = entry
+                .get("answer")
+                .and_then(serde_json::Value::as_f64)
+                .is_some_and(|p| p >= 0.5);
+            if let (true, Some(kind)) = (yes, entry.get("id").and_then(serde_json::Value::as_str)) {
+                // As the real cooldown: a yes the cooldown suppressed was
+                // never delivered, so it starts no window (review finding 2).
+                let suppressed = record
+                    .cooldown_suppressed
+                    .as_ref()
+                    .is_some_and(|listed| listed.iter().any(|k| k == kind));
+                if !suppressed && !kinds.iter().any(|k| k == kind) {
+                    kinds.push(kind.to_string());
+                }
+            }
+        }
+    }
+    Ok(kinds)
+}
+
 fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<JevRecord, AppError> {
     let created: String = row.get("created_at");
     let site: String = row.get("site");
@@ -298,6 +347,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<JevRecord, AppError> {
         label_json: parse_json(row.get("label_json"), "label_json")?,
         label_source: row.get("label_source"),
         label_cost_usd: row.get("label_cost_usd"),
+        cooldown_suppressed: parse_json(row.get("cooldown_suppressed"), "cooldown_suppressed")?,
         state_json: parse_json(row.get("state_json"), "state_json")?,
         state_hash: row.get("state_hash"),
         transcript_ref: row.get("transcript_ref"),
@@ -456,6 +506,27 @@ mod tests {
         assert_eq!(tool["additionalProperties"], serde_json::json!(false));
     }
 
+    // 068 T005 (plan D2a, D3, D7): questions_json entries may carry
+    // `recommends` and `number_diff`; the row may carry `cooldown_suppressed`.
+    #[test]
+    fn the_contract_has_the_turn_signal_fields() {
+        let schema = schema();
+        let entry = &schema["properties"]["questions_json"]["items"]["properties"];
+        assert!(entry["recommends"].is_object(), "recommends");
+        assert!(entry["number_diff"].is_object(), "number_diff");
+        assert!(entry["excluded_claims"].is_object(), "excluded_claims");
+        let required: Vec<&str> = schema["properties"]["questions_json"]["items"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        for field in ["recommends", "number_diff", "excluded_claims"] {
+            assert!(!required.contains(&field), "{field} is required");
+        }
+        assert!(schema["properties"]["cooldown_suppressed"].is_object());
+    }
+
     #[test]
     fn outcomes_are_the_published_list_plus_excluded() {
         for outcome in Outcome::ALL {
@@ -500,6 +571,7 @@ mod tests {
             })),
             label_source: Some("claude-opus-4-8/verify-v1".into()),
             label_cost_usd: None,
+            cooldown_suppressed: None,
             state_json: Some(serde_json::json!({ "claim": "The sky is blue." })),
             state_hash: None,
             transcript_ref: None,
@@ -518,6 +590,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.load_jev_records().await.unwrap(), vec![written]);
+    }
+
+    // 068 T014 (FR-007, plan D3): the session's turn-signal kinds answered
+    // yes (p >= 0.5) since a time; other sessions, sites, older rows and
+    // answers below 0.5 are left out.
+    #[tokio::test]
+    async fn turn_signal_yes_kinds_are_this_sessions_yes_answers_since_a_time() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 11, 24, 12, 0, 0).unwrap();
+        let signal = |id: &str, session: &str, kind: &str, p: f64, minutes: i64| {
+            let mut r = record(id);
+            r.site = JevSite::TurnSignals;
+            r.harness_session_id = Some(session.into());
+            r.created_at = since + chrono::Duration::minutes(minutes);
+            r.questions_json = serde_json::json!([
+                { "id": kind, "version": 1, "option_order": ["true", "false"],
+                  "answer": p, "probabilities": null, "band": null }
+            ]);
+            r
+        };
+        let mut other_site = signal("other-site", "s1", "pushback_reversal", 0.9, 5);
+        other_site.site = JevSite::TurnReview;
+        let rows = vec![
+            signal("yes", "s1", "pushback_reversal", 0.9, 5),
+            signal("edge", "s1", "unverified_fact", 0.5, 0),
+            signal("no", "s1", "unverified_fact", 0.4, 6),
+            signal("old", "s1", "unverified_fact", 0.9, -1),
+            signal("other-session", "s2", "unverified_fact", 0.9, 5),
+            other_site,
+        ];
+        storage.record_jev(&rows).await.unwrap();
+        let mut kinds = storage
+            .turn_signal_yes_kinds_since("s1", since)
+            .await
+            .unwrap();
+        kinds.sort();
+        assert_eq!(kinds, ["pushback_reversal", "unverified_fact"]);
+        assert!(storage
+            .turn_signal_yes_kinds_since("s3", since)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    // 068 review finding 2: as the real cooldown, a yes the cooldown itself
+    // suppressed does not count; a row with no cooldown record (null) does.
+    #[tokio::test]
+    async fn a_suppressed_yes_does_not_count_toward_the_cooldown() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 11, 24, 12, 0, 0).unwrap();
+        let signal = |id: &str, kind: &str, suppressed: Option<Vec<String>>| {
+            let mut r = record(id);
+            r.site = JevSite::TurnSignals;
+            r.harness_session_id = Some("s1".into());
+            r.created_at = since + chrono::Duration::minutes(5);
+            r.questions_json = serde_json::json!([
+                { "id": kind, "version": 1, "option_order": ["true", "false"],
+                  "answer": 0.9, "probabilities": null, "band": null }
+            ]);
+            r.cooldown_suppressed = suppressed;
+            r
+        };
+        let rows = vec![
+            signal(
+                "suppressed",
+                "pushback_reversal",
+                Some(vec!["pushback_reversal".into()]),
+            ),
+            signal("delivered", "unverified_fact", Some(vec![])),
+        ];
+        storage.record_jev(&rows).await.unwrap();
+        assert_eq!(
+            storage
+                .turn_signal_yes_kinds_since("s1", since)
+                .await
+                .unwrap(),
+            ["unverified_fact"]
+        );
     }
 
     #[tokio::test]

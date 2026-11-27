@@ -302,7 +302,6 @@ async fn main() {
         embedder: None,
         gate_extra_patterns: vec![],
         jev: None,
-        turn_signals: None,
         skip_thresholds: None,
         fixed_eval_id: None,
         tool_jev: Some(Arc::new(ToolJev {
@@ -320,6 +319,7 @@ async fn main() {
                 mcp_parallax::jev::shadow::LABEL_IN_FLIGHT,
             )),
         })),
+        signals_jev: None,
     };
 
     // ---- drive the gate; SC-004 per call ------------------------------------

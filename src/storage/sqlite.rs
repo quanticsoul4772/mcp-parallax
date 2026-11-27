@@ -128,14 +128,30 @@ impl SqliteStorage {
             .execute(&pool)
             .await
             .map_err(|e| AppError::Storage(format!("jev_records migration failed: {e}")))?;
-        sqlx::raw_sql(super::turn_signals::TURN_SIGNALS_MIGRATION)
-            .execute(&pool)
-            .await
-            .map_err(|e| AppError::Storage(format!("turn_signal_records migration failed: {e}")))?;
         Self::migrate_review_skipped_by(&pool).await?;
         Self::migrate_label_cost_column(&pool).await?;
+        Self::migrate_cooldown_column(&pool).await?;
 
         Ok(Self { pool })
+    }
+
+    /// 068: `cooldown_suppressed` on `jev_records`, added when missing.
+    async fn migrate_cooldown_column(pool: &SqlitePool) -> Result<(), AppError> {
+        let has = sqlx::query("PRAGMA table_info(jev_records)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("cannot inspect columns: {e}")))?
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "cooldown_suppressed");
+        if !has {
+            sqlx::query("ALTER TABLE jev_records ADD COLUMN cooldown_suppressed TEXT")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    AppError::Storage(format!("cooldown_suppressed migration failed: {e}"))
+                })?;
+        }
+        Ok(())
     }
 
     /// 067: `label_cost_usd` on `jev_records`, added when missing.
@@ -172,18 +188,6 @@ impl SqliteStorage {
                 })?;
         }
         Ok(())
-    }
-
-    /// Read back every turn-signal record, oldest first (066; the report
-    /// reads these). Not part of the [`Storage`] seam.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Storage`] when the read fails.
-    pub async fn load_turn_signal_records(
-        &self,
-    ) -> Result<Vec<super::turn_signals::TurnSignalRecord>, AppError> {
-        super::turn_signals::load(&self.pool).await
     }
 
     /// Read back every Jev record, oldest first (064; the back-test harness
@@ -773,11 +777,29 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
-    async fn record_turn_signals(
+    async fn add_checkpoint_jev_cost(
         &self,
-        record: &super::turn_signals::TurnSignalRecord,
+        eval_id: &str,
+        jev_cost_usd: f64,
     ) -> Result<(), AppError> {
-        super::turn_signals::insert(&self.pool, record).await
+        sqlx::query(
+            "UPDATE checkpoint_records SET jev_cost_usd = COALESCE(jev_cost_usd, 0) + ? \
+             WHERE id = ?",
+        )
+        .bind(jev_cost_usd)
+        .bind(eval_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("checkpoint jev_cost_usd addition: {e}")))?;
+        Ok(())
+    }
+
+    async fn turn_signal_yes_kinds_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError> {
+        super::jev::turn_signal_yes_kinds_since(&self.pool, session_id, since).await
     }
 
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
@@ -1116,6 +1138,30 @@ mod tests {
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
     }
 
+    // 068 T005: a jev_records table written before 068 gains
+    // `cooldown_suppressed`, and re-running the migration changes nothing.
+    #[tokio::test]
+    async fn jev_records_gain_cooldown_suppressed_when_missing() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        sqlx::raw_sql("DROP TABLE jev_records; CREATE TABLE jev_records (id TEXT PRIMARY KEY);")
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        SqliteStorage::migrate_cooldown_column(&storage.pool)
+            .await
+            .unwrap();
+        SqliteStorage::migrate_cooldown_column(&storage.pool)
+            .await
+            .unwrap();
+        let has = sqlx::query("PRAGMA table_info(jev_records)")
+            .fetch_all(&storage.pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "cooldown_suppressed");
+        assert!(has);
+    }
+
     // 067: a jev_records table written before 067 gains `label_cost_usd`,
     // and re-running the migration changes nothing.
     #[tokio::test]
@@ -1168,9 +1214,9 @@ mod tests {
     }
 
     // 066 T011: a database from before 066 gains review_skipped_by on
-    // checkpoint_records, and the turn_signal_records table, on open.
+    // checkpoint_records on open.
     #[tokio::test]
-    async fn a_pre_066_database_gains_review_skipped_by_and_the_turn_signal_table() {
+    async fn a_pre_066_database_gains_review_skipped_by() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pre066.db").to_string_lossy().to_string();
         {
@@ -1210,11 +1256,6 @@ mod tests {
             .await
             .unwrap();
         assert!(names(checkpoint).contains(&"review_skipped_by".to_string()));
-        let turn_signals = sqlx::query("PRAGMA table_info(turn_signal_records)")
-            .fetch_all(&storage.pool)
-            .await
-            .unwrap();
-        assert!(names(turn_signals).contains(&"eval_id".to_string()));
         // Reopening runs the migration again without error.
         drop(storage);
         SqliteStorage::connect(&path).await.unwrap();
@@ -1709,6 +1750,28 @@ mod tests {
         let loaded = storage.list_checkpoints().await.unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], record);
+    }
+
+    // 068 plan D7a: each turn-signal row's cost is added to the checkpoint's
+    // Jev cost; a record with none starts from zero, one with a turn-review
+    // cost keeps it.
+    #[tokio::test]
+    async fn checkpoint_jev_cost_additions_accumulate() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let empty = sample_checkpoint("c-none", "2026-06-12T10:00:00Z", Verdict::Silence, false);
+        let mut reviewed =
+            sample_checkpoint("c-review", "2026-06-12T10:00:00Z", Verdict::Silence, false);
+        reviewed.jev_cost_usd = Some(0.5);
+        storage.record_checkpoint(&empty).await.unwrap();
+        storage.record_checkpoint(&reviewed).await.unwrap();
+        for id in ["c-none", "c-review"] {
+            storage.add_checkpoint_jev_cost(id, 0.25).await.unwrap();
+            storage.add_checkpoint_jev_cost(id, 0.125).await.unwrap();
+        }
+        let loaded = storage.list_checkpoints().await.unwrap();
+        let cost = |id: &str| loaded.iter().find(|r| r.id == id).unwrap().jev_cost_usd;
+        assert_eq!(cost("c-none"), Some(0.375));
+        assert_eq!(cost("c-review"), Some(0.875));
     }
 
     #[tokio::test]

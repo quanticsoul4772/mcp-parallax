@@ -23,7 +23,7 @@
     "created_at": { "type": "string", "format": "date-time" },
     "server_session_id": { "type": "string" },
     "harness_session_id": { "type": ["string", "null"] },
-    "site": { "enum": ["turn_review", "research_claims", "research_injection", "tool_risk"] },
+    "site": { "enum": ["turn_review", "research_claims", "research_injection", "tool_risk", "turn_signals"] },
     "mode": { "enum": ["shadow", "on"] },
     "questions_json": {
       "type": "array",
@@ -40,7 +40,10 @@
             "type": ["object", "null"],
             "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 }
           },
-          "band": { "enum": ["yes", "middle", "no", null] }
+          "band": { "enum": ["yes", "middle", "no", null] },
+          "recommends": { "description": "Turn signals (068): the corrective 066's rule names for this signal given the catalog at the time.", "enum": ["verify", "grounded_verify", "research", null] },
+          "number_diff": { "description": "Turn signals (068), pushback_reversal only: a number or date in the final text differs from one in a transcript pair's earlier statement.", "type": ["boolean", "null"] },
+          "excluded_claims": { "description": "Turn signals (068), unverified_fact only: how many claims with numbers or dates were taken out of the final text before sending.", "type": ["integer", "null"], "minimum": 0 }
         }
       }
     },
@@ -101,6 +104,7 @@
       ]
     },
     "label_source": { "type": ["string", "null"] },
+    "cooldown_suppressed": { "description": "Turn signals (068): the signal kinds whose yes answer would have been suppressed by the cooldown (session plus kind); null on other sites.", "type": ["array", "null"], "items": { "type": "string" } },
     "label_cost_usd": { "description": "Tool risk (067): the label call's cost; null where no label call was made.", "type": ["number", "null"], "minimum": 0 },
     "state_json": { "description": "Research only: the redacted state sent, for replay.", "type": ["object", "null"] },
     "state_hash": { "type": ["string", "null"] },

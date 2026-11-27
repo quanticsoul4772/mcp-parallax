@@ -240,6 +240,83 @@ mod tests {
         assert_eq!(window.entries.len(), 2);
     }
 
+    fn assistant_text_line(session: &str, text: &str) -> String {
+        json!({
+            "type": "assistant",
+            "sessionId": session,
+            "message": { "role": "assistant", "content": [
+                { "type": "text", "text": text }
+            ]}
+        })
+        .to_string()
+    }
+
+    // 068 T015a (§6.2, plan D10, roadmap check item 24): window eviction
+    // (WINDOW_ENTRIES) doesn't change existing signals: a transcript longer
+    // than the window yields the same batch-screen signals and turn-review
+    // candidates as its last WINDOW_ENTRIES entries alone.
+    #[tokio::test]
+    async fn window_eviction_leaves_signals_and_candidates_as_the_tail_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let total = WINDOW_ENTRIES + 50;
+        let lines: Vec<String> = (0..total)
+            .map(|i| {
+                let id = u32::try_from(i).unwrap();
+                match i % 10 {
+                    // Statements a final message can contradict, inside and
+                    // outside the evicted part.
+                    0 => assistant_text_line(
+                        "s1",
+                        &format!("The migration {i} is fully reversible and safe to run."),
+                    ),
+                    // A command repeated across the whole transcript.
+                    1..=4 => tool_line("s1", id, "cargo test"),
+                    _ => tool_line("s1", id, &format!("cmd {i}")),
+                }
+            })
+            .collect();
+        let long = write_transcript(dir.path(), "long.jsonl", &lines);
+        let tail = write_transcript(dir.path(), "tail.jsonl", &lines[total - WINDOW_ENTRIES..]);
+        let (long_window, _) = FsTrajectoryReader.read(&long, "s1").await.unwrap();
+        let (tail_window, _) = FsTrajectoryReader.read(&tail, "s1").await.unwrap();
+        assert_eq!(long_window.entries.len(), WINDOW_ENTRIES);
+        // Entries match except `batch_index`, which counts tool calls from
+        // the start of what was read and is kept through eviction.
+        let without_index = |w: &crate::checkpoint::trajectory::TrajectoryWindow| -> Vec<String> {
+            use crate::checkpoint::trajectory::TrajectoryEntry;
+            w.entries
+                .iter()
+                .map(|e| match e {
+                    TrajectoryEntry::Assistant { text } => format!("text {text}"),
+                    TrajectoryEntry::ToolCall {
+                        tool_name,
+                        normalized_input,
+                        failed,
+                        ..
+                    } => format!("tool {tool_name} {normalized_input} {failed}"),
+                })
+                .collect()
+        };
+        assert_eq!(without_index(&long_window), without_index(&tail_window));
+        let long_signals = crate::checkpoint::screen::screen(&long_window);
+        assert!(
+            !long_signals.is_empty(),
+            "the fixture fires the batch screen"
+        );
+        assert_eq!(
+            format!("{long_signals:?}"),
+            format!("{:?}", crate::checkpoint::screen::screen(&tail_window))
+        );
+        let final_message = "The migration 240 is not reversible.";
+        let mine = |w: &crate::checkpoint::trajectory::TrajectoryWindow| {
+            format!(
+                "{:?}",
+                crate::checkpoint::review::mine_candidates(w, final_message, &[])
+            )
+        };
+        assert_eq!(mine(&long_window), mine(&tail_window));
+    }
+
     #[tokio::test]
     async fn an_oversize_read_drops_the_cut_first_line_from_the_raw_lines_too() {
         let dir = tempfile::tempdir().unwrap();

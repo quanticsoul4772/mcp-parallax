@@ -49,8 +49,6 @@ pub struct CheckpointDeps {
     pub gate_extra_patterns: Vec<String>,
     /// The Jev turn shadow (064); `None` when the site is off.
     pub jev: Option<crate::jev::shadow::TurnJev>,
-    /// The 066 turn signals; `None` when `CHECKPOINT_TURN_SIGNALS` is off.
-    pub turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
     /// The 066 review skip's pinned thresholds; `None` keeps today's
     /// concurrent review and Jev (always `None` in production in 066).
     pub skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
@@ -59,6 +57,8 @@ pub struct CheckpointDeps {
     pub fixed_eval_id: Option<String>,
     /// The Jev tool-risk shadow (067); `None` when the site is off.
     pub tool_jev: Option<Arc<crate::jev::shadow::ToolJev>>,
+    /// The Jev turn-signal shadow (068); `None` when the site is off.
+    pub signals_jev: Option<Arc<crate::jev::shadow::SignalsJev>>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -219,6 +219,75 @@ fn spawn_tool_risk(deps: &CheckpointDeps, params: &CheckpointActionParams, eval_
     });
 }
 
+/// What the turn-signal shadow needs from the turn's one transcript read.
+struct SignalState {
+    window: crate::checkpoint::trajectory::TrajectoryWindow,
+    activity: String,
+    user_text: String,
+}
+
+/// 068: ask Jev both turn-signal questions off the Stop hook's response path,
+/// after the checkpoint record is written; never awaited (plan D1a). Both
+/// rows are written together, then each row's span is exported and its cost
+/// added to the checkpoint record (plan D7a).
+fn spawn_turn_signals(
+    deps: &CheckpointDeps,
+    jev: Arc<crate::jev::shadow::SignalsJev>,
+    params: &CheckpointTurnParams,
+    eval_id: String,
+    state: SignalState,
+) {
+    use crate::jev::shadow::{shadow_signals, SignalInputs, TurnIds};
+    let storage = Arc::clone(&deps.storage);
+    let now = deps.clock.now();
+    let session_id = params.session_id.clone();
+    let transcript_path = params.transcript_path.clone();
+    let final_message = params.final_message.clone();
+    tokio::spawn(async move {
+        let ids = TurnIds {
+            eval_id: &eval_id,
+            harness_session_id: &session_id,
+            transcript_path: &transcript_path,
+            now,
+        };
+        let inputs = SignalInputs {
+            window: &state.window,
+            activity: &state.activity,
+            final_message: &final_message,
+            user_text: &state.user_text,
+        };
+        let mut rows = shadow_signals(&jev, inputs, ids).await;
+        // 068 plan D3: would the cooldown have suppressed this yes?
+        let since = now - Duration::milliseconds(COOLDOWN_WINDOW_MS);
+        match storage
+            .turn_signal_yes_kinds_since(&session_id, since)
+            .await
+        {
+            Ok(earlier) => {
+                for row in &mut rows {
+                    row.cooldown_suppressed =
+                        Some(crate::jev::shadow::cooldown_suppressed(row, &earlier));
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "turn-signal cooldown lookup failed; cooldown_suppressed stays null");
+            }
+        }
+        if let Err(error) = storage.record_jev(&rows).await {
+            tracing::warn!(%error, "turn-signal jev rows write failed; the turn is unaffected");
+            return;
+        }
+        for row in &rows {
+            crate::observability::emit_turn_signals(row);
+            if let Some(cost) = row.cost_usd {
+                if let Err(error) = storage.add_checkpoint_jev_cost(&eval_id, cost).await {
+                    tracing::warn!(%error, "checkpoint jev cost addition failed; the turn is unaffected");
+                }
+            }
+        }
+    });
+}
+
 /// `checkpoint_action` (US2): the risk-matched, deterministic pre-action gate
 /// under a hard budget.
 ///
@@ -359,20 +428,10 @@ pub async fn run_turn(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mut jev_row: Option<TurnJevOutcome> = None;
-    // 066: the turn signals' row joins this evaluation's record.
-    let signals_eval_id = deps.turn_signals.as_ref().map(|_| eval_id.clone());
-    let has_final = !params.final_message.trim().is_empty();
 
     // FR-014: a turn end that follows a forced continuation never reviews
     // again — continuation cannot loop.
     if params.continuation {
-        // 066 FR-005: continuation turns write no row but still update the
-        // session's previous final message.
-        if let (Some(signals), true) = (&deps.turn_signals, has_final) {
-            signals
-                .previous_finals
-                .swap(&params.session_id, &params.final_message);
-        }
         let evaluation = Evaluated::pure(
             vec![],
             vec![],
@@ -399,12 +458,12 @@ pub async fn run_turn(
     } else {
         vec![SignalKind::SelfContradiction]
     };
-    // 066: the raw tail lines of the one transcript read; `None` after the
-    // evaluation means the read failed (or there was no final message).
-    let mut turn_lines: Option<Vec<String>> = None;
     // 066: kept outside the block, so a failed audited review still records
     // its audit marker after the fail-open recovery below.
     let mut skipped_by: Option<ReviewSkippedBy> = None;
+    // 068: what the turn-signal shadow needs, kept from the one transcript
+    // read; `None` when the site is off or nothing was read.
+    let mut signal_state: Option<SignalState> = None;
     let evaluation = async {
         if params.final_message.trim().is_empty() {
             return Ok(Evaluated::pure(
@@ -417,7 +476,13 @@ pub async fn run_turn(
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
-        turn_lines = Some(lines);
+        if deps.signals_jev.is_some() {
+            signal_state = Some(SignalState {
+                activity: review::turn_activity(&window),
+                user_text: crate::checkpoint::turn_view::parse_turn(&lines).user_prompt,
+                window: window.clone(),
+            });
+        }
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
         let preferences = preference::mine_preference_candidates(&recall);
@@ -523,27 +588,12 @@ pub async fn run_turn(
         &params.session_id,
         &evaluation,
         caller,
-        eval_id,
+        eval_id.clone(),
         jev_row,
     )
     .await?;
-    if let (Some(signals), Some(eval_id), true) =
-        (&deps.turn_signals, signals_eval_id.as_deref(), has_final)
-    {
-        // Measurement only, like the 064 Jev row: a failed write is logged and
-        // the turn's result stands (066 US1, SC-001).
-        if let Err(error) = crate::checkpoint::signals::record_turn(
-            signals,
-            deps.storage.as_ref(),
-            deps.clock.now(),
-            eval_id,
-            params,
-            turn_lines.as_deref(),
-        )
-        .await
-        {
-            tracing::warn!(%error, "turn signal row write failed; the turn is unaffected");
-        }
+    if let (Some(jev), Some(state)) = (deps.signals_jev.clone(), signal_state) {
+        spawn_turn_signals(deps, jev, params, eval_id, state);
     }
     Ok((
         evaluation.result,
@@ -892,10 +942,10 @@ mod tests {
         embedder: Option<Arc<dyn Embedder>>,
         patterns: Vec<String>,
         jev: Option<crate::jev::shadow::TurnJev>,
-        turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
         skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
         fixed_eval_id: Option<String>,
         tool_jev: Option<Arc<crate::jev::shadow::ToolJev>>,
+        signals_jev: Option<Arc<crate::jev::shadow::SignalsJev>>,
     }
 
     impl DepsBuilder {
@@ -910,10 +960,10 @@ mod tests {
                 embedder: None,
                 patterns: vec![],
                 jev: None,
-                turn_signals: None,
                 skip_thresholds: None,
                 fixed_eval_id: None,
                 tool_jev: None,
+                signals_jev: None,
             }
         }
 
@@ -928,10 +978,10 @@ mod tests {
                 embedder: self.embedder,
                 gate_extra_patterns: self.patterns,
                 jev: self.jev,
-                turn_signals: self.turn_signals,
                 skip_thresholds: self.skip_thresholds,
                 fixed_eval_id: self.fixed_eval_id,
                 tool_jev: self.tool_jev,
+                signals_jev: self.signals_jev,
             }
         }
     }
@@ -1972,7 +2022,7 @@ mod tests {
 
     mod review_skip;
     mod tool_risk;
-    mod turn_signals;
+    mod turn_signals_jev;
 
     // ---- 064 T019: the turn shadow ------------------------------------------
 

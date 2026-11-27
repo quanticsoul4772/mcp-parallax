@@ -6,7 +6,6 @@ use crate::memory::consolidate::ConsolidationRecord;
 use crate::memory::push::PushRecord;
 use crate::memory::{Memory, Status};
 use crate::storage::jev::JevRecord;
-use crate::storage::turn_signals::TurnSignalRecord;
 use crate::telemetry::InvocationRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -97,12 +96,29 @@ pub trait Storage: Send + Sync {
         jev_cost_usd: f64,
     ) -> Result<(), AppError>;
 
-    /// Persist one turn-signal record (066 FR-011): one per covered turn end.
+    /// Add to a checkpoint record's Jev cost once an off-path turn-signal row
+    /// is written (068 plan D7a); a record with no Jev cost starts from zero.
     ///
     /// # Errors
     ///
     /// Returns [`AppError`] if the write fails.
-    async fn record_turn_signals(&self, record: &TurnSignalRecord) -> Result<(), AppError>;
+    async fn add_checkpoint_jev_cost(
+        &self,
+        eval_id: &str,
+        jev_cost_usd: f64,
+    ) -> Result<(), AppError>;
+
+    /// The turn-signal kinds this session's Jev answered yes (probability
+    /// 0.5 or more) at or after `since` (068 plan D3, FR-007).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    async fn turn_signal_yes_kinds_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError>;
 
     /// Signal keys delivered (verdict ≠ silence, not suppressed) in this
     /// session since `since` — the FR-010 cooldown lookup.
