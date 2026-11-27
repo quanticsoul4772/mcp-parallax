@@ -67,8 +67,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T028 [P] `jev_backtest report` covers `turn_signal_records` (fire rates and exclusion reasons). Files: `examples/jev_backtest/`, `src/jev/report.rs`.
-- [ ] T029 Live example `examples/acceptance_turn_signals.rs` (SC-004): fixtures through `run_turn` with the signals on and a scratch database; one joined row per covered turn end with the expected results; no sentinel string in any request body; exits non-zero on failure. Register it in `Cargo.toml`.
+- [x] T028 [P] `jev_backtest report` covers `turn_signal_records` (fire rates and exclusion reasons). Files: `examples/jev_backtest/`, `src/jev/report.rs`.
+- [x] T029 Live example `examples/acceptance_turn_signals.rs` (SC-004): fixtures through `run_turn` with the signals on and a scratch database; one joined row per covered turn end with the expected results; no sentinel string in any request body; exits non-zero on failure. Register it in `Cargo.toml`.
 - [ ] T030 Amendments (FR-013): `docs/design/MEMORY_LAYER.md`, `docs/design/WATCHDOG_LAYER.md:59`, `docs/design/CORRECTIVE_SELECTION.md:89`, `docs/design/NEW_SERVER_DESIGN.md` §10, `specs/017-memory-consolidation/spec.md`, and the CHANGELOG.
 - [ ] T031 Analyze (Spec Kit) across spec, plan and tasks, with the three reviewers on the version-2 criteria in `contracts/questions.md`.
 - [ ] T032 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` and `code-reviewer` agents.
