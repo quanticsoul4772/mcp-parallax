@@ -23,11 +23,11 @@
 
 At each non-continuation turn end, Jev is asked `pushback_reversal` and `unverified_fact` (§6.2) about the redacted turn. Answers are recorded in `jev_records`; nothing is flagged and nothing the user sees changes (shadow only, §6.2).
 
-**Independent Test**: with `PARALLAX_JEV_MODE_TURN_SIGNALS=shadow`, fixture turns leave one Jev row per request with both answers, and the checkpoint result and record equal the run with the site off.
+**Independent Test**: with `PARALLAX_JEV_MODE_TURN_SIGNALS=shadow`, fixture turns leave one Jev row per question, and the checkpoint result and record equal the run with the site off.
 
 **Acceptance Scenarios**:
 
-1. **Given** the site in shadow and a turn end with a final message, **When** the turn ends, **Then** one Jev request carries both questions and one `jev_records` row records the answers.
+1. **Given** the site in shadow and a turn end with a final message, **When** the turn ends, **Then** one Jev request per question is made, each with its own state (plan D1), and one `jev_records` row per request records the answer.
 2. **Given** a claim in the final message containing a date or a number, **When** the turn ends, **Then** that claim is kept out of `unverified_fact` in code (§6.2 "Exclusions in code").
 3. **Given** a continuation turn, **When** it ends, **Then** nothing flags (§11).
 4. **Given** the site off, **When** a turn ends, **Then** no Jev request is made for these signals and no row is written.
@@ -63,7 +63,7 @@ After merge and rebuild, the owner's setup gets `PARALLAX_JEV_MODE_TURN_SIGNALS=
 - **FR-003** (§6.2 Stance exception): the exception is named and justified in an amendment, limited to user text from that turn.
 - **FR-004** (§6.2 Exclusions in code): claims with dates or numbers are kept out of `unverified_fact`.
 - **FR-005** (§6.2 Transcript parser): 066's parser is kept: real user prompts read from string content and user text blocks, excluding tool results, meta lines, compaction summaries and Parallax's own flag text derived from the template functions.
-- **FR-006** (§6.2 Recommendations): only correctives in the catalog (`research`, `grounded_verify`) are recommended.
+- **FR-006** (§6.2 Recommendations): only correctives in the catalog (`research`, `grounded_verify`) are recommended. The parenthetical names the correctives whose presence depends on configuration; `verify`, always in the catalog, qualifies, so 066's rule stands: `pushback_reversal` → `verify`; `unverified_fact` → `grounded_verify` when configured, else `research` when configured, else none (decide-scored options; chosen 2026-11-27; analyze finding I1).
 - **FR-007** (§6.2 Cooldown): identity is session plus signal kind (Clarification C).
 - **FR-008** (§6.2 Cost): the downstream continuation and verify cost goes into the estimates (Clarification D).
 - **FR-009** (§6.2 User text, §8): sent only with `PARALLAX_JEV_SEND_USER_TEXT=true`.
@@ -76,7 +76,7 @@ After merge and rebuild, the owner's setup gets `PARALLAX_JEV_MODE_TURN_SIGNALS=
 ### Tests required (§11's 066 list, U1 part)
 
 1. Parser fixtures from 066's spike; template-derived exclusions; window-eviction regression.
-2. U1 middle band records only.
+2. ~~U1 middle band records only.~~ Not in 068: no noise measurement and no band edges exist yet (§3.4, §5.4), so answers are recorded raw; the measurement and this test come with promotion (decide-scored options; chosen 2026-11-27; roadmap check item 3).
 3. Catalog check.
 4. Session-plus-kind cooldown.
 5. Continuation turns never flag.
@@ -92,7 +92,7 @@ After merge and rebuild, the owner's setup gets `PARALLAX_JEV_MODE_TURN_SIGNALS=
 
 ### Measurable Outcomes
 
-- **SC-001**: With the site in shadow, every non-continuation turn end with a final message leaves one Jev row with both answers, and checkpoint results and records equal the site-off run.
+- **SC-001**: With the site in shadow, every non-continuation turn end with a final message leaves one Jev row per question, and checkpoint results and records equal the site-off run.
 - **SC-002**: No request body contains user text without `PARALLAX_JEV_SEND_USER_TEXT=true`.
 - **SC-003**: No date- or number-bearing claim reaches `unverified_fact`.
 - **SC-004**: 066's detectors, `CHECKPOINT_TURN_SIGNALS`, `turn_signal_records` and its report code are gone, and the full gate passes.
