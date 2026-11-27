@@ -272,7 +272,8 @@ JEV (TypeSafe; with TYPESAFE_API_KEY set every site is on by default; shadow rec
     TYPESAFE_API_KEY              TypeSafe key; with it set every Jev site is on
                                   by default; never logged
     PARALLAX_JEV_MODE_<SITE>      off | shadow | on; unset is shadow with the key
-                                  (on for RESEARCH_INJECTION), off without. shadow
+                                  (on for RESEARCH_INJECTION with a pinned
+                                  threshold), off without. shadow
                                   asks Jev beside the big model and records its
                                   answer; nothing changes. on (RESEARCH_INJECTION
                                   only, pinned threshold) warns on kept research

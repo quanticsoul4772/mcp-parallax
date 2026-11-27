@@ -66,7 +66,7 @@ pub const DEFAULT_JEV_MODEL: &str = "jev-1.14.0";
 /// The reserved Jev mode namespace (064): `PARALLAX_JEV_MODE_<SITE>`.
 const JEV_MODE_PREFIX: &str = "PARALLAX_JEV_MODE_";
 
-/// The opt-in that lets a turn's user text reach Jev (068 plan D6, D9).
+/// The switch that sends a turn's user text to Jev (068 plan D6, D9); on unless set to `false`.
 const SEND_USER_TEXT: &str = "PARALLAX_JEV_SEND_USER_TEXT";
 
 /// 066 FR-010: the reserved namespace holds only `PARALLAX_JEV_MODEL`, the
@@ -123,7 +123,7 @@ fn parse_send_user_text(value: Option<&str>) -> Result<bool, ConfigError> {
 }
 
 /// Jev settings (064). Every site is off unless the operator sets its mode,
-/// and a mode needs `TYPESAFE_API_KEY`; the key alone enables nothing.
+/// and a mode needs `TYPESAFE_API_KEY`; with the key, every site is on by default.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct JevSettings {
     /// `TYPESAFE_API_KEY`; a blank value counts as unset. Never logged.
@@ -131,18 +131,18 @@ pub struct JevSettings {
     /// `PARALLAX_JEV_MODEL`, default [`DEFAULT_JEV_MODEL`]. A
     /// `JEV_MODEL` variable is never read.
     pub model: String,
-    /// `PARALLAX_JEV_MODE_TURN_REVIEW`, default off.
+    /// `PARALLAX_JEV_MODE_TURN_REVIEW`, default `shadow` with the key, `off` without.
     pub turn_review: crate::traits::classifier::JevMode,
-    /// `PARALLAX_JEV_MODE_RESEARCH_CLAIMS`, default off.
+    /// `PARALLAX_JEV_MODE_RESEARCH_CLAIMS`, default `shadow` with the key, `off` without.
     pub research_claims: crate::traits::classifier::JevMode,
-    /// `PARALLAX_JEV_MODE_RESEARCH_INJECTION`, default off; the only site
+    /// `PARALLAX_JEV_MODE_RESEARCH_INJECTION`, default `on` with the key and a pinned threshold (else `shadow`), `off` without; the only site
     /// that accepts `on`, and only with a pinned threshold (065).
     pub research_injection: crate::traits::classifier::JevMode,
-    /// `PARALLAX_JEV_MODE_TOOL_RISK`, default off; `off` or `shadow` (067).
+    /// `PARALLAX_JEV_MODE_TOOL_RISK`, default `shadow` with the key, `off` without; `off` or `shadow` (067).
     pub tool_risk: crate::traits::classifier::JevMode,
-    /// `PARALLAX_JEV_MODE_TURN_SIGNALS`, default off; `off` or `shadow` (068).
+    /// `PARALLAX_JEV_MODE_TURN_SIGNALS`, default `shadow` with the key, `off` without; `off` or `shadow` (068).
     pub turn_signals: crate::traits::classifier::JevMode,
-    /// `PARALLAX_JEV_SEND_USER_TEXT` (`true` | `false`), false unless set:
+    /// `PARALLAX_JEV_SEND_USER_TEXT` (`true` | `false`), true unless set:
     /// the only path by which a turn's user text reaches Jev (068 plan D9).
     pub send_user_text: bool,
 }
@@ -484,7 +484,7 @@ pub struct Config {
     pub request_timeout_ms: u64,
     /// Maximum API retry attempts. `MAX_RETRIES`, default `3`.
     pub max_retries: u32,
-    /// Jev settings (064); every site off by default.
+    /// Jev settings (064); with the key, every site is on by default.
     pub jev: JevSettings,
 }
 

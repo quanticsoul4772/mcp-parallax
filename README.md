@@ -260,7 +260,7 @@ CI runs format, clippy, the test suite, an MSRV (1.94) build, the coverage gate,
 Parallax handles credentials and, when enabled, reaches the network — treat it accordingly:
 
 - **No code execution.** The deterministic layer evaluates formal targets with an exact in-process arithmetic evaluator (parsed by `evalexpr`) and an in-process Z3; sandboxed code execution is deliberately deferred and off.
-- **Network egress is gated and off by default.** Research egress happens only with `EXA_API_KEY` set, and goes only to Exa: Parallax requests no source page itself. Telemetry egress happens only when an `OTEL_*` endpoint is set.
+- **Network egress is gated and off by default.** Research egress happens only with `EXA_API_KEY` set, and goes only to Exa: Parallax requests no source page itself. Telemetry egress happens only when an `OTEL_*` endpoint is set. Jev egress happens only with `TYPESAFE_API_KEY` set; with it set, every Jev site is on by default and sends redacted turn summaries, statement pairs, final text, the turn's user text, research claims and pages, and tool-call projections to TypeSafe; set a site to `off` (or `PARALLAX_JEV_SEND_USER_TEXT=false`) to stop it.
 - **The checkpoint layer reads transcript files** (bounded tail reads) and is off until you install the hooks. It is fail-open and never blocks an action on error or timeout.
 - **Secrets** are supplied via environment only and are never written to records or exported telemetry.
 - Report security issues via a private advisory on the [repository](https://github.com/quanticsoul4772/mcp-parallax).

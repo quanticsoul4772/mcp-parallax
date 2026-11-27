@@ -9,7 +9,7 @@ use crate::traits::classifier::{JevMode, JevSite};
 /// The one line logged when no key is set.
 pub const NO_KEY_LINE: &str = "Jev off: TYPESAFE_API_KEY is not set, so no Jev site runs";
 
-const fn data_sent(site: JevSite) -> &'static str {
+const fn data_sent(site: JevSite, send_user_text: bool) -> &'static str {
     match site {
         JevSite::TurnReview => {
             "the redacted turn activity summary, transcript statement pairs and final \
@@ -25,10 +25,15 @@ const fn data_sent(site: JevSite) -> &'static str {
              dropped; Write and Edit file paths; Read, Grep and Glob file_path, path and pattern \
              values; other tools' names and argument names)"
         }
-        JevSite::TurnSignals => {
+        JevSite::TurnSignals if send_user_text => {
             "the redacted turn activity summary, transcript statement pairs and final assistant \
              text (claims with dates or numbers removed for unverified_fact), and that turn's \
-             user text for pushback_reversal only with PARALLAX_JEV_SEND_USER_TEXT=true"
+             user text, redacted, to pushback_reversal only"
+        }
+        JevSite::TurnSignals => {
+            "the redacted turn activity summary, transcript statement pairs and final assistant \
+             text (claims with dates or numbers removed for unverified_fact); no user text \
+             (PARALLAX_JEV_SEND_USER_TEXT=false)"
         }
     }
 }
@@ -80,7 +85,7 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
             Some(format!(
                 "{lead} for {}: sends {} to api.typesafe.ai; {effect}",
                 site.as_str(),
-                data_sent(site)
+                data_sent(site, settings.send_user_text)
             ))
         })
         .collect::<Vec<_>>();
@@ -176,6 +181,24 @@ mod tests {
         assert_eq!(lines[1], super::TERMS_LINE);
         let no_key = settings(None, JevMode::Shadow, JevMode::Off);
         assert_eq!(startup_lines(&no_key), [NO_KEY_LINE]);
+    }
+
+    // Review finding (defaults change): the turn-signal line says whether
+    // that turn's user text is sent, from the setting itself.
+    #[test]
+    fn the_turn_signals_line_says_whether_user_text_is_sent() {
+        let mut s = settings(Some("k"), JevMode::Off, JevMode::Off);
+        s.turn_signals = JevMode::Shadow;
+        s.send_user_text = true;
+        let on = startup_lines(&s).join("\n");
+        assert!(
+            on.contains("that turn's user text, redacted, to pushback_reversal"),
+            "{on}"
+        );
+        s.send_user_text = false;
+        let off = startup_lines(&s).join("\n");
+        assert!(off.contains("no user text"), "{off}");
+        assert!(!off.contains("that turn's user text, redacted"), "{off}");
     }
 
     #[test]
