@@ -13,6 +13,16 @@ arc.
 
 ### Added
 
+* **Turn signals at turn end** (066) — with `CHECKPOINT_TURN_SIGNALS=on` (off by
+  default), each non-continuation turn end runs two detectors in code,
+  `pushback_reversal` and `unverified_fact`, and writes one row to the new
+  `turn_signal_records` table with anchors back to the transcript; nothing is sent
+  and nothing is flagged. The 064 turn-review questions move to version 2 with
+  declared criteria, and the report keeps version-1 rows out of promotion. The
+  end-of-turn review skip and its pinned tables are built and tested;
+  `PARALLAX_JEV_MODE_TURN_REVIEW=on` stays refused. Checkpoint records gain
+  `review_skipped_by`.
+
 * **Jev injection warning on research sources** (065) — with
   `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on` (off by default; needs
   `TYPESAFE_API_KEY` and a pinned threshold for the model), research asks Jev's
@@ -228,6 +238,9 @@ arc.
     group runs only under `cargo test -- --ignored`.
 
 ### Changed
+
+* **Unknown `PARALLAX_JEV_*` names are a startup error** (066) — only
+  `PARALLAX_JEV_MODEL` and `PARALLAX_JEV_MODE_<SITE>` are accepted.
 
 * **`research` runs on Exa (059)** — Exa replaces Brave as the research
   provider: one Exa search per angle finds sources, and one contents request

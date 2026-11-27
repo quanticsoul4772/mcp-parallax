@@ -333,6 +333,7 @@ deliberately left for the clarify phase, per the feature request.
   turn via the existing installed sensor plane — the same opt-in integration
   the checkpoint and push layers use; no new consent surface. Prompted-only
   capture is rejected (manual-dependence).
+  *2026-11-26 (066):* the end-of-turn review may be skipped when Jev is confidently no and no candidate exists, except for a 10% audit share; refused at startup until promoted (066 FR-009). See the 066 amendment in `docs/design/MEMORY_LAYER.md`.
 - **Consolidation trigger timing (decided, clarify Q2)**: on-admission —
   supersession and merge are evaluated when a new memory enters the store
   (manual save or admitted candidate); no background or periodic sweeps, no

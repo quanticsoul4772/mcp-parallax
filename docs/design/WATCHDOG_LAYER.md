@@ -57,6 +57,8 @@ instead of an in-process bus. The concept map:
 | Trace event per trigger | Unchanged — one invocation record per checkpoint; catch-rate vs noise measurable from day one |
 
 > **2026-11-24 amendment (064).** With `PARALLAX_JEV_MODE_TURN_REVIEW=shadow`, a second, cheap hop runs beside the review: TypeSafe's Jev answers two typed questions on redacted turn text. It runs only when the review runs (the same cheap-signal gate), never decides or flags, and is recorded in `jev_records`. The review stays the layer's only hop that can change a verdict.
+>
+> **2026-11-26 amendment (066).** Two exceptions to the cheap-signal gate above, both off by default. With `CHECKPOINT_TURN_SIGNALS=on`, two cheap detectors run at every turn end, outside the review's gate: `pushback_reversal` (the existing pair miner, after a real prompt with no tool call) and `unverified_fact` (the final message's entities looked up in the turn's own evidence). They run in code, send nothing, and only record to `turn_signal_records`. The review skip lets a Jev answer stop the review: when both turn-review answers are below thresholds pinned to the Jev model, big model and question version, and no candidate blocks it, the review is skipped, except for a 10% audit share. The skip is refused at startup until promotion data, an order check and a drift check exist.
 
 Deliverable shape: hook configuration shipped alongside the server
 (`integrations/claude-code/`; plugin packaging is a named deferral until the
