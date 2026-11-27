@@ -279,7 +279,7 @@ JEV (TypeSafe; every site off by default; shadow records answers only):
                                   nothing changes. on (RESEARCH_INJECTION only,
                                   pinned threshold) warns on kept research pages.
                                   Needs TYPESAFE_API_KEY
-    SITES:  TURN_REVIEW RESEARCH_CLAIMS RESEARCH_INJECTION
+    SITES:  TURN_REVIEW RESEARCH_CLAIMS RESEARCH_INJECTION TOOL_RISK
     PARALLAX_JEV_MODEL            Pinned Jev model; jev-1.14.0 unless set
 
 PER-CALL-SITE ROUTING (both off by default; unset changes nothing):

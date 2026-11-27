@@ -15,10 +15,10 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Phase 2: Foundation (blocks all stories)
 
-- [ ] T002 [P] Test the site and config (FR-010, contracts/config.md): `JevSite::ToolRisk` (`tool_risk`, suffix `TOOL_RISK`) in `JevSite::ALL`; `PARALLAX_JEV_MODE_TOOL_RISK` defaults to `off`; `shadow` without the key, `on`, and any other value are startup errors; the startup log line names the host and data class; `--help` and the README list the variable. Files: `src/traits/classifier.rs`, `src/config.rs`, `src/main.rs` tests.
-- [ ] T003 Implement T002, plus the operator-owned row in `docs/design/NEW_SERVER_DESIGN.md` §10 (contracts/config.md) and the new field in every `Config` test fixture. Files: `src/traits/classifier.rs`, `src/config.rs`, `src/main.rs`, `README.md`, `docs/design/NEW_SERVER_DESIGN.md`, `tests/common/mod.rs`, `examples/common/mod.rs`.
-- [ ] T004 [P] Test the `tool_risk` branch of `jev-record.schema.json` (contracts/record-additions.md): two-way binding through `JevSite::ALL`; `state_json` null; `applied` 0; `label_json` the big model's `action_class` answer on Jev rows, with `label_source`, and null on excluded rows (data-model.md). Files: storage and contract tests.
-- [ ] T005 Implement the schema branch. Files: `specs/064-jev-first-pass/contracts/jev-record.schema.json`, `src/storage/jev.rs`.
+- [x] T002 [P] Test the site and config (FR-010, contracts/config.md): `JevSite::ToolRisk` (`tool_risk`, suffix `TOOL_RISK`) in `JevSite::ALL`; `PARALLAX_JEV_MODE_TOOL_RISK` defaults to `off`; `shadow` without the key, `on`, and any other value are startup errors; the startup log line names the host and data class; `--help` and the README list the variable. Files: `src/traits/classifier.rs`, `src/config.rs`, `src/main.rs` tests.
+- [x] T003 Implement T002, plus the operator-owned row in `docs/design/NEW_SERVER_DESIGN.md` §10 (contracts/config.md) and the new field in every `Config` test fixture. Files: `src/traits/classifier.rs`, `src/config.rs`, `src/main.rs`, `README.md`, `docs/design/NEW_SERVER_DESIGN.md`, `tests/common/mod.rs`, `examples/common/mod.rs`.
+- [x] T004 [P] Test the `tool_risk` branch of `jev-record.schema.json` (contracts/record-additions.md): two-way binding through `JevSite::ALL`; `state_json` null; `applied` 0; `label_json` the big model's `action_class` answer on Jev rows, with `label_source`, and null on excluded rows (data-model.md). Files: storage and contract tests.
+- [x] T005 Implement the schema branch. Files: `specs/064-jev-first-pass/contracts/jev-record.schema.json`, `src/storage/jev.rs`.
 - [ ] T006 [P] Test the `action_class` question (FR-004, contracts/questions.md): id, version 1, choice, options in the order `spend_or_destructive`, `state_changing`, `read_only`, the instructions and criteria exactly as in the contract, model pinned. Files: `src/jev/questions.rs` tests.
 - [ ] T007 Implement the question. Files: `src/jev/questions.rs`.
 

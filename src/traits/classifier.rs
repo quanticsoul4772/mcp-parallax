@@ -18,14 +18,17 @@ pub enum JevSite {
     ResearchClaims,
     /// The injection screen on kept research pages (065).
     ResearchInjection,
+    /// The risk class of a pending tool call at the pre-action gate (067).
+    ToolRisk,
 }
 
 impl JevSite {
     /// Every site, in declaration order.
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 4] = [
         Self::TurnReview,
         Self::ResearchClaims,
         Self::ResearchInjection,
+        Self::ToolRisk,
     ];
 
     /// The stable name recorded in `jev_records.site`.
@@ -35,6 +38,7 @@ impl JevSite {
             Self::TurnReview => "turn_review",
             Self::ResearchClaims => "research_claims",
             Self::ResearchInjection => "research_injection",
+            Self::ToolRisk => "tool_risk",
         }
     }
 
@@ -45,6 +49,7 @@ impl JevSite {
             Self::TurnReview => "TURN_REVIEW",
             Self::ResearchClaims => "RESEARCH_CLAIMS",
             Self::ResearchInjection => "RESEARCH_INJECTION",
+            Self::ToolRisk => "TOOL_RISK",
         }
     }
 }
@@ -221,6 +226,14 @@ mod tests {
         assert!(JevMode::ALL.contains(&JevMode::On));
         assert_eq!(JevMode::parse("on"), Some(JevMode::On));
         assert_eq!(JevMode::On.as_str(), "on");
+    }
+
+    // 067 T002 (FR-010): the tool-risk site is listed with its stable names.
+    #[test]
+    fn the_tool_risk_site_is_listed() {
+        assert!(JevSite::ALL.contains(&JevSite::ToolRisk));
+        assert_eq!(JevSite::ToolRisk.as_str(), "tool_risk");
+        assert_eq!(JevSite::ToolRisk.suffix(), "TOOL_RISK");
     }
 
     #[tokio::test]

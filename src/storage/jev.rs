@@ -385,6 +385,25 @@ mod tests {
         assert_eq!(names("mode"), modes);
     }
 
+    // 067 T004: the contract's label_json has a tool_risk branch, the big
+    // model's action_class answer for the same projection.
+    #[test]
+    fn the_contract_has_a_tool_risk_label_branch() {
+        let schema = schema();
+        let branches = schema["properties"]["label_json"]["oneOf"]
+            .as_array()
+            .unwrap();
+        let tool = branches
+            .iter()
+            .find(|b| b["required"] == serde_json::json!(["class"]))
+            .expect("a tool_risk label branch");
+        assert_eq!(
+            tool["properties"]["class"]["enum"],
+            serde_json::json!(["spend_or_destructive", "state_changing", "read_only"])
+        );
+        assert_eq!(tool["additionalProperties"], serde_json::json!(false));
+    }
+
     #[test]
     fn outcomes_are_the_published_list_plus_excluded() {
         for outcome in Outcome::ALL {

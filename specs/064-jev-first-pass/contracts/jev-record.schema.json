@@ -23,7 +23,7 @@
     "created_at": { "type": "string", "format": "date-time" },
     "server_session_id": { "type": "string" },
     "harness_session_id": { "type": ["string", "null"] },
-    "site": { "enum": ["turn_review", "research_claims", "research_injection"] },
+    "site": { "enum": ["turn_review", "research_claims", "research_injection", "tool_risk"] },
     "mode": { "enum": ["shadow", "on"] },
     "questions_json": {
       "type": "array",
@@ -87,6 +87,15 @@
             "votes_refuted": { "type": "integer", "minimum": 0 },
             "votes_completed": { "type": "integer", "minimum": 0 },
             "sources": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "description": "Tool risk (067): the big model's action_class answer for the same redacted projection Jev saw; label_source names the model and prompt version. Null on excluded rows.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class"],
+          "properties": {
+            "class": { "enum": ["spend_or_destructive", "state_changing", "read_only"] }
           }
         }
       ]

@@ -20,6 +20,10 @@ const fn data_sent(site: JevSite) -> &'static str {
              numbers, dates or flagged sources are never sent)"
         }
         JevSite::ResearchInjection => "kept research pages (URL and capped text, redacted)",
+        JevSite::ToolRisk => {
+            "pending tool calls as redacted projections: the Bash command with heredoc bodies \
+             dropped, Write and Edit file paths, other tools' names and argument names"
+        }
     }
 }
 
@@ -28,6 +32,7 @@ const fn mode(settings: &JevSettings, site: JevSite) -> JevMode {
         JevSite::TurnReview => settings.turn_review,
         JevSite::ResearchClaims => settings.research_claims,
         JevSite::ResearchInjection => settings.research_injection,
+        JevSite::ToolRisk => settings.tool_risk,
     }
 }
 
@@ -53,7 +58,9 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
                     JevSite::ResearchInjection => {
                         "pages at or above the pinned threshold carry an advisory warning"
                     }
-                    JevSite::ResearchClaims => {
+                    // Config refuses `on` for tool risk (067); the wording
+                    // is the generic one should that change.
+                    JevSite::ResearchClaims | JevSite::ToolRisk => {
                         "answers are used against the site's pinned thresholds"
                     }
                 },
@@ -97,6 +104,7 @@ mod tests {
             turn_review: turn,
             research_claims: research,
             research_injection: JevMode::Off,
+            tool_risk: JevMode::Off,
         }
     }
 
