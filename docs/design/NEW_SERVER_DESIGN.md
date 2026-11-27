@@ -273,6 +273,13 @@ diversity critical ([multiagent debate](https://www.emergentmind.com/papers/2305
 > more than one pass, and any change to the confidence number, are deferred
 > to their own specification and a larger measurement
 > (`specs/054-decide-reliability/spec.md`).
+>
+> **2026-11-27 amendment (068).** Stance exception: the turn-signal question
+> `pushback_reversal` sees the user's prompt from that turn, which breaks the
+> rule that judges stay blind to the user's stance. A reversal after pushback
+> cannot be judged without the pushback. The exception covers that one
+> question and that turn's user text only, redacted, and sent only with
+> `PARALLAX_JEV_SEND_USER_TEXT=true`; no other Jev question sees user text.
 
 ---
 
