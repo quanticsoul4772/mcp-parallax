@@ -261,8 +261,31 @@ async fn a_hanging_jev_delays_the_review_by_at_most_its_deadline() {
     );
     let started = std::time::Instant::now();
     run(b).await;
-    assert!(
-        started.elapsed() < StdDuration::from_millis(crate::client::typesafe::JEV_TURN_DEADLINE_MS)
-    );
+    // The turn's Jev deadline here is 50 ms; 250 ms of margin absorbs
+    // scheduler noise without letting a review held to the 1000 ms
+    // production deadline pass (066 review finding 11).
+    let elapsed = started.elapsed();
+    assert!(elapsed < StdDuration::from_millis(50 + 250), "{elapsed:?}");
     assert!(w.checkpoints.lock().unwrap()[0].review_ran);
+}
+
+// 066 review finding 7: a failed audited review keeps its audit marker, so
+// failed audits stay in the audit sample.
+#[tokio::test]
+async fn a_failed_audited_review_is_recorded_as_audit() {
+    let (mut b, w) = turn(
+        Arc::new(Answers(0.01)),
+        Some(thresholds()),
+        &eval_id(true),
+        0,
+        true,
+    );
+    b.client.checkpoint();
+    b.client
+        .expect_complete()
+        .returning(|_, _| Err(AppError::Client("review failed".into())));
+    run(b).await;
+    let record = w.checkpoints.lock().unwrap()[0].clone();
+    assert!(record.fail_open);
+    assert_eq!(record.review_skipped_by, Some(ReviewSkippedBy::Audit));
 }

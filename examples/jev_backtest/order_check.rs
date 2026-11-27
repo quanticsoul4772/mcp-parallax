@@ -4,8 +4,9 @@
 //! Every dataset line is asked three times: criteria `true` first, `false`
 //! first, and `true` first again. Order flips (first against second) print
 //! beside repeat flips (first against third), so a flip count can be read
-//! against Jev's own run-to-run noise. Nothing is saved; the printed lines go
-//! into the measurements doc.
+//! against Jev's own run-to-run noise. That check saves nothing; its printed
+//! lines go into the measurements doc. `turn_order` (066) saves its results
+//! to the measurements file.
 
 use crate::live::{
     jev, read_dataset, request, turn_questions, turn_rows, turn_version, values, TURN,
@@ -139,7 +140,10 @@ pub async fn turn_order(config: &Config, storage: &SqliteStorage, limit: usize) 
             }
         }
     }
-    results.replace_yes_no_order(TURN, version, items);
+    // An empty run (no rows, or every call failed) keeps the saved items.
+    if !items.is_empty() {
+        results.replace_yes_no_order(TURN, version, items);
+    }
     results.replace_skips(&format!("yes/no order v{version}"), TURN, &counts);
     rebuild::save(&results);
     print!("{}", measure::tables(&results));

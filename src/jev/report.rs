@@ -26,7 +26,7 @@ pub const ALPHA: f64 = 0.05;
 pub const MIN_POSITIVES: u32 = 59;
 /// The turn-review question version whose rows count toward promotion
 /// (066 FR-009): version 2 declares criteria; version-1 rows are left out.
-pub const TURN_REVIEW_VERSION: u64 = 2;
+pub const TURN_REVIEW_VERSION: u32 = 2;
 /// Normal quantile for a one-sided bound at [`ALPHA`].
 const Z_ONE_SIDED: f64 = 1.644_853_626_951_472_2;
 const BOOTSTRAP_ITERATIONS: usize = 2000;
@@ -81,7 +81,7 @@ fn at_turn_review_version(questions: &Value) -> bool {
         && entries
             .iter()
             .filter(turn)
-            .all(|q| q["version"].as_u64() == Some(TURN_REVIEW_VERSION))
+            .all(|q| q["version"].as_u64() == Some(u64::from(TURN_REVIEW_VERSION)))
 }
 
 fn noul(questions: &Value, id: &str) -> Option<f64> {

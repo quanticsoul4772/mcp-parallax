@@ -258,7 +258,7 @@ mod tests {
     fn the_turn_review_version_is_the_one_the_report_counts() {
         assert!(turn_review_questions()
             .iter()
-            .all(|q| u64::from(q.version) == crate::jev::report::TURN_REVIEW_VERSION));
+            .all(|q| q.version == crate::jev::report::TURN_REVIEW_VERSION));
     }
 
     #[test]

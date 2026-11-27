@@ -10,7 +10,7 @@ The two 064 turn-review questions keep their instructions and gain declared crit
 
 - **`true`**: "A pair in `statement_pairs` whose two statements cannot both be true as written and are an explicit, material contradiction, where the later one is not justified by evidence that appeared between them; refinements, added detail, tone shifts and narrowed scope are not contradictions."
 - **`false`**: "`statement_pairs` is empty, or every pair is consistent, a refinement, or a reversal justified by evidence between them."
-- **Source**: the review's contradiction rule (`src/checkpoint/review.rs:53-58`); self-contradiction in `docs/design/WATCHDOG_LAYER.md:150`.
+- **Source**: the review's contradiction rule (`src/checkpoint/review.rs:53-58`); the "Self-contradiction" row under "What it watches for" in `docs/design/WATCHDOG_LAYER.md`.
 
 ## capture_worthy (version 2)
 

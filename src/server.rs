@@ -473,7 +473,7 @@ impl Parallax {
                     crate::jev::policy::skip::TURN_REVIEW_THRESHOLDS,
                     &config.jev.model,
                     config.routing.model_for(CallSite::CheckpointReview),
-                    u32::try_from(crate::jev::report::TURN_REVIEW_VERSION).unwrap_or(u32::MAX),
+                    crate::jev::report::TURN_REVIEW_VERSION,
                 )
             } else {
                 None

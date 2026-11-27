@@ -142,12 +142,18 @@ pub fn values(response: &JevResponse) -> Vec<(String, f64, Option<String>)> {
 
 /// The turn-review questions' version (066: version 2).
 pub fn turn_version() -> u32 {
-    turn_review_questions().first().map_or(1, |q| q.version)
+    turn_review_questions()
+        .first()
+        .expect("turn-review questions")
+        .version
 }
 
 /// The research claim questions' version.
 fn research_version() -> u32 {
-    research_claim_questions(1).first().map_or(1, |q| q.version)
+    research_claim_questions(1)
+        .first()
+        .expect("research questions")
+        .version
 }
 
 /// Ask one request five times; one noise item per question answered.
@@ -185,7 +191,8 @@ async fn five(
                     .questions
                     .iter()
                     .find(|q| q.id == *id)
-                    .map_or(1, |q| q.version),
+                    .expect("question asked")
+                    .version,
             }
         })
         .collect()

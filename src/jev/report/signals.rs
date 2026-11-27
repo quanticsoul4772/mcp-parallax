@@ -78,8 +78,8 @@ mod tests {
             eval_id: "e".into(),
             harness_session_id: None,
             transcript_ref: None,
-            turn_start_line: None,
-            final_line: None,
+            turn_start_uuid: None,
+            final_uuid: None,
             pushback_result: pushback.into(),
             unverified_result: unverified.into(),
             unmatched_entities: kinds

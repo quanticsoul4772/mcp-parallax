@@ -23,8 +23,8 @@
 | `eval_id` | text | joins the checkpoint record |
 | `harness_session_id` | text | |
 | `transcript_ref` | text | transcript path |
-| `turn_start_line` | integer, nullable | line id of the turn start |
-| `final_line` | integer, nullable | line id of the final message |
+| `turn_start_uuid` | text, nullable | `uuid` of the turn start's transcript line |
+| `final_uuid` | text, nullable | `uuid` of the final message's transcript line |
 | `pushback_result` | text | `fired`, `not_fired` or an exclusion reason |
 | `unverified_result` | text | `fired`, `not_fired` or an exclusion reason |
 | `unmatched_entities` | text (JSON) | `[{ "kind": "path" \| "version" \| "identifier" \| "number", "hash": "..." }]` |
@@ -38,10 +38,12 @@ Exclusion reasons: `turn start not found`, `no previous final message`, `transcr
 |---|---|---|
 | `review_skipped_by` | text, nullable | null, `jev`, `audit` |
 
-## Pinned tables (`src/jev/policy.rs`)
+## Pinned tables (`src/jev/policy/skip.rs`)
 
-- `TURN_REVIEW_THRESHOLDS`: entries `{ jev_model, big_model, question_versions, contradiction_no, capture_worthy_no }`. Empty.
-- `TURN_REVIEW_ORDER_CHECKED`: entries `{ jev_model, big_model, question_versions }`. Empty.
+- `TURN_REVIEW_THRESHOLDS`: entries `{ jev_model, big_model, question_version, contradiction_no, capture_worthy_no }`. Empty.
+- `TURN_REVIEW_ORDER_CHECKED`: entries `{ jev_model, big_model, question_version }`. Empty.
+
+Both turn-review questions share one version, so one version keys an entry.
 
 ## Configuration (`src/config.rs`)
 

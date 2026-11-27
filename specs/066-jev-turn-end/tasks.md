@@ -63,7 +63,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T024 [P] [US3] Test configuration: `CHECKPOINT_TURN_SIGNALS` defaults to `off`; an unparseable value is a startup error; `PARALLAX_JEV_*` names outside the known set are startup errors; `PARALLAX_JEV_MODE_TURN_REVIEW=on` is refused (SC-003). Files: `src/config.rs` tests.
 - [x] T025 [US3] Implement the configuration, the turn-review `on` startup wording, `--help` and the README row. Files: `src/config.rs`, `src/jev/startup.rs`, `src/main.rs`, `README.md`.
 - [x] T026 [P] [US3] Test the `checkpoint_turn` signal-enum binding to its contract. Files: `src/checkpoint/contract.rs` tests.
-- [x] T027 [US3] Contracts: the checkpoint record contract gains `review_skipped_by`; `specs/007-observability-layer/contracts/telemetry.md` gains the attribute. Files: `specs/006-checkpoint-layer/contracts/`, `specs/007-observability-layer/contracts/telemetry.md`.
+- [x] T027 [US3] Contracts: the checkpoint record in `specs/006-checkpoint-layer/data-model.md` §6 gains `review_skipped_by` (the same edit adds 064's missing `jev_cost_usd`); `specs/007-observability-layer/contracts/telemetry.md` gains the attribute. Files: `specs/006-checkpoint-layer/data-model.md`, `specs/007-observability-layer/contracts/telemetry.md`.
 
 ## Phase 6: Polish and cross-cutting
 
@@ -76,7 +76,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [ ] T033 Push and PR; CI.
 - [ ] T034 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
 - [ ] T034a After merge and rebuild, re-run the noise and self-agreement measurements, and run the order check in both criteria orders (research D9, FR-010), on the version-2 turn-review questions with `jev_backtest`; results go to the 064 measurements doc under a 066 section.
-- [ ] T035 Update the CLAUDE.md active-feature block to the shipped state.
+- [ ] T035 Update the CLAUDE.md active-feature block to the shipped state, and add `CHECKPOINT_TURN_SIGNALS` to its runtime-configuration paragraph (exact text shown first).
 
 ## Dependencies
 

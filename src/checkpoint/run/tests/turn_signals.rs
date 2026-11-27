@@ -74,8 +74,8 @@ async fn a_turn_without_review_writes_one_row_joined_to_its_checkpoint_record() 
     let rows = rows.lock().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].eval_id, records[0].id);
-    assert_eq!(rows[0].turn_start_line, Some(2));
-    assert_eq!(rows[0].final_line, Some(19));
+    assert_eq!(rows[0].turn_start_uuid.as_deref(), Some("u01"));
+    assert_eq!(rows[0].final_uuid.as_deref(), Some("a03"));
     assert_eq!(rows[0].pushback_result, "no previous final message");
     // 1.2.3 is not in the turn's evidence (the tool saw 1.2.4); the path
     // and the number are.
@@ -197,7 +197,7 @@ async fn an_unreadable_transcript_records_both_signals_as_unreadable() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].pushback_result, "transcript unreadable");
     assert_eq!(rows[0].unverified_result, "transcript unreadable");
-    assert_eq!(rows[0].turn_start_line, None);
+    assert_eq!(rows[0].turn_start_uuid, None);
     assert_eq!(rows[0].eval_id, records.lock().unwrap()[0].id);
 }
 
@@ -403,4 +403,28 @@ async fn no_sentinel_from_the_transcript_reaches_the_jev_request() {
         !body.contains(PROMPT_SENTINEL) && !body.contains(TOOL_SENTINEL),
         "{body}"
     );
+}
+
+// 066 review finding 1: a failed turn-signal row write is logged and the
+// turn's evaluated result stands, like the 064 Jev row.
+#[tokio::test]
+async fn a_failed_signal_row_write_keeps_the_turns_result() {
+    let mut b = DepsBuilder::new();
+    b.reader
+        .expect_read()
+        .returning(|_, _| Ok((empty_window(), fixture_lines())));
+    b.client.expect_complete().times(0);
+    b.storage
+        .expect_record_checkpoint()
+        .times(1)
+        .returning(|_| Ok(()));
+    b.storage
+        .expect_record_turn_signals()
+        .times(1)
+        .returning(|_| Err(AppError::Storage("disk full".into())));
+    b.turn_signals = Some(signals_on(&Arc::new(PreviousFinals::default())));
+    let (result, _, _) = run_turn(&b.build(), &turn_params(FIXTURE_FINAL, false), None)
+        .await
+        .unwrap();
+    assert_eq!(result.verdict, Verdict::Silence);
 }

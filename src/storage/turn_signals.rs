@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS turn_signal_records (
     eval_id            TEXT NOT NULL,
     harness_session_id TEXT,
     transcript_ref     TEXT,
-    turn_start_line    INTEGER,
-    final_line         INTEGER,
+    turn_start_uuid    TEXT,
+    final_uuid         TEXT,
     pushback_result    TEXT NOT NULL,
     unverified_result  TEXT NOT NULL,
     unmatched_entities TEXT NOT NULL,
@@ -42,9 +42,9 @@ pub struct TurnSignalRecord {
     /// The transcript path.
     pub transcript_ref: Option<String>,
     /// Line index of the turn start in the tail read.
-    pub turn_start_line: Option<u32>,
+    pub turn_start_uuid: Option<String>,
     /// Line index of the final message in the tail read.
-    pub final_line: Option<u32>,
+    pub final_uuid: Option<String>,
     /// `fired`, `not_fired`, or an exclusion reason.
     pub pushback_result: String,
     /// `fired`, `not_fired`, or an exclusion reason.
@@ -65,8 +65,8 @@ impl TurnSignalRecord {
             "eval_id": self.eval_id,
             "harness_session_id": self.harness_session_id,
             "transcript_ref": self.transcript_ref,
-            "turn_start_line": self.turn_start_line,
-            "final_line": self.final_line,
+            "turn_start_uuid": self.turn_start_uuid,
+            "final_uuid": self.final_uuid,
             "pushback_result": self.pushback_result,
             "unverified_result": self.unverified_result,
             "unmatched_entities": self.unmatched_entities,
@@ -87,7 +87,7 @@ fn storage_err(what: &'static str) -> impl Fn(sqlx::Error) -> AppError {
 pub async fn insert(pool: &SqlitePool, r: &TurnSignalRecord) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO turn_signal_records (id, created_at, eval_id, harness_session_id,
-            transcript_ref, turn_start_line, final_line, pushback_result,
+            transcript_ref, turn_start_uuid, final_uuid, pushback_result,
             unverified_result, unmatched_entities, recommendations)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -96,8 +96,8 @@ pub async fn insert(pool: &SqlitePool, r: &TurnSignalRecord) -> Result<(), AppEr
     .bind(&r.eval_id)
     .bind(&r.harness_session_id)
     .bind(&r.transcript_ref)
-    .bind(r.turn_start_line.map(i64::from))
-    .bind(r.final_line.map(i64::from))
+    .bind(&r.turn_start_uuid)
+    .bind(&r.final_uuid)
     .bind(&r.pushback_result)
     .bind(&r.unverified_result)
     .bind(r.unmatched_entities.to_string())
@@ -126,11 +126,6 @@ pub async fn load(pool: &SqlitePool) -> Result<Vec<TurnSignalRecord>, AppError> 
 
 fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TurnSignalRecord, AppError> {
     let bad = |what: &str| AppError::Storage(format!("turn_signal_records: bad {what}"));
-    let line = |name: &str| -> Result<Option<u32>, AppError> {
-        row.get::<Option<i64>, _>(name)
-            .map(|v| u32::try_from(v).map_err(|_| bad(name)))
-            .transpose()
-    };
     let json = |name: &str| -> Result<Value, AppError> {
         serde_json::from_str(&row.get::<String, _>(name)).map_err(|_| bad(name))
     };
@@ -142,8 +137,8 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TurnSignalRecord, AppError>
         eval_id: row.get("eval_id"),
         harness_session_id: row.get("harness_session_id"),
         transcript_ref: row.get("transcript_ref"),
-        turn_start_line: line("turn_start_line")?,
-        final_line: line("final_line")?,
+        turn_start_uuid: row.get("turn_start_uuid"),
+        final_uuid: row.get("final_uuid"),
         pushback_result: row.get("pushback_result"),
         unverified_result: row.get("unverified_result"),
         unmatched_entities: json("unmatched_entities")?,
@@ -230,8 +225,8 @@ mod tests {
             eval_id: "eval-1".into(),
             harness_session_id: Some("fixture-session".into()),
             transcript_ref: Some("fixture.jsonl".into()),
-            turn_start_line: Some(2),
-            final_line: Some(19),
+            turn_start_uuid: Some("u01".into()),
+            final_uuid: Some("a03".into()),
             pushback_result: "no previous final message".into(),
             unverified_result: "fired".into(),
             unmatched_entities: serde_json::json!([
@@ -260,8 +255,8 @@ mod tests {
         let written = TurnSignalRecord {
             harness_session_id: None,
             transcript_ref: None,
-            turn_start_line: None,
-            final_line: None,
+            turn_start_uuid: None,
+            final_uuid: None,
             pushback_result: "transcript unreadable".into(),
             unverified_result: "transcript unreadable".into(),
             unmatched_entities: serde_json::json!([]),

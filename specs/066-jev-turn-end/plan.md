@@ -95,7 +95,7 @@ examples/
 tests/fixtures/transcripts/   # NEW: scrubbed spike fixtures
 docs/design/                  # MEMORY_LAYER.md, WATCHDOG_LAYER.md, CORRECTIVE_SELECTION.md, NEW_SERVER_DESIGN.md
 specs/017-memory-consolidation/spec.md   # note
-specs/006-checkpoint-layer/contracts/    # checkpoint record: review_skipped_by
+specs/006-checkpoint-layer/data-model.md  # §6 checkpoint_records: review_skipped_by
 specs/007-observability-layer/contracts/telemetry.md
 README.md                     # CHECKPOINT_TURN_SIGNALS row
 CHANGELOG.md

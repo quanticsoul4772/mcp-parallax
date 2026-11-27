@@ -25,6 +25,9 @@ pub struct TurnData {
     /// Index in the tail lines of the turn's real user prompt; `None` when
     /// it is not in the lines read.
     pub start: Option<usize>,
+    /// The `uuid` of that line, the anchor stored in `turn_signal_records`
+    /// (066 review finding 2); `None` when not found.
+    pub start_uuid: Option<String>,
     /// The prompt's text (string content, or its text blocks joined).
     pub user_prompt: String,
     /// Each tool input after the prompt, as JSON text.
@@ -55,6 +58,10 @@ pub fn parse_turn(lines: &[String]) -> TurnData {
     };
     let mut turn = TurnData {
         start: Some(start),
+        start_uuid: parsed[start]
+            .as_ref()
+            .and_then(|v| v["uuid"].as_str())
+            .map(str::to_string),
         user_prompt: parsed[start]
             .as_ref()
             .map(|v| text_of(&v["message"]["content"]))
@@ -71,7 +78,7 @@ pub fn parse_turn(lines: &[String]) -> TurnData {
         for block in blocks {
             match block["type"].as_str() {
                 Some("tool_use") if value["type"] == "assistant" => {
-                    turn.tool_inputs.push(block["input"].to_string());
+                    turn.tool_inputs.push(input_values(&block["input"]));
                     turn.tool_calls_after_prompt = turn.tool_calls_after_prompt.saturating_add(1);
                 }
                 Some("tool_result") => turn.tool_outputs.push(text_of(&block["content"])),
@@ -82,19 +89,23 @@ pub fn parse_turn(lines: &[String]) -> TurnData {
     turn
 }
 
-/// Index of the last assistant line (outside subagents) holding a text block:
-/// the turn's final message in the lines read.
+/// The `uuid` of the last assistant line (outside subagents) holding a text
+/// block: the turn's final message in the lines read. `None` when there is
+/// no such line, or it carries no `uuid`.
 #[must_use]
-pub fn final_line(lines: &[String]) -> Option<usize> {
-    lines.iter().rposition(|line| {
-        serde_json::from_str::<Value>(line).is_ok_and(|v| {
+pub fn final_uuid(lines: &[String]) -> Option<String> {
+    lines
+        .iter()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|v| {
             v["type"] == "assistant"
                 && v["isSidechain"] != true
                 && v["message"]["content"]
                     .as_array()
                     .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "text"))
         })
-    })
+        .and_then(|v| v["uuid"].as_str().map(str::to_string))
 }
 
 fn is_turn_start(raw: &str, value: &Value) -> bool {
@@ -108,6 +119,25 @@ fn is_turn_start(raw: &str, value: &Value) -> bool {
         && value["isSidechain"] != true
         && !holds_tool_result
         && !FLAG_PREFIXES.iter().any(|prefix| raw.contains(prefix))
+}
+
+/// A tool input's leaf values (strings as decoded text, numbers and booleans
+/// as written), one per line. Decoded, so a JSON escape such as `\n` never
+/// glues a letter onto the value after it (066 review finding 3).
+fn input_values(input: &Value) -> String {
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Number(n) => out.push(n.to_string()),
+            Value::Bool(b) => out.push(b.to_string()),
+            Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+            Value::Object(map) => map.values().for_each(|v| walk(v, out)),
+            Value::Null => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(input, &mut out);
+    out.join("\n")
 }
 
 /// String content as is; text blocks joined by newlines; anything else as JSON.
@@ -219,6 +249,38 @@ mod tests {
         assert_eq!(turn.tool_calls_after_prompt, 1);
         assert_eq!(turn.tool_inputs.len(), 1);
         assert!(turn.tool_inputs[0].contains("after.rs"));
+    }
+
+    // 066 review finding 2: the anchors are the lines' uuids, which stay valid
+    // however large the transcript grows.
+    #[test]
+    fn the_turn_start_and_final_message_are_anchored_by_line_uuid() {
+        let lines = fixture("turn_string_prompt.jsonl");
+        assert_eq!(parse_turn(&lines).start_uuid.as_deref(), Some("u01"));
+        assert_eq!(final_uuid(&lines).as_deref(), Some("a03"));
+        let compacted = fixture("turn_compacted.jsonl");
+        assert_eq!(parse_turn(&compacted).start_uuid, None);
+        assert_eq!(final_uuid(&compacted).as_deref(), Some("a01"));
+    }
+
+    // 066 review finding 3: tool inputs are kept as their decoded values, so
+    // a JSON escape never glues a letter onto the text that follows it.
+    #[test]
+    fn tool_inputs_hold_decoded_values_not_escaped_json() {
+        let lines = vec![
+            human_prompt("write it"),
+            assistant_tool(
+                "Write",
+                &json!({ "file_path": "notes.txt", "content": "first line\n4096 more", "limit": 200 }),
+            ),
+        ];
+        let turn = parse_turn(&lines);
+        let input = &turn.tool_inputs[0];
+        assert!(input.contains("first line\n4096 more"), "{input}");
+        assert!(input.contains("200"), "{input}");
+        assert!(!input.contains("\\n"), "{input}");
+        let evidence = [input.as_str()];
+        assert!(crate::jev::entities::unmatched("It now has 4096 more.", &evidence).is_empty());
     }
 
     #[test]

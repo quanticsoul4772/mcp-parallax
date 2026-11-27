@@ -51,40 +51,49 @@ impl ModelClient for Recorder {
 /// One fixture's expected row.
 struct Expected {
     file: &'static str,
-    turn_start_line: Option<u32>,
-    final_line: Option<u32>,
+    turn_start_uuid: Option<&'static str>,
+    final_uuid: Option<&'static str>,
     pushback: &'static str,
     unverified: &'static str,
 }
 
-const EXPECTED: [Expected; 4] = [
+const EXPECTED: [Expected; 5] = [
     Expected {
         file: "turn_string_prompt.jsonl",
-        turn_start_line: Some(2),
-        final_line: Some(19),
+        turn_start_uuid: Some("u01"),
+        final_uuid: Some("a03"),
         pushback: "no previous final message",
         unverified: "fired",
     },
     Expected {
         file: "turn_block_prompt.jsonl",
-        turn_start_line: Some(1),
-        final_line: Some(2),
+        turn_start_uuid: Some("u01"),
+        final_uuid: Some("a01"),
         pushback: "no previous final message",
         unverified: "not_fired",
     },
     Expected {
         file: "turn_slash_command.jsonl",
-        turn_start_line: Some(1),
-        final_line: Some(2),
+        turn_start_uuid: Some("u01"),
+        final_uuid: Some("a01"),
         pushback: "no previous final message",
         unverified: "not_fired",
     },
     Expected {
         file: "turn_compacted.jsonl",
-        turn_start_line: None,
-        final_line: Some(2),
+        turn_start_uuid: None,
+        final_uuid: Some("a01"),
         pushback: "turn start not found",
         unverified: "turn start not found",
+    },
+    // 066 review finding 4: a reversal pair, so the review runs through the
+    // real reader and the sentinel check has a request to inspect.
+    Expected {
+        file: "turn_reversal.jsonl",
+        turn_start_uuid: Some("u01"),
+        final_uuid: Some("a02"),
+        pushback: "no previous final message",
+        unverified: "not_fired",
     },
 ];
 
@@ -171,11 +180,17 @@ async fn main() {
             expected.file
         );
         assert_eq!(
-            row.turn_start_line, expected.turn_start_line,
+            row.turn_start_uuid.as_deref(),
+            expected.turn_start_uuid,
             "{}",
             expected.file
         );
-        assert_eq!(row.final_line, expected.final_line, "{}", expected.file);
+        assert_eq!(
+            row.final_uuid.as_deref(),
+            expected.final_uuid,
+            "{}",
+            expected.file
+        );
         assert_eq!(row.pushback_result, expected.pushback, "{}", expected.file);
         assert_eq!(
             row.unverified_result, expected.unverified,
@@ -185,14 +200,17 @@ async fn main() {
         println!(
             "{}: start {:?}, final {:?}, pushback {}, unverified {} ({} unmatched)",
             expected.file,
-            row.turn_start_line,
-            row.final_line,
+            row.turn_start_uuid,
+            row.final_uuid,
             row.pushback_result,
             row.unverified_result,
             row.unmatched_entities.as_array().map_or(0, Vec::len)
         );
     }
     let prompts = recorder.0.lock().unwrap().clone();
+    // The reversal fixture makes the review run, so the sentinel check below
+    // inspects at least one real request (066 review finding 4).
+    assert!(!prompts.is_empty(), "no model request was made");
     for prompt in &prompts {
         for sentinel in SENTINELS {
             assert!(

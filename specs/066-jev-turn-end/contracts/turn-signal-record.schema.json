@@ -11,8 +11,8 @@
     "eval_id": { "type": "string" },
     "harness_session_id": { "type": ["string", "null"] },
     "transcript_ref": { "type": ["string", "null"] },
-    "turn_start_line": { "type": ["integer", "null"], "minimum": 0 },
-    "final_line": { "type": ["integer", "null"], "minimum": 0 },
+    "turn_start_uuid": { "type": ["string", "null"] },
+    "final_uuid": { "type": ["string", "null"] },
     "pushback_result": {
       "enum": ["fired", "not_fired", "turn start not found", "no previous final message", "transcript unreadable", "tool call after prompt"]
     },

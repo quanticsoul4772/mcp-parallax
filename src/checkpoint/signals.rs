@@ -7,7 +7,7 @@
 use crate::checkpoint::contract::CheckpointTurnParams;
 use crate::checkpoint::review::mine_candidates;
 use crate::checkpoint::trajectory::{TrajectoryEntry, TrajectoryWindow};
-use crate::checkpoint::turn_view::{final_line, parse_turn, TurnData};
+use crate::checkpoint::turn_view::{final_uuid, parse_turn, TurnData};
 use crate::error::AppError;
 use crate::jev::entities::{unmatched, Unmatched};
 use crate::storage::turn_signals::TurnSignalRecord;
@@ -80,17 +80,14 @@ pub async fn record_turn(
     let previous = signals
         .previous_finals
         .swap(&params.session_id, &params.final_message);
-    let turn = lines.map(|l| (parse_turn(l), final_line(l)));
+    let turn = lines.map(|l| (parse_turn(l), final_uuid(l)));
     let row = build_row(&RowInput {
         id: uuid::Uuid::new_v4().to_string(),
         eval_id,
         harness_session_id: &params.session_id,
         transcript_ref: &params.transcript_path,
         turn: turn.as_ref().map(|(t, _)| t),
-        final_line: turn
-            .as_ref()
-            .and_then(|(_, line)| *line)
-            .and_then(|line| u32::try_from(line).ok()),
+        final_uuid: turn.as_ref().and_then(|(_, uuid)| uuid.clone()),
         previous_final: previous.as_deref(),
         final_message: &params.final_message,
         grounded_verify: signals.grounded_verify,
@@ -100,18 +97,62 @@ pub async fn record_turn(
     storage.record_turn_signals(&row).await
 }
 
+/// Sessions [`PreviousFinals`] keeps; the least recently updated goes first.
+pub const PREVIOUS_FINALS_CAP: usize = 64;
+
 /// The last final message per harness session, held in memory only
-/// (FR-005), updated at every turn end including continuation turns.
+/// (FR-005), updated at every turn end including continuation turns. Keeps
+/// the [`PREVIOUS_FINALS_CAP`] most recently updated sessions.
 #[derive(Debug, Default)]
-pub struct PreviousFinals(Mutex<HashMap<String, String>>);
+pub struct PreviousFinals(Mutex<Finals>);
+
+/// Each session's final message and when it was last updated.
+#[derive(Debug, Default)]
+struct Finals {
+    by_session: HashMap<String, (String, u64)>,
+    clock: u64,
+}
 
 impl PreviousFinals {
     /// Store `final_message` for `session` and return the one it replaces.
     pub fn swap(&self, session: &str, final_message: &str) -> Option<String> {
+        let mut finals = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        finals.clock += 1;
+        let stamp = finals.clock;
+        let previous = finals
+            .by_session
+            .insert(session.to_string(), (final_message.to_string(), stamp))
+            .map(|(text, _)| text);
+        if finals.by_session.len() > PREVIOUS_FINALS_CAP {
+            let oldest = finals
+                .by_session
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                finals.by_session.remove(&oldest);
+            }
+        }
+        previous
+    }
+
+    /// Sessions held.
+    #[must_use]
+    pub fn len(&self) -> usize {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(session.to_string(), final_message.to_string())
+            .by_session
+            .len()
+    }
+
+    /// Whether no session is held.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -198,8 +239,8 @@ pub struct RowInput<'a> {
     pub transcript_ref: &'a str,
     /// The turn data; `None` when the transcript could not be read.
     pub turn: Option<&'a TurnData>,
-    /// Line index of the final message in the tail read.
-    pub final_line: Option<u32>,
+    /// The `uuid` of the final message's line.
+    pub final_uuid: Option<String>,
     /// The previous final message for this session.
     pub previous_final: Option<&'a str>,
     /// This turn's final message.
@@ -238,11 +279,8 @@ pub fn build_row(input: &RowInput<'_>) -> TurnSignalRecord {
         eval_id: input.eval_id.to_string(),
         harness_session_id: Some(input.harness_session_id.to_string()),
         transcript_ref: Some(input.transcript_ref.to_string()),
-        turn_start_line: input
-            .turn
-            .and_then(|t| t.start)
-            .and_then(|s| u32::try_from(s).ok()),
-        final_line: input.final_line,
+        turn_start_uuid: input.turn.and_then(|t| t.start_uuid.clone()),
+        final_uuid: input.final_uuid.clone(),
         pushback_result: pushback_result.as_str().to_string(),
         unverified_result: unverified_result.as_str().to_string(),
         unmatched_entities: Value::Array(
@@ -264,6 +302,7 @@ mod tests {
     fn turn(prompt: &str, tool_calls: u32) -> TurnData {
         TurnData {
             start: Some(3),
+            start_uuid: Some("u03".to_string()),
             user_prompt: prompt.to_string(),
             tool_inputs: Vec::new(),
             tool_outputs: Vec::new(),
@@ -328,6 +367,22 @@ mod tests {
         assert_eq!(finals.swap("s1", "second").as_deref(), Some("first"));
         assert_eq!(finals.swap("s2", "other"), None);
         assert_eq!(finals.swap("s1", "third").as_deref(), Some("second"));
+    }
+
+    // 066 review finding 5: the map keeps the most recent 64 sessions.
+    #[test]
+    fn the_previous_final_map_keeps_only_the_most_recent_sessions() {
+        let finals = PreviousFinals::default();
+        for n in 0..PREVIOUS_FINALS_CAP {
+            finals.swap(&format!("s{n}"), "m");
+        }
+        // Touch s0 so it is the most recent, then add one more session.
+        assert_eq!(finals.swap("s0", "m2").as_deref(), Some("m"));
+        finals.swap("new", "m");
+        assert_eq!(finals.len(), PREVIOUS_FINALS_CAP);
+        // s1 was the least recently updated, so it went; s0 stayed.
+        assert_eq!(finals.swap("s1", "x"), None);
+        assert_eq!(finals.swap("s0", "x").as_deref(), Some("m2"));
     }
 
     // ---- T014: unverified_fact ----
