@@ -51,7 +51,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 - [x] T018 Amendments (FR-011): `docs/design/WATCHDOG_LAYER.md:56` and `:84-86`, the 006 FR-013 and D4 text, the "No model pass" comment at `src/checkpoint/gate.rs:5-7`. Exact text shown to the owner first.
 - [x] T019 FR-007: add the Voyage row (Write file contents through the existing gate embed) to the roadmap's §8 table. Exact text shown to the owner first.
-- [ ] T020 Live example `examples/acceptance_tool_risk.rs` (SC-002, SC-004; §11 test 8, live no-self-trigger): exits non-zero unless every SC-002 assertion holds and Jev adds zero time to the critical path (SC-004).
+- [x] T020 Live example `examples/acceptance_tool_risk.rs` (SC-002, SC-004; §11 test 8, live no-self-trigger): exits non-zero unless every SC-002 assertion holds and Jev adds zero time to the critical path (SC-004).
 - [ ] T021 Load run (SC-005): the live example with at least two sessions plus a research run at once; record hook p99 in `quickstart.md`.
 - [ ] T022 CHANGELOG `[Unreleased]` entry and the CLAUDE.md active-feature and configuration lines (roadmap §10). Exact text shown to the owner first.
 - [ ] T023 Full gate (SC-006), independent review, live acceptance, PR (roadmap line 163).
