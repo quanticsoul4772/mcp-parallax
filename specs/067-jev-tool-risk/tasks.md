@@ -54,11 +54,11 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T020 Live example `examples/acceptance_tool_risk.rs` (SC-002, SC-004; §11 test 8, live no-self-trigger): exits non-zero unless every SC-002 assertion holds and Jev adds zero time to the critical path (SC-004).
 - [x] T021 Load run (SC-005): the live example with at least two sessions plus a research run at once; record hook p99 in `quickstart.md`.
 - [x] T022 CHANGELOG `[Unreleased]` entry and the CLAUDE.md active-feature and configuration lines (roadmap §10). Exact text shown to the owner first.
-- [ ] T023 Full gate (SC-006), independent review, live acceptance, PR (roadmap line 163).
+- [x] T023 Full gate (SC-006), independent review, live acceptance, PR (roadmap line 163).
 
 ## Phase 7: User Story 4 - On in the owner's setup (P2)
 
-- [ ] T024 [US4] After merge and rebuild (FR-012, §4.1 line 186): back up `~/.claude.json`, set `PARALLAX_JEV_MODE_TOOL_RISK=shadow` in the Parallax entry and the widened matcher in the owner's hook config, exact keys shown first; the owner restarts.
+- [x] T024 [US4] After merge and rebuild (FR-012, §4.1 line 186): back up `~/.claude.json`, set `PARALLAX_JEV_MODE_TOOL_RISK=shadow` in the Parallax entry and the widened matcher in the owner's hook config, exact keys shown first; the owner restarts.
 
 ## Dependencies
 
