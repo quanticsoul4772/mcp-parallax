@@ -766,6 +766,18 @@ pub fn emit_checkpoint(
 /// record, so it is its own span with no caller trace; the critical path is
 /// zero by design.
 pub fn emit_tool_risk(row: &crate::storage::jev::JevRecord) {
+    emit_off_path_row(row, "parallax.jev.tool_risk");
+}
+
+/// Mirror one turn-signal row (068 plan D7a) as its own span when it is
+/// written, off the Stop hook's response path; the critical path is zero.
+pub fn emit_turn_signals(row: &crate::storage::jev::JevRecord) {
+    emit_off_path_row(row, "parallax.jev.turn_signals");
+}
+
+/// One Jev row written off a hook's response path, as a span named `name`
+/// with no caller trace.
+fn emit_off_path_row(row: &crate::storage::jev::JevRecord, name: &'static str) {
     if !ENABLED.load(Ordering::Acquire) {
         return;
     }
@@ -785,7 +797,7 @@ pub fn emit_tool_risk(row: &crate::storage::jev::JevRecord) {
     let (start, end) = record_window(row.created_at, row.latency_ms.unwrap_or(0));
     let mut span = handles
         .tracer
-        .span_builder("parallax.jev.tool_risk")
+        .span_builder(name)
         .with_kind(SpanKind::Internal)
         .with_start_time(start)
         .with_attributes(attributes)
@@ -1849,6 +1861,36 @@ mod tests {
                         == Some("tool-risk-span-probe")
             })
             .expect("tool-risk span exported");
+        assert_eq!(span.span_kind, SpanKind::Internal);
+        let attrs = &span.attributes;
+        assert_eq!(int(attrs, "parallax.jev.mode").as_deref(), Some("shadow"));
+        assert_eq!(int(attrs, "parallax.jev.requests").as_deref(), Some("1"));
+        assert_eq!(
+            int(attrs, "parallax.jev.critical_path_ms").as_deref(),
+            Some("0")
+        );
+    }
+
+    // 068 T012 (plan D7a): a turn-signal row is exported when it is written,
+    // off the Stop hook's response path, as its own span.
+    #[test]
+    fn a_turn_signal_row_is_exported_as_its_own_span() {
+        let (spans, _, guard) = test_handles();
+        let mut row = crate::jev::shadow::tests_support::claim_row();
+        row.site = crate::traits::classifier::JevSite::TurnSignals;
+        row.harness_session_id = Some("turn-signal-span-probe".into());
+        emit_turn_signals(&row);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| {
+                s.name == "parallax.jev.turn_signals"
+                    && int(&s.attributes, "parallax.session_id").as_deref()
+                        == Some("turn-signal-span-probe")
+            })
+            .expect("turn-signal span exported");
         assert_eq!(span.span_kind, SpanKind::Internal);
         let attrs = &span.attributes;
         assert_eq!(int(attrs, "parallax.jev.mode").as_deref(), Some("shadow"));

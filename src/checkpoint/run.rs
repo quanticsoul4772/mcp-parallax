@@ -57,6 +57,8 @@ pub struct CheckpointDeps {
     pub fixed_eval_id: Option<String>,
     /// The Jev tool-risk shadow (067); `None` when the site is off.
     pub tool_jev: Option<Arc<crate::jev::shadow::ToolJev>>,
+    /// The Jev turn-signal shadow (068); `None` when the site is off.
+    pub signals_jev: Option<Arc<crate::jev::shadow::SignalsJev>>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -212,6 +214,59 @@ fn spawn_tool_risk(deps: &CheckpointDeps, params: &CheckpointActionParams, eval_
             let update = crate::jev::shadow::label_tool(&jev, &row, &state).await;
             if let Err(error) = storage.update_jev_label(&row.id, &update).await {
                 tracing::warn!(%error, "tool-risk label update failed; the gate is unaffected");
+            }
+        }
+    });
+}
+
+/// What the turn-signal shadow needs from the turn's one transcript read.
+struct SignalState {
+    window: crate::checkpoint::trajectory::TrajectoryWindow,
+    activity: String,
+    user_text: String,
+}
+
+/// 068: ask Jev both turn-signal questions off the Stop hook's response path,
+/// after the checkpoint record is written; never awaited (plan D1a). Both
+/// rows are written together, then each row's span is exported and its cost
+/// added to the checkpoint record (plan D7a).
+fn spawn_turn_signals(
+    deps: &CheckpointDeps,
+    jev: Arc<crate::jev::shadow::SignalsJev>,
+    params: &CheckpointTurnParams,
+    eval_id: String,
+    state: SignalState,
+) {
+    use crate::jev::shadow::{shadow_signals, SignalInputs, TurnIds};
+    let storage = Arc::clone(&deps.storage);
+    let now = deps.clock.now();
+    let session_id = params.session_id.clone();
+    let transcript_path = params.transcript_path.clone();
+    let final_message = params.final_message.clone();
+    tokio::spawn(async move {
+        let ids = TurnIds {
+            eval_id: &eval_id,
+            harness_session_id: &session_id,
+            transcript_path: &transcript_path,
+            now,
+        };
+        let inputs = SignalInputs {
+            window: &state.window,
+            activity: &state.activity,
+            final_message: &final_message,
+            user_text: &state.user_text,
+        };
+        let rows = shadow_signals(&jev, inputs, ids).await;
+        if let Err(error) = storage.record_jev(&rows).await {
+            tracing::warn!(%error, "turn-signal jev rows write failed; the turn is unaffected");
+            return;
+        }
+        for row in &rows {
+            crate::observability::emit_turn_signals(row);
+            if let Some(cost) = row.cost_usd {
+                if let Err(error) = storage.add_checkpoint_jev_cost(&eval_id, cost).await {
+                    tracing::warn!(%error, "checkpoint jev cost addition failed; the turn is unaffected");
+                }
             }
         }
     });
@@ -390,6 +445,9 @@ pub async fn run_turn(
     // 066: kept outside the block, so a failed audited review still records
     // its audit marker after the fail-open recovery below.
     let mut skipped_by: Option<ReviewSkippedBy> = None;
+    // 068: what the turn-signal shadow needs, kept from the one transcript
+    // read; `None` when the site is off or nothing was read.
+    let mut signal_state: Option<SignalState> = None;
     let evaluation = async {
         if params.final_message.trim().is_empty() {
             return Ok(Evaluated::pure(
@@ -398,10 +456,17 @@ pub async fn run_turn(
                 CheckpointResult::silence(elapsed_ms(started)),
             ));
         }
-        let (window, _lines) = deps
+        let (window, lines) = deps
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
+        if deps.signals_jev.is_some() {
+            signal_state = Some(SignalState {
+                activity: review::turn_activity(&window),
+                user_text: crate::checkpoint::turn_view::parse_turn(&lines).user_prompt,
+                window: window.clone(),
+            });
+        }
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
         let preferences = preference::mine_preference_candidates(&recall);
@@ -507,10 +572,13 @@ pub async fn run_turn(
         &params.session_id,
         &evaluation,
         caller,
-        eval_id,
+        eval_id.clone(),
         jev_row,
     )
     .await?;
+    if let (Some(jev), Some(state)) = (deps.signals_jev.clone(), signal_state) {
+        spawn_turn_signals(deps, jev, params, eval_id, state);
+    }
     Ok((
         evaluation.result,
         evaluation.input_tokens,
@@ -861,6 +929,7 @@ mod tests {
         skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
         fixed_eval_id: Option<String>,
         tool_jev: Option<Arc<crate::jev::shadow::ToolJev>>,
+        signals_jev: Option<Arc<crate::jev::shadow::SignalsJev>>,
     }
 
     impl DepsBuilder {
@@ -878,6 +947,7 @@ mod tests {
                 skip_thresholds: None,
                 fixed_eval_id: None,
                 tool_jev: None,
+                signals_jev: None,
             }
         }
 
@@ -895,6 +965,7 @@ mod tests {
                 skip_thresholds: self.skip_thresholds,
                 fixed_eval_id: self.fixed_eval_id,
                 tool_jev: self.tool_jev,
+                signals_jev: self.signals_jev,
             }
         }
     }
@@ -1935,6 +2006,7 @@ mod tests {
 
     mod review_skip;
     mod tool_risk;
+    mod turn_signals_jev;
 
     // ---- 064 T019: the turn shadow ------------------------------------------
 

@@ -319,6 +319,7 @@ async fn main() {
                 mcp_parallax::jev::shadow::LABEL_IN_FLIGHT,
             )),
         })),
+        signals_jev: None,
     };
 
     // ---- drive the gate; SC-004 per call ------------------------------------

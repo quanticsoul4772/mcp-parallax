@@ -777,6 +777,23 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
+    async fn add_checkpoint_jev_cost(
+        &self,
+        eval_id: &str,
+        jev_cost_usd: f64,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE checkpoint_records SET jev_cost_usd = COALESCE(jev_cost_usd, 0) + ? \
+             WHERE id = ?",
+        )
+        .bind(jev_cost_usd)
+        .bind(eval_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Storage(format!("checkpoint jev_cost_usd addition: {e}")))?;
+        Ok(())
+    }
+
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
         let signals_evaluated: Vec<&str> = record
             .signals_evaluated
@@ -1725,6 +1742,28 @@ mod tests {
         let loaded = storage.list_checkpoints().await.unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0], record);
+    }
+
+    // 068 plan D7a: each turn-signal row's cost is added to the checkpoint's
+    // Jev cost; a record with none starts from zero, one with a turn-review
+    // cost keeps it.
+    #[tokio::test]
+    async fn checkpoint_jev_cost_additions_accumulate() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let empty = sample_checkpoint("c-none", "2026-06-12T10:00:00Z", Verdict::Silence, false);
+        let mut reviewed =
+            sample_checkpoint("c-review", "2026-06-12T10:00:00Z", Verdict::Silence, false);
+        reviewed.jev_cost_usd = Some(0.5);
+        storage.record_checkpoint(&empty).await.unwrap();
+        storage.record_checkpoint(&reviewed).await.unwrap();
+        for id in ["c-none", "c-review"] {
+            storage.add_checkpoint_jev_cost(id, 0.25).await.unwrap();
+            storage.add_checkpoint_jev_cost(id, 0.125).await.unwrap();
+        }
+        let loaded = storage.list_checkpoints().await.unwrap();
+        let cost = |id: &str| loaded.iter().find(|r| r.id == id).unwrap().jev_cost_usd;
+        assert_eq!(cost("c-none"), Some(0.375));
+        assert_eq!(cost("c-review"), Some(0.875));
     }
 
     #[tokio::test]

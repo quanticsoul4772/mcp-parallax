@@ -42,7 +42,8 @@
           },
           "band": { "enum": ["yes", "middle", "no", null] },
           "recommends": { "description": "Turn signals (068): the corrective 066's rule names for this signal given the catalog at the time.", "enum": ["verify", "grounded_verify", "research", null] },
-          "number_diff": { "description": "Turn signals (068), pushback_reversal only: a number or date in the final text differs from one in a transcript pair's earlier statement.", "type": ["boolean", "null"] }
+          "number_diff": { "description": "Turn signals (068), pushback_reversal only: a number or date in the final text differs from one in a transcript pair's earlier statement.", "type": ["boolean", "null"] },
+          "excluded_claims": { "description": "Turn signals (068), unverified_fact only: how many claims with numbers or dates were taken out of the final text before sending.", "type": ["integer", "null"], "minimum": 0 }
         }
       }
     },

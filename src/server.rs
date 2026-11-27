@@ -466,6 +466,26 @@ impl Parallax {
                 ))
             })
         };
+        // 068: the turn-signal shadow; recommends name only correctives in
+        // the catalog (FR-006), so it is told which are configured.
+        let signals_jev = if config.jev.turn_signals == crate::traits::classifier::JevMode::Off {
+            None
+        } else {
+            typesafe.clone().map(|client| {
+                Arc::new(crate::jev::shadow::SignalsJev {
+                    classifier: client,
+                    redactor: crate::jev::redact::Redactor::from_env(),
+                    model: config.jev.model.clone(),
+                    server_session_id: session_id.clone(),
+                    deadline: std::time::Duration::from_millis(
+                        crate::client::typesafe::JEV_TURN_DEADLINE_MS,
+                    ),
+                    send_user_text: config.jev.send_user_text,
+                    grounded_verify: grounded.is_some(),
+                    research: search.is_some(),
+                })
+            })
+        };
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
             storage: Arc::clone(&storage),
@@ -483,8 +503,7 @@ impl Parallax {
             gate_extra_patterns: config.checkpoint_gate_patterns.clone(),
             jev: turn_jev,
             tool_jev,
-            // 066: the turn signals record which correctives they would name,
-            // so they need to know what is in the catalog.
+            signals_jev,
             // 066: only an `on` turn-review site looks up pinned skip
             // thresholds; 066 refuses `on`, so this stays None.
             skip_thresholds: if config.jev.turn_review == crate::traits::classifier::JevMode::On {

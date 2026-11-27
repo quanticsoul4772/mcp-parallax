@@ -470,13 +470,16 @@ mod tests {
         let entry = &schema["properties"]["questions_json"]["items"]["properties"];
         assert!(entry["recommends"].is_object(), "recommends");
         assert!(entry["number_diff"].is_object(), "number_diff");
+        assert!(entry["excluded_claims"].is_object(), "excluded_claims");
         let required: Vec<&str> = schema["properties"]["questions_json"]["items"]["required"]
             .as_array()
             .unwrap()
             .iter()
             .map(|v| v.as_str().unwrap())
             .collect();
-        assert!(!required.contains(&"recommends") && !required.contains(&"number_diff"));
+        for field in ["recommends", "number_diff", "excluded_claims"] {
+            assert!(!required.contains(&field), "{field} is required");
+        }
         assert!(schema["properties"]["cooldown_suppressed"].is_object());
     }
 

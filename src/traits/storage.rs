@@ -96,6 +96,18 @@ pub trait Storage: Send + Sync {
         jev_cost_usd: f64,
     ) -> Result<(), AppError>;
 
+    /// Add to a checkpoint record's Jev cost once an off-path turn-signal row
+    /// is written (068 plan D7a); a record with no Jev cost starts from zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] if the write fails.
+    async fn add_checkpoint_jev_cost(
+        &self,
+        eval_id: &str,
+        jev_cost_usd: f64,
+    ) -> Result<(), AppError>;
+
     /// Signal keys delivered (verdict ≠ silence, not suppressed) in this
     /// session since `since` — the FR-010 cooldown lookup.
     ///

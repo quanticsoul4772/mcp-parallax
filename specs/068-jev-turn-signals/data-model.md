@@ -10,7 +10,7 @@ One row per request, so two per covered turn end: one for `pushback_reversal`, o
 |---|---|
 | `site` | `turn_signals` (new in the contract's site list) |
 | `mode` | `shadow` |
-| `questions_json` | one entry: the question's `id`, `version`, `option_order`, `answer`, `probabilities`, `band` (null: no bands in 068, plan D11), plus `recommends` (the corrective 066's rule names, given the catalog at the time; plan D7) and, on `pushback_reversal` only, `number_diff` (true when a number or date in the final text differs from one in a transcript pair's earlier statement; plan D2a) |
+| `questions_json` | one entry: the question's `id`, `version`, `option_order`, `answer`, `probabilities`, `band` (null: no bands in 068, plan D11), plus `recommends` (the corrective 066's rule names, given the catalog at the time; plan D7); on `pushback_reversal` only, `number_diff` (true when a number or date in the final text differs from one in a transcript pair's earlier statement; plan D2a); and on `unverified_fact` only, `excluded_claims` (how many claims with numbers or dates were taken out of the final text before sending; plan D2) |
 | `eval_id` | the turn's checkpoint record |
 | `state_json` | null; `state_hash` plus `transcript_ref` (§5.1) |
 | `truncated` | true when the final text was cut to 2000 characters (plan D1) |
