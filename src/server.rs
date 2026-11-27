@@ -414,6 +414,40 @@ impl Parallax {
                     )
                 })
             };
+        // Grounded-verify is enabled iff a source root is configured. The
+        // reader canonicalizes the root once here — a missing/invalid root is a
+        // loud startup error (008 FR-001/FR-004).
+        // A root that is refused as a secret folder or as too wide (055)
+        // leaves grounded_verify out of the catalog, with the reason logged;
+        // every other tool still starts. Any other root error stops startup.
+        let grounded = match &config.grounded_verify_root {
+            Some(root) => match crate::grounded::reader::SystemSourceReader::new(
+                root,
+                config.grounded_verify_max_bytes,
+            ) {
+                Ok(reader) => Some(Arc::new(GroundedDeps {
+                    model_client: pool.for_site(CallSite::GroundedVerify),
+                    reader: Arc::new(reader),
+                    mode: mode(GROUNDED_VERIFY_ID)?,
+                    limits: crate::grounded::AssemblyLimits {
+                        max_bytes: config.grounded_verify_max_bytes,
+                        max_locators: config.grounded_verify_max_locators,
+                        platform: crate::grounded::HOST_PLATFORM,
+                    },
+                    max_claim_chars: config.input_max_chars,
+                })),
+                Err(AppError::Config(
+                    refused @ (crate::error::ConfigError::SecretRoot { .. }
+                    | crate::error::ConfigError::WideRoot { .. }),
+                )) => {
+                    tracing::warn!(reason = %refused, "grounded_verify left out of the catalog");
+                    None
+                }
+                Err(other) => return Err(other),
+            },
+            None => None,
+        };
+
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
             storage: Arc::clone(&storage),
@@ -430,6 +464,28 @@ impl Parallax {
             embedder: embedder.clone(),
             gate_extra_patterns: config.checkpoint_gate_patterns.clone(),
             jev: turn_jev,
+            // 066: the turn signals record which correctives they would name,
+            // so they need to know what is in the catalog.
+            // 066: only an `on` turn-review site looks up pinned skip
+            // thresholds; 066 refuses `on`, so this stays None.
+            skip_thresholds: if config.jev.turn_review == crate::traits::classifier::JevMode::On {
+                crate::jev::policy::skip::thresholds_for(
+                    crate::jev::policy::skip::TURN_REVIEW_THRESHOLDS,
+                    &config.jev.model,
+                    config.routing.model_for(CallSite::CheckpointReview),
+                    crate::jev::report::TURN_REVIEW_VERSION,
+                )
+            } else {
+                None
+            },
+            fixed_eval_id: None,
+            turn_signals: config.checkpoint_turn_signals.then(|| {
+                crate::checkpoint::signals::TurnSignalsDeps {
+                    previous_finals: Arc::default(),
+                    grounded_verify: grounded.is_some(),
+                    research: search.is_some(),
+                }
+            }),
         });
 
         let memory = embedder.map(|embedder| {
@@ -466,40 +522,6 @@ impl Parallax {
                 jev: claim_jev,
                 jev_injection: injection_jev,
             })),
-            None => None,
-        };
-
-        // Grounded-verify is enabled iff a source root is configured. The
-        // reader canonicalizes the root once here — a missing/invalid root is a
-        // loud startup error (008 FR-001/FR-004).
-        // A root that is refused as a secret folder or as too wide (055)
-        // leaves grounded_verify out of the catalog, with the reason logged;
-        // every other tool still starts. Any other root error stops startup.
-        let grounded = match &config.grounded_verify_root {
-            Some(root) => match crate::grounded::reader::SystemSourceReader::new(
-                root,
-                config.grounded_verify_max_bytes,
-            ) {
-                Ok(reader) => Some(Arc::new(GroundedDeps {
-                    model_client: pool.for_site(CallSite::GroundedVerify),
-                    reader: Arc::new(reader),
-                    mode: mode(GROUNDED_VERIFY_ID)?,
-                    limits: crate::grounded::AssemblyLimits {
-                        max_bytes: config.grounded_verify_max_bytes,
-                        max_locators: config.grounded_verify_max_locators,
-                        platform: crate::grounded::HOST_PLATFORM,
-                    },
-                    max_claim_chars: config.input_max_chars,
-                })),
-                Err(AppError::Config(
-                    refused @ (crate::error::ConfigError::SecretRoot { .. }
-                    | crate::error::ConfigError::WideRoot { .. }),
-                )) => {
-                    tracing::warn!(reason = %refused, "grounded_verify left out of the catalog");
-                    None
-                }
-                Err(other) => return Err(other),
-            },
             None => None,
         };
 

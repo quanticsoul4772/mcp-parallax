@@ -120,6 +120,7 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `RESEARCH_CONCURRENCY` | no | `8` | Concurrent extract/verify cap (1–32) |
 | `FETCH_ALLOW_PRIVATE` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
 | `CHECKPOINT_GATE_PATTERNS` | no | empty | Comma-separated substrings extending the pre-action gate's built-in risk patterns; an empty entry (`a,,b`) is an error |
+| `CHECKPOINT_TURN_SIGNALS` | no | `off` | `off` or `on`. With `on`, each turn end runs the pushback-reversal and unverified-fact detectors in code and writes one `turn_signal_records` row; nothing is sent. Any other value is an error |
 | `GROUNDED_VERIFY_ROOT` | no | unset | Presence enables `grounded_verify`; the single root that locators resolve within (canonicalized at startup; reads are confined to it). Absent, the tool is not in the catalog. If the root is inside a folder whose files are refused as secrets (such as `.ssh`), or is a drive root or the home folder, `grounded_verify` is left out of the catalog with the reason logged; every other tool still starts. Set it to `.` to give each session its own folder: each Parallax uses the folder its session was started in. |
 | `GROUNDED_VERIFY_MAX_BYTES` | no | `262144` | Total assembled-evidence byte ceiling per `grounded_verify` call |
 | `GROUNDED_VERIFY_MAX_LOCATORS` | no | `64` | Maximum locators accepted per `grounded_verify` call |

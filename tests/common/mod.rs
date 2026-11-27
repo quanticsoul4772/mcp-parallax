@@ -42,6 +42,7 @@ pub fn test_config(timeout_ms: u64) -> Config {
         claude_cli_model: mcp_parallax::config::DEFAULT_CLAUDE_CLI_MODEL.into(),
         claude_cli_concurrency: mcp_parallax::config::DEFAULT_CLAUDE_CLI_CONCURRENCY,
         checkpoint_gate_patterns: vec![],
+        checkpoint_turn_signals: false,
         grounded_verify_root: None,
         grounded_verify_max_bytes: 262_144,
         grounded_verify_max_locators: 64,

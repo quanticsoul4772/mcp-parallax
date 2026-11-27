@@ -33,6 +33,7 @@ fn noise(site: &str, question: &str, samples: &[f64], choices: &[&str]) -> Noise
         question: question.into(),
         samples: samples.to_vec(),
         choices: choices.iter().map(|c| (*c).to_string()).collect(),
+        version: 1,
     }
 }
 
@@ -155,13 +156,16 @@ fn sample_results() -> Results {
             ],
             base_supports: true,
             supports: false,
+            version: 1,
         }],
         self_agreement: vec![AgreementItem {
             site: "research_claims".into(),
             row_id: "r1".into(),
             first: "supported".into(),
             second: "supported".into(),
+            version: 1,
         }],
+        yes_no_order: vec![],
         skipped: vec![
             ("turn_review".into(), "noise: transcript missing".into(), 3),
             ("research_claims".into(), "noise: failed calls".into(), 2),
@@ -249,7 +253,7 @@ fn results_round_trip_and_reproduce_the_same_tables() {
 fn replacing_one_sites_noise_keeps_the_other_sites() {
     let mut results = sample_results();
     let fresh = vec![noise("turn_review", "capture_worthy", &[0.2; 5], &[])];
-    results.replace_noise("turn_review", fresh.clone());
+    results.replace_noise("turn_review", 1, fresh.clone());
     let turn: Vec<&NoiseItem> = results
         .noise
         .iter()
@@ -274,8 +278,9 @@ fn replacing_one_sites_agreement_keeps_the_other_sites() {
         row_id: "t1".into(),
         first: "contradiction=false capture=false".into(),
         second: "contradiction=false capture=false".into(),
+        version: 1,
     }];
-    results.replace_agreement("turn_review", fresh.clone());
+    results.replace_agreement("turn_review", 1, fresh.clone());
     assert!(results.self_agreement.contains(&fresh[0]));
     assert!(results
         .self_agreement
@@ -299,7 +304,12 @@ fn skips_for<'a>(results: &'a Results, site: &str) -> Vec<&'a (String, String, u
 fn a_site_whose_rows_were_all_skipped_keeps_its_items_but_updates_its_counts() {
     let mut results = sample_results();
     let before = results.noise.clone();
-    results.record_noise_run("turn_review", None, &counts(&[("transcript missing", 9)]));
+    results.record_noise_run(
+        "turn_review",
+        1,
+        None,
+        &counts(&[("transcript missing", 9)]),
+    );
     assert_eq!(results.noise, before);
     let turn = skips_for(&results, "turn_review");
     assert_eq!(turn.len(), 1);
@@ -313,7 +323,12 @@ fn an_all_skipped_run_keeps_the_loss_counts_behind_the_kept_items() {
     results
         .skipped
         .push(("turn_review".into(), "noise: failed calls".into(), 3));
-    results.record_noise_run("turn_review", None, &counts(&[("transcript missing", 9)]));
+    results.record_noise_run(
+        "turn_review",
+        1,
+        None,
+        &counts(&[("transcript missing", 9)]),
+    );
     let turn = skips_for(&results, "turn_review");
     assert!(turn
         .iter()
@@ -328,7 +343,7 @@ fn an_all_skipped_run_keeps_the_loss_counts_behind_the_kept_items() {
 fn a_site_with_usable_rows_replaces_its_items_and_counts() {
     let mut results = sample_results();
     let fresh = vec![noise("turn_review", "contradiction", &[0.1; 5], &[])];
-    results.record_noise_run("turn_review", Some(fresh), &counts(&[]));
+    results.record_noise_run("turn_review", 1, Some(fresh), &counts(&[]));
     assert_eq!(
         results
             .noise
@@ -345,15 +360,20 @@ fn a_site_with_usable_rows_replaces_its_items_and_counts() {
 fn a_site_the_run_found_nothing_for_is_left_alone() {
     let mut results = sample_results();
     let before = results.clone();
-    results.record_noise_run("turn_review", None, &counts(&[]));
-    results.record_agreement_run("turn_review", None, &counts(&[]));
+    results.record_noise_run("turn_review", 1, None, &counts(&[]));
+    results.record_agreement_run("turn_review", 1, None, &counts(&[]));
     assert_eq!(results, before);
 }
 
 #[test]
 fn agreement_runs_follow_the_same_rule() {
     let mut results = sample_results();
-    results.record_agreement_run("research_claims", None, &counts(&[("no stored state", 4)]));
+    results.record_agreement_run(
+        "research_claims",
+        1,
+        None,
+        &counts(&[("no stored state", 4)]),
+    );
     assert_eq!(results.self_agreement.len(), 1);
     assert!(results
         .skipped
@@ -452,4 +472,157 @@ fn an_injection_result_saved_before_the_skip_count_loads_with_zero() {
     let loaded: InjectionResult = serde_json::from_str(saved).unwrap();
     assert_eq!(loaded.skipped, 0);
     assert!(loaded.per_set.is_empty());
+}
+
+// 066 T019a: results carry the question version, so a version-2 run keeps
+// 064's version-1 results; files saved before 066 read back as version 1.
+
+#[test]
+fn saved_items_without_a_version_read_back_as_version_1() {
+    let noise: NoiseItem = serde_json::from_value(serde_json::json!({
+        "site": "turn_review", "row_id": "r", "question": "contradiction",
+        "samples": [0.1, 0.2]
+    }))
+    .unwrap();
+    assert_eq!(noise.version, 1);
+    let order: OrderItem = serde_json::from_value(serde_json::json!({
+        "row_id": "r", "question": "relation_1", "order": ["a", "b", "c"],
+        "base_supports": true, "supports": true
+    }))
+    .unwrap();
+    assert_eq!(order.version, 1);
+    let agreement: AgreementItem = serde_json::from_value(serde_json::json!({
+        "site": "turn_review", "row_id": "r", "first": "x", "second": "x"
+    }))
+    .unwrap();
+    assert_eq!(agreement.version, 1);
+}
+
+#[test]
+fn a_version_2_noise_run_keeps_the_version_1_items_and_counts() {
+    let mut results = sample_results();
+    results.record_noise_run(
+        "turn_review",
+        1,
+        Some(vec![noise("turn_review", "contradiction", &[0.3; 5], &[])]),
+        &counts(&[("no stored state", 2)]),
+    );
+    let mut v2 = noise("turn_review", "contradiction", &[0.4; 5], &[]);
+    v2.version = 2;
+    results.record_noise_run(
+        "turn_review",
+        2,
+        Some(vec![v2]),
+        &counts(&[("no stored state", 7)]),
+    );
+    let turn: Vec<u32> = results
+        .noise
+        .iter()
+        .filter(|i| i.site == "turn_review")
+        .map(|i| i.version)
+        .collect();
+    assert_eq!(turn, [1, 2]);
+    let reasons: Vec<&str> = skips_for(&results, "turn_review")
+        .iter()
+        .map(|(_, reason, _)| reason.as_str())
+        .collect();
+    assert!(reasons.contains(&"noise: no stored state"), "{reasons:?}");
+    assert!(
+        reasons.contains(&"noise v2: no stored state"),
+        "{reasons:?}"
+    );
+}
+
+#[test]
+fn a_version_2_agreement_run_keeps_the_version_1_items() {
+    let mut results = sample_results();
+    let item = |version: u32| AgreementItem {
+        site: "turn_review".into(),
+        row_id: format!("t{version}"),
+        first: "same".into(),
+        second: "same".into(),
+        version,
+    };
+    results.record_agreement_run("turn_review", 1, Some(vec![item(1)]), &counts(&[]));
+    results.record_agreement_run("turn_review", 2, Some(vec![item(2)]), &counts(&[]));
+    assert!(results.self_agreement.contains(&item(1)));
+    assert!(results.self_agreement.contains(&item(2)));
+}
+
+#[test]
+fn the_tables_name_a_question_version_other_than_1() {
+    let mut v2 = noise("turn_review", "contradiction", &[0.4; 5], &[]);
+    v2.version = 2;
+    let results = Results {
+        noise: vec![noise("turn_review", "contradiction", &[0.3; 5], &[]), v2],
+        ..Results::default()
+    };
+    let printed = tables(&results);
+    assert!(
+        printed.contains("turn_review contradiction v2:"),
+        "{printed}"
+    );
+    assert!(printed.contains("turn_review contradiction:"), "{printed}");
+}
+
+// 066 T019c: the yes/no order result keeps P(yes) under both criteria orders,
+// so flips can be recounted at any cut; the table reports flips at 0.5 and
+// the mean absolute shift.
+
+fn yes_no(question: &str, true_first: f64, false_first: f64) -> YesNoOrderItem {
+    YesNoOrderItem {
+        site: "turn_review".into(),
+        row_id: "r".into(),
+        question: question.into(),
+        version: 2,
+        true_first,
+        false_first,
+    }
+}
+
+#[test]
+fn a_results_file_saved_before_the_yes_no_order_result_reads_back_empty() {
+    let results: Results = serde_json::from_value(serde_json::json!({
+        "noise": [], "order": [], "self_agreement": [], "skipped": [],
+        "base_rate": null, "injection": null
+    }))
+    .unwrap();
+    assert!(results.yes_no_order.is_empty());
+}
+
+#[test]
+fn the_yes_no_order_table_counts_flips_at_one_half_and_the_mean_shift() {
+    let results = Results {
+        yes_no_order: vec![
+            yes_no("contradiction", 0.6, 0.4), // yes to no
+            yes_no("contradiction", 0.3, 0.7), // no to yes
+            yes_no("contradiction", 0.2, 0.3), // no flip
+            yes_no("contradiction", 0.9, 0.9), // no flip
+        ],
+        ..Results::default()
+    };
+    let printed = tables(&results);
+    assert!(
+        printed.contains(
+            "yes/no order turn_review contradiction v2: 4 items, 2 flips at 0.5 \
+             (1 yes to no, 1 no to yes), McNemar 0.000, mean absolute shift 0.1750"
+        ),
+        "{printed}"
+    );
+}
+
+#[test]
+fn replacing_the_yes_no_order_items_keeps_other_versions() {
+    let mut results = Results::default();
+    let mut v3 = yes_no("contradiction", 0.1, 0.2);
+    v3.version = 3;
+    results.replace_yes_no_order("turn_review", 3, vec![v3.clone()]);
+    results.replace_yes_no_order("turn_review", 2, vec![yes_no("contradiction", 0.5, 0.5)]);
+    results.replace_yes_no_order("turn_review", 2, vec![yes_no("capture_worthy", 0.4, 0.4)]);
+    assert_eq!(results.yes_no_order.len(), 2);
+    assert!(results.yes_no_order.contains(&v3));
+    assert!(results
+        .yes_no_order
+        .iter()
+        .any(|i| i.question == "capture_worthy" && i.version == 2));
 }

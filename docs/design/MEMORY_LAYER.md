@@ -100,6 +100,13 @@ forgetting but by recalling badly.
 > stored content) and decay never removes. One `consolidation_records`
 > audit row per action/proposal/drop. Eviction remains manual-only
 > (`forget`), per the corpus's compliance framing.
+>
+> **2026-11-26 amendment (066).** 017 decided the review hop runs at every turn end when
+> memory is configured. 066 adds a skip, refused at startup until promoted: when Jev's two
+> turn-review answers are confidently no and no memory, preference or transcript candidate
+> exists, the hop, and with it the capture judgment, is skipped, except for a 10% audit
+> share. A capture-worthy turn that Jev misses is the harm the promotion rule's recall bound
+> guards against.
 
 Storing everything is as bad as storing nothing. Four consolidation levers
 ([Letta](https://www.letta.com/blog/agent-memory), [mem0](https://mem0.ai/blog/memory-eviction-and-forgetting-in-ai-agents)):

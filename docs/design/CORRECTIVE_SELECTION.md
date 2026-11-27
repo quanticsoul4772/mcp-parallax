@@ -86,7 +86,7 @@ Every routing decision needs a signal, and the signals are unreliable in known w
 | **Checkable-ness** (can it become code?) | → symbolic vs LLM (mechanism) | **deterministic — prefer it** |
 | **Action risk / type** | → watchdog gate (§K) | rule-based, reliable |
 | **Ensemble agreement / consistency** | → escalation, confidence | decent (but consistency ≠ correctness) |
-| **Single-pass classifier probability** (Jev, 064) | → cheap-tier screening and skip gates (shadow in 064; advisory warning `on` in 065, research injection) | reliable only on the measured distribution and error direction, at a version-pinned, back-tested threshold |
+| **Single-pass classifier probability** (Jev, 064) | → cheap-tier screening and skip gates (shadow in 064; advisory warning `on` in 065, research injection; end-of-turn review skip built in 066, refused until promoted) | reliable only on the measured distribution and error direction, at a version-pinned, back-tested threshold |
 | **Query difficulty heuristics** (length, rarity, complexity) | → model-tier routing | rough |
 | **Self-reported confidence** | — | **poorly calibrated — do not route on it** |
 

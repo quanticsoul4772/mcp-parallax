@@ -123,6 +123,9 @@ async fn main() {
         embedder: Some(Arc::clone(&embedder)),
         gate_extra_patterns: vec![],
         jev: None,
+        turn_signals: None,
+        skip_thresholds: None,
+        fixed_eval_id: None,
     };
     let dir = tempfile::tempdir().unwrap();
 

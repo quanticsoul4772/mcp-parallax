@@ -28,6 +28,9 @@ test = true
 name = "acceptance_jev_injection"
 test = true
 
+[[example]]
+name = "acceptance_turn_signals"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "process"] }

@@ -4,16 +4,24 @@
 //! Every dataset line is asked three times: criteria `true` first, `false`
 //! first, and `true` first again. Order flips (first against second) print
 //! beside repeat flips (first against third), so a flip count can be read
-//! against Jev's own run-to-run noise. Nothing is saved; the printed lines go
-//! into the measurements doc.
+//! against Jev's own run-to-run noise. That check saves nothing; its printed
+//! lines go into the measurements doc. `turn_order` (066) saves its results
+//! to the measurements file.
 
-use crate::live::{jev, read_dataset, request, values};
+use crate::live::{
+    jev, read_dataset, request, turn_questions, turn_rows, turn_version, values, TURN,
+};
+use crate::rebuild::{self, asked};
 use mcp_parallax::client::typesafe::TypesafeClient;
 use mcp_parallax::config::Config;
 use mcp_parallax::jev::injection::{order_flips, OrderFlips};
+use mcp_parallax::jev::measure::{self, YesNoOrderItem};
 use mcp_parallax::jev::metrics::Decision;
-use mcp_parallax::jev::questions::{injection_question, injection_question_swapped};
+use mcp_parallax::jev::questions::{
+    injection_question, injection_question_swapped, turn_review_questions_swapped,
+};
 use mcp_parallax::jev::redact::{RedactedState, Redactor};
+use mcp_parallax::storage::SqliteStorage;
 use mcp_parallax::traits::classifier::{Classifier, JevQuestion};
 
 /// One call's decision at `threshold`; a failed call or a missing answer is
@@ -93,4 +101,50 @@ pub async fn injection_order(config: &Config, folder: &str, threshold: f64) {
         "{}",
         line("repeat (true first twice)", &order_flips(&repeat_pairs))
     );
+}
+
+/// 066 T019c: ask each stored turn row's turn-review questions with their
+/// criteria `true` first and `false` first, and save both P(yes) per
+/// question, so the order check (FR-010) can be read at any cut.
+pub async fn turn_order(config: &Config, storage: &SqliteStorage, limit: usize) {
+    let client = jev(config);
+    let mut results = rebuild::load();
+    let (turns, mut counts) = turn_rows(storage, limit, |_| Ok(())).await;
+    let version = turn_version();
+    let mut items = Vec::new();
+    for (row, turn) in turns {
+        let ids = asked(&row);
+        let swapped: Vec<JevQuestion> = turn_review_questions_swapped()
+            .into_iter()
+            .filter(|q| ids.contains(&q.id))
+            .collect();
+        let first = client
+            .classify(&request(config, turn.state.clone(), turn_questions(&row)))
+            .await;
+        let second = client.classify(&request(config, turn.state, swapped)).await;
+        let (Ok(first), Ok(second)) = (first, second) else {
+            *counts.entry("failed calls".to_string()).or_default() += 1;
+            continue;
+        };
+        let later = values(&second);
+        for (id, p_true_first, _) in values(&first) {
+            if let Some((_, p_false_first, _)) = later.iter().find(|(q, _, _)| *q == id) {
+                items.push(YesNoOrderItem {
+                    site: TURN.into(),
+                    row_id: row.id.clone(),
+                    question: id,
+                    version,
+                    true_first: p_true_first,
+                    false_first: *p_false_first,
+                });
+            }
+        }
+    }
+    // An empty run (no rows, or every call failed) keeps the saved items.
+    if !items.is_empty() {
+        results.replace_yes_no_order(TURN, version, items);
+    }
+    results.replace_skips(&format!("yes/no order v{version}"), TURN, &counts);
+    rebuild::save(&results);
+    print!("{}", measure::tables(&results));
 }

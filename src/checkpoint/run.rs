@@ -10,10 +10,11 @@ use crate::checkpoint::contract::{
     CheckpointActionParams, CheckpointBatchParams, CheckpointResult, CheckpointTurnParams,
 };
 use crate::checkpoint::{
-    gate, preference, review, screen, Boundary, CheckpointRecord, Signal, SignalKind,
-    COOLDOWN_WINDOW_MS, GATE_BUDGET_MS,
+    gate, preference, review, screen, Boundary, CheckpointRecord, ReviewSkippedBy, Signal,
+    SignalKind, COOLDOWN_WINDOW_MS, GATE_BUDGET_MS,
 };
 use crate::error::AppError;
+mod turn_review;
 use crate::modes::CorrectiveMode;
 use crate::observability::CallerTrace;
 use crate::telemetry;
@@ -25,6 +26,7 @@ use crate::traits::trajectory::TrajectoryReader;
 use chrono::Duration;
 use std::sync::Arc;
 use std::time::Instant;
+use turn_review::{review_after_jev, review_beside_jev, TurnJevOutcome};
 
 /// Everything the three checkpoint boundaries need.
 pub struct CheckpointDeps {
@@ -47,6 +49,14 @@ pub struct CheckpointDeps {
     pub gate_extra_patterns: Vec<String>,
     /// The Jev turn shadow (064); `None` when the site is off.
     pub jev: Option<crate::jev::shadow::TurnJev>,
+    /// The 066 turn signals; `None` when `CHECKPOINT_TURN_SIGNALS` is off.
+    pub turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
+    /// The 066 review skip's pinned thresholds; `None` keeps today's
+    /// concurrent review and Jev (always `None` in production in 066).
+    pub skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
+    /// A fixed evaluation id, for tests of the audit share; `None` draws a
+    /// fresh UUID per evaluation.
+    pub fixed_eval_id: Option<String>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -61,6 +71,8 @@ struct Evaluated {
     cost_usd: f64,
     input_tokens: u64,
     output_tokens: u64,
+    /// Why the review was skipped or audited (066); `None` otherwise.
+    review_skipped_by: Option<ReviewSkippedBy>,
 }
 
 impl Evaluated {
@@ -74,6 +86,7 @@ impl Evaluated {
             cost_usd: 0.0,
             input_tokens: 0,
             output_tokens: 0,
+            review_skipped_by: None,
         }
     }
 }
@@ -93,7 +106,7 @@ pub async fn run_batch(
     let evaluated_kinds = vec![SignalKind::Repetition, SignalKind::RepeatedFailure];
 
     let evaluation = async {
-        let window = deps
+        let (window, _lines) = deps
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
@@ -263,12 +276,25 @@ pub async fn run_turn(
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
     // 064: the evaluation id exists from the start, so the Jev row can name it.
-    let eval_id = uuid::Uuid::new_v4().to_string();
+    let eval_id = deps
+        .fixed_eval_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let mut jev_row: Option<TurnJevOutcome> = None;
+    // 066: the turn signals' row joins this evaluation's record.
+    let signals_eval_id = deps.turn_signals.as_ref().map(|_| eval_id.clone());
+    let has_final = !params.final_message.trim().is_empty();
 
     // FR-014: a turn end that follows a forced continuation never reviews
     // again — continuation cannot loop.
     if params.continuation {
+        // 066 FR-005: continuation turns write no row but still update the
+        // session's previous final message.
+        if let (Some(signals), true) = (&deps.turn_signals, has_final) {
+            signals
+                .previous_finals
+                .swap(&params.session_id, &params.final_message);
+        }
         let evaluation = Evaluated::pure(
             vec![],
             vec![],
@@ -291,14 +317,16 @@ pub async fn run_turn(
     // when the capability that feeds it is configured — with memory off,
     // records stay byte-identical to the contradiction-only layer (FR-006).
     let evaluated_kinds = if deps.embedder.is_some() {
-        vec![
-            SignalKind::SelfContradiction,
-            SignalKind::PreferenceViolation,
-            SignalKind::CaptureProposal,
-        ]
+        TURN_KINDS_WITH_MEMORY.to_vec()
     } else {
         vec![SignalKind::SelfContradiction]
     };
+    // 066: the raw tail lines of the one transcript read; `None` after the
+    // evaluation means the read failed (or there was no final message).
+    let mut turn_lines: Option<Vec<String>> = None;
+    // 066: kept outside the block, so a failed audited review still records
+    // its audit marker after the fail-open recovery below.
+    let mut skipped_by: Option<ReviewSkippedBy> = None;
     let evaluation = async {
         if params.final_message.trim().is_empty() {
             return Ok(Evaluated::pure(
@@ -307,10 +335,11 @@ pub async fn run_turn(
                 CheckpointResult::silence(elapsed_ms(started)),
             ));
         }
-        let window = deps
+        let (window, lines) = deps
             .reader
             .read(&params.transcript_path, &params.session_id)
             .await?;
+        turn_lines = Some(lines);
         let (recall, mut input_tokens) = turn_recall(deps, &params.final_message).await?;
         let candidates = review::mine_candidates(&window, &params.final_message, &recall);
         let preferences = preference::mine_preference_candidates(&recall);
@@ -329,18 +358,44 @@ pub async fn run_turn(
             return Ok(evaluation);
         }
 
-        // One hop, three judgments (015 FR-010 · 017 research D6).
-        let (review, row) = review_beside_jev(
-            deps,
-            params,
-            &eval_id,
-            &candidates,
-            &preferences,
-            &window,
-            capture_enabled,
-        )
-        .await;
+        // One hop, three judgments (015 FR-010 · 017 research D6). With pinned
+        // thresholds (066), Jev answers first and may skip the hop.
+        let (review, row, by) = if deps.skip_thresholds.is_some() {
+            review_after_jev(
+                deps,
+                params,
+                &eval_id,
+                &candidates,
+                &preferences,
+                &window,
+                capture_enabled,
+            )
+            .await
+        } else {
+            let (review, row) = review_beside_jev(
+                deps,
+                params,
+                &eval_id,
+                &candidates,
+                &preferences,
+                &window,
+                capture_enabled,
+            )
+            .await;
+            (Some(review), row, None)
+        };
         jev_row = row;
+        skipped_by = by;
+        let Some(review) = review else {
+            let mut evaluation = Evaluated::pure(
+                evaluated_kinds.clone(),
+                vec![],
+                CheckpointResult::silence(elapsed_ms(started)),
+            );
+            evaluation.input_tokens = input_tokens;
+            evaluation.review_skipped_by = by;
+            return Ok(evaluation);
+        };
         let (flagged, proposal, inp, out, _raw) = review
             // The recall hop above already ran and was billed; fold it in so
             // the whole boundary's spend survives a review failure (020).
@@ -377,11 +432,13 @@ pub async fn run_turn(
             cost_usd,
             input_tokens,
             output_tokens: out,
+            review_skipped_by: by,
         })
     }
     .await;
 
-    let evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_turn");
+    let mut evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_turn");
+    evaluation.review_skipped_by = skipped_by;
     record_with_jev(
         deps,
         Boundary::Turn,
@@ -392,111 +449,29 @@ pub async fn run_turn(
         jev_row,
     )
     .await?;
+    if let (Some(signals), Some(eval_id), true) =
+        (&deps.turn_signals, signals_eval_id.as_deref(), has_final)
+    {
+        // Measurement only, like the 064 Jev row: a failed write is logged and
+        // the turn's result stands (066 US1, SC-001).
+        if let Err(error) = crate::checkpoint::signals::record_turn(
+            signals,
+            deps.storage.as_ref(),
+            deps.clock.now(),
+            eval_id,
+            params,
+            turn_lines.as_deref(),
+        )
+        .await
+        {
+            tracing::warn!(%error, "turn signal row write failed; the turn is unaffected");
+        }
+    }
     Ok((
         evaluation.result,
         evaluation.input_tokens,
         evaluation.output_tokens,
     ))
-}
-
-/// What one review hop returns: flags, capture proposal, tokens in and out,
-/// and the raw answers.
-type ReviewOutput = (
-    Vec<(Signal, String)>,
-    Option<review::CaptureProposal>,
-    u64,
-    u64,
-    review::ReviewRaw,
-);
-
-/// 064: run the review hop and, when the turn site is in shadow, Jev beside
-/// it (joined, never instead of it). The Jev row is built whatever either
-/// does; its label comes from the review's raw answers when the review
-/// succeeded.
-async fn review_beside_jev(
-    deps: &CheckpointDeps,
-    params: &CheckpointTurnParams,
-    eval_id: &str,
-    candidates: &[review::Candidate],
-    preferences: &[preference::PreferenceCandidate],
-    window: &crate::checkpoint::trajectory::TrajectoryWindow,
-    capture_enabled: bool,
-) -> (Result<ReviewOutput, AppError>, Option<TurnJevOutcome>) {
-    let activity = review::turn_activity(window);
-    let review = review::review_once(
-        deps.model_client.as_ref(),
-        &deps.review_mode,
-        candidates,
-        preferences,
-        &params.final_message,
-        &activity,
-        capture_enabled,
-    );
-    let Some(jev) = &deps.jev else {
-        return (review.await, None);
-    };
-    let shadow = Box::pin(crate::jev::shadow::shadow_turn(
-        jev,
-        crate::jev::shadow::TurnInputs {
-            window,
-            activity: &activity,
-            final_message: &params.final_message,
-            capture_enabled,
-        },
-        crate::jev::shadow::TurnIds {
-            eval_id,
-            harness_session_id: &params.session_id,
-            transcript_path: &params.transcript_path,
-            now: deps.clock.now(),
-        },
-    ));
-    // Each side notes when it finished, so the wait beyond the review is known.
-    let review = async {
-        let result = review.await;
-        (result, Instant::now())
-    };
-    let shadow = async {
-        let row = shadow.await;
-        (row, Instant::now())
-    };
-    let ((review, review_done), (mut row, jev_done)) = tokio::join!(review, shadow);
-    let wait_ms = u64::try_from(jev_done.saturating_duration_since(review_done).as_millis())
-        .unwrap_or(u64::MAX);
-    if let Ok((flags, _, _, _, raw)) = &review {
-        let memory_pairs = candidates
-            .iter()
-            .any(|c| c.origin == review::CandidateOrigin::Memory);
-        let flagged = |kind: SignalKind| flags.iter().any(|(signal, _)| signal.kind == kind);
-        row.label_json = Some(crate::jev::shadow::turn_label(
-            raw,
-            memory_pairs,
-            capture_enabled,
-            crate::jev::shadow::ReviewOutcome {
-                contradiction_flagged: flagged(SignalKind::SelfContradiction),
-                violation_flagged: flagged(SignalKind::PreferenceViolation),
-                // Whether a capture was stored is known only after the store
-                // step in `run_turn`, which sets it there.
-                captured: false,
-            },
-        ));
-        row.label_source = Some(format!("{}/{}", deps.model, review::REVIEW_MODE_ID));
-    }
-    (
-        review,
-        Some(TurnJevOutcome {
-            row: Box::new(row),
-            wait_ms,
-        }),
-    )
-}
-
-/// The turn's Jev row and how long the turn waited on Jev after the review
-/// finished (064).
-struct TurnJevOutcome {
-    // Boxed: the row is large, and carrying it by value through the record
-    // step pushed the turn future past the large-future lint (064).
-    row: Box<crate::storage::jev::JevRecord>,
-    wait_ms: u64,
 }
 
 /// Turn-flag delivery (015 research D6): one message in delivery order
@@ -723,6 +698,7 @@ async fn record_with_jev(
         latency_ms: evaluation.result.latency_ms,
         cost_usd: evaluation.cost_usd,
         jev_cost_usd: jev_row.as_ref().and_then(|r| r.cost_usd),
+        review_skipped_by: evaluation.review_skipped_by,
         created_at: deps.clock.now(),
     };
     // One measurement, two sinks (007 FR-009) — same value, same exit point.
@@ -740,20 +716,37 @@ async fn record_with_jev(
     Ok(())
 }
 
+/// What a turn evaluates with memory configured (015 research D7, 017);
+/// without memory only `SelfContradiction`. `CaptureProposal` never fires,
+/// so `checkpoint_turn.tool.json` lists the other two (066 T026).
+pub const TURN_KINDS_WITH_MEMORY: [SignalKind; 3] = [
+    SignalKind::SelfContradiction,
+    SignalKind::PreferenceViolation,
+    SignalKind::CaptureProposal,
+];
+
+/// The opening text of the batch flag; the turn-start finder skips any
+/// transcript line that contains it (066 FR-014).
+pub const BATCH_FLAG_PREFIX: &str = "Trajectory checkpoint (automated): ";
+
+/// The opening text of the gate hold; the turn-start finder skips any
+/// transcript line that contains it (066 FR-014).
+pub const HOLD_PREFIX: &str = "Checkpoint hold (automated): ";
+
 /// Fixed message templates (FR-005/SC-007): parameterized only by evidence.
-fn batch_flag_message(signals: &[Signal]) -> String {
+pub(crate) fn batch_flag_message(signals: &[Signal]) -> String {
     let evidence: Vec<&str> = signals.iter().map(|s| s.evidence.as_str()).collect();
     format!(
-        "Trajectory checkpoint (automated): {}. This pattern suggests the current \
+        "{BATCH_FLAG_PREFIX}{}. This pattern suggests the current \
          approach is looping — change the approach (or call the unstick corrective) \
          instead of repeating it.",
         evidence.join("; ")
     )
 }
 
-fn hold_message(memory_content: &str) -> String {
+pub(crate) fn hold_message(memory_content: &str) -> String {
     format!(
-        "Checkpoint hold (automated): this action appears to conflict with a stored, \
+        "{HOLD_PREFIX}this action appears to conflict with a stored, \
          verified constraint: \"{memory_content}\". Confirm to run it unchanged, or \
          deny it to let the agent course-correct."
     )
@@ -768,6 +761,14 @@ fn elapsed_ms(started: Instant) -> u64 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // 066 T005: the batch flag and the hold start with their exported prefixes.
+    #[test]
+    fn the_batch_flag_and_the_hold_start_with_their_exported_prefixes() {
+        let signal = Signal::new(SignalKind::Repetition, "e".into(), "k");
+        assert!(batch_flag_message(&[signal]).starts_with(BATCH_FLAG_PREFIX));
+        assert!(hold_message("c").starts_with(HOLD_PREFIX));
+    }
     use crate::checkpoint::trajectory::{TrajectoryEntry, TrajectoryWindow};
     use crate::checkpoint::Verdict;
     use crate::modes::ModeRegistry;
@@ -813,6 +814,9 @@ mod tests {
         embedder: Option<Arc<dyn Embedder>>,
         patterns: Vec<String>,
         jev: Option<crate::jev::shadow::TurnJev>,
+        turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
+        skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
+        fixed_eval_id: Option<String>,
     }
 
     impl DepsBuilder {
@@ -827,6 +831,9 @@ mod tests {
                 embedder: None,
                 patterns: vec![],
                 jev: None,
+                turn_signals: None,
+                skip_thresholds: None,
+                fixed_eval_id: None,
             }
         }
 
@@ -841,6 +848,9 @@ mod tests {
                 embedder: self.embedder,
                 gate_extra_patterns: self.patterns,
                 jev: self.jev,
+                turn_signals: self.turn_signals,
+                skip_thresholds: self.skip_thresholds,
+                fixed_eval_id: self.fixed_eval_id,
             }
         }
     }
@@ -857,7 +867,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(looping_window()));
+            .returning(|_, _| Ok((looping_window(), vec![])));
         b.storage
             .expect_delivered_signal_keys_since()
             .returning(|_, _| Ok(vec![]));
@@ -885,7 +895,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(looping_window()));
+            .returning(|_, _| Ok((looping_window(), vec![])));
         // The same signal key was delivered recently.
         let key = screen::screen(&looping_window())[0].signal_key.clone();
         b.storage
@@ -930,7 +940,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         // The routed review client is unreachable.
         b.client.expect_complete().returning(|_, _| {
             Err(AppError::RetriesExhausted {
@@ -1152,7 +1162,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         b.client.expect_complete().times(1).returning(|_, _| {
             Ok(Completion {
                 value: json!({
@@ -1208,10 +1218,13 @@ mod tests {
     async fn turn_with_no_candidates_never_invokes_the_hop() {
         let mut b = DepsBuilder::new();
         b.reader.expect_read().returning(|_, _| {
-            Ok(TrajectoryWindow {
-                session_id: "s1".into(),
-                entries: vec![],
-            })
+            Ok((
+                TrajectoryWindow {
+                    session_id: "s1".into(),
+                    entries: vec![],
+                },
+                vec![],
+            ))
         });
         b.client.expect_complete().times(0);
         b.storage
@@ -1235,7 +1248,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         b.client.expect_complete().times(1).returning(|_, _| {
             Ok(Completion {
                 value: json!({
@@ -1354,7 +1367,9 @@ mod tests {
     #[tokio::test]
     async fn turn_flags_a_preference_violation_quoting_memory_and_provenance() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1417,7 +1432,7 @@ mod tests {
         let mut b = DepsBuilder::new();
         b.reader
             .expect_read()
-            .returning(|_, _| Ok(reversal_window()));
+            .returning(|_, _| Ok((reversal_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1485,7 +1500,9 @@ mod tests {
     #[tokio::test]
     async fn turn_without_memory_lists_only_the_contradiction_signal() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.client.expect_complete().times(0);
         b.storage
             .expect_record_checkpoint()
@@ -1510,7 +1527,9 @@ mod tests {
     #[tokio::test]
     async fn turn_fails_open_when_recall_errors_and_still_records() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         let mut embedder = MockEmbedder::new();
         embedder
             .expect_embed_query()
@@ -1537,7 +1556,9 @@ mod tests {
     #[tokio::test]
     async fn turn_with_only_untrusted_memories_never_mines_preference_candidates() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1618,7 +1639,9 @@ mod tests {
     #[tokio::test]
     async fn turn_stores_a_capture_proposal_quarantined_with_one_audit_row() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         let mut embedder = matching_embedder();
         embedder.expect_embed_document().times(1).returning(|_| {
             Ok(Embedding {
@@ -1688,7 +1711,9 @@ mod tests {
     #[tokio::test]
     async fn turn_drops_capture_proposals_at_the_session_cap() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| Ok(vec![]));
         b.client
@@ -1725,7 +1750,9 @@ mod tests {
     #[tokio::test]
     async fn capture_storage_failure_never_affects_the_turn_verdict() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         let mut embedder = matching_embedder();
         embedder
             .expect_embed_document()
@@ -1760,7 +1787,9 @@ mod tests {
     #[tokio::test]
     async fn turn_suppresses_a_recently_delivered_violation_by_memory_id() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1803,7 +1832,9 @@ mod tests {
     #[tokio::test]
     async fn turn_cooldown_is_per_key_a_different_memory_still_delivers() {
         let mut b = DepsBuilder::new();
-        b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+        b.reader
+            .expect_read()
+            .returning(|_, _| Ok((empty_window(), vec![])));
         b.embedder = Some(Arc::new(matching_embedder()));
         b.storage.expect_load_memories().returning(|| {
             Ok(vec![preference_memory(
@@ -1857,6 +1888,9 @@ mod tests {
         .unwrap();
         assert_eq!(result.verdict, Verdict::Silence);
     }
+
+    mod review_skip;
+    mod turn_signals;
 
     // ---- 064 T019: the turn shadow ------------------------------------------
 
@@ -2008,7 +2042,7 @@ mod tests {
             let mut b = capturing(written);
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .times(1)
@@ -2115,7 +2149,9 @@ mod tests {
         async fn a_violation_flag_is_labeled_as_a_violation_not_a_contradiction() {
             let written = Written::new();
             let mut b = capturing(&written);
-            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok((empty_window(), vec![])));
             b.embedder = Some(Arc::new(matching_embedder()));
             b.storage.expect_load_memories().returning(|| {
                 Ok(vec![preference_memory(
@@ -2161,7 +2197,9 @@ mod tests {
             audit_ok: bool,
         ) -> DepsBuilder {
             let mut b = capturing(written);
-            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok((empty_window(), vec![])));
             b.embedder = Some(Arc::new(storing_embedder()));
             b.storage.expect_load_memories().returning(|| Ok(vec![]));
             b.client
@@ -2217,7 +2255,7 @@ mod tests {
             let mut b = capturing(&written);
             b.reader
                 .expect_read()
-                .returning(move |_, _| Ok(window.clone()));
+                .returning(move |_, _| Ok((window.clone(), vec![])));
             b.client.expect_complete().times(0);
             let mut mock = MockClassifier::new();
             mock.expect_classify().times(0);
@@ -2247,7 +2285,7 @@ mod tests {
             let mut b = capturing(&written);
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .returning(|_, _| Err(AppError::ValidationFailure("bad shape".into())));
@@ -2267,7 +2305,7 @@ mod tests {
             let mut b = capturing(&written);
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .returning(|_, _| Ok(contradiction_completion()));
@@ -2285,7 +2323,9 @@ mod tests {
             let written = Written::new();
             let requests: Shared<JevRequest> = Arc::default();
             let mut b = capturing(&written);
-            b.reader.expect_read().returning(|_, _| Ok(empty_window()));
+            b.reader
+                .expect_read()
+                .returning(|_, _| Ok((empty_window(), vec![])));
             b.embedder = Some(Arc::new(matching_embedder()));
             b.storage.expect_load_memories().returning(|| {
                 Ok(vec![preference_memory(
@@ -2335,7 +2375,7 @@ mod tests {
             let mut b = DepsBuilder::new();
             b.reader
                 .expect_read()
-                .returning(|_, _| Ok(reversal_window()));
+                .returning(|_, _| Ok((reversal_window(), vec![])));
             b.client
                 .expect_complete()
                 .returning(|_, _| Ok(contradiction_completion()));

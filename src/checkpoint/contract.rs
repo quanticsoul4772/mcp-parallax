@@ -342,6 +342,31 @@ mod tests {
         assert_eq!(hold.message.as_deref(), Some("why"));
     }
 
+    // 066 T026: checkpoint_turn's signal enum is exactly the kinds the turn
+    // evaluates, less the capture judgment, which never fires as a signal.
+    #[test]
+    fn the_turn_contract_lists_exactly_the_kinds_a_turn_can_fire() {
+        let text = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/specs/006-checkpoint-layer/contracts/checkpoint_turn.tool.json"
+        ))
+        .unwrap();
+        let contract: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let listed: Vec<&str> = contract["result"]["properties"]["signals"]["items"]["properties"]
+            ["kind"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let fired: Vec<&str> = crate::checkpoint::run::TURN_KINDS_WITH_MEMORY
+            .iter()
+            .filter(|k| **k != crate::checkpoint::SignalKind::CaptureProposal)
+            .map(|k| k.as_str())
+            .collect();
+        assert_eq!(listed, fired);
+    }
+
     /// Contract sync (the 005 pattern): wire shapes match the three contract
     /// JSONs — params property names + required lists, and the result's
     /// field set.

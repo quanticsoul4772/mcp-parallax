@@ -92,6 +92,7 @@ data).
 | `parallax.checkpoint.suppressed` | bool | cooldown-suppressed delivery |
 | `parallax.checkpoint.fail_open` | bool | evaluation degraded |
 | `parallax.checkpoint.review_ran` | bool | the review hop ran (turn boundary) |
+| `parallax.checkpoint.review_skipped_by` | string | `jev` \| `audit` (066): present only when the review was skipped or audited |
 | `parallax.checkpoint.cost_usd` | double | review-hop cost (0 for pure paths) |
 | `parallax.session_id` | string | the **harness session id** from the hook params (note: invocation spans carry the server's per-process session UUID; checkpoint spans carry the harness's — the useful correlation key at each level) |
 | `parallax.jev.mode` / `.requests` / `.failures` / `.cost_usd` / `.latency_ms` / `.critical_path_ms` | string / int / int / double / int / int | **added 064**: turn boundary only, when its Jev site is in shadow and the review ran: mode, requests (0 or 1), requests not ending in success, Jev cost (equal to the record's `jev_cost_usd`), the request's wall time, time waited on Jev beyond the review. From the evaluation's `jev_records` row; absent otherwise |

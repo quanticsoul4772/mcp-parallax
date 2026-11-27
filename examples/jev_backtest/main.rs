@@ -8,6 +8,7 @@
 //! cargo run --release --example jev_backtest -- report
 //! cargo run --release --example jev_backtest -- noise [rows]            (live, Jev)
 //! cargo run --release --example jev_backtest -- order [rows]            (live, Jev)
+//! cargo run --release --example jev_backtest -- turn-order [rows]       (live, Jev)
 //! cargo run --release --example jev_backtest -- self-agreement [rows]   (live, big model)
 //! cargo run --release --example jev_backtest -- injection <folder> [threshold]
 //! cargo run --release --example jev_backtest -- injection-order <folder> [threshold]
@@ -49,7 +50,7 @@ use mcp_parallax::storage::SqliteStorage;
 fn usage() {
     println!(
         "usage: jev_backtest <base-rate | report | noise [rows] | order [rows] | \
-         self-agreement [rows] | injection <folder> [threshold] | \
+         turn-order [rows] | self-agreement [rows] | injection <folder> [threshold] | \
          injection-order <folder> [threshold] | reproduce [file]>"
     );
 }
@@ -64,7 +65,7 @@ async fn main() {
     let config = Config::from_env().expect("configuration");
     let rows = |i: usize| -> usize { args.get(i).map_or(100, |v| v.parse().expect("a row count")) };
     match command.as_str() {
-        "base-rate" | "report" | "noise" | "order" | "self-agreement" => {
+        "base-rate" | "report" | "noise" | "order" | "turn-order" | "self-agreement" => {
             let storage = SqliteStorage::connect(&config.database_path)
                 .await
                 .expect("database");
@@ -73,6 +74,7 @@ async fn main() {
                 "report" => offline::report(&storage).await,
                 "noise" => live::noise(&config, &storage, rows(1)).await,
                 "order" => live::order(&config, &storage, rows(1)).await,
+                "turn-order" => order_check::turn_order(&config, &storage, rows(1)).await,
                 _ => live::self_agreement(&config, &storage, rows(1)).await,
             }
         }

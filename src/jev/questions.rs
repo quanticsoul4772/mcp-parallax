@@ -25,22 +25,72 @@ fn noul(id: String, instructions: String) -> JevQuestion {
     }
 }
 
-/// The end-of-turn review questions (064 U2).
+/// One yes/no question with declared criteria, `true` first.
+fn noul_with_criteria(
+    id: &str,
+    version: u32,
+    instructions: &str,
+    when_true: &str,
+    when_false: &str,
+) -> JevQuestion {
+    JevQuestion {
+        id: id.into(),
+        version,
+        kind: QuestionKind::Noul,
+        instructions: instructions.into(),
+        options: vec![
+            ("true".into(), Some(when_true.into())),
+            ("false".into(), Some(when_false.into())),
+        ],
+    }
+}
+
+/// The end-of-turn review questions (064 U2), version 2 (066).
+///
+/// The instructions are 064's; version 2 adds the criteria in
+/// `specs/066-jev-turn-end/contracts/questions.md`, each worded to read on
+/// its own so the order check can swap them. `true` is declared first: Jev
+/// leans toward the first option, and for the skip `false` is the answer
+/// that lets a turn through (064 research D10).
 #[must_use]
 pub fn turn_review_questions() -> Vec<JevQuestion> {
     vec![
-        noul(
-            "contradiction".into(),
+        noul_with_criteria(
+            "contradiction",
+            2,
             "Does any pair in `statement_pairs` contain two statements that cannot both be \
-             true, where the later one does not justify the reversal with new evidence?"
-                .into(),
+             true, where the later one does not justify the reversal with new evidence?",
+            "A pair in `statement_pairs` whose two statements cannot both be true as written \
+             and are an explicit, material contradiction, where the later one is not \
+             justified by evidence that appeared between them; refinements, added detail, \
+             tone shifts and narrowed scope are not contradictions.",
+            "`statement_pairs` is empty, or every pair is consistent, a refinement, or a \
+             reversal justified by evidence between them.",
         ),
-        noul(
-            "capture_worthy".into(),
-            "Does the turn contain a reusable skill or lesson worth saving for future sessions?"
-                .into(),
+        noul_with_criteria(
+            "capture_worthy",
+            2,
+            "Does the turn contain a reusable skill or lesson worth saving for future sessions?",
+            "The turn shows a reusable approach that demonstrably worked, or a failure whose \
+             cause it diagnosed, worth saving for future sessions.",
+            "The turn is routine progress, partial work or an unverified hunch, with nothing \
+             worth saving for future sessions.",
         ),
     ]
+}
+
+/// [`turn_review_questions`] with each question's criteria declared `false`
+/// first (066 T019c), for the order check. Ids, versions and criteria texts
+/// are unchanged, so an answer still means "yes".
+#[must_use]
+pub fn turn_review_questions_swapped() -> Vec<JevQuestion> {
+    turn_review_questions()
+        .into_iter()
+        .map(|mut q| {
+            q.options.reverse();
+            q
+        })
+        .collect()
 }
 
 /// The research claim questions (064 U4): a relation and a same-subject
@@ -130,6 +180,96 @@ mod tests {
         let ids: Vec<&str> = qs.iter().map(|q| q.id.as_str()).collect();
         assert_eq!(ids, ["contradiction", "capture_worthy"]);
         assert!(qs.iter().all(|q| q.kind == QuestionKind::Noul));
+    }
+
+    // 066 T018: version 2 declares the reviewed criteria (contracts/questions.md),
+    // `true` first; the research same_subject questions stay at version 1.
+    #[test]
+    fn the_turn_review_questions_are_version_2_with_their_criteria_true_first() {
+        let qs = turn_review_questions();
+        assert!(qs.iter().all(|q| q.version == 2));
+        let criteria = |id: &str| -> Vec<(String, String)> {
+            qs.iter()
+                .find(|q| q.id == id)
+                .unwrap()
+                .options
+                .iter()
+                .map(|(name, text)| (name.clone(), text.clone().unwrap()))
+                .collect()
+        };
+        assert_eq!(
+            criteria("contradiction"),
+            [
+                (
+                    "true".to_string(),
+                    "A pair in `statement_pairs` whose two statements cannot both be true as \
+                     written and are an explicit, material contradiction, where the later one \
+                     is not justified by evidence that appeared between them; refinements, \
+                     added detail, tone shifts and narrowed scope are not contradictions."
+                        .to_string()
+                ),
+                (
+                    "false".to_string(),
+                    "`statement_pairs` is empty, or every pair is consistent, a refinement, or \
+                     a reversal justified by evidence between them."
+                        .to_string()
+                ),
+            ]
+        );
+        assert_eq!(
+            criteria("capture_worthy"),
+            [
+                (
+                    "true".to_string(),
+                    "The turn shows a reusable approach that demonstrably worked, or a failure \
+                     whose cause it diagnosed, worth saving for future sessions."
+                        .to_string()
+                ),
+                (
+                    "false".to_string(),
+                    "The turn is routine progress, partial work or an unverified hunch, with \
+                     nothing worth saving for future sessions."
+                        .to_string()
+                ),
+            ]
+        );
+    }
+
+    // 066 T019c: the order check asks the same questions with the criteria
+    // declared `false` first; ids, versions and criteria texts are unchanged.
+    #[test]
+    fn the_swapped_turn_review_questions_reverse_only_the_criteria_order() {
+        let base = turn_review_questions();
+        let swapped = super::turn_review_questions_swapped();
+        assert_eq!(base.len(), swapped.len());
+        for (b, s) in base.iter().zip(&swapped) {
+            assert_eq!(
+                (&b.id, b.version, &b.instructions),
+                (&s.id, s.version, &s.instructions)
+            );
+            let mut reversed = b.options.clone();
+            reversed.reverse();
+            assert_eq!(s.options, reversed, "{}", b.id);
+            assert_eq!(s.options[0].0, "false");
+        }
+    }
+
+    #[test]
+    fn the_turn_review_version_is_the_one_the_report_counts() {
+        assert!(turn_review_questions()
+            .iter()
+            .all(|q| q.version == crate::jev::report::TURN_REVIEW_VERSION));
+    }
+
+    #[test]
+    fn the_research_same_subject_questions_stay_version_1_without_criteria() {
+        for q in research_claim_questions(2)
+            .iter()
+            .filter(|q| q.id.starts_with("same_subject_"))
+        {
+            assert_eq!(q.version, 1, "{}", q.id);
+            assert!(q.options.is_empty(), "{}", q.id);
+        }
     }
 
     #[test]

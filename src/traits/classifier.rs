@@ -106,8 +106,9 @@ pub struct JevQuestion {
     pub kind: QuestionKind,
     /// The question text, pointing at parts of the state by backticked path.
     pub instructions: String,
-    /// Choice options in order, each with an optional description; empty for
-    /// yes/no questions.
+    /// Choice options in order, each with an optional description. A yes/no
+    /// question has none, or declares its criteria as `true` and `false`
+    /// entries, which the client sends in that order.
     pub options: Vec<(String, Option<String>)>,
 }
 

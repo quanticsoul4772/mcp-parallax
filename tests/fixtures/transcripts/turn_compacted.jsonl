@@ -1,0 +1,3 @@
+{"type":"system","subtype":"compact_boundary","uuid":"s01","parentUuid":null,"timestamp":"2026-01-01T00:00:00.000Z","sessionId":"fixture-session","isSidechain":false}
+{"type":"user","uuid":"y01","parentUuid":"s01","timestamp":"2026-01-01T00:00:00.000Z","sessionId":"fixture-session","isSidechain":false,"isCompactSummary":true,"isVisibleInTranscriptOnly":true,"turnOrigin":"human","turnPosition":{"promptIndex":1,"turnIndex":1},"message":{"role":"user","content":"Fixture summary of earlier work SENTINEL-USER-PROMPT-7f3a"}}
+{"type":"assistant","uuid":"a01","parentUuid":"y01","timestamp":"2026-01-01T00:00:00.000Z","sessionId":"fixture-session","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Fixture final answer."}]}}

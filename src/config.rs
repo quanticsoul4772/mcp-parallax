@@ -124,6 +124,19 @@ impl JevSettings {
         let model = present_key(lookup("PARALLAX_JEV_MODEL"))
             .map_or_else(|| DEFAULT_JEV_MODEL.to_string(), |m| m.trim().to_string());
 
+        // 066 FR-010: the reserved namespace holds only PARALLAX_JEV_MODEL and
+        // the PARALLAX_JEV_MODE_<SITE> switches; any other name is a mistake.
+        if let Some((name, _)) = vars.iter().find(|(name, _)| {
+            name.starts_with("PARALLAX_JEV_")
+                && name != "PARALLAX_JEV_MODEL"
+                && !name.starts_with(JEV_MODE_PREFIX)
+        }) {
+            return Err(ConfigError::Jev(format!(
+                "unknown variable `{name}` in the reserved `PARALLAX_JEV_*` namespace; the known \
+                 names are PARALLAX_JEV_MODEL and PARALLAX_JEV_MODE_<SITE>"
+            )));
+        }
+
         let mut settings = Self {
             api_key,
             model,
@@ -151,6 +164,14 @@ impl JevSettings {
                     value.trim()
                 ))
             })?;
+            // 066 FR-010: the turn-review skip needs promotion data first.
+            if mode == JevMode::On && site == JevSite::TurnReview {
+                return Err(ConfigError::Jev(format!(
+                    "`{name}` is `on`, but the end-of-turn review skip needs a pinned threshold \
+                     entry, a recorded order check on question version 2 and the drift check, \
+                     and none exist yet; use `off` or `shadow`"
+                )));
+            }
             if mode == JevMode::On && site != JevSite::ResearchInjection {
                 return Err(ConfigError::Jev(format!(
                     "`{name}` is `on`, but only RESEARCH_INJECTION has a measured threshold; \
@@ -364,6 +385,11 @@ pub struct Config {
     /// `CHECKPOINT_GATE_PATTERNS`, default empty. A present value with an
     /// empty entry (`"a,,b"`) is an error, never silently skipped.
     pub checkpoint_gate_patterns: Vec<String>,
+    /// The 066 turn signals. `CHECKPOINT_TURN_SIGNALS`: `off` | `on`, unset
+    /// is `off`; any other present value is an error. With `on`, each turn
+    /// end runs the two detectors in code and writes one
+    /// `turn_signal_records` row; nothing is sent.
+    pub checkpoint_turn_signals: bool,
     /// The single source root for the `grounded_verify` tool (008). **Optional
     /// — its presence enables the tool**; absent, the tool does not exist and
     /// no file-read path is ever taken. `GROUNDED_VERIFY_ROOT`.
@@ -506,6 +532,9 @@ impl Config {
         )?)?;
         let checkpoint_gate_patterns =
             parse_gate_patterns(std::env::var("CHECKPOINT_GATE_PATTERNS").ok().as_deref())?;
+        let turn_signals_raw =
+            std::env::var("CHECKPOINT_TURN_SIGNALS").unwrap_or_else(|_| "off".to_string());
+        let checkpoint_turn_signals = parse_turn_signals(&turn_signals_raw)?;
         let grounded_verify_root = std::env::var("GROUNDED_VERIFY_ROOT")
             .ok()
             .filter(|root| !root.trim().is_empty());
@@ -551,6 +580,7 @@ impl Config {
             claude_cli_model,
             claude_cli_concurrency,
             checkpoint_gate_patterns,
+            checkpoint_turn_signals,
             grounded_verify_root,
             grounded_verify_max_bytes,
             grounded_verify_max_locators,
@@ -753,6 +783,16 @@ fn parse_gate_patterns(raw: Option<&str>) -> Result<Vec<String>, ConfigError> {
     Ok(patterns)
 }
 
+/// Parse `CHECKPOINT_TURN_SIGNALS` (066): `off` is off, `on` is on, anything
+/// else is an error, never a silent fallback. Unset reads as `off`.
+fn parse_turn_signals(raw: &str) -> Result<bool, ConfigError> {
+    match raw {
+        "off" => Ok(false),
+        "on" => Ok(true),
+        _ => Err(ConfigError::Invalid("CHECKPOINT_TURN_SIGNALS")),
+    }
+}
+
 /// Read an environment variable and parse it, falling back to `default` when the
 /// variable is unset. A present-but-unparseable value is an error, not a silent
 /// fallback.
@@ -808,6 +848,7 @@ pub(crate) fn test_config() -> Config {
         claude_cli_model: DEFAULT_CLAUDE_CLI_MODEL.into(),
         claude_cli_concurrency: DEFAULT_CLAUDE_CLI_CONCURRENCY,
         checkpoint_gate_patterns: vec![],
+        checkpoint_turn_signals: false,
         grounded_verify_root: None,
         grounded_verify_max_bytes: DEFAULT_GROUNDED_VERIFY_MAX_BYTES,
         grounded_verify_max_locators: DEFAULT_GROUNDED_VERIFY_MAX_LOCATORS,
@@ -994,6 +1035,18 @@ mod tests {
         );
         let err = parse_gate_patterns(Some("a,,b")).unwrap_err();
         assert!(err.to_string().contains("CHECKPOINT_GATE_PATTERNS"));
+    }
+
+    // 066 T024 (switch part): CHECKPOINT_TURN_SIGNALS is off unless set to
+    // `on`; any other present value is a startup error naming the variable.
+    #[test]
+    fn turn_signals_are_off_unless_on_and_reject_anything_else() {
+        assert!(!parse_turn_signals("off").unwrap());
+        assert!(parse_turn_signals("on").unwrap());
+        for bad in ["", "ON", "true", "1", "shadow"] {
+            let err = parse_turn_signals(bad).unwrap_err();
+            assert!(err.to_string().contains("CHECKPOINT_TURN_SIGNALS"), "{bad}");
+        }
     }
 
     #[test]
@@ -1266,6 +1319,32 @@ mod tests {
                         .contains("PARALLAX_JEV_MODE_RESEARCH_INJECTION"),
                     "{err}"
                 );
+            }
+        }
+
+        // 066 T024: a name in the reserved PARALLAX_JEV_* namespace that is
+        // neither PARALLAX_JEV_MODEL nor PARALLAX_JEV_MODE_<SITE> is an error.
+        #[test]
+        fn a_jev_name_outside_the_known_set_is_an_error_naming_it() {
+            for name in ["PARALLAX_JEV_SEND_USER_TEXT", "PARALLAX_JEV_THRESHOLD"] {
+                let err = JevSettings::resolve(vars(&[KEY, (name, "x")]))
+                    .unwrap_err()
+                    .to_string();
+                assert!(err.contains(name), "{err}");
+            }
+            assert!(
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "jev-1.14.0")])).is_ok()
+            );
+        }
+
+        // 066 analyze finding 5: the turn-review refusal names what `on` needs.
+        #[test]
+        fn the_turn_review_on_refusal_names_the_missing_conditions() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "on")]))
+                .unwrap_err()
+                .to_string();
+            for needed in ["pinned threshold", "order check", "drift check"] {
+                assert!(err.contains(needed), "{err}");
             }
         }
 
