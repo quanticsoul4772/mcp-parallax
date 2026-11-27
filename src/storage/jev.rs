@@ -268,6 +268,44 @@ pub async fn load(pool: &SqlitePool) -> Result<Vec<JevRecord>, AppError> {
     rows.iter().map(from_row).collect()
 }
 
+/// The turn-signal kinds a session's Jev answered yes (0.5 or more) at or
+/// after `since` (068 plan D3).
+///
+/// # Errors
+///
+/// [`AppError::Storage`] when the read fails or a value is unreadable.
+pub async fn turn_signal_yes_kinds_since(
+    pool: &SqlitePool,
+    session_id: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query("SELECT * FROM jev_records WHERE site = ? AND harness_session_id = ?")
+        .bind(JevSite::TurnSignals.as_str())
+        .bind(session_id)
+        .fetch_all(pool)
+        .await
+        .map_err(storage_err("read"))?;
+    let mut kinds = Vec::new();
+    for row in &rows {
+        let record = from_row(row)?;
+        if record.created_at < since {
+            continue;
+        }
+        for entry in record.questions_json.as_array().into_iter().flatten() {
+            let yes = entry
+                .get("answer")
+                .and_then(serde_json::Value::as_f64)
+                .is_some_and(|p| p >= 0.5);
+            if let (true, Some(kind)) = (yes, entry.get("id").and_then(serde_json::Value::as_str)) {
+                if !kinds.iter().any(|k| k == kind) {
+                    kinds.push(kind.to_string());
+                }
+            }
+        }
+    }
+    Ok(kinds)
+}
+
 fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<JevRecord, AppError> {
     let created: String = row.get("created_at");
     let site: String = row.get("site");
@@ -546,6 +584,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.load_jev_records().await.unwrap(), vec![written]);
+    }
+
+    // 068 T014 (FR-007, plan D3): the session's turn-signal kinds answered
+    // yes (p >= 0.5) since a time; other sessions, sites, older rows and
+    // answers below 0.5 are left out.
+    #[tokio::test]
+    async fn turn_signal_yes_kinds_are_this_sessions_yes_answers_since_a_time() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 11, 24, 12, 0, 0).unwrap();
+        let signal = |id: &str, session: &str, kind: &str, p: f64, minutes: i64| {
+            let mut r = record(id);
+            r.site = JevSite::TurnSignals;
+            r.harness_session_id = Some(session.into());
+            r.created_at = since + chrono::Duration::minutes(minutes);
+            r.questions_json = serde_json::json!([
+                { "id": kind, "version": 1, "option_order": ["true", "false"],
+                  "answer": p, "probabilities": null, "band": null }
+            ]);
+            r
+        };
+        let mut other_site = signal("other-site", "s1", "pushback_reversal", 0.9, 5);
+        other_site.site = JevSite::TurnReview;
+        let rows = vec![
+            signal("yes", "s1", "pushback_reversal", 0.9, 5),
+            signal("edge", "s1", "unverified_fact", 0.5, 0),
+            signal("no", "s1", "unverified_fact", 0.4, 6),
+            signal("old", "s1", "unverified_fact", 0.9, -1),
+            signal("other-session", "s2", "unverified_fact", 0.9, 5),
+            other_site,
+        ];
+        storage.record_jev(&rows).await.unwrap();
+        let mut kinds = storage
+            .turn_signal_yes_kinds_since("s1", since)
+            .await
+            .unwrap();
+        kinds.sort();
+        assert_eq!(kinds, ["pushback_reversal", "unverified_fact"]);
+        assert!(storage
+            .turn_signal_yes_kinds_since("s3", since)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

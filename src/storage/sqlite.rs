@@ -794,6 +794,14 @@ impl Storage for SqliteStorage {
         Ok(())
     }
 
+    async fn turn_signal_yes_kinds_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError> {
+        super::jev::turn_signal_yes_kinds_since(&self.pool, session_id, since).await
+    }
+
     async fn record_checkpoint(&self, record: &CheckpointRecord) -> Result<(), AppError> {
         let signals_evaluated: Vec<&str> = record
             .signals_evaluated

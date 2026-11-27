@@ -256,7 +256,23 @@ fn spawn_turn_signals(
             final_message: &final_message,
             user_text: &state.user_text,
         };
-        let rows = shadow_signals(&jev, inputs, ids).await;
+        let mut rows = shadow_signals(&jev, inputs, ids).await;
+        // 068 plan D3: would the cooldown have suppressed this yes?
+        let since = now - Duration::milliseconds(COOLDOWN_WINDOW_MS);
+        match storage
+            .turn_signal_yes_kinds_since(&session_id, since)
+            .await
+        {
+            Ok(earlier) => {
+                for row in &mut rows {
+                    row.cooldown_suppressed =
+                        Some(crate::jev::shadow::cooldown_suppressed(row, &earlier));
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "turn-signal cooldown lookup failed; cooldown_suppressed stays null");
+            }
+        }
         if let Err(error) = storage.record_jev(&rows).await {
             tracing::warn!(%error, "turn-signal jev rows write failed; the turn is unaffected");
             return;

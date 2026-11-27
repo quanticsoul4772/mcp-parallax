@@ -108,6 +108,18 @@ pub trait Storage: Send + Sync {
         jev_cost_usd: f64,
     ) -> Result<(), AppError>;
 
+    /// The turn-signal kinds this session's Jev answered yes (probability
+    /// 0.5 or more) at or after `since` (068 plan D3, FR-007).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError`] on read failure or a contract-violating row.
+    async fn turn_signal_yes_kinds_since(
+        &self,
+        session_id: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError>;
+
     /// Signal keys delivered (verdict ≠ silence, not suppressed) in this
     /// session since `since` — the FR-010 cooldown lookup.
     ///

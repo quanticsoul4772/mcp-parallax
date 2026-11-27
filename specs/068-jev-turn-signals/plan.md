@@ -44,7 +44,7 @@ Before the `pushback_reversal` request, code compares the numbers and dates in t
 
 ### D3. Would-be cooldown suppression
 
-A new nullable `jev_records` column, `cooldown_suppressed`: the signal kinds whose yes answer would have been suppressed by the cooldown, as a JSON array; null on other sites. A migration and a contract update (decide-scored options; chosen 2026-11-27). The identity is session plus signal kind; the window is the checkpoint layer's `COOLDOWN_WINDOW_MS` (spec Clarification C).
+A new nullable `jev_records` column, `cooldown_suppressed`: the signal kinds whose yes answer would have been suppressed by the cooldown, as a JSON array; null on other sites. A migration and a contract update (decide-scored options; chosen 2026-11-27). The identity is session plus signal kind; the window is the checkpoint layer's `COOLDOWN_WINDOW_MS` (spec Clarification C). For this record only, a yes is a probability of 0.5 or more; promotion's threshold (D11) replaces it (decide-scored options; chosen 2026-11-27).
 
 ### D4. Downstream-cost estimate
 

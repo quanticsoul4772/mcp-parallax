@@ -174,6 +174,25 @@ async fn unverified_row(
     )
 }
 
+/// A turn-signal row's `cooldown_suppressed` (068 plan D3, FR-007).
+///
+/// Its own kind when its answer is a yes (0.5 or more, the plan D3 note) and
+/// the session already had a yes for that kind inside the cooldown window;
+/// otherwise empty.
+#[must_use]
+pub fn cooldown_suppressed(row: &JevRecord, earlier_yes: &[String]) -> Vec<String> {
+    let entry = row.questions_json.get(0);
+    let kind = entry.and_then(|e| e.get("id")).and_then(Value::as_str);
+    let yes = entry
+        .and_then(|e| e.get("answer"))
+        .and_then(Value::as_f64)
+        .is_some_and(|p| p >= 0.5);
+    match kind {
+        Some(kind) if yes && earlier_yes.iter().any(|k| k == kind) => vec![kind.to_string()],
+        _ => vec![],
+    }
+}
+
 /// Send one question with its state, once, under the deadline, and fill the
 /// row from the result.
 async fn ask(

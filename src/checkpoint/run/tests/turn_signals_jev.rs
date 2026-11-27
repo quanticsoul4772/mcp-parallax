@@ -100,6 +100,9 @@ fn capturing(rows: &Rows, costs: &Costs, records: &Records) -> DepsBuilder {
         written.lock().unwrap().extend_from_slice(r);
         Ok(())
     });
+    b.storage
+        .expect_turn_signal_yes_kinds_since()
+        .returning(|_, _| Ok(vec![]));
     let costs = Arc::clone(costs);
     b.storage
         .expect_add_checkpoint_jev_cost()
@@ -309,4 +312,114 @@ async fn the_checkpoint_result_and_record_equal_the_site_off_run() {
     for classifier in shadows {
         assert_eq!(turn_outcome(Some(classifier)).await, off);
     }
+}
+
+/// Jev answering every question at probability `0`.
+struct AnswersAt(f64);
+
+#[async_trait::async_trait]
+impl Classifier for AnswersAt {
+    async fn classify(&self, request: &JevRequest) -> Result<JevResponse, AppError> {
+        Ok(JevResponse {
+            model_answered: PINNED.into(),
+            answers: request
+                .questions
+                .iter()
+                .map(|q| (q.id.clone(), JevAnswer::Noul { p: self.0 }))
+                .collect(),
+            input_tokens: Some(40),
+            request_id: Some("req-1".into()),
+            latency_ms: 90,
+        })
+    }
+    fn model_id(&self) -> &str {
+        PINNED
+    }
+}
+
+/// The two rows' `cooldown_suppressed`, by question id, when the storage
+/// lookup reports `earlier` yes kinds for session `for_session` (and none
+/// for any other), with Jev answering at `p`.
+async fn suppressed(
+    earlier: &'static [&'static str],
+    for_session: &'static str,
+    p: f64,
+) -> Vec<(String, Option<Vec<String>>)> {
+    let rows = Rows::default();
+    let mut b = DepsBuilder::new();
+    b.reader
+        .expect_read()
+        .returning(|_, _| Ok((reversal_window(), vec![])));
+    b.storage.expect_record_checkpoint().returning(|_| Ok(()));
+    let written = Arc::clone(&rows);
+    b.storage.expect_record_jev().returning(move |r| {
+        written.lock().unwrap().extend_from_slice(r);
+        Ok(())
+    });
+    b.storage
+        .expect_add_checkpoint_jev_cost()
+        .returning(|_, _| Ok(()));
+    b.storage
+        .expect_turn_signal_yes_kinds_since()
+        .returning(move |session, since| {
+            assert_eq!(
+                since,
+                fixed_now() - Duration::milliseconds(COOLDOWN_WINDOW_MS)
+            );
+            Ok(if session == for_session {
+                earlier.iter().map(|k| (*k).to_string()).collect()
+            } else {
+                vec![]
+            })
+        });
+    b.signals_jev = Some(signals_jev(
+        Arc::new(AnswersAt(p)),
+        StdDuration::from_millis(JEV_TURN_DEADLINE_MS),
+    ));
+    run_turn(&b.build(), &turn_params(FINAL, false), None)
+        .await
+        .unwrap();
+    rows_after(&rows, 2)
+        .await
+        .into_iter()
+        .map(|r| {
+            (
+                r.questions_json[0]["id"].as_str().unwrap().to_string(),
+                r.cooldown_suppressed,
+            )
+        })
+        .collect()
+}
+
+fn kinds_of(rows: &[(String, Option<Vec<String>>)], id: &str) -> Option<Vec<String>> {
+    rows.iter().find(|(q, _)| q == id).unwrap().1.clone()
+}
+
+// 068 T014 (FR-007, plan D3): a yes after a yes for the same session and
+// kind inside the window lists that kind; the other kind lists nothing.
+#[tokio::test]
+async fn a_second_yes_for_the_same_session_and_kind_lists_that_kind() {
+    let rows = suppressed(&["pushback_reversal"], "s1", 0.9).await;
+    assert_eq!(
+        kinds_of(&rows, "pushback_reversal"),
+        Some(vec!["pushback_reversal".to_string()])
+    );
+    assert_eq!(kinds_of(&rows, "unverified_fact"), Some(vec![]));
+}
+
+// 068 T014: an earlier yes in a different session lists nothing.
+#[tokio::test]
+async fn an_earlier_yes_in_another_session_lists_nothing() {
+    let rows = suppressed(&["pushback_reversal", "unverified_fact"], "other", 0.9).await;
+    assert_eq!(kinds_of(&rows, "pushback_reversal"), Some(vec![]));
+    assert_eq!(kinds_of(&rows, "unverified_fact"), Some(vec![]));
+}
+
+// 068 T014 (plan D3 note): an answer below 0.5 is not a yes, so it would not
+// have been suppressed.
+#[tokio::test]
+async fn an_answer_below_one_half_is_not_listed() {
+    let rows = suppressed(&["pushback_reversal", "unverified_fact"], "s1", 0.3).await;
+    assert_eq!(kinds_of(&rows, "pushback_reversal"), Some(vec![]));
+    assert_eq!(kinds_of(&rows, "unverified_fact"), Some(vec![]));
 }
