@@ -91,6 +91,8 @@ The yes/no questions declare their criteria `true` then `false` (as 066's versio
 
 U1's positive class (§7.1 defines none for U1), hand labels (§3.8, §5.4: a stratified sample of at least 60 the owner labels or approves), the noise measurement and band edges (§3.4), and thresholds (§7.7) come with promotion; 068's rows are the sampling pool (decide-scored options; chosen 2026-11-27; roadmap check items 3, 5, 33, 34).
 
+Data status (T019a, 2026-11-27): turn-signal rows in the owner's database: 0; the site is set in the owner's setup at T021, and the live example's 8 rows came from made-up fixtures and are not counted. Still needed for promotion: §5.4, at least 60 hand-labeled items per question; §7.3, at least 60 flags per question, a tight false-positive bound (for example 0 of 300 labeled negatives flagged) and a recall floor (no number set yet). Rate: the owner's checkpoint records show about 146 turn ends a day from 2026-11-25 to 2026-11-27 and about 39 a day over the last 14 days; both are upper bounds, since they include continuation turns and turns with no final message; each covered turn end writes 2 rows. The date for 60 flags cannot be estimated until a yes rate is observed after T021.
+
 ## 4. Project structure
 
 - **Added**: `src/jev/shadow/signals.rs` (the turn-signal shadow), its tests, `examples/acceptance_jev_signals.rs`.
