@@ -97,11 +97,15 @@ data).
 | `parallax.session_id` | string | the **harness session id** from the hook params (note: invocation spans carry the server's per-process session UUID; checkpoint spans carry the harness's — the useful correlation key at each level) |
 | `parallax.jev.mode` / `.requests` / `.failures` / `.cost_usd` / `.latency_ms` / `.critical_path_ms` | string / int / int / double / int / int | **added 064**: turn boundary only, when its Jev site is in shadow and the review ran: mode, requests (0 or 1), requests not ending in success, Jev cost (equal to the record's `jev_cost_usd`), the request's wall time, time waited on Jev beyond the review. From the evaluation's `jev_records` row; absent otherwise |
 
-> **Amendment (2026-11-24, feature 064).** The `parallax.jev.*` attributes come from the call's `jev_records` rows, not the invocation or checkpoint record. They are computed at the same exit point from the rows being written, so they agree with `jev_records`; `parallax.jev.cost_usd` equals the record's `jev_cost_usd`.
+> **Amendment (2026-11-24, feature 064).** The `parallax.jev.*` attributes come from the call's `jev_records` rows, not the invocation or checkpoint record. They are computed at the same exit point from the rows being written, so they agree with `jev_records`; `parallax.jev.cost_usd` equals the record's `jev_cost_usd`, except on the turn span since 068: there it covers the turn-review request only, because each turn-signal row's cost is added to the record after the span is exported.
 
 ### `parallax.jev.tool_risk` — one per tool-risk row (kind INTERNAL)
 
 **Added 067.** Exported when the row is written, off the gate's response path and after the checkpoint record, so it is its own trace root with no caller trace. Attributes: `parallax.jev.mode` (`shadow`), `parallax.jev.requests` (0 or 1), `parallax.jev.failures`, `parallax.jev.cost_usd` (when known; equal to the row's `cost_usd`), `parallax.jev.latency_ms` (when a request ran), `parallax.jev.critical_path_ms` (0 by design), `parallax.session_id` (the harness session). Never the projection, the answer or the label.
+
+### `parallax.jev.turn_signals` — one per turn-signal row (kind INTERNAL)
+
+**Added 068.** Exported when the row is written, off the Stop hook's response path and after the checkpoint record, so it is its own trace root with no caller trace. Attributes: as `parallax.jev.tool_risk` (mode `shadow`, requests 0 or 1, failures, cost_usd when known and equal to the row's `cost_usd`, latency_ms when a request ran, critical_path_ms 0 by design, session_id). Never the state, the answer or the user text.
 
 ## Metrics
 

@@ -85,35 +85,45 @@ async fn pushback_row(jev: &SignalsJev, inputs: &SignalInputs<'_>, ids: &TurnIds
             &[("recommends", recommends), ("number_diff", Value::Null)],
         );
     };
-    let diff = map
-        .get("final_message")
-        .and_then(Value::as_str)
-        .map_or(Value::Null, |final_text| {
-            let earlier: Vec<&str> = map
-                .get("statement_pairs")
-                .and_then(Value::as_array)
-                .map(|pairs| {
-                    pairs
-                        .iter()
-                        .filter_map(|p| p.get("earlier").and_then(Value::as_str))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Value::Bool(number_diff(final_text, &earlier))
-        });
-    let built = if jev.send_user_text {
-        map.insert("user_text".into(), json!(inputs.user_text));
+    let pairs: Vec<(&str, &str)> = map
+        .get("statement_pairs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|p| Some((p.get("earlier")?.as_str()?, p.get("final")?.as_str()?)))
+        .collect();
+    let diff = Value::Bool(number_diff(&pairs));
+    // With the opt-in, that turn's user text, redacted whole and then cut to
+    // the final text's length; no field when there is none (review 5a).
+    let built = if jev.send_user_text && !inputs.user_text.trim().is_empty() {
+        let user_text = match jev.redactor.redact(inputs.user_text) {
+            Ok(redacted) => redacted,
+            Err(error) => {
+                row.truncated = built.truncated;
+                return annotate(
+                    redaction_failed(row, &error),
+                    &[("recommends", recommends), ("number_diff", diff)],
+                );
+            }
+        };
+        let (cut, user_truncated) = crate::checkpoint::review::truncate(
+            user_text.as_str(),
+            crate::checkpoint::review::FINAL_MESSAGE_EXCERPT_CHARS,
+        );
+        map.insert("user_text".into(), json!(cut));
+        let truncated = built.truncated || user_truncated;
         match jev.redactor.redact_json(&Value::Object(map)) {
             Ok(state) => TurnState {
                 redactions: built
                     .redactions
+                    .saturating_add(u32::try_from(user_text.redactions()).unwrap_or(u32::MAX))
                     .saturating_add(u32::try_from(state.redactions()).unwrap_or(u32::MAX)),
                 hash: state_hash(&state),
                 state,
-                truncated: built.truncated,
+                truncated,
             },
             Err(error) => {
-                row.truncated = built.truncated;
+                row.truncated = truncated;
                 return annotate(
                     redaction_failed(row, &error),
                     &[("recommends", recommends), ("number_diff", diff)],
@@ -154,7 +164,15 @@ async fn unverified_row(
     };
     let (kept, excluded) = strip_number_and_date_claims(redacted_final.as_str());
     let excluded = json!(excluded);
-    let mut built = match turn_state(&jev.redactor, inputs.window, inputs.activity, &kept) {
+    // Mine the pairs against the original final message, so the window's own
+    // copy of it is skipped (068 review finding 1); then take number and
+    // date claims out of the final text and every pair's sentences.
+    let built = match turn_state(
+        &jev.redactor,
+        inputs.window,
+        inputs.activity,
+        inputs.final_message,
+    ) {
         Ok(built) => built,
         Err(failed) => {
             row.truncated = failed.truncated;
@@ -164,14 +182,64 @@ async fn unverified_row(
             );
         }
     };
-    built.redactions = built
+    let Some(Value::Object(mut map)) = built.state.as_json().cloned() else {
+        return annotate(
+            state_not_an_object(row),
+            &[("recommends", recommends), ("excluded_claims", excluded)],
+        );
+    };
+    let (final_text, truncated) = crate::checkpoint::review::truncate(
+        &kept,
+        crate::checkpoint::review::FINAL_MESSAGE_EXCERPT_CHARS,
+    );
+    map.insert("final_message".into(), json!(final_text));
+    let pairs: Vec<Value> = map
+        .get("statement_pairs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(stripped_pair)
+        .collect();
+    map.insert("statement_pairs".into(), Value::Array(pairs));
+    let state = match jev.redactor.redact_json(&Value::Object(map)) {
+        Ok(state) => state,
+        Err(error) => {
+            row.truncated = truncated;
+            return annotate(
+                redaction_failed(row, &error),
+                &[("recommends", recommends), ("excluded_claims", excluded)],
+            );
+        }
+    };
+    let redactions = built
         .redactions
-        .saturating_add(u32::try_from(redacted_final.redactions()).unwrap_or(u32::MAX));
+        .saturating_add(u32::try_from(redacted_final.redactions()).unwrap_or(u32::MAX))
+        .saturating_add(u32::try_from(state.redactions()).unwrap_or(u32::MAX));
+    let built = TurnState {
+        hash: state_hash(&state),
+        state,
+        redactions,
+        truncated,
+    };
     let row = ask(jev, row, built, question).await;
     annotate(
         row,
         &[("recommends", recommends), ("excluded_claims", excluded)],
     )
+}
+
+/// A statement pair with number and date claims taken out of both its
+/// sentences; `None` when either sentence has nothing left.
+fn stripped_pair(pair: &Value) -> Option<Value> {
+    let earlier = strip_number_and_date_claims(pair.get("earlier")?.as_str()?).0;
+    let final_sentence = strip_number_and_date_claims(pair.get("final")?.as_str()?).0;
+    if earlier.is_empty() || final_sentence.is_empty() {
+        return None;
+    }
+    let mut pair = pair.clone();
+    pair["earlier"] = json!(earlier);
+    pair["final"] = json!(final_sentence);
+    Some(pair)
 }
 
 /// A turn-signal row's `cooldown_suppressed` (068 plan D3, FR-007).
@@ -295,15 +363,29 @@ pub fn strip_number_and_date_claims(text: &str) -> (String, usize) {
 }
 
 /// The `pushback_reversal` entry's `number_diff` (068 plan D2a, roadmap
-/// §3.2): true when the final text and the earlier statement of any
-/// transcript pair both hold numbers or dates and those differ.
-pub fn number_diff(final_text: &str, earlier_statements: &[&str]) -> bool {
-    let finals = number_and_date_tokens(final_text);
-    !finals.is_empty()
-        && earlier_statements.iter().any(|earlier| {
-            let tokens = number_and_date_tokens(earlier);
-            !tokens.is_empty() && tokens != finals
-        })
+/// §3.2, review finding 4): true when, in any transcript pair given as
+/// `(earlier, final)`, both sentences hold numbers or dates and those differ
+/// after normalizing.
+pub fn number_diff(pairs: &[(&str, &str)]) -> bool {
+    pairs.iter().any(|(earlier, final_sentence)| {
+        let earlier = number_and_date_tokens(earlier);
+        let finals = number_and_date_tokens(final_sentence);
+        !earlier.is_empty() && !finals.is_empty() && earlier != finals
+    })
+}
+
+/// A number written one way: thousands commas dropped, and trailing zeros
+/// after a decimal point dropped (`4,096` is `4096`, `3.50` is `3.5`).
+fn normalized_number(piece: &str) -> String {
+    let plain: String = piece.chars().filter(|c| *c != ',').collect();
+    if plain.contains('.') {
+        plain
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    } else {
+        plain
+    }
 }
 
 /// A text's numbers (digit runs, with `.` or `,` between digits), number
@@ -315,7 +397,7 @@ fn number_and_date_tokens(text: &str) -> std::collections::BTreeSet<String> {
         .split(|c: char| !(c.is_numeric() || c == '.' || c == ','))
         .map(|piece| piece.trim_matches(|c| c == '.' || c == ','))
         .filter(|piece| piece.chars().any(char::is_numeric))
-        .map(str::to_string)
+        .map(normalized_number)
         .collect();
     let words: Vec<String> = text
         .split(|c: char| !c.is_alphabetic())
@@ -433,33 +515,42 @@ mod tests {
         assert_eq!(strip_number_and_date_claims(text), (text.to_string(), 0));
     }
 
-    // 068 T009a (plan D2a, roadmap §3.2): `number_diff` is true when the
-    // final text and the earlier statement of any transcript pair both hold
-    // numbers or dates and those differ; matching numbers, or none on either
-    // side, give false.
+    // 068 T009a (plan D2a, roadmap §3.2), changed for review finding 4:
+    // `number_diff` is true when, in any transcript pair, the earlier
+    // statement and the pair's own final sentence both hold numbers or dates
+    // and those differ after normalizing (no thousands commas, no trailing
+    // decimal zeros); matching numbers, or none on either side, give false.
     #[test]
     fn number_diff_is_true_only_when_numbers_or_dates_differ() {
-        let cases: [(&str, &[&str], bool); 9] = [
-            ("It has 4096 entries.", &["It has 4000 entries."], true),
-            ("Growth was 3.6%.", &["Growth was 3.5%."], true),
-            ("It failed three times.", &["It failed four times."], true),
-            ("It shipped in March.", &["It shipped in April."], true),
+        let cases: [(&[(&str, &str)], bool); 12] = [
+            (&[("It has 4000 entries.", "It has 4096 entries.")], true),
+            (&[("Growth was 3.5%.", "Growth was 3.6%.")], true),
+            (&[("It failed four times.", "It failed three times.")], true),
+            (&[("It shipped in April.", "It shipped in March.")], true),
             (
-                "It has 4096 entries.",
-                &["No numbers here.", "It had 12."],
+                &[
+                    ("No numbers here.", "It has 4096 entries."),
+                    ("It had 12.", "It has 4096."),
+                ],
                 true,
             ),
-            ("It has 4096 entries.", &["It has 4096 entries."], false),
-            ("The build passes.", &["It has 4000 entries."], false),
-            ("It has 4096 entries.", &["The build passes."], false),
-            ("It has 4096 entries.", &[], false),
+            (&[("It has 4096 entries.", "It has 4096 entries.")], false),
+            (&[("It has 4000 entries.", "The build passes.")], false),
+            (&[("The build passes.", "It has 4096 entries.")], false),
+            (&[], false),
+            // The pair's own sentences, not the rest of the final text.
+            (
+                &[(
+                    "The cache does not have 4096 entries",
+                    "The cache has 4096 entries",
+                )],
+                false,
+            ),
+            (&[("It has 4,096 entries.", "It has 4096 entries.")], false),
+            (&[("It costs 3.50.", "It costs 3.5.")], false),
         ];
-        for (final_text, earlier, expected) in cases {
-            assert_eq!(
-                super::number_diff(final_text, earlier),
-                expected,
-                "{final_text} vs {earlier:?}"
-            );
+        for (pairs, expected) in cases {
+            assert_eq!(super::number_diff(pairs), expected, "{pairs:?}");
         }
     }
 }
@@ -706,5 +797,82 @@ mod wire_tests {
             assert_eq!(rows[0].questions_json[0]["recommends"], "verify", "{case}");
             assert_eq!(rows[1].questions_json[0]["recommends"], expected, "{case}");
         }
+    }
+
+    /// pushback_reversal's sent body and row for `user_text`, opt-in on.
+    async fn pushback_with_user_text(user_text: &str) -> (Value, crate::storage::jev::JevRecord) {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let jev = jev(recording(Arc::clone(&sent)), true);
+        let window = window();
+        let rows = shadow_signals(
+            &jev,
+            SignalInputs {
+                window: &window,
+                activity: "ran cargo test",
+                final_message: FINAL,
+                user_text,
+            },
+            ids(),
+        )
+        .await;
+        let sent = sent.lock().unwrap().clone();
+        let (_, state) = sent
+            .iter()
+            .find(|(id, _)| id == "pushback_reversal")
+            .unwrap();
+        (serde_json::from_str(state).unwrap(), rows[0].clone())
+    }
+
+    // 068 review finding 5a: with the opt-in, the user text is cut to 2000
+    // characters like the final text, with `truncated` set on a cut; an
+    // empty user text adds no field.
+    #[tokio::test]
+    async fn the_user_text_is_capped_and_left_out_when_empty() {
+        let long = "word ".repeat(600);
+        let (body, row) = pushback_with_user_text(&long).await;
+        let text = body["user_text"].as_str().unwrap();
+        assert!(
+            text.chars().count() <= FINAL_MESSAGE_EXCERPT_CHARS,
+            "{} chars",
+            text.chars().count()
+        );
+        assert!(row.truncated);
+        let (body, row) = pushback_with_user_text("").await;
+        assert!(body.get("user_text").is_none(), "{body}");
+        assert!(!row.truncated);
+    }
+
+    // 068 review finding 1 (FR-004, SC-003): at the Stop hook the window's
+    // last entry is the final message itself; a number or date sentence
+    // taken out of the final text must not come back through the statement
+    // pairs, and the final message must not pair with itself.
+    #[tokio::test]
+    async fn a_removed_date_claim_does_not_return_through_the_pairs() {
+        let final_message = "The database migration is reversible. \
+                             The database migration was not reversible on Tuesday.";
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let jev = jev(recording(Arc::clone(&sent)), false);
+        let window = TrajectoryWindow {
+            session_id: "s1".into(),
+            entries: vec![TrajectoryEntry::Assistant {
+                text: final_message.into(),
+            }],
+        };
+        shadow_signals(
+            &jev,
+            SignalInputs {
+                window: &window,
+                activity: "ran cargo test",
+                final_message,
+                user_text: USER_TEXT,
+            },
+            ids(),
+        )
+        .await;
+        let sent = sent.lock().unwrap().clone();
+        let (_, unverified) = sent.iter().find(|(id, _)| id == "unverified_fact").unwrap();
+        assert!(!unverified.contains("Tuesday"), "{unverified}");
+        let body: Value = serde_json::from_str(unverified).unwrap();
+        assert_eq!(body["statement_pairs"], serde_json::json!([]), "{body}");
     }
 }

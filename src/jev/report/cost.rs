@@ -89,14 +89,18 @@ pub fn signal_costs(rows: &[JevRecord], tool_costs: &[(&str, f64)]) -> Vec<Signa
                 corrective_cost_usd: 0.0,
                 unpriced: 0,
             };
-            for (i, answer) in yeses.iter().enumerate() {
-                let suppressed = yeses[..i].iter().any(|earlier| {
+            // As the real cooldown: only a delivered yes starts a window
+            // (068 review finding 2).
+            let mut delivered: Vec<&Answer<'_>> = Vec::new();
+            for answer in &yeses {
+                let suppressed = delivered.iter().any(|earlier| {
                     earlier.session == answer.session && answer.at - earlier.at <= window
                 });
                 if suppressed {
                     cost.suppressed += 1;
                     continue;
                 }
+                delivered.push(answer);
                 cost.continuations += 1;
                 if let Some(tool) = answer.recommends {
                     match mean(tool) {
@@ -206,6 +210,20 @@ mod tests {
             );
             assert_eq!(c.unpriced, unpriced, "{case}");
         }
+    }
+
+    // 068 review finding 2: as the real cooldown, only a delivered yes starts
+    // a window; yeses at 0, 20 and 40 minutes deliver at 0 and 40.
+    #[test]
+    fn a_suppressed_yes_does_not_restart_the_window() {
+        let rows = vec![
+            row("s1", "pushback_reversal", 0.9, 0, Some("verify")),
+            row("s1", "pushback_reversal", 0.9, 20, Some("verify")),
+            row("s1", "pushback_reversal", 0.9, 40, Some("verify")),
+        ];
+        let costs = signal_costs(&rows, &[("verify", 0.01)]);
+        let c = find(&costs, "pushback_reversal", 0.5);
+        assert_eq!((c.yes, c.suppressed, c.continuations), (3, 1, 2), "{c:?}");
     }
 
     // 068 T016: rows from other sites, and rows with no answer, count nowhere.

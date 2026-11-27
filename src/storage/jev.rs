@@ -297,7 +297,13 @@ pub async fn turn_signal_yes_kinds_since(
                 .and_then(serde_json::Value::as_f64)
                 .is_some_and(|p| p >= 0.5);
             if let (true, Some(kind)) = (yes, entry.get("id").and_then(serde_json::Value::as_str)) {
-                if !kinds.iter().any(|k| k == kind) {
+                // As the real cooldown: a yes the cooldown suppressed was
+                // never delivered, so it starts no window (review finding 2).
+                let suppressed = record
+                    .cooldown_suppressed
+                    .as_ref()
+                    .is_some_and(|listed| listed.iter().any(|k| k == kind));
+                if !suppressed && !kinds.iter().any(|k| k == kind) {
                     kinds.push(kind.to_string());
                 }
             }
@@ -626,6 +632,42 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    // 068 review finding 2: as the real cooldown, a yes the cooldown itself
+    // suppressed does not count; a row with no cooldown record (null) does.
+    #[tokio::test]
+    async fn a_suppressed_yes_does_not_count_toward_the_cooldown() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 11, 24, 12, 0, 0).unwrap();
+        let signal = |id: &str, kind: &str, suppressed: Option<Vec<String>>| {
+            let mut r = record(id);
+            r.site = JevSite::TurnSignals;
+            r.harness_session_id = Some("s1".into());
+            r.created_at = since + chrono::Duration::minutes(5);
+            r.questions_json = serde_json::json!([
+                { "id": kind, "version": 1, "option_order": ["true", "false"],
+                  "answer": 0.9, "probabilities": null, "band": null }
+            ]);
+            r.cooldown_suppressed = suppressed;
+            r
+        };
+        let rows = vec![
+            signal(
+                "suppressed",
+                "pushback_reversal",
+                Some(vec!["pushback_reversal".into()]),
+            ),
+            signal("delivered", "unverified_fact", Some(vec![])),
+        ];
+        storage.record_jev(&rows).await.unwrap();
+        assert_eq!(
+            storage
+                .turn_signal_yes_kinds_since("s1", since)
+                .await
+                .unwrap(),
+            ["unverified_fact"]
+        );
     }
 
     #[tokio::test]
