@@ -33,7 +33,7 @@ Test-first throughout: each test task is written and run to fail before its impl
 - [x] T015c After T007, confirm the signal-enum binding test (`src/checkpoint/contract.rs`, `the_turn_contract_lists_exactly_the_kinds_a_turn_can_fire`) still passes; check the `parallax.checkpoint.signals` list in `specs/007-observability-layer/contracts/telemetry.md` against the fired-signal kinds and correct it if it differs (FR-010).
 - [x] T016 Test the back-test report's downstream-cost estimate (FR-008, plan D4) from fixture rows and invocation records. Files: `src/jev/report/` tests.
 - [x] T017 Implement T016. Files: `src/jev/report/`.
-- [ ] T017a Print the downstream-cost estimate in the back-test report (plan D4): the `report` subcommand in `examples/jev_backtest/offline.rs` loads each invocation record's tool and `cost_usd` and prints `jev::report::cost::summary_lines` after the existing tables. Files: `examples/jev_backtest/offline.rs`, plus a storage reader for invocation records if none exists.
+- [x] T017a Print the downstream-cost estimate in the back-test report (plan D4): the `report` subcommand in `examples/jev_backtest/offline.rs` loads each invocation record's tool and `cost_usd` and prints `jev::report::cost::summary_lines` after the existing tables. Files: `examples/jev_backtest/offline.rs`, plus a storage reader for invocation records if none exists.
 
 ## Phase 4: Polish and acceptance
 
