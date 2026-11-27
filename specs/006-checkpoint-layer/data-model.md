@@ -132,7 +132,9 @@ CREATE TABLE checkpoint_records (
   fail_open INTEGER NOT NULL,
   latency_ms INTEGER NOT NULL,
   cost_usd REAL NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  jev_cost_usd REAL,                   -- 064: the turn's Jev request cost, if any
+  review_skipped_by TEXT               -- 066: null | jev | audit
 );
 ```
 

@@ -316,11 +316,7 @@ pub async fn run_turn(
     // when the capability that feeds it is configured — with memory off,
     // records stay byte-identical to the contradiction-only layer (FR-006).
     let evaluated_kinds = if deps.embedder.is_some() {
-        vec![
-            SignalKind::SelfContradiction,
-            SignalKind::PreferenceViolation,
-            SignalKind::CaptureProposal,
-        ]
+        TURN_KINDS_WITH_MEMORY.to_vec()
     } else {
         vec![SignalKind::SelfContradiction]
     };
@@ -904,6 +900,15 @@ async fn record_with_jev(
     }
     Ok(())
 }
+
+/// What a turn evaluates with memory configured (015 research D7, 017);
+/// without memory only `SelfContradiction`. `CaptureProposal` never fires,
+/// so `checkpoint_turn.tool.json` lists the other two (066 T026).
+pub const TURN_KINDS_WITH_MEMORY: [SignalKind; 3] = [
+    SignalKind::SelfContradiction,
+    SignalKind::PreferenceViolation,
+    SignalKind::CaptureProposal,
+];
 
 /// The opening text of the batch flag; the turn-start finder skips any
 /// transcript line that contains it (066 FR-014).

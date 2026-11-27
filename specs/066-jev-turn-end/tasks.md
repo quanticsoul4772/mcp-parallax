@@ -60,10 +60,10 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 ## Phase 5: User Story 3 - Configuration and records (P3)
 
-- [ ] T024 [P] [US3] Test configuration: `CHECKPOINT_TURN_SIGNALS` defaults to `off`; an unparseable value is a startup error; `PARALLAX_JEV_*` names outside the known set are startup errors; `PARALLAX_JEV_MODE_TURN_REVIEW=on` is refused (SC-003). Files: `src/config.rs` tests.
-- [ ] T025 [US3] Implement the configuration, the turn-review `on` startup wording, `--help` and the README row. Files: `src/config.rs`, `src/jev/startup.rs`, `src/main.rs`, `README.md`.
-- [ ] T026 [P] [US3] Test the `checkpoint_turn` signal-enum binding to its contract. Files: `src/checkpoint/contract.rs` tests.
-- [ ] T027 [US3] Contracts: the checkpoint record contract gains `review_skipped_by`; `specs/007-observability-layer/contracts/telemetry.md` gains the attribute. Files: `specs/006-checkpoint-layer/contracts/`, `specs/007-observability-layer/contracts/telemetry.md`.
+- [x] T024 [P] [US3] Test configuration: `CHECKPOINT_TURN_SIGNALS` defaults to `off`; an unparseable value is a startup error; `PARALLAX_JEV_*` names outside the known set are startup errors; `PARALLAX_JEV_MODE_TURN_REVIEW=on` is refused (SC-003). Files: `src/config.rs` tests.
+- [x] T025 [US3] Implement the configuration, the turn-review `on` startup wording, `--help` and the README row. Files: `src/config.rs`, `src/jev/startup.rs`, `src/main.rs`, `README.md`.
+- [x] T026 [P] [US3] Test the `checkpoint_turn` signal-enum binding to its contract. Files: `src/checkpoint/contract.rs` tests.
+- [x] T027 [US3] Contracts: the checkpoint record contract gains `review_skipped_by`; `specs/007-observability-layer/contracts/telemetry.md` gains the attribute. Files: `specs/006-checkpoint-layer/contracts/`, `specs/007-observability-layer/contracts/telemetry.md`.
 
 ## Phase 6: Polish and cross-cutting
 

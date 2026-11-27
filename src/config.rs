@@ -124,6 +124,19 @@ impl JevSettings {
         let model = present_key(lookup("PARALLAX_JEV_MODEL"))
             .map_or_else(|| DEFAULT_JEV_MODEL.to_string(), |m| m.trim().to_string());
 
+        // 066 FR-010: the reserved namespace holds only PARALLAX_JEV_MODEL and
+        // the PARALLAX_JEV_MODE_<SITE> switches; any other name is a mistake.
+        if let Some((name, _)) = vars.iter().find(|(name, _)| {
+            name.starts_with("PARALLAX_JEV_")
+                && name != "PARALLAX_JEV_MODEL"
+                && !name.starts_with(JEV_MODE_PREFIX)
+        }) {
+            return Err(ConfigError::Jev(format!(
+                "unknown variable `{name}` in the reserved `PARALLAX_JEV_*` namespace; the known \
+                 names are PARALLAX_JEV_MODEL and PARALLAX_JEV_MODE_<SITE>"
+            )));
+        }
+
         let mut settings = Self {
             api_key,
             model,
@@ -1299,6 +1312,21 @@ mod tests {
                     "{err}"
                 );
             }
+        }
+
+        // 066 T024: a name in the reserved PARALLAX_JEV_* namespace that is
+        // neither PARALLAX_JEV_MODEL nor PARALLAX_JEV_MODE_<SITE> is an error.
+        #[test]
+        fn a_jev_name_outside_the_known_set_is_an_error_naming_it() {
+            for name in ["PARALLAX_JEV_SEND_USER_TEXT", "PARALLAX_JEV_THRESHOLD"] {
+                let err = JevSettings::resolve(vars(&[KEY, (name, "x")]))
+                    .unwrap_err()
+                    .to_string();
+                assert!(err.contains(name), "{err}");
+            }
+            assert!(
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "jev-1.14.0")])).is_ok()
+            );
         }
 
         #[test]

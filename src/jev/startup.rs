@@ -45,7 +45,18 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
             let effect = match mode(settings, site) {
                 JevMode::Off => return None,
                 JevMode::Shadow => "answers are recorded only",
-                JevMode::On => "pages at or above the pinned threshold carry an advisory warning",
+                JevMode::On => match site {
+                    JevSite::TurnReview => {
+                        "the end-of-turn review is skipped when both answers are below their \
+                         pinned thresholds and nothing blocks the skip"
+                    }
+                    JevSite::ResearchInjection => {
+                        "pages at or above the pinned threshold carry an advisory warning"
+                    }
+                    JevSite::ResearchClaims => {
+                        "answers are used against the site's pinned thresholds"
+                    }
+                },
             };
             // The shadow wording is 064's, unchanged.
             let lead = if mode(settings, site) == JevMode::Shadow {
@@ -118,6 +129,26 @@ mod tests {
         assert!(lines[0].contains("turn_review"));
         assert!(lines[1].contains("research_claims"));
         assert!(wants_client(&s));
+    }
+
+    // 066 T025: an `on` turn-review site describes the review skip, not the
+    // injection warning (`on` is refused at startup in 066; the line is for
+    // when it is allowed).
+    #[test]
+    fn the_turn_review_on_line_describes_the_skip() {
+        let s = settings(Some("ts-key-value-123"), JevMode::On, JevMode::Off);
+        let lines = startup_lines(&s);
+        assert!(
+            lines[0].starts_with("Jev on for turn_review"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("end-of-turn review is skipped"),
+            "{}",
+            lines[0]
+        );
+        assert!(!lines[0].contains("advisory warning"), "{}", lines[0]);
     }
 
     #[test]
