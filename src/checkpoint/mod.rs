@@ -14,6 +14,7 @@ pub mod review;
 pub mod run;
 pub mod screen;
 pub mod signals;
+pub mod tool_risk;
 pub mod trajectory;
 pub mod turn_view;
 
