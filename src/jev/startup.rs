@@ -25,16 +25,16 @@ const fn data_sent(site: JevSite) -> &'static str {
              dropped; Write and Edit file paths; Read, Grep and Glob file_path, path and pattern \
              values; other tools' names and argument names)"
         }
+        JevSite::TurnSignals => {
+            "the redacted turn activity summary, transcript statement pairs and final assistant \
+             text (claims with dates or numbers removed for unverified_fact), and that turn's \
+             user text for pushback_reversal only with PARALLAX_JEV_SEND_USER_TEXT=true"
+        }
     }
 }
 
 const fn mode(settings: &JevSettings, site: JevSite) -> JevMode {
-    match site {
-        JevSite::TurnReview => settings.turn_review,
-        JevSite::ResearchClaims => settings.research_claims,
-        JevSite::ResearchInjection => settings.research_injection,
-        JevSite::ToolRisk => settings.tool_risk,
-    }
+    settings.mode(site)
 }
 
 /// The startup lines: [`NO_KEY_LINE`] without a key; otherwise one line per
@@ -45,7 +45,7 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
     if settings.api_key.is_none() {
         return vec![NO_KEY_LINE.to_string()];
     }
-    JevSite::ALL
+    let mut lines = JevSite::ALL
         .into_iter()
         .filter_map(|site| {
             let effect = match mode(settings, site) {
@@ -66,7 +66,7 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
                     }
                     // Config refuses `on` for tool risk (067); the wording
                     // is the generic one should that change.
-                    JevSite::ResearchClaims | JevSite::ToolRisk => {
+                    JevSite::ResearchClaims | JevSite::ToolRisk | JevSite::TurnSignals => {
                         "answers are used against the site's pinned thresholds"
                     }
                 },
@@ -83,8 +83,18 @@ pub fn startup_lines(settings: &JevSettings) -> Vec<String> {
                 data_sent(site)
             ))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if !lines.is_empty() {
+        lines.push(TERMS_LINE.to_string());
+    }
+    lines
 }
+
+/// TypeSafe's terms (roadmap §8), logged once after the site lines whenever
+/// any site is on.
+pub const TERMS_LINE: &str = "TypeSafe's terms: no training on inputs; retention as long as \
+                              reasonably necessary; telemetry processed without restriction; \
+                              some data kept indefinitely; zero retention for enterprise only.";
 
 /// Whether to build the TypeSafe client: a key is set and some site is not
 /// off.
@@ -111,6 +121,8 @@ mod tests {
             research_claims: research,
             research_injection: JevMode::Off,
             tool_risk: JevMode::Off,
+            turn_signals: JevMode::Off,
+            send_user_text: false,
         }
     }
 
@@ -121,7 +133,9 @@ mod tests {
         let mut s = settings(Some("k"), JevMode::Off, JevMode::Off);
         s.tool_risk = JevMode::Shadow;
         let lines = startup_lines(&s);
-        assert_eq!(lines.len(), 1, "{lines:?}");
+        // 068: the terms line follows the site lines.
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[1], super::TERMS_LINE);
         assert!(
             lines[0].starts_with("Jev shadow on for tool_risk:"),
             "{lines:?}"
@@ -141,6 +155,27 @@ mod tests {
         s.tool_risk = JevMode::Off;
         assert!(startup_lines(&s).is_empty());
         assert!(!wants_client(&s));
+    }
+
+    // 068 T002 (roadmap §8): TypeSafe's terms appear once, last, whenever
+    // any site is on; never without a key or with every site off.
+    #[test]
+    fn the_terms_line_follows_the_site_lines_when_any_site_is_on() {
+        let mut s = settings(Some("k"), JevMode::Off, JevMode::Off);
+        assert!(startup_lines(&s).is_empty());
+        s.turn_signals = JevMode::Shadow;
+        let lines = startup_lines(&s);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("Jev shadow on for turn_signals:"));
+        assert_eq!(
+            lines[1],
+            "TypeSafe's terms: no training on inputs; retention as long as reasonably \
+             necessary; telemetry processed without restriction; some data kept indefinitely; \
+             zero retention for enterprise only."
+        );
+        assert_eq!(lines[1], super::TERMS_LINE);
+        let no_key = settings(None, JevMode::Shadow, JevMode::Off);
+        assert_eq!(startup_lines(&no_key), [NO_KEY_LINE]);
     }
 
     #[test]
@@ -166,9 +201,11 @@ mod tests {
         let key = ["ts-", "secret", "-value-", "987"].concat();
         let s = settings(Some(&key), JevMode::Shadow, JevMode::Shadow);
         let lines = startup_lines(&s);
-        assert_eq!(lines.len(), 2);
-        assert!(lines.iter().all(|l| l.contains("api.typesafe.ai")));
+        // 068: two site lines, then the terms line.
+        assert_eq!(lines.len(), 3);
+        assert!(lines[..2].iter().all(|l| l.contains("api.typesafe.ai")));
         assert!(lines.iter().all(|l| !l.contains(&key)));
+        assert_eq!(lines[2], super::TERMS_LINE);
         assert!(lines[0].contains("turn_review"));
         assert!(lines[1].contains("research_claims"));
         assert!(wants_client(&s));
@@ -203,7 +240,9 @@ mod tests {
             let mut s = settings(Some("ts-key-value-123"), JevMode::Off, JevMode::Off);
             s.research_injection = mode;
             let lines = startup_lines(&s);
-            assert_eq!(lines.len(), 1, "{lines:?}");
+            // 068: the terms line follows the site line.
+            assert_eq!(lines.len(), 2, "{lines:?}");
+            assert_eq!(lines[1], super::TERMS_LINE);
             assert!(lines[0].contains("research_injection"), "{}", lines[0]);
             assert!(lines[0].starts_with(lead), "{}", lines[0]);
             assert!(

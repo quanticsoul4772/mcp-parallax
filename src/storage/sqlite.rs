@@ -134,8 +134,28 @@ impl SqliteStorage {
             .map_err(|e| AppError::Storage(format!("turn_signal_records migration failed: {e}")))?;
         Self::migrate_review_skipped_by(&pool).await?;
         Self::migrate_label_cost_column(&pool).await?;
+        Self::migrate_cooldown_column(&pool).await?;
 
         Ok(Self { pool })
+    }
+
+    /// 068: `cooldown_suppressed` on `jev_records`, added when missing.
+    async fn migrate_cooldown_column(pool: &SqlitePool) -> Result<(), AppError> {
+        let has = sqlx::query("PRAGMA table_info(jev_records)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("cannot inspect columns: {e}")))?
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "cooldown_suppressed");
+        if !has {
+            sqlx::query("ALTER TABLE jev_records ADD COLUMN cooldown_suppressed TEXT")
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    AppError::Storage(format!("cooldown_suppressed migration failed: {e}"))
+                })?;
+        }
+        Ok(())
     }
 
     /// 067: `label_cost_usd` on `jev_records`, added when missing.
@@ -1114,6 +1134,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    // 068 T005: a jev_records table written before 068 gains
+    // `cooldown_suppressed`, and re-running the migration changes nothing.
+    #[tokio::test]
+    async fn jev_records_gain_cooldown_suppressed_when_missing() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        sqlx::raw_sql("DROP TABLE jev_records; CREATE TABLE jev_records (id TEXT PRIMARY KEY);")
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        SqliteStorage::migrate_cooldown_column(&storage.pool)
+            .await
+            .unwrap();
+        SqliteStorage::migrate_cooldown_column(&storage.pool)
+            .await
+            .unwrap();
+        let has = sqlx::query("PRAGMA table_info(jev_records)")
+            .fetch_all(&storage.pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "cooldown_suppressed");
+        assert!(has);
     }
 
     // 067: a jev_records table written before 067 gains `label_cost_usd`,

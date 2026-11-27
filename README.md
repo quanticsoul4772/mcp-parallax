@@ -115,6 +115,8 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` | no | unset | `off` or `shadow`; unset is `off`. `shadow`: Jev answers beside every verified research claim, recorded only. Sends the redacted claim and its source excerpts. Requires the key. |
 | `PARALLAX_JEV_MODE_RESEARCH_INJECTION` | no | unset | `off`, `shadow` or `on`; unset is `off`. Jev screens each kept research page for text addressed to an AI. `shadow`: recorded only. `on`: pages at or above the pinned threshold (0.35 on `jev-1.14.0`) carry an advisory warning; no warning does not mean clean. Sends the redacted page URL and capped text. Requires the key; `on` needs a pinned threshold for `PARALLAX_JEV_MODEL`. |
 | `PARALLAX_JEV_MODE_TOOL_RISK` | no | unset | `off` or `shadow`; unset is `off`. `shadow`: each pending tool call gets a risk class, recorded only; the gate's verdict never changes. Sends the redacted Bash command (heredoc bodies dropped), Write and Edit file paths, the `file_path`, `path` and `pattern` values of Read, Grep and Glob, or other tools' names and argument names, to Jev and to the configured model for a label. Requires the key. |
+| `PARALLAX_JEV_MODE_TURN_SIGNALS` | no | unset | `off` or `shadow`; unset is `off`. `shadow`: at each turn end Jev is asked `pushback_reversal` and `unverified_fact`, one request each, recorded only. Sends the redacted turn activity summary, transcript statement pairs and final assistant text (claims with dates or numbers removed for `unverified_fact`). Requires the key. |
+| `PARALLAX_JEV_SEND_USER_TEXT` | no | unset | `true` or `false`; unset is `false`. `true` sends that turn's user text, redacted, to the `pushback_reversal` question only. |
 | `PARALLAX_JEV_MODEL` | no | unset | Pinned model; `jev-1.14.0` unless set. A `JEV_MODEL` variable is never read. |
 | `EXA_MAX_AGE_HOURS` | no | `168` | Freshness limit for research page text, in hours: `0` always fetches live, `-1` uses Exa's cache only (-1 to 720) |
 | `FETCH_TIMEOUT_MS` | no | unset | No longer used: Parallax does not fetch pages. Set, it stops startup with an error naming it |
@@ -131,6 +133,8 @@ All configuration is environment variables, read once at startup by `Config::fro
 | `MAX_RETRIES` | no | `3` | Maximum API retry attempts |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | unset | Presence enables OTLP telemetry export (traces + metrics, GenAI semantic conventions); the standard `OTEL_*` family is honored. Schemeless endpoints default to `https` — use an explicit `http://localhost:4318` for local collectors. Exported data is record metadata only (tool, model, tokens, cost, latency, outcome) — never input text, memory/transcript content, or credentials |
 | `OTEL_SDK_DISABLED` | no | unset | `true` (case-insensitive) force-disables telemetry regardless of endpoint |
+
+TypeSafe's terms: no training on inputs; retention as long as reasonably necessary; telemetry processed without restriction; some data kept indefinitely; zero retention for enterprise only.
 
 ### Model backend (BYOM)
 

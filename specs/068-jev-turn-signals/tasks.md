@@ -6,12 +6,12 @@ Test-first throughout: each test task is written and run to fail before its impl
 
 ## Phase 1: Foundation (blocks the stories)
 
-- [ ] T001 Test the site and configuration (FR-011, plan D6): `JevSite::TurnSignals` listed as `turn_signals` / `TURN_SIGNALS`; `PARALLAX_JEV_MODE_TURN_SIGNALS` off by default, `shadow` accepted, `on` refused, `shadow` without the key refused; `PARALLAX_JEV_SEND_USER_TEXT` accepted as `true`/`false`, false unless set, other values refused. Files: `src/config.rs`, `src/traits/classifier.rs` tests.
-- [ ] T002 Implement T001; the startup line names the host (`api.typesafe.ai`) and the data sent (plan D8, §5.1); `--help` and the README list both variables; `NEW_SERVER_DESIGN.md` §10 classifies both as operator-owned; TypeSafe's terms (§8) appear where the Jev docs and startup log carry them. Exact doc text shown to the owner first (roadmap check items 14, 15, 36). Files: `src/config.rs`, `src/traits/classifier.rs`, `src/jev/startup.rs`, `src/main.rs`, `README.md`.
-- [ ] T003 Test the two questions word for word against `contracts/questions.md` (FR-001): ids, version 1, yes/no, criteria `true` then `false`. Files: `src/jev/questions.rs` tests.
-- [ ] T004 Implement the questions. Files: `src/jev/questions.rs`.
-- [ ] T005 Test the record contract (FR-012, plan D3, D7): the site enum lists `turn_signals`; the `cooldown_suppressed` column is bound two ways to the contract; a table written before 068 gains the column through the migration. Files: `src/storage/jev.rs`, `src/storage/sqlite.rs` tests.
-- [ ] T006 Implement T005. Files: `specs/064-jev-first-pass/contracts/jev-record.schema.json`, `src/storage/jev.rs`, `src/storage/sqlite.rs`, every `JevRecord` constructor.
+- [x] T001 Test the site and configuration (FR-011, plan D6): `JevSite::TurnSignals` listed as `turn_signals` / `TURN_SIGNALS`; `PARALLAX_JEV_MODE_TURN_SIGNALS` off by default, `shadow` accepted, `on` refused, `shadow` without the key refused; `PARALLAX_JEV_SEND_USER_TEXT` accepted as `true`/`false`, false unless set, other values refused. Files: `src/config.rs`, `src/traits/classifier.rs` tests.
+- [x] T002 Implement T001; the startup line names the host (`api.typesafe.ai`) and the data sent (plan D8, §5.1); `--help` and the README list both variables; `NEW_SERVER_DESIGN.md` §10 classifies both as operator-owned; TypeSafe's terms (§8) appear where the Jev docs and startup log carry them. Exact doc text shown to the owner first (roadmap check items 14, 15, 36). Files: `src/config.rs`, `src/traits/classifier.rs`, `src/jev/startup.rs`, `src/main.rs`, `README.md`.
+- [x] T003 Test the two questions word for word against `contracts/questions.md` (FR-001): ids, version 1, yes/no, criteria `true` then `false`. Files: `src/jev/questions.rs` tests.
+- [x] T004 Implement the questions. Files: `src/jev/questions.rs`.
+- [x] T005 Test the record contract (FR-012, plan D3, D7): the site enum lists `turn_signals`; the `cooldown_suppressed` column is bound two ways to the contract; a table written before 068 gains the column through the migration. Files: `src/storage/jev.rs`, `src/storage/sqlite.rs` tests.
+- [x] T006 Implement T005. Files: `specs/064-jev-first-pass/contracts/jev-record.schema.json`, `src/storage/jev.rs`, `src/storage/sqlite.rs`, every `JevRecord` constructor.
 
 ## Phase 2: User Story 3 - 066's detectors are removed (P1)
 

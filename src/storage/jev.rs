@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS jev_records (
     label_json        TEXT,
     label_source      TEXT,
     label_cost_usd    REAL,
+    cooldown_suppressed TEXT,
     state_json        TEXT,
     state_hash        TEXT,
     transcript_ref    TEXT,
@@ -106,6 +107,9 @@ pub struct JevRecord {
     pub label_source: Option<String>,
     /// The label call's cost (067 tool risk); `None` where none was made.
     pub label_cost_usd: Option<f64>,
+    /// Turn signals (068): the signal kinds whose yes answer would have been
+    /// suppressed by the cooldown; `None` on other sites.
+    pub cooldown_suppressed: Option<Vec<String>>,
     pub state_json: Option<Value>,
     pub state_hash: Option<String>,
     pub transcript_ref: Option<String>,
@@ -147,9 +151,9 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
                 site, mode, questions_json, model_requested, model_answered, outcome,
                 error_class, request_id, latency_ms, input_tokens, cost_usd, applied,
                 eval_id, invocation_id, claim_key, source_ids, label_json, label_source,
-                label_cost_usd, state_json, state_hash, transcript_ref, redaction_count,
-                truncated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                label_cost_usd, cooldown_suppressed, state_json, state_hash, transcript_ref,
+                redaction_count, truncated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&r.id)
         .bind(r.created_at.to_rfc3339())
@@ -174,6 +178,7 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
         .bind(json_text(r.label_json.as_ref())?)
         .bind(&r.label_source)
         .bind(r.label_cost_usd)
+        .bind(json_text(r.cooldown_suppressed.as_ref())?)
         .bind(json_text(r.state_json.as_ref())?)
         .bind(&r.state_hash)
         .bind(&r.transcript_ref)
@@ -298,6 +303,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<JevRecord, AppError> {
         label_json: parse_json(row.get("label_json"), "label_json")?,
         label_source: row.get("label_source"),
         label_cost_usd: row.get("label_cost_usd"),
+        cooldown_suppressed: parse_json(row.get("cooldown_suppressed"), "cooldown_suppressed")?,
         state_json: parse_json(row.get("state_json"), "state_json")?,
         state_hash: row.get("state_hash"),
         transcript_ref: row.get("transcript_ref"),
@@ -456,6 +462,24 @@ mod tests {
         assert_eq!(tool["additionalProperties"], serde_json::json!(false));
     }
 
+    // 068 T005 (plan D2a, D3, D7): questions_json entries may carry
+    // `recommends` and `number_diff`; the row may carry `cooldown_suppressed`.
+    #[test]
+    fn the_contract_has_the_turn_signal_fields() {
+        let schema = schema();
+        let entry = &schema["properties"]["questions_json"]["items"]["properties"];
+        assert!(entry["recommends"].is_object(), "recommends");
+        assert!(entry["number_diff"].is_object(), "number_diff");
+        let required: Vec<&str> = schema["properties"]["questions_json"]["items"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(!required.contains(&"recommends") && !required.contains(&"number_diff"));
+        assert!(schema["properties"]["cooldown_suppressed"].is_object());
+    }
+
     #[test]
     fn outcomes_are_the_published_list_plus_excluded() {
         for outcome in Outcome::ALL {
@@ -500,6 +524,7 @@ mod tests {
             })),
             label_source: Some("claude-opus-4-8/verify-v1".into()),
             label_cost_usd: None,
+            cooldown_suppressed: None,
             state_json: Some(serde_json::json!({ "claim": "The sky is blue." })),
             state_hash: None,
             transcript_ref: None,

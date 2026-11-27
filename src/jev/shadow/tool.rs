@@ -255,6 +255,7 @@ fn tool_row(jev: &ToolJev, questions: &[JevQuestion], ids: &ToolIds<'_>) -> JevR
         label_json: None,
         label_source: None,
         label_cost_usd: None,
+        cooldown_suppressed: None,
         state_json: None,
         state_hash: None,
         transcript_ref: Some(ids.transcript_path.to_string()),

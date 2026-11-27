@@ -66,6 +66,39 @@ pub const DEFAULT_JEV_MODEL: &str = "jev-1.14.0";
 /// The reserved Jev mode namespace (064): `PARALLAX_JEV_MODE_<SITE>`.
 const JEV_MODE_PREFIX: &str = "PARALLAX_JEV_MODE_";
 
+/// The opt-in that lets a turn's user text reach Jev (068 plan D6, D9).
+const SEND_USER_TEXT: &str = "PARALLAX_JEV_SEND_USER_TEXT";
+
+/// 066 FR-010: the reserved namespace holds only `PARALLAX_JEV_MODEL`, the
+/// `PARALLAX_JEV_MODE_<SITE>` switches and (068 plan D6) [`SEND_USER_TEXT`];
+/// any other name is a mistake.
+fn reject_unknown_jev_names(vars: &[(String, String)]) -> Result<(), ConfigError> {
+    match vars.iter().find(|(name, _)| {
+        name.starts_with("PARALLAX_JEV_")
+            && name != "PARALLAX_JEV_MODEL"
+            && name != SEND_USER_TEXT
+            && !name.starts_with(JEV_MODE_PREFIX)
+    }) {
+        Some((name, _)) => Err(ConfigError::Jev(format!(
+            "unknown variable `{name}` in the reserved `PARALLAX_JEV_*` namespace; the known \
+             names are PARALLAX_JEV_MODEL, {SEND_USER_TEXT} and PARALLAX_JEV_MODE_<SITE>"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// [`SEND_USER_TEXT`]: `true` | `false`, false when unset; anything else is
+/// an error.
+fn parse_send_user_text(value: Option<&str>) -> Result<bool, ConfigError> {
+    match value {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(other) => Err(ConfigError::Jev(format!(
+            "`{SEND_USER_TEXT}` must be `true` or `false` (got `{other}`)"
+        ))),
+    }
+}
+
 /// Jev settings (064). Every site is off unless the operator sets its mode,
 /// and a mode needs `TYPESAFE_API_KEY`; the key alone enables nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -84,6 +117,11 @@ pub struct JevSettings {
     pub research_injection: crate::traits::classifier::JevMode,
     /// `PARALLAX_JEV_MODE_TOOL_RISK`, default off; `off` or `shadow` (067).
     pub tool_risk: crate::traits::classifier::JevMode,
+    /// `PARALLAX_JEV_MODE_TURN_SIGNALS`, default off; `off` or `shadow` (068).
+    pub turn_signals: crate::traits::classifier::JevMode,
+    /// `PARALLAX_JEV_SEND_USER_TEXT` (`true` | `false`), false unless set:
+    /// the only path by which a turn's user text reaches Jev (068 plan D9).
+    pub send_user_text: bool,
 }
 
 impl JevSettings {
@@ -99,6 +137,7 @@ impl JevSettings {
             JevSite::ResearchClaims => self.research_claims,
             JevSite::ResearchInjection => self.research_injection,
             JevSite::ToolRisk => self.tool_risk,
+            JevSite::TurnSignals => self.turn_signals,
         }
     }
 
@@ -141,18 +180,8 @@ impl JevSettings {
         let model = present_key(lookup("PARALLAX_JEV_MODEL"))
             .map_or_else(|| DEFAULT_JEV_MODEL.to_string(), |m| m.trim().to_string());
 
-        // 066 FR-010: the reserved namespace holds only PARALLAX_JEV_MODEL and
-        // the PARALLAX_JEV_MODE_<SITE> switches; any other name is a mistake.
-        if let Some((name, _)) = vars.iter().find(|(name, _)| {
-            name.starts_with("PARALLAX_JEV_")
-                && name != "PARALLAX_JEV_MODEL"
-                && !name.starts_with(JEV_MODE_PREFIX)
-        }) {
-            return Err(ConfigError::Jev(format!(
-                "unknown variable `{name}` in the reserved `PARALLAX_JEV_*` namespace; the known \
-                 names are PARALLAX_JEV_MODEL and PARALLAX_JEV_MODE_<SITE>"
-            )));
-        }
+        reject_unknown_jev_names(&vars)?;
+        let send_user_text = parse_send_user_text(lookup(SEND_USER_TEXT).as_deref())?;
 
         let mut settings = Self {
             api_key,
@@ -161,6 +190,8 @@ impl JevSettings {
             research_claims: JevMode::Off,
             research_injection: JevMode::Off,
             tool_risk: JevMode::Off,
+            turn_signals: JevMode::Off,
+            send_user_text,
         };
         for (name, value) in vars
             .iter()
@@ -209,6 +240,7 @@ impl JevSettings {
                 JevSite::ResearchClaims => settings.research_claims = mode,
                 JevSite::ResearchInjection => settings.research_injection = mode,
                 JevSite::ToolRisk => settings.tool_risk = mode,
+                JevSite::TurnSignals => settings.turn_signals = mode,
             }
         }
         if settings.research_injection == JevMode::On
@@ -1392,11 +1424,68 @@ mod tests {
             assert!(err.contains("PARALLAX_JEV_MODEL"), "{err}");
         }
 
+        // 068 T001 (FR-011, plan D6): the turn-signal site is off by default,
+        // takes `shadow`, refuses `on`, needs the key and rejects other values;
+        // PARALLAX_JEV_SEND_USER_TEXT is `true` | `false`, false unless set.
+        #[test]
+        fn the_turn_signals_site_defaults_off_and_takes_shadow() {
+            let off = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(off.turn_signals, JevMode::Off);
+            assert!(!off.send_user_text);
+            let s =
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_SIGNALS", "shadow")]))
+                    .unwrap();
+            assert_eq!(s.turn_signals, JevMode::Shadow);
+        }
+
+        #[test]
+        fn turn_signals_on_without_key_or_unknown_value_is_an_error_naming_it() {
+            for (vars_set, name) in [
+                (
+                    vec![KEY, ("PARALLAX_JEV_MODE_TURN_SIGNALS", "on")],
+                    "PARALLAX_JEV_MODE_TURN_SIGNALS",
+                ),
+                (
+                    vec![("PARALLAX_JEV_MODE_TURN_SIGNALS", "shadow")],
+                    "PARALLAX_JEV_MODE_TURN_SIGNALS",
+                ),
+                (
+                    vec![KEY, ("PARALLAX_JEV_MODE_TURN_SIGNALS", "maybe")],
+                    "PARALLAX_JEV_MODE_TURN_SIGNALS",
+                ),
+            ] {
+                let err = JevSettings::resolve(vars(&vars_set))
+                    .unwrap_err()
+                    .to_string();
+                assert!(err.contains(name), "{err}");
+            }
+        }
+
+        #[test]
+        fn send_user_text_takes_true_or_false_and_refuses_anything_else() {
+            for (value, expected) in [("true", true), ("false", false)] {
+                let s = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_SEND_USER_TEXT", value)]))
+                    .unwrap();
+                assert_eq!(s.send_user_text, expected, "{value}");
+            }
+            for value in ["yes", "1", "TRUE", ""] {
+                let err =
+                    JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_SEND_USER_TEXT", value)]))
+                        .unwrap_err()
+                        .to_string();
+                assert!(
+                    err.contains("PARALLAX_JEV_SEND_USER_TEXT"),
+                    "{value}: {err}"
+                );
+            }
+        }
+
         // 066 T024: a name in the reserved PARALLAX_JEV_* namespace that is
         // neither PARALLAX_JEV_MODEL nor PARALLAX_JEV_MODE_<SITE> is an error.
+        // (068: PARALLAX_JEV_SEND_USER_TEXT is now a known name, plan D6.)
         #[test]
         fn a_jev_name_outside_the_known_set_is_an_error_naming_it() {
-            for name in ["PARALLAX_JEV_SEND_USER_TEXT", "PARALLAX_JEV_THRESHOLD"] {
+            for name in ["PARALLAX_JEV_THRESHOLD", "PARALLAX_JEV_SEND_TEXT"] {
                 let err = JevSettings::resolve(vars(&[KEY, (name, "x")]))
                     .unwrap_err()
                     .to_string();
