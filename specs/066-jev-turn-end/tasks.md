@@ -73,10 +73,11 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - [x] T031 Analyze (Spec Kit) across spec, plan and tasks, with the three reviewers on the version-2 criteria in `contracts/questions.md`.
 - [x] T032 Full gate; independent review by a fresh general-purpose subagent given only the diff, plus the constitution's `design-reviewer` and `code-reviewer` agents.
 - [x] T032a Before the PR, run `examples/acceptance_jev.rs` on the branch, so the version-2 turn-review wording passes the live example before its PR (real redacted test requests to TypeSafe); results go to `quickstart.md`.
-- [ ] T033 Push and PR; CI.
-- [ ] T034 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
-- [ ] T034a After merge and rebuild, re-run the noise and self-agreement measurements, and run the order check in both criteria orders (research D9, FR-010), on the version-2 turn-review questions with `jev_backtest`; results go to the 064 measurements doc under a 066 section.
-- [ ] T035 Update the CLAUDE.md active-feature block to the shipped state, and add `CHECKPOINT_TURN_SIGNALS` to its runtime-configuration paragraph (exact text shown first).
+- [x] T033 Push and PR; CI.
+- [x] T034 After merge and rebuild, run the live example (quickstart §3); results go to `quickstart.md`.
+- [x] T034a After merge and rebuild, re-run the noise and self-agreement measurements, and run the order check in both criteria orders (research D9, FR-010), on the version-2 turn-review questions with `jev_backtest`; results go to the 064 measurements doc under a 066 section.
+- [x] T035 Update the CLAUDE.md active-feature block to the shipped state, and add `CHECKPOINT_TURN_SIGNALS` to its runtime-configuration paragraph (exact text shown first).
+- [x] T036 Turn on `CHECKPOINT_TURN_SIGNALS=on` in the owner's setup (roadmap §4.1): `~/.claude.json` backed up, the one key added to the Parallax entry, Claude Code restarted. Done 2026-11-26.
 
 ## Dependencies
 
@@ -84,7 +85,7 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 - Phase 2 blocks every story. T003 → T004; T005 → T006; T007 → T008 (needs T006); T009 → T010; T011 → T012.
 - US1 (T013–T017) needs T004, T008, T010, T012. US2 (T018–T023) needs T012. US3 (T024–T027) needs T012.
 - Within US2: T018a → T018b → T019 (the report separates versions before version 2 is sent); T018 → T019; T019a → T019b; T019c → T019d (needs T019 and T019b).
-- Phase 6 needs all stories; T031 → T032 → T032a → T033 → merge → T034 → T034a → T035.
+- Phase 6 needs all stories; T031 → T032 → T032a → T033 → merge → T034 → T034a → T035 → T036.
 
 ## Parallel examples
 

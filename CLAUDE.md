@@ -155,6 +155,10 @@ text), `RESEARCH_CONCURRENCY` (default `8`, 1..=32), `BRAVE_API_KEY`,
 `FETCH_*` are startup errors if set, `BRAVE_API_KEY` only when `EXA_API_KEY` is
 unset), `CHECKPOINT_GATE_PATTERNS` (default empty — comma-separated
 substrings extending the gate's built-in risk patterns),
+`CHECKPOINT_TURN_SIGNALS` (`off`|`on`, default `off` — `on` runs the
+pushback-reversal and unverified-fact detectors in code at each turn end and
+writes one `turn_signal_records` row; nothing is sent; any other value is a
+startup error),
 `GROUNDED_VERIFY_ROOT` (optional — presence enables the `grounded_verify`
 tool; the single root that locators resolve within (`.` means the folder the
 server was started in, so each session gets its own project folder), confined at startup,
@@ -293,6 +297,8 @@ not a mandate — confirm priorities before building.
 ## Active feature (Spec Kit)
 
 <!-- SPECKIT START -->
+**066 (`066-jev-turn-end`); shipped** ([plan](specs/066-jev-turn-end/plan.md)) - with `CHECKPOINT_TURN_SIGNALS=on`, each turn end runs the pushback-reversal and unverified-fact detectors in code and writes one `turn_signal_records` row; nothing is sent. The turn-review Jev questions moved to version 2; the review skip is built but `on` is refused until thresholds are pinned (the tables are empty). Unknown `PARALLAX_JEV_*` names are now startup errors. Off in code; on in the operator's setup since 2026-11-26. Live example: 5 of 5 turn ends joined, no sentinel sent. Version-2 measurements: self-agreement 100 of 100; order flips 1 and 0 in 100 at a 0.5 cutoff, repeated once a threshold is pinned.
+
 **065 (`065-jev-injection-warning`); shipped** ([plan](specs/065-jev-injection-warning/plan.md)) - Jev's `directs_ai` question on each page research keeps, asked beside that page's extraction call; with `PARALLAX_JEV_MODE_RESEARCH_INJECTION=on`, pages at or above the pinned threshold (0.35 on `jev-1.14.0`) carry an advisory warning, separate from 063's pattern screen. Off in code; on in the operator's setup since 2026-11-26. Live run: 5 pages kept, all screened (SC-005 pass). Option order: 4 flips in 612 pages (0.65%), under the 5% gate. Claim settling moved to a later feature.
 
 **064 (`064-jev-first-pass`); shipped, every T038 measurement recorded** ([plan](specs/064-jev-first-pass/plan.md)) - TypeSafe's Jev (a fast typed-answer model) as a cheap judgment tier, run in shadow beside the end-of-turn review and research claim verification: answers recorded next to the big model's, nothing changes. Off in code; on in the operator's setup since 2026-11-25. Mandatory redaction before every request; no stored memories sent. The back-test harness (`examples/jev_backtest`) measures noise, self-agreement, option order, base rate and the injection back-test, saves them to `./data/jev-measurements.json` and reprints them with `reproduce`; results are in `claudedocs/jev-064-measurements-2026-11-24.md`. Full roadmap 064-067 in the Jev roadmap file.
