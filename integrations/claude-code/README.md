@@ -17,7 +17,7 @@ explicit opt-in (006 FR-007).
 
 | Hook | Tool | Boundary | Intervention |
 |---|---|---|---|
-| `PreToolUse` (matcher: `Bash\|Write\|Edit`) | `checkpoint_action` | before a pending action | **hold**: risk-matched actions (deploys, pushes, deletes, …) that conflict with a verified stored constraint pause for your confirmation, quoting the memory. Everything else passes with no evaluation. Hard 500 ms budget; timeout = pass. |
+| `PreToolUse` (matcher: `^(?!mcp__parallax__).*`, every tool except Parallax's own) | `checkpoint_action` | before a pending action | **hold**: risk-matched actions (deploys, pushes, deletes, …) that conflict with a verified stored constraint pause for your confirmation, quoting the memory. Everything else passes with no evaluation. Hard 500 ms budget; timeout = pass. |
 | `PostToolBatch` | `checkpoint_batch` | after each completed tool batch | **flag**: loops (same action ≥4× in 10 batches) and repeated failures (same action failing 3× consecutively) are named to the model. Pure and local — no model call. Delivered flags cool down for 30 min. |
 | `Stop` | `checkpoint_turn` | end of turn | **flag (forced continuation)**: a confirmed self-contradiction (final message vs an earlier committed statement or stored decision, with no intervening evidence) blocks the turn from ending until the model reconciles it — at most once per turn. |
 

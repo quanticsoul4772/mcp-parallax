@@ -367,6 +367,22 @@ mod tests {
         assert_eq!(listed, fired);
     }
 
+    /// 067 T008 (FR-001, §11 test 1): the shipped `PreToolUse` matcher is the
+    /// pattern the T001 spike verified: every tool except Parallax's own.
+    #[test]
+    fn the_pre_tool_use_matcher_is_the_spike_verified_pattern() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/integrations/claude-code/hooks.json"
+        );
+        let hooks: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let entries = hooks["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["matcher"], "^(?!mcp__parallax__).*");
+        assert_eq!(entries[0]["hooks"][0]["tool"], "checkpoint_action");
+    }
+
     /// Contract sync (the 005 pattern): wire shapes match the three contract
     /// JSONs — params property names + required lists, and the result's
     /// field set.

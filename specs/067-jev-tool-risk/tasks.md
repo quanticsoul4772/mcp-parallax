@@ -26,8 +26,8 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 **Goal**: the widened matcher ships, checked by a test (FR-001).
 
-- [ ] T008 [US1] Test (§11 test 1, matcher binding): parse `integrations/claude-code/hooks.json` and check the matcher against the pattern T001 verified. Files: `src/checkpoint/contract.rs` tests.
-- [ ] T009 [US1] Update the matcher in `integrations/claude-code/hooks.json`, its README and `.claude/settings.json` to the T001 pattern.
+- [x] T008 [US1] Test (§11 test 1, matcher binding): parse `integrations/claude-code/hooks.json` and check the matcher against the pattern T001 verified. Files: `src/checkpoint/contract.rs` tests.
+- [x] T009 [US1] Update the matcher in `integrations/claude-code/hooks.json`, its README and `.claude/settings.json` to the T001 pattern.
 
 ## Phase 4: User Story 2 - Every matched call is classified, recorded only (P1)
 
