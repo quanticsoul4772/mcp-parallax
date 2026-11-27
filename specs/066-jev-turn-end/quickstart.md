@@ -13,10 +13,10 @@ Set `CHECKPOINT_TURN_SIGNALS=on`. At each turn end one `turn_signal_records` row
 ## 3. Live acceptance (SC-004)
 
 ```bash
-CHECKPOINT_TURN_SIGNALS=on DATABASE_PATH=./data/turn-signals-acceptance.db cargo run --release --example acceptance_turn_signals
+cargo run --release --example acceptance_turn_signals
 ```
 
-It exits non-zero unless every fixture turn end has one joined row with the expected detector results and no sentinel string reaches a request body.
+It builds its own checkpoint dependencies with the signals on and uses a fresh temporary database, so it reads neither `CHECKPOINT_TURN_SIGNALS` nor `DATABASE_PATH`. It exits non-zero unless every fixture turn end has one joined row with the expected detector results and no sentinel string reaches a request body.
 
 ## 4. Report from stored records
 

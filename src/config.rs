@@ -164,6 +164,14 @@ impl JevSettings {
                     value.trim()
                 ))
             })?;
+            // 066 FR-010: the turn-review skip needs promotion data first.
+            if mode == JevMode::On && site == JevSite::TurnReview {
+                return Err(ConfigError::Jev(format!(
+                    "`{name}` is `on`, but the end-of-turn review skip needs a pinned threshold \
+                     entry, a recorded order check on question version 2 and the drift check, \
+                     and none exist yet; use `off` or `shadow`"
+                )));
+            }
             if mode == JevMode::On && site != JevSite::ResearchInjection {
                 return Err(ConfigError::Jev(format!(
                     "`{name}` is `on`, but only RESEARCH_INJECTION has a measured threshold; \
@@ -1327,6 +1335,17 @@ mod tests {
             assert!(
                 JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "jev-1.14.0")])).is_ok()
             );
+        }
+
+        // 066 analyze finding 5: the turn-review refusal names what `on` needs.
+        #[test]
+        fn the_turn_review_on_refusal_names_the_missing_conditions() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "on")]))
+                .unwrap_err()
+                .to_string();
+            for needed in ["pinned threshold", "order check", "drift check"] {
+                assert!(err.contains(needed), "{err}");
+            }
         }
 
         #[test]

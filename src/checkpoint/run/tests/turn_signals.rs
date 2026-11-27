@@ -323,3 +323,84 @@ fn cleared_review() -> serde_json::Value {
         "capture_content": "", "capture_basis": ""
     })
 }
+
+/// Records every Jev request and answers every question at 0.5.
+struct RecordingJev(Arc<Mutex<Vec<crate::traits::classifier::JevRequest>>>);
+
+#[async_trait::async_trait]
+impl crate::traits::classifier::Classifier for RecordingJev {
+    async fn classify(
+        &self,
+        request: &crate::traits::classifier::JevRequest,
+    ) -> Result<crate::traits::classifier::JevResponse, AppError> {
+        self.0.lock().unwrap().push(request.clone());
+        Ok(crate::traits::classifier::JevResponse {
+            model_answered: "jev-1.14.0".into(),
+            answers: request
+                .questions
+                .iter()
+                .map(|q| {
+                    (
+                        q.id.clone(),
+                        crate::traits::classifier::JevAnswer::Noul { p: 0.5 },
+                    )
+                })
+                .collect(),
+            input_tokens: Some(100),
+            request_id: None,
+            latency_ms: 10,
+        })
+    }
+    fn model_id(&self) -> &'static str {
+        "jev-1.14.0"
+    }
+}
+
+// SC-002 in Jev mode (066 analyze finding 1): with the signals on and the
+// 064 turn shadow running, no fixture sentinel reaches the Jev request.
+#[tokio::test]
+async fn no_sentinel_from_the_transcript_reaches_the_jev_request() {
+    let mut b = DepsBuilder::new();
+    b.reader
+        .expect_read()
+        .returning(|_, _| Ok((reversal_window(), fixture_lines())));
+    b.client.expect_complete().returning(|_, _| {
+        Ok(Completion {
+            value: cleared_review(),
+            input_tokens: 80,
+            output_tokens: 30,
+            reported_cost_micros: None,
+        })
+    });
+    b.storage
+        .expect_delivered_signal_keys_since()
+        .returning(|_, _| Ok(vec![]));
+    b.storage.expect_record_jev().returning(|_| Ok(()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    b.jev = Some(crate::jev::shadow::TurnJev {
+        classifier: Arc::new(RecordingJev(Arc::clone(&requests))),
+        redactor: crate::jev::redact::Redactor::new(vec![]),
+        model: "jev-1.14.0".into(),
+        server_session_id: "server-1".into(),
+        deadline: std::time::Duration::from_millis(500),
+    });
+    b.turn_signals = Some(signals_on(&Arc::new(PreviousFinals::default())));
+    let _ = capture(&mut b);
+    run_turn(
+        &b.build(),
+        &turn_params(
+            "After checking, the database migration is not reversible after all.",
+            false,
+        ),
+        None,
+    )
+    .await
+    .unwrap();
+    let requests = requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1, "the turn shadow asked Jev once");
+    let body = format!("{} {:?}", requests[0].state.as_str(), requests[0].questions);
+    assert!(
+        !body.contains(PROMPT_SENTINEL) && !body.contains(TOOL_SENTINEL),
+        "{body}"
+    );
+}

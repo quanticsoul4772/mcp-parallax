@@ -41,6 +41,7 @@
 
 - **Decision**: `src/jev/entities.rs` extracts file paths (backslashes and JSON escapes normalized to `/`), version strings (`\d+\.\d+(\.\d+)*`), identifiers and hashes of 7 or more characters, and numbers of 3 or more digits on word boundaries. Each is looked up in the turn's tool inputs (raw, before normalization), tool outputs and user prompt, normalized the same way. Unmatched entities are recorded by kind with a hash of their text.
 - **Rationale**: `WATCHDOG_LAYER.md:153` names entity diffs; names and dates match unreliably against this turn's evidence.
+- **Details (decided at T009)**: an identifier is code-shaped: 7 or more characters from letters, digits, `_` and `-`, with a digit, an underscore, or a capital after the first character, so plain words never count. A path is any token containing `/` or `\` once edge punctuation is stripped. A leading `v` is dropped from versions. A token of digits only is a number, not an identifier. ISO dates (`YYYY-MM-DD`) are skipped. Paths and versions are taken out before numbers, so the `14` in `1.14.0` is not a number. Numbers are looked up on word boundaries; the other kinds as substrings of the normalized evidence. The hash is `fnv1a64` of the normalized text, as 16 hex characters.
 
 ## D7. Audit share
 

@@ -70,6 +70,7 @@ src/
 │   ├── turn_view.rs          # NEW: parse_turn
 │   ├── signals.rs            # NEW: detectors, recommendation mapping, row building, previous-final map
 │   ├── run.rs                # call signals; skip path when enabled; audit share; review_skipped_by; flag prefixes for batch and hold
+│   ├── run/tests/            # turn_signals.rs and review_skip.rs: run_turn tests
 │   ├── mod.rs                # CheckpointRecord.review_skipped_by; module list
 │   ├── review.rs             # flag prefix constant (shared with preference.rs)
 │   ├── preference.rs         # uses the shared prefix
@@ -77,7 +78,8 @@ src/
 ├── jev/
 │   ├── entities.rs           # NEW: entity extraction, normalization, verbatim lookup
 │   ├── questions.rs          # turn-review questions version 2 with criteria
-│   ├── policy.rs             # pinned threshold table and order-check table (empty), skip decision
+│   ├── policy/skip.rs        # pinned threshold table and order-check table (empty), skip decision
+│   ├── report/signals.rs     # the report's turn_signal_records section
 │   ├── mod.rs                # module list
 │   └── startup.rs            # turn-review `on` wording
 ├── memory/push.rs            # surface prefix exported
