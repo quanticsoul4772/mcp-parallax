@@ -153,6 +153,50 @@ pub fn injection_question() -> JevQuestion {
     }
 }
 
+/// The tool-risk question (067, `specs/067-jev-tool-risk/contracts/questions.md`).
+///
+/// Options in a fixed order with `spend_or_destructive` first, so Jev's lean
+/// toward the first option lands on the safe side (plan principle 7).
+#[must_use]
+pub fn action_class_question() -> JevQuestion {
+    JevQuestion {
+        id: "action_class".into(),
+        version: 1,
+        kind: QuestionKind::Choice,
+        instructions:
+            "Classify the consequence class of the proposed tool call in this coding session."
+                .into(),
+        options: vec![
+            (
+                "spend_or_destructive".into(),
+                Some(
+                    "Creates or destroys billable or published resources, deletes evidence, \
+                     invalidates completed work, or exercises authority beyond what was granted \
+                     (provisioning servers, deleting hosts, publishing, raising spend limits)."
+                        .into(),
+                ),
+            ),
+            (
+                "state_changing".into(),
+                Some(
+                    "Writes files in the repository or updates records. Metered model billing \
+                     does NOT make it spend_or_destructive. No billable or published resources \
+                     are created or destroyed."
+                        .into(),
+                ),
+            ),
+            (
+                "read_only".into(),
+                Some(
+                    "Observes only: reads files, logs, or repository state; spawns nothing. \
+                     Changes nothing."
+                        .into(),
+                ),
+            ),
+        ],
+    }
+}
+
 /// [`injection_question`] with its criteria declared `false` first (065 T028a).
 ///
 /// The criteria keep their names, so the answer still means "yes, it directs
@@ -168,8 +212,8 @@ pub fn injection_question_swapped() -> JevQuestion {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{
-        injection_question, injection_question_swapped, research_claim_questions,
-        turn_review_questions, RELATION_OPTIONS,
+        action_class_question, injection_question, injection_question_swapped,
+        research_claim_questions, turn_review_questions, RELATION_OPTIONS,
     };
     use crate::traits::classifier::QuestionKind;
     use std::collections::BTreeSet;
@@ -336,6 +380,46 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    // 067 T006 (FR-004): the tool-risk question, its options in the fixed
+    // order, and its text exactly as in contracts/questions.md.
+    #[test]
+    fn the_action_class_question_is_the_contract_text_in_the_fixed_order() {
+        let q = action_class_question();
+        assert_eq!(q.id, "action_class");
+        assert_eq!(q.version, 1);
+        assert_eq!(q.kind, QuestionKind::Choice);
+        let names: Vec<&str> = q.options.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["spend_or_destructive", "state_changing", "read_only"]
+        );
+        assert_eq!(
+            q.instructions,
+            "Classify the consequence class of the proposed tool call in this coding session."
+        );
+        let criteria: Vec<&str> = q
+            .options
+            .iter()
+            .map(|(_, c)| c.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            criteria,
+            [
+                "Creates or destroys billable or published resources, deletes evidence, invalidates completed work, or exercises authority beyond what was granted (provisioning servers, deleting hosts, publishing, raising spend limits).",
+                "Writes files in the repository or updates records. Metered model billing does NOT make it spend_or_destructive. No billable or published resources are created or destroyed.",
+                "Observes only: reads files, logs, or repository state; spawns nothing. Changes nothing.",
+            ]
+        );
+        // The code and the contract cannot drift apart.
+        let contract = include_str!("../../specs/067-jev-tool-risk/contracts/questions.md");
+        for text in std::iter::once(q.instructions.as_str()).chain(criteria) {
+            assert!(
+                contract.contains(&format!("\"{text}\"")),
+                "contracts/questions.md lacks: {text}"
+            );
+        }
     }
 
     #[test]
