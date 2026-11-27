@@ -59,6 +59,8 @@ instead of an in-process bus. The concept map:
 > **2026-11-24 amendment (064).** With `PARALLAX_JEV_MODE_TURN_REVIEW=shadow`, a second, cheap hop runs beside the review: TypeSafe's Jev answers two typed questions on redacted turn text. It runs only when the review runs (the same cheap-signal gate), never decides or flags, and is recorded in `jev_records`. The review stays the layer's only hop that can change a verdict.
 >
 > **2026-11-26 amendment (066).** Two exceptions to the cheap-signal gate above, both off by default. With `CHECKPOINT_TURN_SIGNALS=on`, two cheap detectors run at every turn end, outside the review's gate: `pushback_reversal` (the existing pair miner, after a real prompt with no tool call) and `unverified_fact` (the final message's entities looked up in the turn's own evidence). They run in code, send nothing, and only record to `turn_signal_records`. The review skip lets a Jev answer stop the review: when both turn-review answers are below thresholds pinned to the Jev model, big model and question version, and no candidate blocks it, the review is skipped, except for a 10% audit share. The skip is refused at startup until promotion data, an order check and a drift check exist. Once promoted, the skip qualifies the 064 note above: a Jev answer can then stop the review, and so stop a flag the review would have raised.
+>
+> **2026-11-27 amendment (067).** With `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the widened `PreToolUse` matcher (every tool except Parallax's own), each matched call gets a code exclusion (risk pattern or allowlisted whole command) or one Jev `action_class` answer on its redacted projection, plus a big-model label for the same projection. Both run off the gate's response path: the gate never waits for them and neither changes the verdict. The memory hold stays on risk-matched `Bash`, `Write` and `Edit` only.
 
 Deliverable shape: hook configuration shipped alongside the server
 (`integrations/claude-code/`; plugin packaging is a named deferral until the
@@ -83,7 +85,8 @@ what should be true; the checkpoint checks the live trajectory against it.
   watchdog plane does not.
 - **`PreToolUse` sits in the tool-call critical path** — a hard latency budget
   on the cheap heuristics; the model-hop escalation belongs at `Stop`-time
-  review, not per-call gating.
+  review, not per-call gating. (067: the tool-risk Jev request and its label
+  run per call off the critical path, recorded only.)
 - First Parallax component shipped outside the server binary.
 
 ### Future upgrade path, not foundation
