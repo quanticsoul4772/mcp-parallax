@@ -8,6 +8,14 @@
 
 **Input**: the Jev roadmap §6.3 (U3 risk classification, shadow only, after a hooks spike) and §4.1 (turn the site on in the owner's setup as the last task). The feature description given to `/speckit-specify` is reproduced under Source below.
 
+## Clarifications
+
+### Session 2026-11-26
+
+- Q: With the widened matcher, what does the gate do for MCP tool calls? → A: The full gate: risk patterns and the memory hold apply to MCP calls as they do to `Bash`, `Write` and `Edit`, plus classification.
+- Q: What deadline does the Jev request get? → A: 300 ms; a later answer is abandoned and recorded, never retried.
+- Q: Are `Write` and `Edit` calls classed in code or asked of Jev? → A: In code, as `state_changing` (a risk-pattern match still wins); no Jev request, so no file path is sent.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The gate sees every tool call, without seeing itself (Priority: P1)
@@ -47,7 +55,7 @@ Each tool call the gate evaluates is given one of three classes: `spend_or_destr
 
 ### User Story 3 - Only a projection of the call leaves the machine (Priority: P1)
 
-Jev never receives a whole tool input. It receives a projection, after the mandatory redactor: for `Bash`, the command with heredoc bodies removed; for `Write` and `Edit`, the file path only; for an MCP tool, the tool name and the names of its arguments, with argument values only for fields on a per-tool allowlist. If redaction fails, nothing is sent.
+Jev never receives a whole tool input. It receives a projection, after the mandatory redactor: for `Bash`, the command with heredoc bodies removed; for an MCP tool, the tool name and the names of its arguments, with argument values only for fields on a per-tool allowlist. `Write` and `Edit` are classed in code and never reach Jev. If redaction fails, nothing is sent.
 
 **Why this priority**: tool inputs carry file contents, credentials and private text; the classification must not become a new path for them to leave.
 
@@ -55,7 +63,7 @@ Jev never receives a whole tool input. It receives a projection, after the manda
 
 **Acceptance Scenarios**:
 
-1. **Given** a `Write` call, **When** it is classified by Jev, **Then** the request holds the file path and none of the file contents.
+1. **Given** a `Write` or `Edit` call, **When** it is classified, **Then** no Jev request is made.
 2. **Given** a `Bash` command with a heredoc, **When** it is classified, **Then** the heredoc body is absent from the request.
 3. **Given** an MCP call, **When** it is classified, **Then** only allowlisted argument values appear; every other argument appears by name only.
 4. **Given** the redactor fails on a projection, **When** the call is evaluated, **Then** no request is made and the failure is recorded.
@@ -87,10 +95,10 @@ After merge and rebuild, the owner's Parallax entry gets `PARALLAX_JEV_MODE_TOOL
 ### Functional Requirements
 
 - **FR-001**: The shipped hook config and the project settings MUST use a pre-action matcher that fires for every tool call except `mcp__parallax__*`, as verified by the spike (task 1). A test MUST parse the shipped matcher and check it against the verified tool list.
-- **FR-002**: The gate MUST evaluate every call the hook sends it, with or without memory configured. Calls that match no risk pattern keep today's silence verdict; only the classification is new for them.
-- **FR-003**: Classification MUST run in this order: risk patterns (code), then the whole-command allowlist (code, `Bash` only, never for chained commands), then Jev for the remainder.
+- **FR-002**: The gate MUST evaluate every call the hook sends it, with or without memory configured. MCP tool calls get the same evaluation as `Bash`, `Write` and `Edit`: risk patterns, and the memory hold when memory is configured. Calls that match no risk pattern keep today's silence verdict; only the classification is new for them.
+- **FR-003**: Classification MUST run in this order: risk patterns (code, `spend_or_destructive`), then `Write` and `Edit` (code, `state_changing`), then the whole-command allowlist (code, `state_changing`, `Bash` only, never for chained commands), then Jev for the remainder.
 - **FR-004**: The Jev question MUST be one choice question, `action_class`, with options `spend_or_destructive`, `state_changing`, `read_only` in that order, each with fixed criteria, versioned, and the model pinned to `jev-1.14.0`.
-- **FR-005**: The Jev request MUST run beside the gate's own work, with a deadline that keeps the gate inside its existing budget (`GATE_BUDGET_MS`, 500 ms) and no retries. A contract test MUST keep the Jev deadline plus `GATE_BUDGET_MS` well under the 5 s pre-action hook timeout.
+- **FR-005**: The Jev request MUST run beside the gate's own work, with a 300 ms deadline, inside the gate's existing budget (`GATE_BUDGET_MS`, 500 ms), and no retries. A contract test MUST keep the Jev deadline plus `GATE_BUDGET_MS` well under the 5 s pre-action hook timeout.
 - **FR-006**: The memory constraint hold MUST be unaffected by any Jev answer, error, timeout or missing key.
 - **FR-007**: Requests MUST carry only the projection in User Story 3, after the mandatory redactor; a redaction failure MUST send nothing and be recorded.
 - **FR-008**: Every evaluated call in shadow mode MUST leave one record: the class, its source (risk pattern, allowlist or Jev), the Jev outcome when asked, and the projection's truncation flag. Code-classed calls MUST leave a record with no request.
