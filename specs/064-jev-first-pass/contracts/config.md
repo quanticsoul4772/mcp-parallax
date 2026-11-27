@@ -4,7 +4,7 @@ The new variables, as they appear in `--help` and the README environment table. 
 
 | Variable | Values | Default | Notes |
 |---|---|---|---|
-| `TYPESAFE_API_KEY` | string | unset | Presence enables nothing by itself. A blank value counts as unset. Never logged. Removed from the claude_cli child environment. |
+| `TYPESAFE_API_KEY` | string | unset | With it set, every Jev site is on by default. A blank value counts as unset. Never logged. Removed from the claude_cli child environment. |
 | `PARALLAX_JEV_MODE_TURN_REVIEW` | `off` \| `shadow` | `off` | `shadow`: Jev answers beside every end-of-turn review, recorded only. Sends a redacted turn summary, transcript-only statement pairs and the final assistant text. Requires the key. |
 | `PARALLAX_JEV_MODE_RESEARCH_CLAIMS` | `off` \| `shadow` | `off` | `shadow`: Jev answers beside every verified research claim, recorded only. Sends the redacted claim and its source excerpts. Requires the key. |
 | `PARALLAX_JEV_MODEL` | model id | `jev-1.14.0` | Pinned model. A `JEV_MODEL` variable is never read. |

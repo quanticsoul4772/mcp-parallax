@@ -68,7 +68,7 @@ After merge and rebuild, `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the widened ho
 
 ### Functional Requirements
 
-- **FR-001** (§6.3.1): `integrations/claude-code/hooks.json`, its README and `.claude/settings.json` use a `PreToolUse` matcher that includes MCP tools and excludes `mcp__parallax__*`, verified by the spike with no self-trigger. A test parses `hooks.json` and checks the matcher.
+- **FR-001** (§6.3.1): `integrations/claude-code/hooks.json`, its README and `.claude/settings.json` use a `PreToolUse` matcher that includes MCP tools and excludes `mcp__parallax__*`, verified by the spike with no self-trigger. A test parses `hooks.json` and checks the matcher. (2026-11-27) The project's `.claude/settings.json` no longer carries the Parallax hooks: they moved to the owner's user-wide settings so they run in every project, and the test checks `hooks.json` only.
 - **FR-002** (§6.3.2, Clarifications): `run_action` classifies every matched call, including with memory off. The memory hold applies only to risk-matched `Bash`, `Write` and `Edit` calls, as today.
 - **FR-003** (§6.3.3, Clarifications R): Risk patterns first; then an allowlist of whole commands only, such as test and build commands, which never matches a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(`, `>(`, a newline or a carriage return; Jev sees only the remainder.
 - **FR-004** (§6.3.4): One choice question, `action_class`, options ordered `spend_or_destructive`, `state_changing`, `read_only`, wording adapted from harness-bridge's fixed criteria, versioned, model pinned (§5.1).

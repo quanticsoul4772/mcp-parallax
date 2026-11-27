@@ -87,12 +87,35 @@ fn reject_unknown_jev_names(vars: &[(String, String)]) -> Result<(), ConfigError
     }
 }
 
-/// [`SEND_USER_TEXT`]: `true` | `false`, false when unset; anything else is
-/// an error.
+/// The Jev sites' default modes (no feature is opt-in): with the key, every
+/// site starts at the highest mode its code allows, `shadow`, and `on` for
+/// the injection site when the model has a pinned threshold; without the
+/// key, `off`. An explicit `PARALLAX_JEV_MODE_*` overrides either.
+fn default_modes(
+    has_key: bool,
+    model: &str,
+) -> (
+    crate::traits::classifier::JevMode,
+    crate::traits::classifier::JevMode,
+) {
+    use crate::traits::classifier::JevMode;
+    if !has_key {
+        return (JevMode::Off, JevMode::Off);
+    }
+    let injection = if crate::jev::policy::injection_threshold(model).is_some() {
+        JevMode::On
+    } else {
+        JevMode::Shadow
+    };
+    (JevMode::Shadow, injection)
+}
+
+/// [`SEND_USER_TEXT`]: `true` | `false`, true when unset (no feature is
+/// opt-in); anything else is an error.
 fn parse_send_user_text(value: Option<&str>) -> Result<bool, ConfigError> {
     match value {
-        None | Some("false") => Ok(false),
-        Some("true") => Ok(true),
+        None | Some("true") => Ok(true),
+        Some("false") => Ok(false),
         Some(other) => Err(ConfigError::Jev(format!(
             "`{SEND_USER_TEXT}` must be `true` or `false` (got `{other}`)"
         ))),
@@ -183,14 +206,15 @@ impl JevSettings {
         reject_unknown_jev_names(&vars)?;
         let send_user_text = parse_send_user_text(lookup(SEND_USER_TEXT).as_deref())?;
 
+        let (shadow, injection) = default_modes(api_key.is_some(), &model);
         let mut settings = Self {
             api_key,
             model,
-            turn_review: JevMode::Off,
-            research_claims: JevMode::Off,
-            research_injection: JevMode::Off,
-            tool_risk: JevMode::Off,
-            turn_signals: JevMode::Off,
+            turn_review: shadow,
+            research_claims: shadow,
+            research_injection: injection,
+            tool_risk: shadow,
+            turn_signals: shadow,
             send_user_text,
         };
         for (name, value) in vars
@@ -1235,12 +1259,13 @@ mod tests {
         const KEY: (&str, &str) = ("TYPESAFE_API_KEY", "test-key");
 
         #[test]
-        fn with_no_jev_variables_both_sites_are_off() {
-            for set in [vars(&[]), vars(&[KEY])] {
-                let s = JevSettings::resolve(set).unwrap();
-                assert_eq!(s.turn_review, JevMode::Off);
-                assert_eq!(s.research_claims, JevMode::Off);
-            }
+        fn with_no_jev_variables_both_sites_are_off_without_the_key_and_shadow_with_it() {
+            let s = JevSettings::resolve(vars(&[])).unwrap();
+            assert_eq!(s.turn_review, JevMode::Off);
+            assert_eq!(s.research_claims, JevMode::Off);
+            let s = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(s.turn_review, JevMode::Shadow);
+            assert_eq!(s.research_claims, JevMode::Shadow);
         }
 
         #[test]
@@ -1248,7 +1273,7 @@ mod tests {
             let s = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_REVIEW", "shadow")]))
                 .unwrap();
             assert_eq!(s.turn_review, JevMode::Shadow);
-            assert_eq!(s.research_claims, JevMode::Off);
+            assert_eq!(s.research_claims, JevMode::Shadow);
         }
 
         #[test]
@@ -1259,7 +1284,7 @@ mod tests {
             ]))
             .unwrap();
             assert_eq!(s.research_claims, JevMode::Shadow);
-            assert_eq!(s.turn_review, JevMode::Off);
+            assert_eq!(s.turn_review, JevMode::Shadow);
         }
 
         #[test]
@@ -1302,9 +1327,13 @@ mod tests {
 
         #[test]
         fn the_injection_site_takes_off_shadow_and_on() {
-            let off = JevSettings::resolve(vars(&[KEY])).unwrap();
-            assert_eq!(off.research_injection, JevMode::Off);
-            for (value, mode) in [("shadow", JevMode::Shadow), ("on", JevMode::On)] {
+            let default = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(default.research_injection, JevMode::On);
+            for (value, mode) in [
+                ("off", JevMode::Off),
+                ("shadow", JevMode::Shadow),
+                ("on", JevMode::On),
+            ] {
                 let s = JevSettings::resolve(vars(&[
                     KEY,
                     ("PARALLAX_JEV_MODE_RESEARCH_INJECTION", value),
@@ -1344,16 +1373,17 @@ mod tests {
             }
         }
 
-        // 067 T002 (FR-010): the tool-risk site is off by default, takes
-        // `shadow`, refuses `on`, needs the key, rejects other values, and
-        // its model needs a price row like every other site.
+        // 067 T002 (FR-010), defaults changed 2026-11-27 (no feature is
+        // opt-in): with the key the tool-risk site is `shadow` by default,
+        // `off` turns it off, `on` is refused, it needs the key, rejects
+        // other values, and its model needs a price row like every site.
         #[test]
-        fn the_tool_risk_site_defaults_off_and_takes_shadow() {
-            let off = JevSettings::resolve(vars(&[KEY])).unwrap();
-            assert_eq!(off.tool_risk, JevMode::Off);
-            let s = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TOOL_RISK", "shadow")]))
-                .unwrap();
-            assert_eq!(s.tool_risk, JevMode::Shadow);
+        fn the_tool_risk_site_defaults_on_and_takes_off() {
+            let default = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(default.tool_risk, JevMode::Shadow);
+            let s =
+                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TOOL_RISK", "off")])).unwrap();
+            assert_eq!(s.tool_risk, JevMode::Off);
         }
 
         #[test]
@@ -1392,18 +1422,24 @@ mod tests {
             assert!(err.contains("PARALLAX_JEV_MODEL"), "{err}");
         }
 
-        // 068 T001 (FR-011, plan D6): the turn-signal site is off by default,
-        // takes `shadow`, refuses `on`, needs the key and rejects other values;
-        // PARALLAX_JEV_SEND_USER_TEXT is `true` | `false`, false unless set.
+        // 068 T001 (FR-011, plan D6), defaults changed 2026-11-27 (no
+        // feature is opt-in): with the key the turn-signal site is `shadow`
+        // by default and `off` turns it off; `on` is refused, it needs the
+        // key and rejects other values; PARALLAX_JEV_SEND_USER_TEXT is
+        // `true` | `false`, true unless set.
         #[test]
-        fn the_turn_signals_site_defaults_off_and_takes_shadow() {
-            let off = JevSettings::resolve(vars(&[KEY])).unwrap();
-            assert_eq!(off.turn_signals, JevMode::Off);
-            assert!(!off.send_user_text);
-            let s =
-                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODE_TURN_SIGNALS", "shadow")]))
-                    .unwrap();
-            assert_eq!(s.turn_signals, JevMode::Shadow);
+        fn the_turn_signals_site_defaults_on_and_takes_off() {
+            let default = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(default.turn_signals, JevMode::Shadow);
+            assert!(default.send_user_text);
+            let s = JevSettings::resolve(vars(&[
+                KEY,
+                ("PARALLAX_JEV_MODE_TURN_SIGNALS", "off"),
+                ("PARALLAX_JEV_SEND_USER_TEXT", "false"),
+            ]))
+            .unwrap();
+            assert_eq!(s.turn_signals, JevMode::Off);
+            assert!(!s.send_user_text);
         }
 
         #[test]
@@ -1445,6 +1481,45 @@ mod tests {
                     err.contains("PARALLAX_JEV_SEND_USER_TEXT"),
                     "{value}: {err}"
                 );
+            }
+        }
+
+        // Owner's direction (2026-11-27): no feature is opt-in. With the key
+        // set, every Jev site takes the highest mode its code allows and the
+        // user text is sent; an explicit `off` or `false` turns one off.
+        #[test]
+        fn with_the_key_every_site_is_on_by_default_and_off_turns_one_off() {
+            use crate::traits::classifier::JevMode;
+            let s = JevSettings::resolve(vars(&[KEY])).unwrap();
+            assert_eq!(s.turn_review, JevMode::Shadow);
+            assert_eq!(s.research_claims, JevMode::Shadow);
+            assert_eq!(s.research_injection, JevMode::On);
+            assert_eq!(s.tool_risk, JevMode::Shadow);
+            assert_eq!(s.turn_signals, JevMode::Shadow);
+            assert!(s.send_user_text);
+            let off = JevSettings::resolve(vars(&[
+                KEY,
+                ("PARALLAX_JEV_MODE_TOOL_RISK", "off"),
+                ("PARALLAX_JEV_SEND_USER_TEXT", "false"),
+            ]))
+            .unwrap();
+            assert_eq!(off.tool_risk, JevMode::Off);
+            assert!(!off.send_user_text);
+            assert_eq!(off.turn_signals, JevMode::Shadow);
+        }
+
+        #[test]
+        fn without_the_key_every_site_stays_off() {
+            use crate::traits::classifier::JevMode;
+            let s = JevSettings::resolve(vars(&[])).unwrap();
+            for mode in [
+                s.turn_review,
+                s.research_claims,
+                s.research_injection,
+                s.tool_risk,
+                s.turn_signals,
+            ] {
+                assert_eq!(mode, JevMode::Off);
             }
         }
 
@@ -1526,9 +1601,19 @@ mod tests {
         fn the_model_defaults_to_the_pinned_version_and_is_not_a_mode_suffix() {
             let default = JevSettings::resolve(vars(&[KEY])).unwrap();
             assert_eq!(default.model, "jev-1.14.0");
-            let set =
-                JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "jev-1.13.0")])).unwrap();
+            // Without the key no site is on, so an unpriced model parses.
+            let set = JevSettings::resolve(vars(&[("PARALLAX_JEV_MODEL", "jev-1.13.0")])).unwrap();
             assert_eq!(set.model, "jev-1.13.0");
+        }
+
+        // Defaults changed 2026-11-27: with the key every site is on by
+        // default, so an unpriced model stops startup with no site variable.
+        #[test]
+        fn the_key_with_an_unpriced_model_stops_startup_with_no_site_variables() {
+            let err = JevSettings::resolve(vars(&[KEY, ("PARALLAX_JEV_MODEL", "jev-1.13.0")]))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("PARALLAX_JEV_MODEL"), "{err}");
         }
 
         /// Review finding D: with a site in shadow, a model without a price

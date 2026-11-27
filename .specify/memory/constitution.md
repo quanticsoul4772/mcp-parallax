@@ -96,6 +96,10 @@ deliberate operator decision, never a side effect of an upgrade.
 **Rationale**: an MCP server runs inside other people's sessions; surprise
 capability escalation is a security defect even when the capability is useful.
 
+(Amended 2026-11-27: no feature is opt-in; with TYPESAFE_API_KEY set every Jev
+site defaults to its highest allowed mode and user text is sent; an explicit
+off turns one off.)
+
 ### VII. Simplicity and Scope Discipline
 
 Build only what the spec asks. MVP first; YAGNI. New `.rs` modules target
