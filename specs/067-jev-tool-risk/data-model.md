@@ -1,6 +1,6 @@
 # Data Model: Jev on tool calls (067)
 
-No new table and no migration (§5.1 records).
+No new table; one migration adds label_cost_usd to jev_records (found during implementation; decide-scored, 2026-11-27).
 
 ## `jev_records`, site `tool_risk`
 

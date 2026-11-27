@@ -194,12 +194,27 @@ fn spawn_tool_risk(deps: &CheckpointDeps, params: &CheckpointActionParams, eval_
             transcript_path: &transcript_path,
             now,
         };
-        let row = match decision {
-            Prefilter::Excluded(reason) => excluded_tool_row(&jev, reason.as_str(), &ids),
+        let (row, to_label) = match decision {
+            Prefilter::Excluded(reason) => (excluded_tool_row(&jev, reason.as_str(), &ids), None),
             Prefilter::Classify => shadow_tool(&jev, &tool_name, &tool_input, ids).await,
         };
+        // The row is written as soon as Jev has answered, so a finished
+        // answer survives an exit while its label is pending (067 review).
         if let Err(error) = storage.record_jev(std::slice::from_ref(&row)).await {
             tracing::warn!(%error, "tool-risk jev row write failed; the gate is unaffected");
+            return;
+        }
+        crate::observability::emit_tool_risk(&row);
+        if let Some(cost) = row.cost_usd {
+            if let Err(error) = storage.set_checkpoint_jev_cost(&eval_id, cost).await {
+                tracing::warn!(%error, "checkpoint jev cost update failed; the gate is unaffected");
+            }
+        }
+        if let Some(state) = to_label {
+            let update = crate::jev::shadow::label_tool(&jev, &row, &state).await;
+            if let Err(error) = storage.update_jev_label(&row.id, &update).await {
+                tracing::warn!(%error, "tool-risk label update failed; the gate is unaffected");
+            }
         }
     });
 }

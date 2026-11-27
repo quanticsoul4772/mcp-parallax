@@ -35,7 +35,22 @@ pub struct ToolJev {
     pub label_client: Arc<dyn ModelClient>,
     /// Its model id, recorded in `label_source`.
     pub label_model: String,
+    /// Tool-risk Jev requests in flight: [`TOOL_JEV_IN_FLIGHT`], so this site
+    /// holds at most that many of the client's shared slots (067 review).
+    pub jev_slot: Arc<tokio::sync::Semaphore>,
+    /// Label calls in flight: [`LABEL_IN_FLIGHT`]; a label that finds none
+    /// free is skipped and recorded as busy (067 review).
+    pub label_slot: Arc<tokio::sync::Semaphore>,
 }
+
+/// Tool-risk Jev requests in flight at once, out of the client's shared slots.
+pub const TOOL_JEV_IN_FLIGHT: usize = 1;
+
+/// Tool-risk label calls in flight at once.
+pub const LABEL_IN_FLIGHT: usize = 1;
+
+/// The `error_class` note for a label skipped because one was running.
+pub const LABEL_BUSY: &str = "label: busy";
 
 impl ToolJev {
     /// The production setup: secrets from the environment, the named deadline.
@@ -55,6 +70,8 @@ impl ToolJev {
             deadline: Duration::from_millis(JEV_TOOL_DEADLINE_MS),
             label_client,
             label_model,
+            jev_slot: Arc::new(tokio::sync::Semaphore::new(TOOL_JEV_IN_FLIGHT)),
+            label_slot: Arc::new(tokio::sync::Semaphore::new(LABEL_IN_FLIGHT)),
         }
     }
 }
@@ -87,19 +104,21 @@ pub fn excluded_tool_row(jev: &ToolJev, reason: &str, ids: &ToolIds<'_>) -> JevR
     row
 }
 
-/// Ask Jev about one pending call's projection, then the big model for the
-/// label when Jev answered, and build the row.
+/// Ask Jev about one pending call's projection and build the row.
+///
+/// When Jev answered, also return the redacted state the label is asked
+/// about; the caller writes the row first and labels it after (067 review).
 pub async fn shadow_tool(
     jev: &ToolJev,
     tool_name: &str,
     tool_input: &str,
     ids: ToolIds<'_>,
-) -> JevRecord {
+) -> (JevRecord, Option<String>) {
     let questions = tool_questions();
     let mut row = tool_row(jev, &questions, &ids);
     let state = match redacted_projection(&jev.redactor, tool_name, tool_input) {
         Ok(state) => state,
-        Err(error) => return redaction_failed(row, &error),
+        Err(error) => return (redaction_failed(row, &error), None),
     };
     row.redaction_count = u32::try_from(state.redactions()).unwrap_or(u32::MAX);
     row.state_hash = Some(format!(
@@ -115,26 +134,50 @@ pub async fn shadow_tool(
         retry: false,
     };
     let started = Instant::now();
-    let result = tokio::time::timeout(jev.deadline, jev.classifier.classify(&request)).await;
+    // The site's own slot is taken inside the deadline, so waiting for it
+    // counts against the gate budget like the request itself.
+    let result = tokio::time::timeout(jev.deadline, async {
+        let _slot = jev
+            .jev_slot
+            .acquire()
+            .await
+            .map_err(|_| crate::error::AppError::ClassifierProvider("no_slot".into()))?;
+        jev.classifier.classify(&request).await
+    })
+    .await;
     row.latency_ms = Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
     record_result(&mut row, result, &request, &jev.model);
-    if row.outcome == JevOutcome::Call(Outcome::Success) {
-        match label(jev, &state_text).await {
-            Ok((class, cost)) => {
-                row.label_json = Some(json!({ "class": class }));
-                row.label_cost_usd = Some(cost);
-                row.label_source = Some(format!("{}:{LABEL_PROMPT_VERSION}", jev.label_model));
-            }
-            Err(reason) => {
-                let note = format!("label: {reason}");
-                row.error_class = Some(match row.error_class.take() {
-                    Some(existing) => format!("{existing}; {note}"),
-                    None => note,
-                });
-            }
-        }
+    let answered = row.outcome == JevOutcome::Call(Outcome::Success);
+    (row, answered.then_some(state_text))
+}
+
+/// The label fields for a row Jev answered: the big model's answer for the
+/// same redacted state, or a `label:` note in `error_class` when the call
+/// failed or another label call was running.
+pub async fn label_tool(
+    jev: &ToolJev,
+    row: &JevRecord,
+    state: &str,
+) -> crate::storage::jev::JevLabelUpdate {
+    let with_note = |note: &str| crate::storage::jev::JevLabelUpdate {
+        error_class: Some(row.error_class.as_ref().map_or_else(
+            || note.to_string(),
+            |existing| format!("{existing}; {note}"),
+        )),
+        ..Default::default()
+    };
+    let Ok(_slot) = jev.label_slot.try_acquire() else {
+        return with_note(LABEL_BUSY);
+    };
+    match label(jev, state).await {
+        Ok((class, cost)) => crate::storage::jev::JevLabelUpdate {
+            label_json: Some(json!({ "class": class })),
+            label_source: Some(format!("{}:{LABEL_PROMPT_VERSION}", jev.label_model)),
+            label_cost_usd: Some(cost),
+            error_class: row.error_class.clone(),
+        },
+        Err(reason) => with_note(&format!("label: {reason}")),
     }
-    row
 }
 
 /// The big model's `action_class` answer for the same redacted projection,
@@ -234,5 +277,144 @@ mod tests {
         let questions = tool_questions();
         let ids: Vec<&str> = questions.iter().map(|q| q.id.as_str()).collect();
         assert_eq!(ids, [action_class_question().id.as_str()]);
+    }
+
+    use super::{excluded_tool_row, label_tool, ToolIds, ToolJev};
+    use crate::error::AppError;
+    use crate::jev::redact::Redactor;
+    use crate::traits::classifier::{Classifier, JevRequest, JevResponse};
+    use crate::traits::client::{Completion, MockModelClient};
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    struct NoJev;
+
+    #[async_trait::async_trait]
+    impl Classifier for NoJev {
+        async fn classify(&self, _: &JevRequest) -> Result<JevResponse, AppError> {
+            Err(AppError::ClassifierProvider("not used".into()))
+        }
+        fn model_id(&self) -> &'static str {
+            "jev-1.14.0"
+        }
+    }
+
+    fn jev_with(label: MockModelClient) -> ToolJev {
+        ToolJev {
+            classifier: Arc::new(NoJev),
+            redactor: Redactor::new(vec![]),
+            model: "jev-1.14.0".into(),
+            server_session_id: "server-1".into(),
+            deadline: std::time::Duration::from_millis(500),
+            label_client: Arc::new(label),
+            label_model: "claude-opus-4-8".into(),
+            jev_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+            label_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+        }
+    }
+
+    fn answering(value: serde_json::Value, reported: Option<u64>) -> MockModelClient {
+        let mut client = MockModelClient::new();
+        client.expect_complete().returning(move |_, _| {
+            Ok(Completion {
+                value: value.clone(),
+                input_tokens: 30,
+                output_tokens: 5,
+                reported_cost_micros: reported,
+            })
+        });
+        client
+    }
+
+    fn row(jev: &ToolJev) -> crate::storage::jev::JevRecord {
+        let mut row = excluded_tool_row(
+            jev,
+            "unused",
+            &ToolIds {
+                eval_id: "eval-1",
+                harness_session_id: "s1",
+                transcript_path: "t.jsonl",
+                now: chrono::Utc::now(),
+            },
+        );
+        row.error_class = None;
+        row
+    }
+
+    // 067 review finding 9: each label failure leaves a `label:` note and no
+    // label or cost.
+    #[tokio::test]
+    async fn a_failed_label_leaves_a_note_and_no_label_or_cost() {
+        let mut erroring = MockModelClient::new();
+        erroring.expect_complete().returning(|_, _| {
+            Err(AppError::Timeout {
+                what: "label",
+                ms: 1,
+            })
+        });
+        for (client, note) in [
+            (erroring, "label: timeout"),
+            (answering(json!({}), None), "label: no class"),
+            (
+                answering(json!({ "class": "maybe" }), None),
+                "label: undeclared class",
+            ),
+        ] {
+            let jev = jev_with(client);
+            let update = label_tool(&jev, &row(&jev), "{}").await;
+            assert_eq!(update.error_class.as_deref(), Some(note));
+            assert!(update.label_json.is_none() && update.label_cost_usd.is_none());
+            assert!(update.label_source.is_none());
+        }
+    }
+
+    // 067 review finding 9: a backend that reports its own cost is recorded
+    // at that figure.
+    #[tokio::test]
+    async fn a_reported_cost_is_recorded_as_the_label_cost() {
+        let jev = jev_with(answering(json!({ "class": "read_only" }), Some(2_500)));
+        let update = label_tool(&jev, &row(&jev), "{}").await;
+        assert_eq!(update.label_json, Some(json!({ "class": "read_only" })));
+        assert_eq!(update.label_cost_usd, Some(0.0025));
+        assert_eq!(
+            update.label_source.as_deref(),
+            Some("claude-opus-4-8:tool_risk_label_v1")
+        );
+    }
+
+    // 067 review finding 10: the label prompt carries the redacted state the
+    // caller passes, the question and its options, and no secret.
+    #[tokio::test]
+    async fn the_label_prompt_carries_the_redacted_state_and_no_secret() {
+        let secret = ["sk-", "label", "Probe", "Secret", "42"].concat();
+        let state = crate::checkpoint::tool_risk::redacted_projection(
+            &Redactor::new(vec![secret.clone()]),
+            "Bash",
+            &json!({ "command": format!("echo {secret}") }).to_string(),
+        )
+        .unwrap();
+        let prompts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = Arc::clone(&prompts);
+        let mut client = MockModelClient::new();
+        client.expect_complete().returning(move |prompt, _| {
+            seen.lock().unwrap().push(prompt.to_string());
+            Ok(Completion {
+                value: json!({ "class": "read_only" }),
+                input_tokens: 30,
+                output_tokens: 5,
+                reported_cost_micros: None,
+            })
+        });
+        let jev = jev_with(client);
+        label_tool(&jev, &row(&jev), state.as_str()).await;
+        let prompts = prompts.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 1);
+        let prompt = &prompts[0];
+        assert!(prompt.contains(state.as_str()));
+        assert!(prompt.contains(&action_class_question().instructions));
+        for (name, _) in action_class_question().options {
+            assert!(prompt.contains(&name), "{name}");
+        }
+        assert!(!prompt.contains(&secret));
     }
 }

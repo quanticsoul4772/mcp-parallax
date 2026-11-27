@@ -186,6 +186,52 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
     tx.commit().await.map_err(storage_err("commit"))
 }
 
+/// The label fields of a tool-risk row, filled after its label call ends
+/// (067): the row is written when Jev answers, so a finished answer survives
+/// a process exit while the label is still pending.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct JevLabelUpdate {
+    /// The label, or `None` when the label call failed or was skipped.
+    pub label_json: Option<Value>,
+    /// The label model and prompt version.
+    pub label_source: Option<String>,
+    /// The label call's cost.
+    pub label_cost_usd: Option<f64>,
+    /// The row's `error_class` after the label step (a `label:` note on failure).
+    pub error_class: Option<String>,
+}
+
+/// Fill one row's label fields.
+///
+/// # Errors
+///
+/// [`AppError::Storage`] when the write fails or no row has `id`.
+pub async fn update_label(
+    pool: &SqlitePool,
+    id: &str,
+    update: &JevLabelUpdate,
+) -> Result<(), AppError> {
+    let done = sqlx::query(
+        "UPDATE jev_records SET label_json = ?, label_source = ?, label_cost_usd = ?,
+            error_class = ? WHERE id = ?",
+    )
+    .bind(json_text(update.label_json.as_ref())?)
+    .bind(&update.label_source)
+    .bind(update.label_cost_usd)
+    .bind(&update.error_class)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(storage_err("label update"))?;
+    if done.rows_affected() == 1 {
+        Ok(())
+    } else {
+        Err(AppError::Storage(format!(
+            "jev_records label update: no row {id}"
+        )))
+    }
+}
+
 fn bad(column: &str, value: &str) -> AppError {
     AppError::Storage(format!("jev_records {column} unreadable: {value}"))
 }

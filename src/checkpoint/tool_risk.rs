@@ -169,22 +169,49 @@ fn heredoc_delimiters(line: &str) -> Vec<(String, bool)> {
             .strip_prefix('-')
             .map_or((false, after), |a| (true, a));
         let after = after.trim_start_matches([' ', '\t']);
-        let (delimiter, remainder) = if let Some(quote @ ('\'' | '"')) = after.chars().next() {
-            let body = &after[1..];
-            body.find(quote)
-                .map_or((body, ""), |end| (&body[..end], &body[end + 1..]))
-        } else {
-            let end = after
-                .find(|c: char| c.is_whitespace() || ";|&<>()".contains(c))
-                .unwrap_or(after.len());
-            (&after[..end], &after[end..])
-        };
-        if !delimiter.is_empty() {
-            found.push((delimiter.to_string(), strip_tabs));
+        let (delimiter, quoted, end) = delimiter_word(after);
+        // `<<''` is a heredoc ending at the first empty line; a bare `<<`
+        // with no word is not a heredoc.
+        if !delimiter.is_empty() || quoted {
+            found.push((delimiter, strip_tabs));
         }
-        rest = remainder;
+        rest = &after[end..];
     }
     found
+}
+
+/// The heredoc delimiter word at the start of `text`, with bash's quoting
+/// removed (`'EOF'`, `"EOF"`, `\EOF`, `E"O"F` all give `EOF`), whether any
+/// part of it was quoted, and the byte offset where the word ends.
+fn delimiter_word(text: &str) -> (String, bool, usize) {
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (at, c) in text.char_indices() {
+        if escaped {
+            word.push(c);
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.push(c),
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    quoted = true;
+                }
+                '\\' => {
+                    escaped = true;
+                    quoted = true;
+                }
+                c if c.is_whitespace() || ";|&<>()".contains(c) => return (word, quoted, at),
+                c => word.push(c),
+            },
+        }
+    }
+    (word, quoted, text.len())
 }
 
 #[cfg(test)]
@@ -326,6 +353,12 @@ mod tests {
             ("cat <<EOF\nbody\nEOF", "cat <<EOF\nEOF"),
             ("cat <<\"END\"\nbody\nEND", "cat <<\"END\"\nEND"),
             ("cat <<-EOF\n\tbody\n\tEOF", "cat <<-EOF\n\tEOF"),
+            // 067 review finding 5: an empty quoted delimiter ends at the
+            // first empty line; backslash and partly quoted delimiters are
+            // the word with the quoting removed.
+            ("cat <<''\nprivate body\n\nwc -l", "cat <<''\n\nwc -l"),
+            ("cat <<\\EOF\nbody\nEOF\nnext", "cat <<\\EOF\nEOF\nnext"),
+            ("cat <<E\"O\"F\nbody\nEOF\nnext", "cat <<E\"O\"F\nEOF\nnext"),
         ] {
             assert_eq!(
                 sent("Bash", &bash(command)),
@@ -473,9 +506,11 @@ mod tests {
             deadline: std::time::Duration::from_millis(crate::checkpoint::GATE_BUDGET_MS),
             label_client: std::sync::Arc::new(crate::traits::client::MockModelClient::new()),
             label_model: "claude-opus-4-8".into(),
+            jev_slot: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+            label_slot: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
         };
         let huge = "x".repeat(crate::jev::redact::MAX_INPUT_CHARS + 1);
-        let row = shadow_tool(
+        let (row, to_label) = shadow_tool(
             &jev,
             "Bash",
             &bash(&huge),
@@ -494,5 +529,6 @@ mod tests {
         assert_eq!(row.error_class.as_deref(), Some("redaction:too_large"));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(row.label_json.is_none());
+        assert!(to_label.is_none(), "nothing to label when nothing was sent");
     }
 }

@@ -381,6 +381,19 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["matcher"], "^(?!mcp__parallax__).*");
         assert_eq!(entries[0]["hooks"][0]["tool"], "checkpoint_action");
+
+        // 067 review finding 12: the project's own settings carry the same
+        // matcher for the same tool (FR-001 names both files).
+        let settings_path = concat!(env!("CARGO_MANIFEST_DIR"), "/.claude/settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(settings_path).unwrap()).unwrap();
+        let gate = settings["hooks"]["PreToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["hooks"][0]["tool"] == "checkpoint_action")
+            .expect("a checkpoint_action PreToolUse entry in .claude/settings.json");
+        assert_eq!(gate["matcher"], entries[0]["matcher"]);
     }
 
     /// 067 T014 (FR-005, §11 test 6): the Jev deadline plus the gate budget

@@ -751,6 +751,28 @@ impl Storage for SqliteStorage {
         super::jev::insert(&self.pool, records).await
     }
 
+    async fn update_jev_label(
+        &self,
+        id: &str,
+        update: &super::jev::JevLabelUpdate,
+    ) -> Result<(), AppError> {
+        super::jev::update_label(&self.pool, id, update).await
+    }
+
+    async fn set_checkpoint_jev_cost(
+        &self,
+        eval_id: &str,
+        jev_cost_usd: f64,
+    ) -> Result<(), AppError> {
+        sqlx::query("UPDATE checkpoint_records SET jev_cost_usd = ? WHERE id = ?")
+            .bind(jev_cost_usd)
+            .bind(eval_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("checkpoint jev_cost_usd update: {e}")))?;
+        Ok(())
+    }
+
     async fn record_turn_signals(
         &self,
         record: &super::turn_signals::TurnSignalRecord,

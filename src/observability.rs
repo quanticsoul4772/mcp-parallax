@@ -760,6 +760,40 @@ pub fn emit_checkpoint(
     );
 }
 
+/// Mirror one tool-risk row (067) as a span at the same exit point as its write.
+///
+/// The row is written off the gate's response path, after the checkpoint
+/// record, so it is its own span with no caller trace; the critical path is
+/// zero by design.
+pub fn emit_tool_risk(row: &crate::storage::jev::JevRecord) {
+    if !ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+    let Some(handles) = HANDLES.get() else {
+        return;
+    };
+    let summary = JevSpanSummary::from_rows(
+        std::slice::from_ref(row),
+        0,
+        crate::traits::classifier::JevMode::Shadow,
+    );
+    let mut attributes = summary.attributes(true);
+    attributes.push(KeyValue::new(
+        "parallax.session_id",
+        row.harness_session_id.clone().unwrap_or_default(),
+    ));
+    let (start, end) = record_window(row.created_at, row.latency_ms.unwrap_or(0));
+    let mut span = handles
+        .tracer
+        .span_builder("parallax.jev.tool_risk")
+        .with_kind(SpanKind::Internal)
+        .with_start_time(start)
+        .with_attributes(attributes)
+        .start_with_context(&handles.tracer, &parent_context(None));
+    span.set_status(Status::Ok);
+    span.end_with_timestamp(end);
+}
+
 /// Mirror one consolidation audit record (017) as a span + counter at the
 /// same exit point as the store write (007 FR-009). Attributes carry ids,
 /// action, and session only — never memory content.
@@ -1792,6 +1826,36 @@ mod tests {
             .attributes(false)
             .iter()
             .all(|kv| !kv.key.as_str().starts_with("parallax.jev.injection.")));
+    }
+
+    // 067 review finding 6: a tool-risk row is exported when it is written,
+    // off the gate's response path, as its own span.
+    #[test]
+    fn a_tool_risk_row_is_exported_as_its_own_span() {
+        let (spans, _, guard) = test_handles();
+        let mut row = crate::jev::shadow::tests_support::claim_row();
+        row.site = crate::traits::classifier::JevSite::ToolRisk;
+        row.harness_session_id = Some("tool-risk-span-probe".into());
+        emit_tool_risk(&row);
+        guard.tracer_provider.force_flush().unwrap();
+
+        let exported = spans.get_finished_spans().unwrap();
+        let span = exported
+            .iter()
+            .find(|s| {
+                s.name == "parallax.jev.tool_risk"
+                    && int(&s.attributes, "parallax.session_id").as_deref()
+                        == Some("tool-risk-span-probe")
+            })
+            .expect("tool-risk span exported");
+        assert_eq!(span.span_kind, SpanKind::Internal);
+        let attrs = &span.attributes;
+        assert_eq!(int(attrs, "parallax.jev.mode").as_deref(), Some("shadow"));
+        assert_eq!(int(attrs, "parallax.jev.requests").as_deref(), Some("1"));
+        assert_eq!(
+            int(attrs, "parallax.jev.critical_path_ms").as_deref(),
+            Some("0")
+        );
     }
 
     #[test]

@@ -46,10 +46,33 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// The real client, keeping a copy of every state it sends.
+/// How many calls are in flight now, and the most ever at once.
+#[derive(Default)]
+struct InFlight {
+    now: std::sync::atomic::AtomicUsize,
+    max: std::sync::atomic::AtomicUsize,
+}
+
+impl InFlight {
+    fn enter(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let n = self.now.fetch_add(1, SeqCst) + 1;
+        self.max.fetch_max(n, SeqCst);
+    }
+    fn leave(&self) {
+        self.now.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn max(&self) -> usize {
+        self.max.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// The real client, keeping a copy of every state it sends and counting how
+/// many tool-risk requests are in flight at once.
 struct Recorder {
     inner: TypesafeClient,
     sent: Mutex<Vec<String>>,
+    in_flight: InFlight,
 }
 
 #[async_trait::async_trait]
@@ -62,11 +85,42 @@ impl Classifier for Recorder {
             .lock()
             .unwrap()
             .push(request.state.as_str().to_string());
-        self.inner.classify(request).await
+        self.in_flight.enter();
+        let result = self.inner.classify(request).await;
+        self.in_flight.leave();
+        result
     }
 
     fn model_id(&self) -> &str {
         self.inner.model_id()
+    }
+}
+
+/// The label client the server routes to (the checkpoint review's), keeping
+/// every prompt it sends and the message of every call that fails, so a
+/// rejected label is explained in the output (067 review findings 10, 13).
+struct LabelRecorder {
+    inner: Arc<dyn mcp_parallax::traits::client::ModelClient>,
+    prompts: Mutex<Vec<String>>,
+    failures: Mutex<Vec<String>>,
+    in_flight: InFlight,
+}
+
+#[async_trait::async_trait]
+impl mcp_parallax::traits::client::ModelClient for LabelRecorder {
+    async fn complete(
+        &self,
+        prompt: &str,
+        schema: &serde_json::Value,
+    ) -> Result<mcp_parallax::traits::client::Completion, mcp_parallax::error::AppError> {
+        self.prompts.lock().unwrap().push(prompt.to_string());
+        self.in_flight.enter();
+        let result = self.inner.complete(prompt, schema).await;
+        self.in_flight.leave();
+        if let Err(error) = &result {
+            self.failures.lock().unwrap().push(error.to_string());
+        }
+        result
     }
 }
 
@@ -166,6 +220,35 @@ fn calls(secret: &str) -> Vec<(&'static str, String)> {
     calls
 }
 
+/// Wait until the row for `eval_id` exists and its label step has ended (a
+/// label, or a `label:` note), up to `limit`; `None` when it does not.
+async fn settled_row(storage: &SqliteStorage, eval_id: &str, limit: Duration) -> Option<JevRecord> {
+    let deadline = Instant::now() + limit;
+    loop {
+        let row = storage
+            .load_jev_records()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.eval_id.as_deref() == Some(eval_id));
+        if let Some(row) = row {
+            let done = row.outcome != JevOutcome::Call(Outcome::Success)
+                || row.label_json.is_some()
+                || row
+                    .error_class
+                    .as_deref()
+                    .is_some_and(|e| e.contains("label:"));
+            if done {
+                return Some(row);
+            }
+        }
+        if Instant::now() > deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let config = Config::from_env().expect("configuration");
@@ -185,8 +268,27 @@ async fn main() {
     let recorder = Arc::new(Recorder {
         inner: TypesafeClient::new(&config.jev).expect("TYPESAFE_API_KEY"),
         sent: Mutex::new(Vec::new()),
+        in_flight: InFlight::default(),
     });
     let secret = ["sk-", "acceptance", "Planted", "Tool", "Secret", "67"].concat();
+
+    // The label is wired exactly as the server wires it: the checkpoint
+    // review's routed model, through the same routed client pool.
+    let http = reqwest::Client::new();
+    let pool =
+        mcp_parallax::client::pool::ClientPool::from_factory(&config.routing, |model, effort| {
+            mcp_parallax::client::build_model_client(&config, &http, model, effort)
+        });
+    let label_model = config
+        .routing
+        .model_for(mcp_parallax::routing::CallSite::CheckpointReview)
+        .to_string();
+    let labels = Arc::new(LabelRecorder {
+        inner: pool.for_site(mcp_parallax::routing::CallSite::CheckpointReview),
+        prompts: Mutex::new(Vec::new()),
+        failures: Mutex::new(Vec::new()),
+        in_flight: InFlight::default(),
+    });
 
     let mut registry = ModeRegistry::new();
     review::register(&mut registry).unwrap();
@@ -209,8 +311,14 @@ async fn main() {
             model: pinned.clone(),
             server_session_id: "acceptance-067".into(),
             deadline: Duration::from_millis(JEV_TOOL_DEADLINE_MS),
-            label_client: default_model_client(&config),
-            label_model: config.default_model().to_string(),
+            label_client: Arc::clone(&labels) as Arc<dyn mcp_parallax::traits::client::ModelClient>,
+            label_model: label_model.clone(),
+            jev_slot: Arc::new(tokio::sync::Semaphore::new(
+                mcp_parallax::jev::shadow::TOOL_JEV_IN_FLIGHT,
+            )),
+            label_slot: Arc::new(tokio::sync::Semaphore::new(
+                mcp_parallax::jev::shadow::LABEL_IN_FLIGHT,
+            )),
         })),
     };
 
@@ -243,29 +351,24 @@ async fn main() {
             }
         }
         println!("{tool}: {:?} in {gate_ms} ms, {decision:?}", result.verdict);
+        // Paced (067 review): the next call waits for this one's row and label
+        // step, so SC-002 is checked per call, not against a burst.
+        let _ = settled_row(&storage, &eval_id, Duration::from_secs(180)).await;
         expected.insert(eval_id, decision);
     }
 
-    // ---- wait for the off-path rows ------------------------------------------
-    let deadline = Instant::now() + Duration::from_secs(600);
-    let rows: Vec<JevRecord> = loop {
-        let rows: Vec<JevRecord> = storage
-            .load_jev_records()
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|r| {
-                r.created_at >= run_started
-                    && r.eval_id
-                        .as_ref()
-                        .is_some_and(|id| expected.contains_key(id))
-            })
-            .collect();
-        if rows.len() >= expected.len() || Instant::now() > deadline {
-            break rows;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    };
+    let rows: Vec<JevRecord> = storage
+        .load_jev_records()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| {
+            r.created_at >= run_started
+                && r.eval_id
+                    .as_ref()
+                    .is_some_and(|id| expected.contains_key(id))
+        })
+        .collect();
 
     // ---- SC-002 ----------------------------------------------------------------
     let checkpoint_ids: Vec<String> = storage
@@ -337,6 +440,20 @@ async fn main() {
             }
         }
     }
+    let failures = labels.failures.lock().unwrap().clone();
+    for message in &failures {
+        println!("label call failed: {message}");
+    }
+    let label_prompts = labels.prompts.lock().unwrap().clone();
+    assert!(
+        label_prompts.iter().all(|prompt| !prompt.contains(&secret)),
+        "the planted secret reached the label model"
+    );
+    println!(
+        "label model {label_model}: {} prompts, {} failed",
+        label_prompts.len(),
+        failures.len()
+    );
     let sent: Vec<String> = recorder.sent.lock().unwrap().clone();
     assert!(
         sent.iter().all(|state| !state.contains(&secret)),
@@ -346,6 +463,58 @@ async fn main() {
         waited_on.is_empty(),
         "the gate waited for Jev on: {waited_on:?}"
     );
+    // ---- burst (067 review findings 1, 2) -------------------------------------
+    // Eight calls back to back: tool risk holds at most one Jev request and
+    // one label call in flight, and every call still leaves a row. Timeouts
+    // and busy labels are allowed here and are recorded.
+    let mut burst_ids = Vec::new();
+    for i in 0..8 {
+        let eval_id = uuid::Uuid::new_v4().to_string();
+        deps.fixed_eval_id = Some(eval_id.clone());
+        let params = CheckpointActionParams {
+            session_id: "acceptance-067-burst".into(),
+            transcript_path: "acceptance-067.jsonl".into(),
+            tool_name: "Grep".into(),
+            tool_input: json!({ "pattern": format!("burst{i}") }).to_string(),
+        };
+        run_action(&deps, &params, None).await.unwrap();
+        burst_ids.push(eval_id);
+    }
+    let mut burst_rows = Vec::new();
+    for id in &burst_ids {
+        if let Some(row) = settled_row(&storage, id, Duration::from_secs(300)).await {
+            burst_rows.push(row);
+        }
+    }
+    let mut burst_outcomes: BTreeMap<String, usize> = BTreeMap::new();
+    for row in &burst_rows {
+        let key = match row.error_class.as_deref() {
+            Some(note) if note.contains("label:") => format!("{} ({note})", row.outcome.as_str()),
+            _ => row.outcome.as_str().to_string(),
+        };
+        *burst_outcomes.entry(key).or_default() += 1;
+    }
+    println!(
+        "burst: {} of {} rows; most in flight: Jev {}, labels {}; {burst_outcomes:?}",
+        burst_rows.len(),
+        burst_ids.len(),
+        recorder.in_flight.max(),
+        labels.in_flight.max()
+    );
+    assert_eq!(
+        burst_rows.len(),
+        burst_ids.len(),
+        "a burst call left no row"
+    );
+    assert!(
+        recorder.in_flight.max() <= 1,
+        "more than one Jev request in flight"
+    );
+    assert!(
+        labels.in_flight.max() <= 1,
+        "more than one label call in flight"
+    );
+
     println!(
         "SC-002 and SC-004: passed ({} states sent, none with the planted secret; no gate response waited for Jev)",
         sent.len()
