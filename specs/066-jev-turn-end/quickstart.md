@@ -18,6 +18,8 @@ cargo run --release --example acceptance_turn_signals
 
 It builds its own checkpoint dependencies with the signals on and uses a fresh temporary database, so it reads neither `CHECKPOINT_TURN_SIGNALS` nor `DATABASE_PATH`. It exits non-zero unless every fixture turn end has one joined row with the expected detector results and no sentinel string reaches a request body.
 
+Result on main (T034, 2026-11-26, after #183): 5 fixture turn ends, 5 joined rows with the expected anchors and results, 1 real model request, no sentinel sent.
+
 ## 4. Report from stored records
 
 ```bash

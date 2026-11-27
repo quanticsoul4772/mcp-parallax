@@ -293,3 +293,26 @@ Limits:
 - All 4 order flips went from warned to not warned with `false` first. McNemar 2.25 is below 3.84, so this run doesn't show a lean either way.
 - The clean pages come from a new query list, so the dataset is close to T038 (e) but not identical.
 - One run.
+
+## 066 T034a: version-2 turn-review questions (2026-11-26)
+
+Source: the Parallax server's own database (`%APPDATA%\Claude\parallax.db`), claude_cli backend, tune split only, `jev_backtest` default row counts, run after #183 merged.
+
+Result, as printed:
+
+```text
+turn_review capture_worthy v2: 100 items, 5..5 samples each; logit spread mean 0.0707, max 0.1826; flipped 4
+turn_review contradiction v2: 100 items, 5..5 samples each; logit spread mean 0.1486, max 3.6882; flipped 0
+self-agreement turn_review v2: same verdict twice: 100 of 100
+yes/no order turn_review capture_worthy v2: 100 items, 1 flips at 0.5 (0 yes to no, 1 no to yes), McNemar 0.000, mean absolute shift 0.0140
+yes/no order turn_review contradiction v2: 100 items, 0 flips at 0.5 (0 yes to no, 0 no to yes), McNemar 0.000, mean absolute shift 0.0047
+skipped turn_review, yes/no order v2: fingerprint mismatch: 7
+```
+
+At a 0.5 cutoff the order flip rates are 1 in 100 and 0 in 100. FR-010 sets its 5% limit at the pinned threshold; none is pinned yet, so the check is repeated once one is.
+
+Limits:
+
+- One run of each.
+- 7 stored turns could not be rebuilt (fingerprint mismatch) and are left out of all three measurements.
+- Two earlier attempts the same day read the wrong databases and measured nothing; their output only reprinted older saved results.
