@@ -383,6 +383,27 @@ mod tests {
         assert_eq!(entries[0]["hooks"][0]["tool"], "checkpoint_action");
     }
 
+    /// 067 T014 (FR-005, §11 test 6): the Jev deadline plus the gate budget
+    /// stays within a quarter of the `checkpoint_action` hook timeout.
+    #[test]
+    fn the_tool_risk_deadline_and_gate_budget_fit_a_quarter_of_the_hook_timeout() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/integrations/claude-code/hooks.json"
+        );
+        let hooks: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let timeout_s = hooks["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"]
+            .as_u64()
+            .unwrap();
+        let quarter_ms = timeout_s * 1000 / 4;
+        assert!(
+            crate::client::typesafe::JEV_TOOL_DEADLINE_MS + crate::checkpoint::GATE_BUDGET_MS
+                <= quarter_ms,
+            "Jev deadline + gate budget exceeds {quarter_ms} ms"
+        );
+    }
+
     /// Contract sync (the 005 pattern): wire shapes match the three contract
     /// JSONs — params property names + required lists, and the result's
     /// field set.

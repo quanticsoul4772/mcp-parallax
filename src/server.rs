@@ -448,6 +448,24 @@ impl Parallax {
             None => None,
         };
 
+        // 067: the tool-risk shadow; its label comes from the checkpoint
+        // review's routed model, asked off the gate's response path.
+        let tool_jev = if config.jev.tool_risk == crate::traits::classifier::JevMode::Off {
+            None
+        } else {
+            typesafe.clone().map(|client| {
+                Arc::new(crate::jev::shadow::ToolJev::new(
+                    client,
+                    config.jev.model.clone(),
+                    session_id.clone(),
+                    pool.for_site(CallSite::CheckpointReview),
+                    config
+                        .routing
+                        .model_for(CallSite::CheckpointReview)
+                        .to_string(),
+                ))
+            })
+        };
         let checkpoint = Arc::new(CheckpointDeps {
             reader: Arc::new(FsTrajectoryReader),
             storage: Arc::clone(&storage),
@@ -464,6 +482,7 @@ impl Parallax {
             embedder: embedder.clone(),
             gate_extra_patterns: config.checkpoint_gate_patterns.clone(),
             jev: turn_jev,
+            tool_jev,
             // 066: the turn signals record which correctives they would name,
             // so they need to know what is in the catalog.
             // 066: only an `on` turn-review site looks up pinned skip

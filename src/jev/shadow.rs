@@ -4,6 +4,7 @@
 
 mod claim;
 mod injection;
+mod tool;
 mod turn;
 
 pub use claim::{
@@ -11,6 +12,9 @@ pub use claim::{
     PreparedClaim, ABANDONED_ERROR,
 };
 pub use injection::{abandoned_row, screen_page, InjectionJev, Screening, CANCELLED_ERROR};
+pub use tool::{
+    excluded_tool_row, shadow_tool, tool_questions, ToolIds, ToolJev, LABEL_PROMPT_VERSION,
+};
 pub use turn::{
     no_memory_candidates, shadow_turn, turn_label, turn_state, ReviewOutcome, TurnIds, TurnInputs,
     TurnJev, TurnState, TurnStateError,

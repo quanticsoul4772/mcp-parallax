@@ -35,17 +35,17 @@ Format: `- [ ] Txxx [P?] [Story?] Description (files)`. `[P]` means it can run i
 
 - [x] T010 [P] [US2] Test the pre-filter table (§11 test 2, FR-003): risk-pattern matches and allowlisted whole commands are excluded with no Jev request (`times(0)` at the classifier); a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(` or `>(` never matches the allowlist. Files: `src/checkpoint/tool_risk.rs` tests.
 - [x] T011 [US2] Implement the order and the allowlist (research D2). Files: `src/checkpoint/tool_risk.rs`, `src/checkpoint/mod.rs`.
-- [ ] T012 [US2] Test `run_action` (FR-002, FR-005, FR-008, FR-009, SC-003; §11 tests 4 and 5): every matched call is classified, memory on or off; a newly matched tool gets no hold; a risk-matched `Bash`, `Write` or `Edit` hold is unchanged when Jev hangs, errors, or answers `read_only` at 1.0; with a never-returning classifier the gate still returns a response in the same test run, because its response path never awaits the Jev request (SC-003); the gate's verdict and message are identical with the site off and `shadow`; excluded calls leave an `excluded` row with the reason in `error_class`; a Jev answer leaves its row when it arrives; one attempt, deadline `GATE_BUDGET_MS`. Files: `src/checkpoint/run/tests/tool_risk.rs`.
-- [ ] T013 [US2] Implement the `run_action` restructure and the Jev request (research D4, D5). Files: `src/checkpoint/run.rs`, `src/jev/shadow/tool.rs`, `src/jev/shadow.rs`, `src/server.rs`.
-- [ ] T014 [P] [US2] Contract test (§11 test 6, FR-005): the Jev deadline plus `GATE_BUDGET_MS` is at most a quarter (1.25 s) of the `checkpoint_action` timeout read from `hooks.json`. Files: `src/checkpoint/contract.rs` tests.
-- [ ] T015 [P] [US2] §11 test 7, "memory questions off without the opt-in": test that the tool-risk site asks Jev no memory question at all (owner's answer, 2026-11-27). Files: `src/jev/questions.rs` or `src/jev/shadow/tool.rs` tests.
+- [x] T012 [US2] Test `run_action` (FR-002, FR-005, FR-008, FR-009, SC-003; §11 tests 4 and 5): every matched call is classified, memory on or off; a newly matched tool gets no hold; a risk-matched `Bash`, `Write` or `Edit` hold is unchanged when Jev hangs, errors, or answers `read_only` at 1.0; with a never-returning classifier the gate still returns a response in the same test run, because its response path never awaits the Jev request (SC-003); the gate's verdict and message are identical with the site off and `shadow`; excluded calls leave an `excluded` row with the reason in `error_class`; a Jev answer leaves its row when it arrives; one attempt, deadline `GATE_BUDGET_MS`. Files: `src/checkpoint/run/tests/tool_risk.rs`.
+- [x] T013 [US2] Implement the `run_action` restructure and the Jev request (research D4, D5). Files: `src/checkpoint/run.rs`, `src/jev/shadow/tool.rs`, `src/jev/shadow.rs`, `src/server.rs`.
+- [x] T014 [P] [US2] Contract test (§11 test 6, FR-005): the Jev deadline plus `GATE_BUDGET_MS` is at most a quarter (1.25 s) of the `checkpoint_action` timeout read from `hooks.json`. Files: `src/checkpoint/contract.rs` tests.
+- [x] T015 [P] [US2] §11 test 7, "memory questions off without the opt-in": test that the tool-risk site asks Jev no memory question at all (owner's answer, 2026-11-27). Files: `src/jev/questions.rs` or `src/jev/shadow/tool.rs` tests.
 
 ## Phase 5: User Story 3 - Only projections leave the machine (P1)
 
 **Goal**: Jev sees only the projections (FR-006).
 
-- [ ] T016 [US3] Test the projections (§11 test 3, FR-006): `Bash` command with heredoc bodies dropped, redacted; `file_path` only for `Write` and `Edit`; MCP and other built-in tools as name plus argument key names, values only for allowlisted fields; a redaction failure sends nothing and is recorded; wire-level assertions on the whole serialized body. Files: `src/checkpoint/tool_risk.rs` tests.
-- [ ] T017 [US3] Implement the projections (research D3). Per-tool argument-value allowlist: `file_path`, `path` and `pattern` of `Read`, `Grep` and `Glob` (owner's answer, 2026-11-27). Files: `src/checkpoint/tool_risk.rs`.
+- [x] T016 [US3] Test the projections (§11 test 3, FR-006): `Bash` command with heredoc bodies dropped, redacted; `file_path` only for `Write` and `Edit`; MCP and other built-in tools as name plus argument key names, values only for allowlisted fields; a redaction failure sends nothing and is recorded; wire-level assertions on the whole serialized body. Files: `src/checkpoint/tool_risk.rs` tests.
+- [x] T017 [US3] Implement the projections (research D3). Per-tool argument-value allowlist: `file_path`, `path` and `pattern` of `Read`, `Grep` and `Glob` (owner's answer, 2026-11-27). Files: `src/checkpoint/tool_risk.rs`.
 
 ## Phase 6: Polish and acceptance
 

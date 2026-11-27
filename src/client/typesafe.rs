@@ -30,6 +30,9 @@ pub const JEV_TURN_DEADLINE_MS: u64 = 1000;
 /// Deadline for a research-claim request, capped by the run's time left.
 pub const JEV_CLAIM_DEADLINE_MS: u64 = 2000;
 
+/// Deadline for a tool-risk request: the gate budget, one attempt (067, research D4).
+pub const JEV_TOOL_DEADLINE_MS: u64 = crate::checkpoint::GATE_BUDGET_MS;
+
 /// Requests in flight at once. The server builds one client, so this holds
 /// per process.
 pub const MAX_IN_FLIGHT: usize = 4;

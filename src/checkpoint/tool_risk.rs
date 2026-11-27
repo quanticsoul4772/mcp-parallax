@@ -70,10 +70,126 @@ fn allowlisted(command: &str) -> bool {
     })
 }
 
+/// Tools whose allowlisted argument values are sent (research D3).
+const VALUE_TOOLS: [&str; 3] = ["Read", "Grep", "Glob"];
+
+/// The argument fields of [`VALUE_TOOLS`] whose values are sent.
+const VALUE_FIELDS: [&str; 3] = ["file_path", "path", "pattern"];
+
+/// The projection of one pending call, before redaction (research D3).
+///
+/// `Bash` sends its command with heredoc bodies dropped; `Write` and `Edit`
+/// their `file_path`; every other tool its name and argument names, with
+/// values only for the allowlisted fields of `Read`, `Grep` and `Glob`.
+#[must_use]
+pub fn projection(tool_name: &str, tool_input: &str) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let input: Value = serde_json::from_str(tool_input).unwrap_or(Value::Null);
+    let field = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    match tool_name {
+        "Bash" => json!({ "tool": tool_name, "command": drop_heredoc_bodies(&field("command")) }),
+        "Write" | "Edit" => json!({ "tool": tool_name, "file_path": field("file_path") }),
+        _ => {
+            let object = input.as_object();
+            let mut names: Vec<&str> = object
+                .map(|o| o.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            names.sort_unstable();
+            let mut values = serde_json::Map::new();
+            if let (true, Some(o)) = (VALUE_TOOLS.contains(&tool_name), object) {
+                for key in VALUE_FIELDS {
+                    if let Some(value) = o.get(key) {
+                        values.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+            json!({ "tool": tool_name, "argument_names": names, "values": values })
+        }
+    }
+}
+
+/// The projection through the mandatory redactor; nothing else is sent.
+///
+/// # Errors
+///
+/// A redaction failure, in which case nothing is sent.
+pub fn redacted_projection(
+    redactor: &crate::jev::redact::Redactor,
+    tool_name: &str,
+    tool_input: &str,
+) -> Result<crate::jev::redact::RedactedState, crate::jev::redact::RedactError> {
+    redactor.redact_json(&projection(tool_name, tool_input))
+}
+
+/// Drop every heredoc body, keeping the line that opens it and its closing
+/// delimiter.
+fn drop_heredoc_bodies(command: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut pending: std::collections::VecDeque<(String, bool)> = std::collections::VecDeque::new();
+    for line in command.split('\n') {
+        if let Some((delimiter, strip_tabs)) = pending.front() {
+            let candidate = if *strip_tabs {
+                line.trim_start_matches('\t')
+            } else {
+                line
+            };
+            if candidate == delimiter {
+                kept.push(line);
+                pending.pop_front();
+            }
+            continue;
+        }
+        kept.push(line);
+        pending.extend(heredoc_delimiters(line));
+    }
+    kept.join("\n")
+}
+
+/// The heredoc delimiters a line opens, in order, each with whether `<<-`
+/// strips leading tabs. A here-string (`<<<`) opens none.
+fn heredoc_delimiters(line: &str) -> Vec<(String, bool)> {
+    let mut found = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find("<<") {
+        let after = &rest[at + 2..];
+        if after.starts_with('<') {
+            rest = after.trim_start_matches('<');
+            continue;
+        }
+        let (strip_tabs, after) = after
+            .strip_prefix('-')
+            .map_or((false, after), |a| (true, a));
+        let after = after.trim_start_matches([' ', '\t']);
+        let (delimiter, remainder) = if let Some(quote @ ('\'' | '"')) = after.chars().next() {
+            let body = &after[1..];
+            body.find(quote)
+                .map_or((body, ""), |end| (&body[..end], &body[end + 1..]))
+        } else {
+            let end = after
+                .find(|c: char| c.is_whitespace() || ";|&<>()".contains(c))
+                .unwrap_or(after.len());
+            (&after[..end], &after[end..])
+        };
+        if !delimiter.is_empty() {
+            found.push((delimiter.to_string(), strip_tabs));
+        }
+        rest = remainder;
+    }
+    found
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{prefilter, Exclusion, Prefilter};
+    use super::{prefilter, redacted_projection, Exclusion, Prefilter};
+    use crate::jev::redact::{RedactError, Redactor};
+    use serde_json::json;
 
     fn bash(command: &str) -> String {
         serde_json::json!({ "command": command }).to_string()
@@ -173,5 +289,205 @@ mod tests {
     fn exclusion_reasons_have_their_record_names() {
         assert_eq!(Exclusion::RiskPattern.as_str(), "risk_pattern");
         assert_eq!(Exclusion::Allowlist.as_str(), "allowlist");
+    }
+
+    // 067 T016 (FR-006, §11 test 3): only projections leave the machine.
+    // Each test asserts on the whole serialized state that is sent.
+
+    fn sent(tool: &str, input: &str) -> String {
+        redacted_projection(&Redactor::new(vec![]), tool, input)
+            .unwrap()
+            .as_str()
+            .to_string()
+    }
+
+    #[test]
+    fn bash_sends_the_command_with_heredoc_bodies_dropped() {
+        let command =
+            "cat > notes.txt <<'EOF'\nprivate line one\nprivate line two\nEOF\nwc -l notes.txt";
+        assert_eq!(
+            sent("Bash", &bash(command)),
+            json!({
+                "tool": "Bash",
+                "command": "cat > notes.txt <<'EOF'\nEOF\nwc -l notes.txt",
+            })
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn bash_heredoc_forms_are_all_dropped() {
+        for (command, kept) in [
+            ("cat <<EOF\nbody\nEOF", "cat <<EOF\nEOF"),
+            ("cat <<\"END\"\nbody\nEND", "cat <<\"END\"\nEND"),
+            ("cat <<-EOF\n\tbody\n\tEOF", "cat <<-EOF\n\tEOF"),
+        ] {
+            assert_eq!(
+                sent("Bash", &bash(command)),
+                json!({ "tool": "Bash", "command": kept }).to_string(),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_and_edit_send_the_file_path_only() {
+        assert_eq!(
+            sent(
+                "Write",
+                r#"{"file_path":"src/lib.rs","content":"secret body"}"#
+            ),
+            json!({ "tool": "Write", "file_path": "src/lib.rs" }).to_string()
+        );
+        assert_eq!(
+            sent(
+                "Edit",
+                r#"{"file_path":"a.rs","old_string":"x","new_string":"y"}"#
+            ),
+            json!({ "tool": "Edit", "file_path": "a.rs" }).to_string()
+        );
+    }
+
+    #[test]
+    fn other_tools_send_the_name_and_argument_names_without_values() {
+        assert_eq!(
+            sent(
+                "mcp__exa__exa_search",
+                r#"{"query":"private question","numResults":5}"#
+            ),
+            json!({
+                "tool": "mcp__exa__exa_search",
+                "argument_names": ["numResults", "query"],
+                "values": {},
+            })
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn read_grep_and_glob_send_their_allowlisted_values() {
+        assert_eq!(
+            sent("Read", r#"{"file_path":"src/main.rs","limit":20}"#),
+            json!({
+                "tool": "Read",
+                "argument_names": ["file_path", "limit"],
+                "values": { "file_path": "src/main.rs" },
+            })
+            .to_string()
+        );
+        assert_eq!(
+            sent(
+                "Grep",
+                r#"{"pattern":"fn main","path":"src","glob":"*.rs"}"#
+            ),
+            json!({
+                "tool": "Grep",
+                "argument_names": ["glob", "path", "pattern"],
+                "values": { "path": "src", "pattern": "fn main" },
+            })
+            .to_string()
+        );
+        assert_eq!(
+            sent("Glob", r#"{"pattern":"**/*.rs"}"#),
+            json!({
+                "tool": "Glob",
+                "argument_names": ["pattern"],
+                "values": { "pattern": "**/*.rs" },
+            })
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn a_value_field_of_another_tool_is_not_sent() {
+        // `path` is allowlisted for Read, Grep and Glob only.
+        assert_eq!(
+            sent("mcp__fs__list", r#"{"path":"/home/someone/private"}"#),
+            json!({
+                "tool": "mcp__fs__list",
+                "argument_names": ["path"],
+                "values": {},
+            })
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn projections_are_redacted() {
+        let redactor = Redactor::new(vec!["supersecretvalue123".into()]);
+        let state = redacted_projection(
+            &redactor,
+            "Bash",
+            &bash("curl -H 'X-Key: supersecretvalue123' localhost"),
+        )
+        .unwrap();
+        assert!(!state.as_str().contains("supersecretvalue123"));
+        assert!(state.as_str().contains(crate::jev::redact::MARKER));
+        assert_eq!(state.redactions(), 1);
+    }
+
+    #[test]
+    fn a_redaction_failure_sends_nothing() {
+        let huge = "x".repeat(crate::jev::redact::MAX_INPUT_CHARS + 1);
+        assert!(matches!(
+            redacted_projection(&Redactor::new(vec![]), "Bash", &bash(&huge)),
+            Err(RedactError::TooLarge { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_redaction_failure_is_recorded_with_no_request() {
+        use crate::jev::shadow::{shadow_tool, ToolIds, ToolJev};
+        use crate::storage::jev::JevOutcome;
+        use crate::traits::classifier::{Classifier, JevRequest, JevResponse};
+
+        /// Counts requests; a redaction failure must leave it at zero.
+        struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+        #[async_trait::async_trait]
+        impl Classifier for Counting {
+            async fn classify(
+                &self,
+                _: &JevRequest,
+            ) -> Result<JevResponse, crate::error::AppError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err(crate::error::AppError::ClassifierProvider(
+                    "nothing is sent when redaction fails".into(),
+                ))
+            }
+            fn model_id(&self) -> &'static str {
+                "jev-1.14.0"
+            }
+        }
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let jev = ToolJev {
+            classifier: std::sync::Arc::new(Counting(std::sync::Arc::clone(&calls))),
+            redactor: Redactor::new(vec![]),
+            model: "jev-1.14.0".into(),
+            server_session_id: "server-1".into(),
+            deadline: std::time::Duration::from_millis(crate::checkpoint::GATE_BUDGET_MS),
+            label_client: std::sync::Arc::new(crate::traits::client::MockModelClient::new()),
+            label_model: "claude-opus-4-8".into(),
+        };
+        let huge = "x".repeat(crate::jev::redact::MAX_INPUT_CHARS + 1);
+        let row = shadow_tool(
+            &jev,
+            "Bash",
+            &bash(&huge),
+            ToolIds {
+                eval_id: "eval-1",
+                harness_session_id: "s1",
+                transcript_path: "t.jsonl",
+                now: chrono::Utc::now(),
+            },
+        )
+        .await;
+        assert_eq!(
+            row.outcome,
+            JevOutcome::Call(crate::error::Outcome::InvalidInput)
+        );
+        assert_eq!(row.error_class.as_deref(), Some("redaction:too_large"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(row.label_json.is_none());
     }
 }

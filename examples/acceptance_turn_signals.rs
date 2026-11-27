@@ -147,6 +147,7 @@ async fn main() {
             }),
             skip_thresholds: None,
             fixed_eval_id: None,
+            tool_jev: None,
         };
         let path = fixtures.join(expected.file);
         let params = CheckpointTurnParams {

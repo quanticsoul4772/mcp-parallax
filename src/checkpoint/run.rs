@@ -57,6 +57,8 @@ pub struct CheckpointDeps {
     /// A fixed evaluation id, for tests of the audit share; `None` draws a
     /// fresh UUID per evaluation.
     pub fixed_eval_id: Option<String>,
+    /// The Jev tool-risk shadow (067); `None` when the site is off.
+    pub tool_jev: Option<Arc<crate::jev::shadow::ToolJev>>,
 }
 
 /// What one evaluation concluded, before recording.
@@ -156,6 +158,52 @@ pub async fn run_batch(
     ))
 }
 
+/// The tools whose risk-matched calls can hold (067 Clarification O).
+const HOLD_TOOLS: [&str; 3] = ["Bash", "Write", "Edit"];
+
+fn holds_on(tool_name: &str) -> bool {
+    HOLD_TOOLS.iter().any(|t| t.eq_ignore_ascii_case(tool_name))
+}
+
+/// 067: classify one matched call off the gate's response path. Excluded
+/// calls get their row with no request; the rest ask Jev, then the big model
+/// for the label, and the row is written when they end (research D4, D5).
+/// The gate never awaits this.
+fn spawn_tool_risk(deps: &CheckpointDeps, params: &CheckpointActionParams, eval_id: &str) {
+    use crate::checkpoint::tool_risk::{prefilter, Prefilter};
+    use crate::jev::shadow::{excluded_tool_row, shadow_tool, ToolIds};
+    let Some(jev) = deps.tool_jev.clone() else {
+        return;
+    };
+    let decision = prefilter(
+        &params.tool_name,
+        &params.tool_input,
+        &deps.gate_extra_patterns,
+    );
+    let storage = Arc::clone(&deps.storage);
+    let now = deps.clock.now();
+    let tool_name = params.tool_name.clone();
+    let tool_input = params.tool_input.clone();
+    let session_id = params.session_id.clone();
+    let transcript_path = params.transcript_path.clone();
+    let eval_id = eval_id.to_string();
+    tokio::spawn(async move {
+        let ids = ToolIds {
+            eval_id: &eval_id,
+            harness_session_id: &session_id,
+            transcript_path: &transcript_path,
+            now,
+        };
+        let row = match decision {
+            Prefilter::Excluded(reason) => excluded_tool_row(&jev, reason.as_str(), &ids),
+            Prefilter::Classify => shadow_tool(&jev, &tool_name, &tool_input, ids).await,
+        };
+        if let Err(error) = storage.record_jev(std::slice::from_ref(&row)).await {
+            tracing::warn!(%error, "tool-risk jev row write failed; the gate is unaffected");
+        }
+    });
+}
+
 /// `checkpoint_action` (US2): the risk-matched, deterministic pre-action gate
 /// under a hard budget.
 ///
@@ -168,26 +216,38 @@ pub async fn run_action(
     caller: Option<&CallerTrace>,
 ) -> Result<(CheckpointResult, u64, u64), AppError> {
     let started = Instant::now();
+    // 067: the evaluation id exists from the start, so the Jev row can name it.
+    let eval_id = deps
+        .fixed_eval_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // FR-013: non-risk-matched actions pass with no evaluation at all.
-    if !gate::risk_matched(
-        &params.tool_name,
-        &params.tool_input,
-        &deps.gate_extra_patterns,
-    ) {
+    // FR-013: non-risk-matched actions pass with no evaluation at all. 067
+    // keeps the hold on Bash, Write and Edit, so newly matched tools never
+    // hold (Clarification O).
+    if !holds_on(&params.tool_name)
+        || !gate::risk_matched(
+            &params.tool_name,
+            &params.tool_input,
+            &deps.gate_extra_patterns,
+        )
+    {
         let evaluation = Evaluated::pure(
             vec![],
             vec![],
             CheckpointResult::silence(elapsed_ms(started)),
         );
-        record(
+        record_with_jev(
             deps,
             Boundary::Action,
             &params.session_id,
             &evaluation,
             caller,
+            eval_id.clone(),
+            None,
         )
         .await?;
+        spawn_tool_risk(deps, params, &eval_id);
         return Ok((evaluation.result, 0, 0));
     }
 
@@ -247,14 +307,17 @@ pub async fn run_action(
     .await;
 
     let evaluation = recover(evaluation, evaluated_kinds, started, "checkpoint_action");
-    record(
+    record_with_jev(
         deps,
         Boundary::Action,
         &params.session_id,
         &evaluation,
         caller,
+        eval_id.clone(),
+        None,
     )
     .await?;
+    spawn_tool_risk(deps, params, &eval_id);
     Ok((
         evaluation.result,
         evaluation.input_tokens,
@@ -817,6 +880,7 @@ mod tests {
         turn_signals: Option<crate::checkpoint::signals::TurnSignalsDeps>,
         skip_thresholds: Option<crate::jev::policy::skip::ThresholdEntry>,
         fixed_eval_id: Option<String>,
+        tool_jev: Option<Arc<crate::jev::shadow::ToolJev>>,
     }
 
     impl DepsBuilder {
@@ -834,6 +898,7 @@ mod tests {
                 turn_signals: None,
                 skip_thresholds: None,
                 fixed_eval_id: None,
+                tool_jev: None,
             }
         }
 
@@ -851,6 +916,7 @@ mod tests {
                 turn_signals: self.turn_signals,
                 skip_thresholds: self.skip_thresholds,
                 fixed_eval_id: self.fixed_eval_id,
+                tool_jev: self.tool_jev,
             }
         }
     }
@@ -1890,6 +1956,7 @@ mod tests {
     }
 
     mod review_skip;
+    mod tool_risk;
     mod turn_signals;
 
     // ---- 064 T019: the turn shadow ------------------------------------------
