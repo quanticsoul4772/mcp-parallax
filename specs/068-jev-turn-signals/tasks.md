@@ -38,7 +38,7 @@ Test-first throughout: each test task is written and run to fail before its impl
 ## Phase 4: Polish and acceptance
 
 - [x] T018 The stance-exception amendment in `WATCHDOG_LAYER.md` and `NEW_SERVER_DESIGN.md` (plan D9), and the README, CLAUDE.md and CHANGELOG text. Exact text shown to the owner first.
-- [ ] T019 Live example `examples/acceptance_jev_signals.rs` (SC-005): exits non-zero unless SC-001 to SC-003 hold.
+- [x] T019 Live example `examples/acceptance_jev_signals.rs` (SC-005): exits non-zero unless SC-001 to SC-003 hold.
 - [ ] T019a After the live run (§4.1, roadmap check item 11): count the turn-signal rows and yes answers so far, and report in the plan the data still needed for §5.4 (60 hand-labeled items) and §7.3 (60 flags, the false-positive bound, a recall floor) and the expected date at the observed rate.
 - [ ] T020 Full gate, independent review, live acceptance, PR.
 

@@ -423,3 +423,86 @@ async fn an_answer_below_one_half_is_not_listed() {
     assert_eq!(kinds_of(&rows, "pushback_reversal"), Some(vec![]));
     assert_eq!(kinds_of(&rows, "unverified_fact"), Some(vec![]));
 }
+
+/// Jev that records each request's first question id and state, then fails.
+struct RecordingStates(Arc<Mutex<Vec<(String, String)>>>);
+
+#[async_trait::async_trait]
+impl Classifier for RecordingStates {
+    async fn classify(&self, request: &JevRequest) -> Result<JevResponse, AppError> {
+        self.0.lock().unwrap().push((
+            request.questions[0].id.clone(),
+            request.state.as_str().to_string(),
+        ));
+        Err(AppError::ClassifierProvider("test".into()))
+    }
+    fn model_id(&self) -> &str {
+        PINNED
+    }
+}
+
+/// The states sent when the transcript lines hold a human prompt carrying
+/// `marker`, with the opt-in on or off.
+async fn states_with_prompt(marker: &'static str, send_user_text: bool) -> Vec<(String, String)> {
+    let rows = Rows::default();
+    let sent = Arc::new(Mutex::new(vec![]));
+    let mut b = DepsBuilder::new();
+    let prompt = json!({
+        "type": "user", "sessionId": "s1", "origin": { "kind": "human" },
+        "message": { "role": "user", "content": format!("{marker} that is wrong") }
+    })
+    .to_string();
+    b.reader
+        .expect_read()
+        .returning(move |_, _| Ok((reversal_window(), vec![prompt.clone()])));
+    b.storage.expect_record_checkpoint().returning(|_| Ok(()));
+    let written = Arc::clone(&rows);
+    b.storage.expect_record_jev().returning(move |r| {
+        written.lock().unwrap().extend_from_slice(r);
+        Ok(())
+    });
+    b.storage
+        .expect_turn_signal_yes_kinds_since()
+        .returning(|_, _| Ok(vec![]));
+    b.storage
+        .expect_add_checkpoint_jev_cost()
+        .returning(|_, _| Ok(()));
+    b.signals_jev = Some(Arc::new(SignalsJev {
+        classifier: Arc::new(RecordingStates(Arc::clone(&sent))),
+        redactor: Redactor::new(vec![]),
+        model: PINNED.into(),
+        server_session_id: "server-1".into(),
+        deadline: StdDuration::from_millis(JEV_TURN_DEADLINE_MS),
+        send_user_text,
+        grounded_verify: false,
+        research: false,
+    }));
+    run_turn(&b.build(), &turn_params(FINAL, false), None)
+        .await
+        .unwrap();
+    rows_after(&rows, 2).await;
+    let sent = sent.lock().unwrap().clone();
+    sent
+}
+
+// 068 (T019 follow-up): run_turn reads that turn's user prompt from the
+// transcript lines; with the opt-in it reaches pushback_reversal only, and
+// without it neither request.
+#[tokio::test]
+async fn the_turns_user_prompt_from_the_transcript_reaches_pushback_reversal_only_with_the_opt_in()
+{
+    // Under 20 characters, so the redactor's high-entropy rule leaves it.
+    const MARKER: &str = "PROMPT-MARK-68";
+    let with = states_with_prompt(MARKER, true).await;
+    assert_eq!(with.len(), 2);
+    for (id, state) in &with {
+        assert_eq!(
+            state.contains(MARKER),
+            id == "pushback_reversal",
+            "{id}: {state}"
+        );
+    }
+    let without = states_with_prompt(MARKER, false).await;
+    assert_eq!(without.len(), 2);
+    assert!(without.iter().all(|(_, state)| !state.contains(MARKER)));
+}
