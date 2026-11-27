@@ -79,7 +79,9 @@ Test-first implementation, the full gate, an independent review, live acceptance
 
 ## Open items
 
-- §11 test 7, "memory questions off without the opt-in": 067 asks Jev no memory question, so what the test checks is to be settled with the owner (tasks.md T015).
+- The widened matcher's exact pattern: set by the T001 spike.
+
+Settled 2026-11-27: §11 test 7 checks that the tool-risk site asks no memory question (T015); the per-tool argument-value allowlist is `file_path`, `path` and `pattern` of `Read`, `Grep` and `Glob`.
 
 ## Complexity Tracking
 

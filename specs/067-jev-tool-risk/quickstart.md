@@ -20,7 +20,7 @@ Set `PARALLAX_JEV_MODE_TOOL_RISK=shadow` with `TYPESAFE_API_KEY` present, restar
 cargo run --release --example acceptance_tool_risk
 ```
 
-Exits non-zero unless: at least N `tool_risk` rows; every outcome in the bound set; every row joins to its checkpoint record; `model_answered` equals the pinned version; no row has `applied=true`; every redaction fixture is absent from captured request bodies; no Jev request row exists for a call excluded in code; and the hook does not trigger itself. It reports Jev time on the critical path summed per run against a stated limit.
+Exits non-zero unless: at least 25 `tool_risk` rows; every outcome in the bound set (the existing outcomes plus `excluded`); every row joins to its checkpoint record; `model_answered` equals the pinned version on every row that made a Jev request; no row has `applied=true`; every redaction fixture is absent from captured request bodies; no Jev request row exists for a call excluded in code; and the hook does not trigger itself. It also fails if Jev adds any time to the critical path (SC-004).
 
 ## 5. Load (§5.5)
 

@@ -10,14 +10,14 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 ## D2. Order (§6.3.3, Clarifications R)
 
 1. Risk patterns: `gate::risk_matched` (`src/checkpoint/gate.rs:17`), unchanged. Excluded row, reason `risk_pattern`.
-2. An allowlist of whole commands only, such as test and build commands (§6.3.3), never matching a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(` or `>(` (Clarifications R). Excluded row, reason `allowlist`.
+2. An allowlist of whole commands only, such as test and build commands (§6.3.3): `cargo test` and `cargo build`, each followed by any arguments (owner's answers, 2026-11-27), never matching a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(` or `>(` (Clarifications R). Excluded row, reason `allowlist`.
 3. Everything else: Jev.
 
 ## D3. Projections (§6.3.6, Clarifications M)
 
 - `Bash`: the `command`, heredoc bodies removed, then redacted.
 - `Write`, `Edit`: `file_path` only, redacted.
-- MCP tools and the other built-in tools (Clarifications M): the tool name plus argument key names, with values only for fields on a per-tool allowlist (§6.3.6).
+- MCP tools and the other built-in tools (Clarifications M): the tool name plus argument key names, with values only for fields on a per-tool allowlist (§6.3.6): `file_path`, `path` and `pattern` of `Read`, `Grep` and `Glob` (owner's answer, 2026-11-27).
 - Every projection goes through the mandatory redactor (`Redactor::redact_json`, `src/jev/redact.rs:182`); a redaction failure sends nothing and is recorded.
 - Wire-level tests assert on the whole serialized body.
 
@@ -26,7 +26,8 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 - The gate's work and verdict are unchanged and do not wait for Jev.
 - The Jev request is started after classification and is not awaited by the hook response; its deadline is `GATE_BUDGET_MS` (500 ms, `src/checkpoint/mod.rs:40`), with no retries. Its row is written when it ends.
 - The memory hold (`gate.rs` constraint hold) is computed exactly as today for `Bash`, `Write` and `Edit`, whatever Jev does.
-- Contract test: Jev deadline plus `GATE_BUDGET_MS` stays well under the 5 s hook timeout read from `hooks.json:18`.
+- Contract test: Jev deadline plus `GATE_BUDGET_MS` is at most a quarter of the hook timeout read from `hooks.json:18` (1.25 s of 5 s; owner's answer).
+- "Gate latency unchanged" is tested structurally: the response path never awaits the Jev request, and a never-returning classifier still gets a response in the same test run (owner's answer).
 - A request still running at process exit leaves no row (accepted in Clarifications P).
 
 ## D5. Records (§5.1 records, §3.11)
