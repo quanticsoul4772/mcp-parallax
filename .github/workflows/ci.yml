@@ -16,6 +16,8 @@ env:
 # `cargo +<ver> clippy --all-features --all-targets -- -D warnings` reproduces
 # the gate locally first. The MSRV job's 1.94.0 is the declared floor
 # (Cargo.toml `rust-version`), kept in lockstep with it.
+# rust-cache saves only on main. A PR run's caches can't be read by later
+# PRs, and their ~10 GB of saves evicted main's, so every PR compiled z3 cold.
 jobs:
   fmt:
     name: Format
@@ -36,6 +38,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all-features --all-targets -- -D warnings
 
   test:
@@ -52,12 +56,14 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
       - uses: dtolnay/rust-toolchain@1.100.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # --tests: linking every example exhausts the runner (each statically
       # links z3 + aws-lc + the OTel tree; rust-lld dies with SIGBUS once
       # 007 added two more). Examples are compile-verified without linking
-      # in the next step and exercised manually/live per the quickstarts.
+      # by the Clippy and Windows jobs (--all-targets) and exercised
+      # manually/live per the quickstarts.
       - run: cargo test --all-features --tests
-      - run: cargo check --all-features --examples
 
   # Line-coverage gate. Runs the `cov` alias from .cargo/config.toml so the
   # floor is defined in exactly one place (local `cargo cov` and CI agree).
@@ -80,6 +86,8 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo cov --summary-only
 
   # Verify the crate still builds on its declared MSRV (Cargo.toml
@@ -93,6 +101,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.94.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --all-features
 
   # Windows: the 055 disk tests for folder junctions, verbatim (\\?\) paths,
@@ -107,5 +117,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all-features --all-targets -- -D warnings
       - run: cargo test --all-features --tests
