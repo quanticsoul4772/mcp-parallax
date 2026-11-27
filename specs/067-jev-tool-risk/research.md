@@ -6,6 +6,7 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 
 - Today: `PreToolUse` matcher `Bash|Write|Edit` (`integrations/claude-code/hooks.json:6`, `.claude/settings.json:56`).
 - The spike: a widened matcher that includes MCP tools and excludes `mcp__parallax__*`, verified with no self-trigger. A test parses `hooks.json` and checks the matcher.
+- **Spike result (T001, 2026-11-27):** with `^(?!mcp__parallax__).*` in the project's `.claude/settings.json`, a `Read` call, which the old matcher never covered, produced a pre-action gate record (`checkpoint_records`, boundary `action`, 11:31:26 UTC). Three `mcp__parallax__grounded_verify` calls, each cut off mid-call by an incoming message, produced none. Attribution is by timing: `checkpoint_records` stores no tool name, and the Parallax log does not record hook calls. This is the pattern T008 and T009 use.
 
 ## D2. Order (§6.3.3, Clarifications R)
 
@@ -35,6 +36,7 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 - One `jev_records` row per Jev request, site `tool_risk`, linked by `eval_id` to the checkpoint record.
 - One `excluded` row per call excluded in code, with no request; the exclusion reason (`risk_pattern` or `allowlist`) goes in `error_class`.
 - `state_json` is null; the row stores only `state_hash` plus transcript coordinates (§5.1).
+- `label_json` on rows Jev answers: the big model's `action_class` answer for the same redacted projection, requested off the critical path beside the Jev request; `label_source` is the model id plus prompt version (owner's answer, 2026-11-27).
 
 ## D6. Question (§6.3.4)
 
@@ -49,4 +51,5 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 | Destination | What | When |
 |---|---|---|
 | TypeSafe (Jev) | the projections in D3 | shadow on, call reaches Jev |
+| The configured model backend (the big-model label) | the same projections in D3 | shadow on, call reaches Jev |
 | Voyage | `Bash`, `Write`, `Edit`: tool name plus whole input, including `Write` file contents (unchanged, now listed per §6.3.7) | memory on, risk-matched |
