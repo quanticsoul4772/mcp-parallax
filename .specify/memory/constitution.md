@@ -87,14 +87,19 @@ reserved for what cannot be checked mechanically.
 **Rationale**: the server's thesis is catching model error; using a model to
 check what a solver can prove imports the failure mode it exists to correct.
 
-### VI. Capabilities Off By Default
+### VI. Capabilities Gated by Key, On by Default
 
-Every new capability with effects beyond the process — network egress, code
-execution, shell-out — MUST be env-gated and OFF by default. Enabling one is a
-deliberate operator decision, never a side effect of an upgrade.
+Every capability with effects beyond the process — network egress, code
+execution, shell-out — MUST be gated on its key or path; once that is set it
+runs by default, and an explicit off turns it off. Sandboxed code execution
+stays deferred.
 
 **Rationale**: an MCP server runs inside other people's sessions; surprise
 capability escalation is a security defect even when the capability is useful.
+
+(Amended 2026-11-27: no feature is opt-in; with TYPESAFE_API_KEY set every Jev
+site defaults to its highest allowed mode and user text is sent; an explicit
+off turns one off.)
 
 ### VII. Simplicity and Scope Discipline
 

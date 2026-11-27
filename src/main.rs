@@ -268,17 +268,19 @@ CHECKPOINTS:
                                   gate's built-in risk patterns (default: empty).
                                   An empty entry (\"a,,b\") is an error, not a skip
 
-JEV (TypeSafe; every site off by default; shadow records answers only):
-    TYPESAFE_API_KEY              TypeSafe key; enables nothing by itself;
-                                  never logged
-    PARALLAX_JEV_MODE_<SITE>      off | shadow | on; unset is off. shadow asks Jev
-                                  beside the big model and records its answer;
-                                  nothing changes. on (RESEARCH_INJECTION only,
-                                  pinned threshold) warns on kept research pages.
-                                  Needs TYPESAFE_API_KEY
+JEV (TypeSafe; with TYPESAFE_API_KEY set every site is on by default; shadow records answers only):
+    TYPESAFE_API_KEY              TypeSafe key; with it set every Jev site is on
+                                  by default; never logged
+    PARALLAX_JEV_MODE_<SITE>      off | shadow | on; unset is shadow with the key
+                                  (on for RESEARCH_INJECTION with a pinned
+                                  threshold), off without. shadow
+                                  asks Jev beside the big model and records its
+                                  answer; nothing changes. on (RESEARCH_INJECTION
+                                  only, pinned threshold) warns on kept research
+                                  pages. Needs TYPESAFE_API_KEY
     SITES:  TURN_REVIEW RESEARCH_CLAIMS RESEARCH_INJECTION TOOL_RISK TURN_SIGNALS
     PARALLAX_JEV_MODEL            Pinned Jev model; jev-1.14.0 unless set
-    PARALLAX_JEV_SEND_USER_TEXT   true | false, false unless set; true sends that
+    PARALLAX_JEV_SEND_USER_TEXT   true | false, true unless set; true sends that
                                   turn's user text to pushback_reversal only
 
 PER-CALL-SITE ROUTING (both off by default; unset changes nothing):
@@ -534,7 +536,7 @@ mod tests {
                 );
             }
             let lower = text.to_lowercase();
-            for phrase in ["enables nothing by itself", "never logged"] {
+            for phrase in ["on by default", "never logged"] {
                 assert!(lower.contains(phrase), "{doc} omits \"{phrase}\"");
             }
             assert!(
@@ -542,9 +544,10 @@ mod tests {
                 "{doc} omits the pinned model"
             );
         }
+        // Defaults changed 2026-11-27: no feature is opt-in.
         assert!(
-            help.contains("unset is off"),
-            "--help omits the off default"
+            help.contains("unset is shadow with the key"),
+            "--help omits the on-by-default with the key"
         );
         for site in JevSite::ALL {
             let row = readme
@@ -556,9 +559,14 @@ mod tests {
                 "README has no row for the {} site",
                 site.suffix()
             );
+            let default = if site == JevSite::ResearchInjection {
+                "unset is `on` when"
+            } else {
+                "unset is `shadow` when"
+            };
             assert!(
-                row.contains("unset is `off`"),
-                "README row does not default to off: {row}"
+                row.contains(default),
+                "README row does not state its default ({default}): {row}"
             );
         }
     }

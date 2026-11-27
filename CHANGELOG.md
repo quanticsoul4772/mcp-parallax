@@ -259,6 +259,12 @@ arc.
 
 ### Changed
 
+* **Jev on by default** — with `TYPESAFE_API_KEY` set, every Jev site defaults to
+  its highest allowed mode (`shadow`; `on` for `RESEARCH_INJECTION` with a pinned
+  threshold) and `PARALLAX_JEV_SEND_USER_TEXT` defaults to `true`; an explicit
+  `off` or `false` turns one off. A key with an unpriced `PARALLAX_JEV_MODEL` now
+  stops startup unless every site is set to `off`.
+
 * **Unknown `PARALLAX_JEV_*` names are a startup error** (066) — only
   `PARALLAX_JEV_MODEL` and `PARALLAX_JEV_MODE_<SITE>` are accepted.
 
