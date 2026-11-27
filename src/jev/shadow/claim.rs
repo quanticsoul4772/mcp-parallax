@@ -91,6 +91,7 @@ pub fn prepare_claim(
         source_ids: Some(sources.iter().map(|s| s.id.clone()).collect()),
         label_json: None,
         label_source: None,
+        label_cost_usd: None,
         state_json: None,
         state_hash: None,
         transcript_ref: None,

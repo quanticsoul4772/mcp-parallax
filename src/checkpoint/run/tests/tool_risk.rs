@@ -182,6 +182,11 @@ async fn every_matched_call_is_classified_with_memory_off() {
         .as_deref()
         .unwrap()
         .starts_with("claude-opus-4-8"));
+    // The label call's cost, priced at the label model's rate.
+    assert_eq!(
+        row.label_cost_usd,
+        Some(crate::telemetry::cost_usd("claude-opus-4-8", 30, 5))
+    );
     // One attempt, deadline GATE_BUDGET_MS, the action_class question only.
     let requests = requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 1);

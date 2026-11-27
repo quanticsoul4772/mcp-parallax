@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS jev_records (
     source_ids        TEXT,
     label_json        TEXT,
     label_source      TEXT,
+    label_cost_usd    REAL,
     state_json        TEXT,
     state_hash        TEXT,
     transcript_ref    TEXT,
@@ -103,6 +104,8 @@ pub struct JevRecord {
     pub source_ids: Option<Vec<String>>,
     pub label_json: Option<Value>,
     pub label_source: Option<String>,
+    /// The label call's cost (067 tool risk); `None` where none was made.
+    pub label_cost_usd: Option<f64>,
     pub state_json: Option<Value>,
     pub state_hash: Option<String>,
     pub transcript_ref: Option<String>,
@@ -144,8 +147,9 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
                 site, mode, questions_json, model_requested, model_answered, outcome,
                 error_class, request_id, latency_ms, input_tokens, cost_usd, applied,
                 eval_id, invocation_id, claim_key, source_ids, label_json, label_source,
-                state_json, state_hash, transcript_ref, redaction_count, truncated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                label_cost_usd, state_json, state_hash, transcript_ref, redaction_count,
+                truncated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&r.id)
         .bind(r.created_at.to_rfc3339())
@@ -169,6 +173,7 @@ pub async fn insert(pool: &SqlitePool, rows: &[JevRecord]) -> Result<(), AppErro
         .bind(json_text(r.source_ids.as_ref())?)
         .bind(json_text(r.label_json.as_ref())?)
         .bind(&r.label_source)
+        .bind(r.label_cost_usd)
         .bind(json_text(r.state_json.as_ref())?)
         .bind(&r.state_hash)
         .bind(&r.transcript_ref)
@@ -246,6 +251,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<JevRecord, AppError> {
         source_ids: parse_json(row.get("source_ids"), "source_ids")?,
         label_json: parse_json(row.get("label_json"), "label_json")?,
         label_source: row.get("label_source"),
+        label_cost_usd: row.get("label_cost_usd"),
         state_json: parse_json(row.get("state_json"), "state_json")?,
         state_hash: row.get("state_hash"),
         transcript_ref: row.get("transcript_ref"),
@@ -447,6 +453,7 @@ mod tests {
                 "votes_completed": 3, "sources": 1
             })),
             label_source: Some("claude-opus-4-8/verify-v1".into()),
+            label_cost_usd: None,
             state_json: Some(serde_json::json!({ "claim": "The sky is blue." })),
             state_hash: None,
             transcript_ref: None,

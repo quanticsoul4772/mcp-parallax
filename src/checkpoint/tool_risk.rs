@@ -38,8 +38,11 @@ pub enum Prefilter {
 /// Allowlisted command words, each followed by any arguments (research D2).
 const ALLOWLIST: [&str; 2] = ["cargo test", "cargo build"];
 
-/// Operators that make a command more than one whole command (Clarifications R).
-const CHAINING: [&str; 11] = ["&&", ";", "|", "$(", "`", "&", ">", ">>", "<", "<(", ">("];
+/// Operators that make a command more than one whole command (Clarifications R);
+/// a newline or carriage return starts another command in bash.
+const CHAINING: [&str; 13] = [
+    "&&", ";", "|", "$(", "`", "&", ">", ">>", "<", "<(", ">(", "\n", "\r",
+];
 
 /// Decide one matched call: risk pattern, allowlist, or Jev.
 #[must_use]
@@ -254,7 +257,9 @@ mod tests {
 
     #[test]
     fn a_command_with_any_chaining_or_redirection_operator_never_matches() {
-        for op in ["&&", ";", "|", "$(", "`", "&", ">", ">>", "<", "<(", ">("] {
+        for op in [
+            "&&", ";", "|", "$(", "`", "&", ">", ">>", "<", "<(", ">(", "\n", "\r",
+        ] {
             let command = format!("cargo test {op} echo hi");
             assert_eq!(
                 prefilter("Bash", &bash(&command), &[]),

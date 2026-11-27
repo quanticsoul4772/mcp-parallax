@@ -15,7 +15,7 @@
 - **O.** Q: §6.3.1 widens the matcher, which would put newly matched tools through the memory hold; §6.3.8 says U3 changes no behavior in 067. Which governs? → A: §6.3.8. Tools newly reached by the widened matcher are classified only; the memory hold stays on risk-matched `Bash`, `Write` and `Edit` calls as today. No new permission prompts.
 - **P.** Q: §6.3.5 runs Jev alongside the gate; §11 tests "gate latency unchanged with a never-returning classifier". Should a tool call wait for Jev? → A: No. The gate returns its verdict without waiting; Jev's answer is recorded when it arrives. Consequence accepted with the answer: a request still running when the process exits leaves no row (the roadmap's Appendix A rejected detached work for this reason).
 - **M.** Q: The roadmap names no projection for Claude's built-in tools other than `Bash`, `Write` and `Edit`. What does Jev see for them? → A: The same as MCP tools: the tool name plus argument key names.
-- **R.** Q: The allowlist's excluded operators (§6.3.3: `&&`, `;`, `|`, `$(`, backticks) miss `&`, `>`, `>>`, `<`, `<(` and `>(`. → A: Those are excluded too; only a plain command with plain arguments matches the allowlist.
+- **R.** Q: The allowlist's excluded operators (§6.3.3: `&&`, `;`, `|`, `$(`, backticks) miss `&`, `>`, `>>`, `<`, `<(` and `>(`. → A: Those are excluded too; only a plain command with plain arguments matches the allowlist. Newline and carriage return are excluded too; each starts another command in bash (found during implementation; decide-scored, 2026-11-27).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -70,7 +70,7 @@ After merge and rebuild, `PARALLAX_JEV_MODE_TOOL_RISK=shadow` and the widened ho
 
 - **FR-001** (§6.3.1): `integrations/claude-code/hooks.json`, its README and `.claude/settings.json` use a `PreToolUse` matcher that includes MCP tools and excludes `mcp__parallax__*`, verified by the spike with no self-trigger. A test parses `hooks.json` and checks the matcher.
 - **FR-002** (§6.3.2, Clarifications): `run_action` classifies every matched call, including with memory off. The memory hold applies only to risk-matched `Bash`, `Write` and `Edit` calls, as today.
-- **FR-003** (§6.3.3, Clarifications R): Risk patterns first; then an allowlist of whole commands only, such as test and build commands, which never matches a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(` or `>(`; Jev sees only the remainder.
+- **FR-003** (§6.3.3, Clarifications R): Risk patterns first; then an allowlist of whole commands only, such as test and build commands, which never matches a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(`, `>(`, a newline or a carriage return; Jev sees only the remainder.
 - **FR-004** (§6.3.4): One choice question, `action_class`, options ordered `spend_or_destructive`, `state_changing`, `read_only`, wording adapted from harness-bridge's fixed criteria, versioned, model pinned (§5.1).
 - **FR-005** (§6.3.5, Clarifications): The Jev request runs beside the gate without the gate waiting for it, with a deadline sized to `GATE_BUDGET_MS` and no retries. The memory hold stands whatever Jev does. A contract test asserts the Jev budget plus `GATE_BUDGET_MS` stays well under the 5 s hook timeout (`hooks.json:18`): at most a quarter of it, 1.25 s (owner's answer, 2026-11-27).
 - **FR-006** (§6.3.6, Clarifications): Requests carry only the projections in User Story 3, after the mandatory redactor (§8). If redaction fails, nothing is sent.

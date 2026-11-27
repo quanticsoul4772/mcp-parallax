@@ -120,8 +120,9 @@ pub async fn shadow_tool(
     record_result(&mut row, result, &request, &jev.model);
     if row.outcome == JevOutcome::Call(Outcome::Success) {
         match label(jev, &state_text).await {
-            Ok(class) => {
+            Ok((class, cost)) => {
                 row.label_json = Some(json!({ "class": class }));
+                row.label_cost_usd = Some(cost);
                 row.label_source = Some(format!("{}:{LABEL_PROMPT_VERSION}", jev.label_model));
             }
             Err(reason) => {
@@ -136,8 +137,9 @@ pub async fn shadow_tool(
     row
 }
 
-/// The big model's `action_class` answer for the same redacted projection.
-async fn label(jev: &ToolJev, state: &str) -> Result<String, String> {
+/// The big model's `action_class` answer for the same redacted projection,
+/// with the call's cost (the backend's own figure when it reports one).
+async fn label(jev: &ToolJev, state: &str) -> Result<(String, f64), String> {
     let question = action_class_question();
     let names: Vec<&str> = question.options.iter().map(|(n, _)| n.as_str()).collect();
     let options = question
@@ -169,7 +171,18 @@ async fn label(jev: &ToolJev, state: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "no class".to_string())?;
     if names.contains(&class) {
-        Ok(class.to_string())
+        #[allow(clippy::cast_precision_loss)]
+        let cost = completion.reported_cost_micros.map_or_else(
+            || {
+                crate::telemetry::cost_usd(
+                    &jev.label_model,
+                    completion.input_tokens,
+                    completion.output_tokens,
+                )
+            },
+            |micros| micros as f64 / 1_000_000.0,
+        );
+        Ok((class.to_string(), cost))
     } else {
         Err("undeclared class".to_string())
     }
@@ -198,6 +211,7 @@ fn tool_row(jev: &ToolJev, questions: &[JevQuestion], ids: &ToolIds<'_>) -> JevR
         source_ids: None,
         label_json: None,
         label_source: None,
+        label_cost_usd: None,
         state_json: None,
         state_hash: None,
         transcript_ref: Some(ids.transcript_path.to_string()),

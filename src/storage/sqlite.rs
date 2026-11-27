@@ -133,8 +133,26 @@ impl SqliteStorage {
             .await
             .map_err(|e| AppError::Storage(format!("turn_signal_records migration failed: {e}")))?;
         Self::migrate_review_skipped_by(&pool).await?;
+        Self::migrate_label_cost_column(&pool).await?;
 
         Ok(Self { pool })
+    }
+
+    /// 067: `label_cost_usd` on `jev_records`, added when missing.
+    async fn migrate_label_cost_column(pool: &SqlitePool) -> Result<(), AppError> {
+        let has = sqlx::query("PRAGMA table_info(jev_records)")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::Storage(format!("cannot inspect columns: {e}")))?
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "label_cost_usd");
+        if !has {
+            sqlx::query("ALTER TABLE jev_records ADD COLUMN label_cost_usd REAL")
+                .execute(pool)
+                .await
+                .map_err(|e| AppError::Storage(format!("label_cost_usd migration failed: {e}")))?;
+        }
+        Ok(())
     }
 
     /// 066: `review_skipped_by` on `checkpoint_records`, added when missing.
@@ -1074,6 +1092,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(storage.list_invocations().await.unwrap().len(), 1);
+    }
+
+    // 067: a jev_records table written before 067 gains `label_cost_usd`,
+    // and re-running the migration changes nothing.
+    #[tokio::test]
+    async fn jev_records_gain_label_cost_usd_when_missing() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        sqlx::raw_sql("DROP TABLE jev_records; CREATE TABLE jev_records (id TEXT PRIMARY KEY);")
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        SqliteStorage::migrate_label_cost_column(&storage.pool)
+            .await
+            .unwrap();
+        SqliteStorage::migrate_label_cost_column(&storage.pool)
+            .await
+            .unwrap();
+        let has = sqlx::query("PRAGMA table_info(jev_records)")
+            .fetch_all(&storage.pool)
+            .await
+            .unwrap()
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "label_cost_usd");
+        assert!(has);
     }
 
     // 064 T015: the Jev cost round-trips on both record types; absent reads None.

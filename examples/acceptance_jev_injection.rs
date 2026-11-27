@@ -215,6 +215,7 @@ mod tests {
             source_ids: Some(vec![id.into()]),
             label_json: None,
             label_source: None,
+            label_cost_usd: None,
             state_json: None,
             state_hash: None,
             transcript_ref: None,

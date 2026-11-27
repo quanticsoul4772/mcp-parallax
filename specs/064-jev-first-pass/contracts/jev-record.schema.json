@@ -101,6 +101,7 @@
       ]
     },
     "label_source": { "type": ["string", "null"] },
+    "label_cost_usd": { "description": "Tool risk (067): the label call's cost; null where no label call was made.", "type": ["number", "null"], "minimum": 0 },
     "state_json": { "description": "Research only: the redacted state sent, for replay.", "type": ["object", "null"] },
     "state_hash": { "type": ["string", "null"] },
     "transcript_ref": { "type": ["string", "null"] },

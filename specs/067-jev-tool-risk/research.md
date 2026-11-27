@@ -11,7 +11,7 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 ## D2. Order (§6.3.3, Clarifications R)
 
 1. Risk patterns: `gate::risk_matched` (`src/checkpoint/gate.rs:17`), unchanged. Excluded row, reason `risk_pattern`.
-2. An allowlist of whole commands only, such as test and build commands (§6.3.3): `cargo test` and `cargo build`, each followed by any arguments (owner's answers, 2026-11-27), never matching a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(` or `>(` (Clarifications R). Excluded row, reason `allowlist`.
+2. An allowlist of whole commands only, such as test and build commands (§6.3.3): `cargo test` and `cargo build`, each followed by any arguments (owner's answers, 2026-11-27), never matching a command containing `&&`, `;`, `|`, `$(`, a backtick, `&`, `>`, `>>`, `<`, `<(`, `>(`, a newline or a carriage return (Clarifications R). Excluded row, reason `allowlist`.
 3. Everything else: Jev.
 
 ## D3. Projections (§6.3.6, Clarifications M)
@@ -37,6 +37,7 @@ Each item carries the roadmap line it implements (`warm-kindling-shell.md`) and 
 - One `excluded` row per call excluded in code, with no request; the exclusion reason (`risk_pattern` or `allowlist`) goes in `error_class`.
 - `state_json` is null; the row stores only `state_hash` plus transcript coordinates (§5.1).
 - `label_json` on rows Jev answers: the big model's `action_class` answer for the same redacted projection, requested off the critical path beside the Jev request; `label_source` is the model id plus prompt version (owner's answer, 2026-11-27).
+- The label model is the checkpoint review's routed model (`PARALLAX_MODEL_CHECKPOINT_REVIEW`, else `PARALLAX_MODEL_JUDGMENT`, else `ANTHROPIC_MODEL`), through the same client. `label_cost_usd` records the label call's cost: the backend's own figure when it reports one, else priced at the label model's rate; null where no label call was made (found during implementation; decide-scored, 2026-11-27).
 
 ## D6. Question (§6.3.4)
 
