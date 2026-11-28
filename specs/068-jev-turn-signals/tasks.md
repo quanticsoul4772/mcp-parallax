@@ -40,11 +40,11 @@ Test-first throughout: each test task is written and run to fail before its impl
 - [x] T018 The stance-exception amendment in `WATCHDOG_LAYER.md` and `NEW_SERVER_DESIGN.md` (plan D9), and the README, CLAUDE.md and CHANGELOG text. Exact text shown to the owner first.
 - [x] T019 Live example `examples/acceptance_jev_signals.rs` (SC-005): exits non-zero unless SC-001 to SC-003 hold.
 - [x] T019a After the live run (§4.1, roadmap check item 11): count the turn-signal rows and yes answers so far, and report in the plan the data still needed for §5.4 (60 hand-labeled items) and §7.3 (60 flags, the false-positive bound, a recall floor) and the expected date at the observed rate.
-- [ ] T020 Full gate, independent review, live acceptance, PR.
+- [x] T020 Full gate, independent review, live acceptance, PR. (#188; fixes #189, #190; live checks 2026-11-27 and 2026-11-28 UTC.)
 
 ## Phase 5: User Story 4 - On in the owner's setup (P2)
 
-- [ ] T021 After merge and rebuild (FR-014, §4.1): back up `~/.claude.json`; set `PARALLAX_JEV_MODE_TURN_SIGNALS=shadow`, set `PARALLAX_JEV_SEND_USER_TEXT` only if the owner chooses, remove `CHECKPOINT_TURN_SIGNALS`; the exact keys and values shown first (§4.1); `PARALLAX_JEV_MODE_TURN_REVIEW` stays `shadow` until §7 passes; the owner restarts.
+- [x] T021 After merge and rebuild (FR-014, §4.1): back up `~/.claude.json`; set `PARALLAX_JEV_MODE_TURN_SIGNALS=shadow`, set `PARALLAX_JEV_SEND_USER_TEXT` only if the owner chooses, remove `CHECKPOINT_TURN_SIGNALS`; the exact keys and values shown first (§4.1); `PARALLAX_JEV_MODE_TURN_REVIEW` stays `shadow` until §7 passes; the owner restarts. (Done 2026-11-27: both keys set, `CHECKPOINT_TURN_SIGNALS` absent; since #189 both are on by default with the key.)
 
 ## Dependencies
 
