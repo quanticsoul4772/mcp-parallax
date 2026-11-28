@@ -575,11 +575,15 @@ async fn costs_of_rows_that_land_before_the_record_are_added_after_it() {
     let mut deps = b.build();
     deps.model_client = Arc::new(SlowFailingReview);
     let params = turn_params("The database migration is not reversible.", false);
-    let landed = Arc::clone(&rows);
-    let early = tokio::spawn(async move { rows_after(&landed, 2).await });
     run_turn(&deps, &params, None).await.unwrap();
-    let rows = early.await.unwrap();
-    assert_eq!(rows.len(), 2, "{rows:?}");
+    // The precondition: both rows were written before run_turn returned, so
+    // their costs took the hand-over path, not the task's own.
+    let rows = rows.lock().unwrap().clone();
+    assert_eq!(
+        rows.len(),
+        2,
+        "the rows did not land within the review's delay: {rows:?}"
+    );
     assert_eq!(records.lock().unwrap().len(), 1);
     let costs = costs.lock().unwrap().clone();
     assert_eq!(costs.len(), 2, "{costs:?}");

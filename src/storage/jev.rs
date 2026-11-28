@@ -269,7 +269,8 @@ pub async fn load(pool: &SqlitePool) -> Result<Vec<JevRecord>, AppError> {
 }
 
 /// The turn-signal kinds a session's Jev answered yes (0.5 or more) at or
-/// after `since` (068 plan D3).
+/// after `since` (068 plan D3). Only rows whose turn call wrote its
+/// checkpoint record count; a cancelled call delivered nothing.
 ///
 /// # Errors
 ///

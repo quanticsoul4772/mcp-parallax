@@ -32,7 +32,7 @@ The roadmap names the two questions and gives no text or criteria (§6.2). The w
 
 ### D1a. When the request runs
 
-Off the Stop hook's response path, never awaited, as 067's tool-risk request: spawned by the long-running server, deadline `JEV_TURN_DEADLINE_MS` (1000 ms), one attempt; its row is written when it ends. No time is added to the hook (decide-scored options; chosen 2026-11-27; analyze finding U1). (Amended 2026-11-27, timing fix) The requests start right after the transcript read; when they finish before the checkpoint record, run_turn adds their cost right after writing it, which can add a few milliseconds of database writes before the hook's response.
+Off the Stop hook's response path, never awaited, as 067's tool-risk request: spawned by the long-running server, deadline `JEV_TURN_DEADLINE_MS` (1000 ms), one attempt; its row is written when it ends. No time is added to the hook (decide-scored options; chosen 2026-11-27; analyze finding U1). (Amended 2026-11-27, timing fix) The requests start right after the transcript read; when they finish before the checkpoint record, run_turn adds their cost right after writing it, which can add a few milliseconds of database writes before the hook's response. (Amended 2026-11-27, timing fix) The turn-signal requests share the process's 4 Jev request slots with the turn-review request; when research Jev requests are also running, the turn-review request can time out waiting for a slot.
 
 ### D2. Claims with dates or numbers
 
