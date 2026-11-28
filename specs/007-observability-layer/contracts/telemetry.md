@@ -105,7 +105,7 @@ data).
 
 ### `parallax.jev.turn_signals` — one per turn-signal row (kind INTERNAL)
 
-**Added 068.** Exported when the row is written, off the Stop hook's response path and after the checkpoint record, so it is its own trace root with no caller trace. Attributes: as `parallax.jev.tool_risk` (mode `shadow`, requests 0 or 1, failures, cost_usd when known and equal to the row's `cost_usd`, latency_ms when a request ran, critical_path_ms 0 by design, session_id). Never the state, the answer or the user text.
+**Added 068.** Exported when the row is written, off the Stop hook's response path, usually before the checkpoint record (with none when the call is cancelled), so it is its own trace root with no caller trace. Attributes: as `parallax.jev.tool_risk` (mode `shadow`, requests 0 or 1, failures, cost_usd when known and equal to the row's `cost_usd`, latency_ms when a request ran, critical_path_ms 0 by design, session_id). Never the state, the answer or the user text.
 
 ## Metrics
 

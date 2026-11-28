@@ -269,7 +269,8 @@ pub async fn load(pool: &SqlitePool) -> Result<Vec<JevRecord>, AppError> {
 }
 
 /// The turn-signal kinds a session's Jev answered yes (0.5 or more) at or
-/// after `since` (068 plan D3).
+/// after `since` (068 plan D3). Only rows whose turn call wrote its
+/// checkpoint record count; a cancelled call delivered nothing.
 ///
 /// # Errors
 ///
@@ -279,12 +280,17 @@ pub async fn turn_signal_yes_kinds_since(
     session_id: &str,
     since: DateTime<Utc>,
 ) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query("SELECT * FROM jev_records WHERE site = ? AND harness_session_id = ?")
-        .bind(JevSite::TurnSignals.as_str())
-        .bind(session_id)
-        .fetch_all(pool)
-        .await
-        .map_err(storage_err("read"))?;
+    // Only rows whose turn call wrote its checkpoint record were delivered;
+    // a cancelled call leaves rows with no record (068 review finding 1).
+    let rows = sqlx::query(
+        "SELECT j.* FROM jev_records j JOIN checkpoint_records c ON c.id = j.eval_id \
+         WHERE j.site = ? AND j.harness_session_id = ?",
+    )
+    .bind(JevSite::TurnSignals.as_str())
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(storage_err("read"))?;
     let mut kinds = Vec::new();
     for row in &rows {
         let record = from_row(row)?;
@@ -612,7 +618,7 @@ mod tests {
         };
         let mut other_site = signal("other-site", "s1", "pushback_reversal", 0.9, 5);
         other_site.site = JevSite::TurnReview;
-        let rows = vec![
+        let mut rows = vec![
             signal("yes", "s1", "pushback_reversal", 0.9, 5),
             signal("edge", "s1", "unverified_fact", 0.5, 0),
             signal("no", "s1", "unverified_fact", 0.4, 6),
@@ -620,6 +626,11 @@ mod tests {
             signal("other-session", "s2", "unverified_fact", 0.9, 5),
             other_site,
         ];
+        // Delivered rows: each names a checkpoint record (068 review finding 1).
+        for r in &mut rows {
+            r.eval_id = Some(r.id.clone());
+            storage.record_checkpoint(&delivered(&r.id)).await.unwrap();
+        }
         storage.record_jev(&rows).await.unwrap();
         let mut kinds = storage
             .turn_signal_yes_kinds_since("s1", since)
@@ -652,7 +663,7 @@ mod tests {
             r.cooldown_suppressed = suppressed;
             r
         };
-        let rows = vec![
+        let mut rows = vec![
             signal(
                 "suppressed",
                 "pushback_reversal",
@@ -660,6 +671,11 @@ mod tests {
             ),
             signal("delivered", "unverified_fact", Some(vec![])),
         ];
+        // Delivered rows: each names a checkpoint record (068 review finding 1).
+        for r in &mut rows {
+            r.eval_id = Some(r.id.clone());
+            storage.record_checkpoint(&delivered(&r.id)).await.unwrap();
+        }
         storage.record_jev(&rows).await.unwrap();
         assert_eq!(
             storage
@@ -667,6 +683,65 @@ mod tests {
                 .await
                 .unwrap(),
             ["unverified_fact"]
+        );
+    }
+
+    /// A checkpoint record with `id`, so a turn-signal row that names it
+    /// counts as delivered.
+    fn delivered(id: &str) -> crate::checkpoint::CheckpointRecord {
+        crate::checkpoint::CheckpointRecord {
+            id: id.into(),
+            session_id: "s1".into(),
+            boundary: crate::checkpoint::Boundary::Turn,
+            signals_evaluated: vec![],
+            signals_fired: vec![],
+            delivered_keys: vec![],
+            review_ran: false,
+            verdict: crate::checkpoint::Verdict::Silence,
+            suppressed: false,
+            fail_open: false,
+            latency_ms: 0,
+            cost_usd: 0.0,
+            jev_cost_usd: None,
+            review_skipped_by: None,
+            created_at: Utc.with_ymd_and_hms(2026, 11, 24, 12, 0, 0).unwrap(),
+        }
+    }
+
+    // 068 review finding 1 (timing fix): a turn call Claude Code cancelled
+    // writes rows but no checkpoint record; its yes was never delivered, so
+    // only rows whose eval_id has a checkpoint record count.
+    #[tokio::test]
+    async fn a_yes_from_a_cancelled_turn_call_does_not_count_toward_the_cooldown() {
+        let storage = SqliteStorage::connect(":memory:").await.unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 11, 24, 12, 0, 0).unwrap();
+        let signal = |id: &str, kind: &str, eval_id: &str| {
+            let mut r = record(id);
+            r.site = JevSite::TurnSignals;
+            r.harness_session_id = Some("s1".into());
+            r.created_at = since + chrono::Duration::minutes(5);
+            r.eval_id = Some(eval_id.into());
+            r.questions_json = serde_json::json!([
+                { "id": kind, "version": 1, "option_order": ["true", "false"],
+                  "answer": 0.9, "probabilities": null, "band": null }
+            ]);
+            r
+        };
+        storage
+            .record_checkpoint(&delivered("eval-recorded"))
+            .await
+            .unwrap();
+        let rows = vec![
+            signal("recorded", "pushback_reversal", "eval-recorded"),
+            signal("cancelled", "unverified_fact", "eval-cancelled"),
+        ];
+        storage.record_jev(&rows).await.unwrap();
+        assert_eq!(
+            storage
+                .turn_signal_yes_kinds_since("s1", since)
+                .await
+                .unwrap(),
+            ["pushback_reversal"]
         );
     }
 

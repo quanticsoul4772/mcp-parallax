@@ -109,7 +109,9 @@ pub trait Storage: Send + Sync {
     ) -> Result<(), AppError>;
 
     /// The turn-signal kinds this session's Jev answered yes (probability
-    /// 0.5 or more) at or after `since` (068 plan D3, FR-007).
+    /// 0.5 or more) at or after `since` (068 plan D3, FR-007). Only rows whose
+    /// turn call wrote its checkpoint record count; a cancelled call delivered
+    /// nothing.
     ///
     /// # Errors
     ///

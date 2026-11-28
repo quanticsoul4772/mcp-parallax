@@ -506,3 +506,89 @@ async fn the_turns_user_prompt_from_the_transcript_reaches_pushback_reversal_onl
     assert_eq!(without.len(), 2);
     assert!(without.iter().all(|(_, state)| !state.contains(MARKER)));
 }
+
+/// A review model that never answers, so the turn's evaluation is still
+/// running when the call is cancelled.
+struct PendingReview;
+
+#[async_trait::async_trait]
+impl ModelClient for PendingReview {
+    async fn complete(&self, _: &str, _: &serde_json::Value) -> Result<Completion, AppError> {
+        std::future::pending().await
+    }
+}
+
+// The turn-signal requests start right after the transcript read, so a
+// turn call cancelled during the slow review (Claude Code cancels the hook
+// when the next message arrives) still writes both rows.
+#[tokio::test]
+async fn turn_signal_rows_are_written_even_when_the_turn_call_is_cancelled() {
+    let (rows, costs, records) = (Rows::default(), Costs::default(), Records::default());
+    let mut b = capturing(&rows, &costs, &records);
+    b.signals_jev = Some(signals_jev(
+        Arc::new(Answers(PINNED, Arc::default())),
+        StdDuration::from_millis(JEV_TURN_DEADLINE_MS),
+    ));
+    let mut deps = b.build();
+    deps.model_client = Arc::new(PendingReview);
+    // Contradicts the window's statement, so the review runs and hangs.
+    let params = turn_params("The database migration is not reversible.", false);
+    let cancelled = tokio::time::timeout(
+        StdDuration::from_millis(300),
+        run_turn(&deps, &params, None),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "the review was expected to still be running"
+    );
+    let rows = rows_after(&rows, 2).await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(records.lock().unwrap().is_empty());
+    // No record was written, so no cost was added to one (068 review finding 5).
+    assert!(costs.lock().unwrap().is_empty());
+}
+
+/// A review model that fails after a delay, so the turn-signal rows land
+/// before the (fail-open) checkpoint record is written.
+struct SlowFailingReview;
+
+#[async_trait::async_trait]
+impl ModelClient for SlowFailingReview {
+    async fn complete(&self, _: &str, _: &serde_json::Value) -> Result<Completion, AppError> {
+        tokio::time::sleep(StdDuration::from_millis(200)).await;
+        Err(AppError::Client("review failed".into()))
+    }
+}
+
+// 068 review finding 5: when the rows land before the record, run_turn adds
+// their costs right after writing the record, once each.
+#[tokio::test]
+async fn costs_of_rows_that_land_before_the_record_are_added_after_it() {
+    let (rows, costs, records) = (Rows::default(), Costs::default(), Records::default());
+    let mut b = capturing(&rows, &costs, &records);
+    b.fixed_eval_id = Some("eval-68".into());
+    b.signals_jev = Some(signals_jev(
+        Arc::new(Answers(PINNED, Arc::default())),
+        StdDuration::from_millis(JEV_TURN_DEADLINE_MS),
+    ));
+    let mut deps = b.build();
+    deps.model_client = Arc::new(SlowFailingReview);
+    let params = turn_params("The database migration is not reversible.", false);
+    run_turn(&deps, &params, None).await.unwrap();
+    // The precondition: both rows were written before run_turn returned, so
+    // their costs took the hand-over path, not the task's own.
+    let rows = rows.lock().unwrap().clone();
+    assert_eq!(
+        rows.len(),
+        2,
+        "the rows did not land within the review's delay: {rows:?}"
+    );
+    assert_eq!(records.lock().unwrap().len(), 1);
+    let costs = costs.lock().unwrap().clone();
+    assert_eq!(costs.len(), 2, "{costs:?}");
+    for (row, (eval_id, cost)) in rows.iter().zip(&costs) {
+        assert_eq!(eval_id, "eval-68");
+        assert!((cost - row.cost_usd.unwrap()).abs() < 1e-12);
+    }
+}
