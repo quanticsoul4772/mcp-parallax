@@ -545,4 +545,46 @@ async fn turn_signal_rows_are_written_even_when_the_turn_call_is_cancelled() {
     let rows = rows_after(&rows, 2).await;
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert!(records.lock().unwrap().is_empty());
+    // No record was written, so no cost was added to one (068 review finding 5).
+    assert!(costs.lock().unwrap().is_empty());
+}
+
+/// A review model that fails after a delay, so the turn-signal rows land
+/// before the (fail-open) checkpoint record is written.
+struct SlowFailingReview;
+
+#[async_trait::async_trait]
+impl ModelClient for SlowFailingReview {
+    async fn complete(&self, _: &str, _: &serde_json::Value) -> Result<Completion, AppError> {
+        tokio::time::sleep(StdDuration::from_millis(200)).await;
+        Err(AppError::Client("review failed".into()))
+    }
+}
+
+// 068 review finding 5: when the rows land before the record, run_turn adds
+// their costs right after writing the record, once each.
+#[tokio::test]
+async fn costs_of_rows_that_land_before_the_record_are_added_after_it() {
+    let (rows, costs, records) = (Rows::default(), Costs::default(), Records::default());
+    let mut b = capturing(&rows, &costs, &records);
+    b.fixed_eval_id = Some("eval-68".into());
+    b.signals_jev = Some(signals_jev(
+        Arc::new(Answers(PINNED, Arc::default())),
+        StdDuration::from_millis(JEV_TURN_DEADLINE_MS),
+    ));
+    let mut deps = b.build();
+    deps.model_client = Arc::new(SlowFailingReview);
+    let params = turn_params("The database migration is not reversible.", false);
+    let landed = Arc::clone(&rows);
+    let early = tokio::spawn(async move { rows_after(&landed, 2).await });
+    run_turn(&deps, &params, None).await.unwrap();
+    let rows = early.await.unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(records.lock().unwrap().len(), 1);
+    let costs = costs.lock().unwrap().clone();
+    assert_eq!(costs.len(), 2, "{costs:?}");
+    for (row, (eval_id, cost)) in rows.iter().zip(&costs) {
+        assert_eq!(eval_id, "eval-68");
+        assert!((cost - row.cost_usd.unwrap()).abs() < 1e-12);
+    }
 }

@@ -115,6 +115,22 @@ pub fn signal_costs(rows: &[JevRecord], tool_costs: &[(&str, f64)]) -> Vec<Signa
     out
 }
 
+/// The rows whose turn call wrote its checkpoint record.
+///
+/// `recorded` holds those records' ids. A call Claude Code cancelled leaves
+/// rows with no record; it delivered nothing, so the estimate leaves them out
+/// (068 review finding 1).
+#[must_use]
+pub fn delivered_rows<S: std::hash::BuildHasher>(
+    rows: &[JevRecord],
+    recorded: &std::collections::HashSet<&str, S>,
+) -> Vec<JevRecord> {
+    rows.iter()
+        .filter(|r| r.eval_id.as_deref().is_some_and(|id| recorded.contains(id)))
+        .cloned()
+        .collect()
+}
+
 /// The report's lines for the estimate (plan D4).
 #[must_use]
 pub fn summary_lines(costs: &[SignalCost]) -> Vec<String> {
@@ -210,6 +226,23 @@ mod tests {
             );
             assert_eq!(c.unpriced, unpriced, "{case}");
         }
+    }
+
+    // 068 review finding 1 (timing fix): a turn call Claude Code cancelled
+    // writes rows but no checkpoint record; those rows were never delivered,
+    // so the estimate leaves them out.
+    #[test]
+    fn rows_without_a_checkpoint_record_are_left_out() {
+        let mut recorded = row("s1", "pushback_reversal", 0.9, 0, Some("verify"));
+        recorded.eval_id = Some("eval-recorded".into());
+        let mut cancelled = row("s1", "pushback_reversal", 0.9, 5, Some("verify"));
+        cancelled.eval_id = Some("eval-cancelled".into());
+        let mut unlinked = row("s1", "pushback_reversal", 0.9, 10, Some("verify"));
+        unlinked.eval_id = None;
+        let ids = std::collections::HashSet::from(["eval-recorded"]);
+        let kept = super::delivered_rows(&[recorded, cancelled, unlinked], &ids);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].eval_id.as_deref(), Some("eval-recorded"));
     }
 
     // 068 review finding 2: as the real cooldown, only a delivered yes starts

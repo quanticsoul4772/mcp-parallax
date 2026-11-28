@@ -129,8 +129,16 @@ pub async fn report(storage: &SqliteStorage) {
         .iter()
         .map(|r| (r.tool.as_str(), r.cost_usd))
         .collect();
+    // Only turn calls that wrote their checkpoint record were delivered.
+    let checkpoints = storage
+        .list_checkpoints()
+        .await
+        .expect("checkpoint records");
+    let recorded: std::collections::HashSet<&str> =
+        checkpoints.iter().map(|c| c.id.as_str()).collect();
+    let delivered = mcp_parallax::jev::report::cost::delivered_rows(&rows, &recorded);
     for line in mcp_parallax::jev::report::cost::summary_lines(
-        &mcp_parallax::jev::report::cost::signal_costs(&rows, &tool_costs),
+        &mcp_parallax::jev::report::cost::signal_costs(&delivered, &tool_costs),
     ) {
         println!("{line}");
     }
